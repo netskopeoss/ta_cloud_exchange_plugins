@@ -1,0 +1,95 @@
+{
+    "name": "Notifier",
+    "description": "Send notifications to various platforms.",
+    "id": "notifier_itsm",
+    "pulling_supported": false,
+    "receiving_supported": true,
+    "version": "1.0.0",
+    "configuration": [
+        {
+            "label": "Platform",
+            "name": "platform",
+            "type": "step",
+            "fields": [
+                {
+                    "label": "Platform Name",
+                    "key": "name",
+                    "type": "choice",
+                    "default": "",
+                    "mandatory": true,
+                    "choices": [
+                        {
+                            "key": "Email (SMTP)",
+                            "value": "email"
+                        },
+                        {
+                            "key": "Gitter",
+                            "value": "gitter"
+                        },
+                        {
+                            "key": "Gmail",
+                            "value": "gmail"
+                        },
+                        {
+                            "key": "Hipchat",
+                            "value": "hipchat"
+                        },
+                        {
+                            "key": "Join",
+                            "value": "join"
+                        },
+                        {
+                            "key": "Mailgun",
+                            "value": "mailgun"
+                        },
+                        {
+                            "key": "Pagerduty",
+                            "value": "pagerduty"
+                        },
+                        {
+                            "key": "PopcornNotify",
+                            "value": "popcornnotify"
+                        },
+                        {
+                            "key": "Pushbullet",
+                            "value": "pushbullet"
+                        },
+                        {
+                            "key": "Pushover",
+                            "value": "pushover"
+                        },
+                        {
+                            "key": "SimplePush",
+                            "value": "simplepush"
+                        },
+                        {
+                            "key": "Slack (Webhooks)",
+                            "value": "slack"
+                        },
+                        {
+                            "key": "StatusPage",
+                            "value": "statuspage"
+                        },
+                        {
+                            "key": "Telegram",
+                            "value": "telegram"
+                        },
+                        {
+                            "key": "Twilio",
+                            "value": "twilio"
+                        },
+                        {
+                            "key": "Zulip",
+                            "value": "zulip"
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "label": "Configuration Parameters",
+            "name": "params",
+            "type": "dynamic_step"
+        }
+    ]
+}

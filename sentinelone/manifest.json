@@ -1,0 +1,42 @@
+{
+    "name": "SentinelOne",
+    "id": "sentinelone",
+    "version": "1.0.0",
+    "description": "The SentinelOne plugin fetches threats from the SentinelOne site. The threat data is processed and Indicators are reported to Netskope CTE. This plugin does not support sharing of Indicators to SentinelOne.",
+    "patch_supported": false,
+    "push_supported": false,
+    "configuration": [
+        {
+            "label": "Management URL",
+            "key": "url",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": ""
+        },
+        {
+            "label": "API Token",
+            "key": "token",
+            "type": "password",
+            "default": "",
+            "mandatory": true,
+            "description": "API token to authenticate SentinelOne."
+        },
+        {
+            "label": "Site Name",
+            "key": "site",
+            "type": "text",
+            "default": "",
+            "mandatory": false,
+            "description": "Name of the site to fetch alerts from. Leave blank to fetch data from all sites."
+        },
+        {
+            "label": "Initial Range (in days)",
+            "key": "days",
+            "type": "number",
+            "mandatory": true,
+            "default": 7,
+            "description": "Number of days to pull the data for the initial run."
+        }
+    ]
+}

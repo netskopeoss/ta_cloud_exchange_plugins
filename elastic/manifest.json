@@ -1,0 +1,38 @@
+{
+  "name": "Elastic",
+  "id": "elastic",
+  "version": "1.0.0",
+  "mapping": "Elastic Default Mappings",
+  "description": "This plugin is used to deliver alerts/events data to Elastic platform.",
+  "netskope": false,
+  "types": [
+    "events",
+    "alerts"
+  ],
+  "configuration": [
+    {
+      "label": "Server Address",
+      "key": "server_address",
+      "type": "text",
+      "default": "",
+      "mandatory": true,
+      "description": "Server Address for TCP Connection."
+    },
+    {
+      "label": "Server Port",
+      "key": "server_port",
+      "type": "number",
+      "default": "",
+      "mandatory": true,
+      "description": "Server Port for TCP Connection."
+    },
+    {
+      "label": "Valid Extensions",
+      "key": "valid_extensions",
+      "type": "textarea",
+      "default": "ECS Key Name,Length,Data Type\r\n@timestamp,,DateTime\r\ncloud.account.id,,String\r\ncloud.account.name,,String\r\ncloud.region,,String\r\ncloud.service.name,,String\r\ndestination.address,,String\r\ndestination.ip,,String\r\ndestination.domain,,String\r\ndestination.geo.country_name,,String\r\ndestination.geo.name,,String\r\ndestination.geo.postal_code,,String\r\ndestination.geo.region_name,,String\r\ndestination.geo.location.lat,,Integer\r\ndestination.geo.location.lon,,Integer\r\ndestination.port,,Integer\r\nfile.hash.md5,,String\r\nfile.mime_type,,String\r\nfile.name,,String\r\nfile.path,,String\r\nfile.size,,Integer\r\nhost.hostname,,String\r\nrule.id,,Integer\r\nrule.name,,String\r\nsource.address,,String\r\nsource.ip,,String\r\nsource.geo.country_name,,String\r\nsource.geo.name,,String\r\nsource.geo.postal_code,,String\r\nsource.geo.region_name,,String\r\nthreat.indicator.file.hash.md5,,String\r\nthreat.indicator.file.hash.sha1,,String\r\nthreat.indicator.file.hash.sha256,,String\r\nuser_agent.device.name,,String\r\nuser_agent.name,,String\r\nuser_agent.original,,String\r\nuser_agent.os.name,,String\r\nuser_agent.os.version,,String\r\nuser_agent.version,,String\r\nuser.email,,String\r\nuser.name,,String\r\nuser.roles,,String\r\nevent.id,,String\r\nsource.geo.country_iso_code,,String\r\ndestination.geo.country_iso_code,,String\r\nthreat.indicator.type,,String",
+      "mandatory": true,
+      "description": "Valid extensions in CSV format."
+    }
+  ]
+}

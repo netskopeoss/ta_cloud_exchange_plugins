@@ -1,0 +1,28 @@
+{
+    "name": "Security Advisor",
+    "description": "Fetch Behaviour score of users from your Security Advisor instance.",
+    "id": "security_advisor_cre",
+    "type": [
+        "user"
+    ],
+    "netskope": false,
+    "version": "1.0.0",
+    "configuration": [
+        {
+            "label": "Base URL",
+            "key": "base_url",
+            "type": "text",
+            "default": "https://www.securityadvisor.io",
+            "mandatory": true,
+            "description": "Security Advisor API endpoint URL."
+        },
+        {
+            "label": "API Token",
+            "key": "API_token",
+            "type": "password",
+            "default": "",
+            "mandatory": true,
+            "description": "Security Advisor API Token."
+        }
+    ]
+}

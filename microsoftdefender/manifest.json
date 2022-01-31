@@ -1,0 +1,72 @@
+{
+    "name": "Microsoft Defender for Endpoint",
+    "id": "microsoftdefender",
+    "version": "1.0.0",
+    "description": "This plugin is used to fetch alerts from Microsoft Defender for Endpoint platform and extract indicators from them. To get required details for creating a new configuration, visit https://securitycenter.windows.com/preferences2/siem/private. This plugin does not support sharing of indicators to Microsoft Defender for Endpoint.",
+    "patch_supported": false,
+    "push_supported": false,
+    "configuration": [
+        {
+            "label": "Tenant ID",
+            "key": "tenantid",
+            "type": "text",
+            "mandatory": true,
+            "default": "",
+            "description": "Microsoft Defender for Endpoint Tenant Id."
+        },
+        {
+            "label": "App ID",
+            "key": "appid",
+            "type": "text",
+            "mandatory": true,
+            "default": "",
+            "description": "Microsoft Defender for Endpoint App Id."
+        },
+        {
+            "label": "App Secret",
+            "key": "appsecret",
+            "type": "password",
+            "mandatory": true,
+            "default": "",
+            "description": "Microsoft Defender for Endpoint App Secret."
+        },
+        {
+            "label": "Region",
+            "key": "region",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "European Union",
+                    "value": "eu"
+                },
+                {
+                    "key": "United States",
+                    "value": "us"
+                },
+                {
+                    "key": "United Kingdom",
+                    "value": "uk"
+                }
+            ],
+            "default":"us",
+            "mandatory": true,
+            "description": "Select Applicable Region."
+        },
+        {
+            "label": "Device Groups",
+            "key": "machinegroup",
+            "type": "text",
+            "mandatory": false,
+            "default": "",
+            "description": "Specific device groups to pull alerts from. Separate multiple values with comma. Leave blank to fetch all device group's alerts."
+        },
+        {
+            "label": "Initial Range (in days)",
+            "key": "days",
+            "type": "number",
+            "mandatory": true,
+            "default": 7,
+            "description": "Number of days to pull the data for the initial run."
+        }
+    ]
+}

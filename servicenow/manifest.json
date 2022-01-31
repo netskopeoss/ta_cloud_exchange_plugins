@@ -1,0 +1,41 @@
+{
+    "name": "ServiceNow Threat Intelligence Plugin",
+    "id": "servicenow",
+    "version": "1.0.0",
+    "description": "ServiceNow Threat Intelligence application has Observables table that stores the indicators observed across the enterprise. This plugin provides mechanism to query the Observables(sn_ti_observables) table for MD5, SHA256 and URL type of observables and sharing new observables. This plugin requires ServiceNow account details which has access to Threat Intelligence application.",
+    "patch_supported": true,
+    "configuration": [
+        {
+            "label": "ServiceNow Instance URL (e.g. https://<INSTANCE_NAME>.service-now.com)",
+            "key": "url",
+            "type": "text",
+            "mandatory": true,
+            "default": "",
+            "description": ""
+        },
+        {
+            "label": "Username",
+            "key": "username",
+            "type": "text",
+            "mandatory": true,
+            "default": "",
+            "description": "The ServiceNow user having access to read Observables(sn_ti_observables) table."
+        },
+        {
+            "label": "Password",
+            "key": "password",
+            "type": "password",
+            "mandatory": true,
+            "default": "",
+            "description": ""
+        },
+        {
+            "label": "Initial Range (in days)",
+            "key": "days",
+            "type": "number",
+            "mandatory": true,
+            "default": 7,
+            "description": "Number of days to pull the data for the initial run."
+        }
+    ]
+}

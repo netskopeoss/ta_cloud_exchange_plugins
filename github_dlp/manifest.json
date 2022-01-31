@@ -1,0 +1,50 @@
+{
+    "name": "GitHub DLP",
+    "id": "github_dlp",
+    "version": "1.0.0",
+    "description": "GitHub DLP plugin is used to fetch files from the owner's GitHub repositories. MD5 hashes of files reported to Netskope CTE as indicators. For more information regarding generating access token, refer https://docs.github.com/en/free-pro-team@latest/github/authenticating-to-github/creating-a-personal-access-token.",
+    "patch_supported": false,
+    "push_supported": false,
+    "configuration": [
+        {
+            "label": "Base URL",
+            "key": "base_url",
+            "type": "text",
+            "default": "https://api.github.com",
+            "mandatory": true,
+            "description": "Base URL of GitHub API."
+        },
+        {
+            "label": "API Token",
+            "key": "api_token",
+            "type": "password",
+            "default": "",
+            "mandatory": true,
+            "description": "The GitHub user account’s API key."
+        },
+        {
+            "label": "Repository Name",
+            "key": "repository",
+            "type": "text",
+            "default": "",
+            "mandatory": false,
+            "description": "Comma-separated repository names whose repository contents the user wants to fetch. Leave empty to fetch data from all repositories."
+        },
+        {
+            "label": "Tag",
+            "key": "tag",
+            "type": "text",
+            "default": "GitHub-$REPO",
+            "mandatory": false,
+            "description": "Tag name to be used for tagging indicators. `$REPO` will be replaced by the name of the repository that the hash belongs to."
+        },
+        {
+            "label": "Quota Limit",
+            "key": "quota_limit",
+            "type": "number",
+            "default": 50,
+            "mandatory": true,
+            "description": "Amount of maximum API calls that should be consumed in percentage (1-100)."
+        }
+    ]
+}

@@ -1,0 +1,51 @@
+{
+    "name": "Microsoft Cloud App Security Plugin",
+    "id": "mcas",
+    "version": "1.0.0",
+    "description": "This plugin is used to fetch unsanctioned data from the Microsoft Cloud App Security platform. This plugin does not support sharing of Indicators to Microsoft CAS.",
+    "patch_supported": false,
+    "push_supported": false,
+    "configuration": [
+        {
+            "label": "URL",
+            "key": "url",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "MCASB instance URL."
+        },
+        {
+            "label": "API Token",
+            "key": "token",
+            "type": "password",
+            "mandatory": false,
+            "description": "Your Cloud App Security API token."
+        },
+        {
+            "label": "Enable Tagging",
+            "key": "enable_tagging",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Yes",
+                    "value": "yes"
+                },
+                {
+                    "key": "No",
+                    "value": "no"
+                }
+            ],
+            "default": "yes",
+            "mandatory": true,
+            "description": "Enable/Disable tagging functionality."
+        },
+        {
+            "label": "Tag Name",
+            "key": "tag",
+            "type": "text",
+            "default": "MCAS Unsanctioned",
+            "mandatory": true,
+            "description": "Tag name to be used for tagging indicators."
+        }
+    ]
+}

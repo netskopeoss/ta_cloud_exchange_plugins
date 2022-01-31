@@ -102,7 +102,9 @@ class JiraPlugin(PluginBase):
         """Create an issue/ticket on Jira platform."""
         params = self.configuration["auth"]
         project_id, issue_type = queue.value.split(":")
-
+        jira_comment = {}
+        if "comment" in mappings:
+            jira_comment["comment_while_create"] = mappings["comment"]
         # Filter out the mapped attributes based on given project and issue_type
         create_meta = self._get_createmeta(
             self.configuration,
@@ -153,7 +155,7 @@ class JiraPlugin(PluginBase):
             issue_status = str(
                 issue.get("fields", {}).get("status", {}).get("name")
             ).lower()
-            return Task(
+            task = Task(
                 id=result.get("key"),
                 status=STATE_MAPPINGS.get(issue_status, TaskStatus.OTHER),
                 link=(
@@ -161,6 +163,9 @@ class JiraPlugin(PluginBase):
                     f"{result.get('key')}"
                 ),
             )
+            if jira_comment:
+                self.update_task(task, alert, jira_comment, queue)
+            return task
         elif response.status_code == 400:
             self.logger.error(
                 f"Jira ITSM: Error occurred. {'; '.join(response.json().get('errors', {}).values())}"
@@ -221,11 +226,18 @@ class JiraPlugin(PluginBase):
     ) -> Task:
         """Add a comment in existing Jira issue."""
         params = self.configuration["auth"]
-        comment = {
-            "body": self._get_atlassian_document(
-                f"New alert received at {str(alert.timestamp)}."
-            )
-        }
+        if mappings.get("comment_while_create", None):
+            comment = {
+                "body": self._get_atlassian_document(
+                    mappings["comment_while_create"]
+                )
+            }
+        else:
+            comment = {
+                "body": self._get_atlassian_document(
+                    f"New alert received at {str(alert.timestamp)}."
+                )
+            }
         response = requests.post(
             f"{params['url'].strip('/')}/rest/api/3/issue/{task.id}/comment",
             headers=add_user_agent(),
@@ -291,7 +303,8 @@ class JiraPlugin(PluginBase):
         params = configuration["params"]
         if "issue_type" not in params or len(params["issue_type"]) == 0:
             return ValidationResult(
-                success=False, message="Jira issue type(s) can not be empty.",
+                success=False,
+                message="Jira issue type(s) can not be empty.",
             )
 
         # split the CSVs
@@ -397,7 +410,8 @@ class JiraPlugin(PluginBase):
                 if is_last or (start_at % 650) == 0:
                     total_project_ids = ",".join(total_ids)
                     meta = self._get_createmeta(
-                        self.configuration, {"projectIds": total_project_ids},
+                        self.configuration,
+                        {"projectIds": total_project_ids},
                     )
                     projects_list = meta.get("projects")
                     for project in projects_list:

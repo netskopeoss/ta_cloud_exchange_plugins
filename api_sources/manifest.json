@@ -1,0 +1,9 @@
+{
+    "name": "API Sources",
+    "id": "api_sources",
+    "version": "1.0.0",
+    "description": "The REST API Plugin should be used to receive data via RESTful APIs. This plugin cannot pull data from the source. This plugin can be configured to share data with other threat sources.",
+    "patch_supported": true,
+    "push_supported": false,
+    "configuration": []
+}

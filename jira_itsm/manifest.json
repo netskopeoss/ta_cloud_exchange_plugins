@@ -1,0 +1,56 @@
+{
+    "name": "Jira ITSM",
+    "description": "Create issues/tickets on Jira platform.",
+    "id": "jira_itsm",
+    "pulling_supported": false,
+    "receiving_supported": true,
+    "version": "1.0.0",
+    "configuration": [
+        {
+            "label": "Authentication",
+            "name": "auth",
+            "type": "step",
+            "fields": [
+                {
+                    "label": "Jira Cloud Instance URL",
+                    "key": "url",
+                    "type": "text",
+                    "default": "",
+                    "mandatory": true,
+                    "description": "Jira Cloud Instance URL. e.g. https://<your-domain>.atlassian.net."
+                },
+                {
+                    "label": "Email",
+                    "key": "email",
+                    "type": "text",
+                    "default": "",
+                    "mandatory": true,
+                    "description": "The email Jira user having access to read jira projects and create/update issues."
+                },
+                {
+                    "label": "API Token",
+                    "key": "api_token",
+                    "type": "password",
+                    "default": "",
+                    "mandatory": true,
+                    "description": "The Jira account's API token."
+                }
+            ]
+        },
+        {
+            "label": "Configuration parameter",
+            "name": "params",
+            "type": "step",
+            "fields": [
+                {
+                    "label": "Jira Issue Type(s)",
+                    "key": "issue_type",
+                    "type": "text",
+                    "default": "Task",
+                    "mandatory": true,
+                    "description": "Enter comma separated values of Jira issue types (values are case sensitive)."
+                }
+            ]
+        }
+    ]
+}

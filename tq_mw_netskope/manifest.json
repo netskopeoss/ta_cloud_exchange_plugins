@@ -1,0 +1,42 @@
+{
+    "name": "ThreatQ",
+    "id": "tq_mw_netskope",
+    "version": "1.0.1",
+    "description": "ThreatQ Plugin for Netskope",
+    "patch_supported": false,
+    "push_supported": false,
+    "configuration": [
+        {
+            "label": "ThreatQ URL",
+            "key": "tq_host",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "This is the URL to the ThreatQ instance."
+        },
+        {
+            "label": "ThreatQ Client ID",
+            "key": "tq_client_id",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "This is the ThreatQ Oauth2 Client ID."
+        },
+        {
+            "label": "ThreatQ Client Secret",
+            "key": "tq_client_secret",
+            "type": "password",
+            "default": "",
+            "mandatory": true,
+            "description": "This is the ThreatQ Oauth2 Client Secret."
+        },
+        {
+            "label": "ThreatQ Search Names",
+            "key": "tq_searches",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "This is the ThreatQ search names that contain the data to be imported. This should be a comma separated list of search names, or a single search name."
+        }
+    ]
+}

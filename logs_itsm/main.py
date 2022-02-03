@@ -14,11 +14,23 @@ class CELogsPlugin(PluginBase):
     """CE Logs plugin implementation."""
 
     def _validate_params(self, configuration):
+        params = configuration["params"]
+        if len(params["logs_type"]) == 0:
+            return ValidationResult(
+                success=False,
+                message="Log Type(s) should not be empty."
+            )
         return ValidationResult(success=True, message="Validation successful.")
 
     def validate_step(self, name, configuration):
         """Validate a given step."""
-        return ValidationResult(success=True, message="Validation successful.")
+        if name == "params":
+            return self._validate_params(configuration)
+        else:
+            return ValidationResult(
+                success=True,
+                message="Validation successful."
+            )
 
     def pull_alerts(self) -> List[Alert]:
         """Pull alerts from the Netskope platform."""
@@ -47,6 +59,7 @@ class CELogsPlugin(PluginBase):
                 )
             except KeyError as ex:
                 self.logger.error(
-                    f"Error occurred while getting fields from alert with id={str(log.get('_id'))}. {repr(ex)}"
+                    f"Error occurred while getting fields from "
+                    f"alert with id={str(log.get('_id'))}. {repr(ex)}"
                 )
         return alerts

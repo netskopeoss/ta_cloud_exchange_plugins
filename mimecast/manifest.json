@@ -1,0 +1,90 @@
+{
+    "name": "Mimecast Plugin",
+    "id": "mimecast",
+    "version": "1.0.0",
+    "description": "This plugin is used to fetch File hashes from Mimecast. This plugin can share the indicator Hash to Mimecast. To access the plugin, you would need an API application on Mimecast and user credentials. Refer these Mimecast guides for detailed steps: https://www.mimecast.com/tech-connect/authentication-scripts-server-apps/ and https://community.mimecast.com/s/article/Managing-API-Applications-505230018.",
+    "patch_supported": true,
+    "push_supported": true,
+    "configuration": [
+        {
+            "label": "Base URL",
+            "key": "url",
+            "type": "text",
+            "default": "https://us-api.mimecast.com",
+            "mandatory": true,
+            "description": "Mimecast API base URL including region."
+        },
+        {
+            "label": "Application ID",
+            "key": "app_id",
+            "type": "text",
+            "mandatory": true,
+            "description": "Mimecast API Application ID."
+        },
+        {
+            "label": "Application Key",
+            "key": "app_key",
+            "type": "password",
+            "mandatory": true,
+            "description": "Mimecast API Application Key."
+        },
+        {
+            "label": "Access Key",
+            "key": "access_key",
+            "type": "password",
+            "mandatory": true,
+            "description": "Mimecast user's access key."
+        },
+        {
+            "label": "Secret Key",
+            "key": "secret_key",
+            "type": "password",
+            "mandatory": true,
+            "description": "Mimecast user's secret key."
+        },
+        {
+            "label": "Indicator Feed Type",
+            "key": "feed_type",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Malware Customer",
+                    "value": "malware_customer"
+                },
+                {
+                    "key": "Malware Grid",
+                    "value": "malware_grid"
+                }
+            ],
+            "mandatory": false,
+            "default": "malware_customer",
+            "description": "The scope of data to fetch, either for the account, or for the regions grid."
+        },
+        {
+            "label": "Push Enabled",
+            "key": "push_enabled",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Yes",
+                    "value": "yes"
+                },
+                {
+                    "key": "No",
+                    "value": "no"
+                }
+            ],
+            "mandatory": true,
+            "default": "yes",
+            "description": "Whether to push indicators to Mimecast or not."
+        },
+        {
+            "label": "Initial Range (in days)",
+            "key": "days",
+            "type": "number",
+            "mandatory": true,
+            "default": 7,
+            "description": "Number of days to pull the data for the initial run."
+        }
+    ]
+}

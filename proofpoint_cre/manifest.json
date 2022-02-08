@@ -1,0 +1,58 @@
+{
+    "name": "Proofpoint",
+    "description": "Fetch attack index of users from your Proofpoint instance using the VAP module.",
+    "id": "proofpoint_cre",
+    "type": [
+        "user"
+    ],
+    "netskope": false,
+    "version": "1.0.0",
+    "configuration": [
+        {
+            "label": "Proofpoint URL",
+            "key": "proofpoint_url",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "Proofpoint API endpoint URL."
+        },
+        {
+            "label": "Proofpoint Username",
+            "key": "proofpoint_username",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "Proofpoint API username."
+        },
+        {
+            "label": "Proofpoint Password",
+            "key": "proofpoint_password",
+            "type": "password",
+            "default": "",
+            "mandatory": true,
+            "description": "Proofpoint API password."
+        },
+        {
+            "label": "Proofpoint Window",
+            "key": "window",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": 14,
+                    "value": 14
+                },
+                {
+                    "key": 30,
+                    "value": 30
+                },
+                {
+                    "key": 90,
+                    "value": 90
+                }
+            ],
+            "default": 90,
+            "mandatory": true,
+            "description": "Time range in days to fetch users and scores from Proofpoint API."
+        }
+    ]
+}

@@ -1,0 +1,52 @@
+{
+    "name": "Azure Cloud Storage",
+    "id": "azure_object_storage",
+    "version": "1.0.0",
+    "mapping": "Azure Default Mappings",
+    "types": [
+        "webtx"
+    ],
+    "description": "This plugin is used to deliver web transactions data to Azure platform.",
+    "configuration": [
+        {
+            "label": "Azure Connection String",
+            "key": "azure_connection_string",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "Azure connection string for Authentication of Storage account."
+        },
+        {
+            "label": "Container Name",
+            "key": "container_name",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "Container Name in which the files will be stored. Container names must start with a letter or number, and can contain only letters, numbers, and the dash  character. Every dash  character must be immediately preceded and followed by a letter or number; consecutive dashes are not permitted in container names. All letters in a container name must be lowercase. Container names must be from 3 through 63 characters long."
+        },
+        {
+            "label": "Object Prefix",
+            "key": "obj_prefix",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "Object prefix for the file while pushing it to Azure."
+        },
+        {
+            "label": "Maximum File Size (in MBs)",
+            "key": "max_file_size",
+            "type": "number",
+            "default": 10,
+            "mandatory": true,
+            "description": "Maximum size of data object to be stored in the container. (Value should be between 0 to 100.)"
+        },
+        {
+            "label": "Maximum Duration (in Seconds)",
+            "key": "max_duration",
+            "type": "number",
+            "default": 30,
+            "mandatory": true,
+            "description": "Maximum duration after which the data object should be stored in the container."
+        }
+    ]
+}

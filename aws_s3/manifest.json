@@ -1,0 +1,163 @@
+{
+    "name": "AWS S3",
+    "id": "aws_s3",
+    "version": "1.0.0",
+    "mapping": "AWS S3 Default Mappings",
+    "netskope": false,
+    "types": [
+        "webtx"
+    ],
+    "description": "This plugin is used to deliver web transactions data to AWS S3 platform. To access the plugin, you would need the credentials of AWS S3 instance.",
+    "configuration": [
+        {
+            "label": "AWS Access Key ID (Public Key)",
+            "key": "aws_public_key",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "AWS S3 access key id for AWS S3 authentication."
+        },
+        {
+            "label": "AWS Secret Access Key (Private Key)",
+            "key": "aws_private_key",
+            "type": "password",
+            "default": "",
+            "mandatory": true,
+            "description": "AWS S3 secret access key for AWS S3 authentication."
+        },
+        {
+            "label": "Region Name",
+            "key": "region_name",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "US East (N. Virginia) [us-east-1]",
+                    "value": "None"
+                },
+                {
+                    "key": "US East (Ohio) [us-east-2]",
+                    "value": "us-east-2"
+                },
+                {
+                    "key": "US West (N. California) [us-west-1]",
+                    "value": "us-west-1"
+                },
+                {
+                    "key": "US West (Oregon) [us-west-2]",
+                    "value": "us-west-2"
+                },
+                {
+                    "key": "Africa (Cape Town) [af-south-1]",
+                    "value": "af-south-1"
+                },
+                {
+                    "key": "Asia Pacific (Hong Kong) [ap-east-1]",
+                    "value": "ap-east-1"
+                },
+                {
+                    "key": "Asia Pacific (Mumbai) [ap-south-1]",
+                    "value": "ap-south-1"
+                },
+                {
+                    "key": "Asia Pacific (Tokyo) [ap-northeast-1]",
+                    "value": "ap-northeast-1"
+                },
+                {
+                    "key": "Asia Pacific (Seoul) [ap-northeast-2]",
+                    "value": "ap-northeast-2"
+                },
+                {
+                    "key": "Asia Pacific (Osaka) [ap-northeast-3]",
+                    "value": "ap-northeast-3"
+                },
+                {
+                    "key": "Asia Pacific (Singapore) [ap-southeast-1]",
+                    "value": "ap-southeast-1"
+                },
+                {
+                    "key": "Asia Pacific (Sydney) [ap-southeast-2]",
+                    "value": "ap-southeast-2"
+                },
+                {
+                    "key": "Canada (Central) [ca-central-1]",
+                    "value": "ca-central-1"
+                },
+                {
+                    "key": "China (Beijing) [cn-north-1]",
+                    "value": "cn-north-1"
+                },
+                {
+                    "key": "China (Ningxia) [cn-northwest-1]",
+                    "value": "cn-northwest-1"
+                },
+                {
+                    "key": "Europe (Frankfurt) [eu-central-1]",
+                    "value": "eu-central-1"
+                },
+                {
+                    "key": "Europe (Ireland) [eu-west-1]",
+                    "value": "eu-west-1"
+                },
+                {
+                    "key": "Europe (London) [eu-west-2]",
+                    "value": "eu-west-2"
+                },
+                {
+                    "key": "Europe (Paris) [eu-west-3]",
+                    "value": "eu-west-3"
+                },
+                {
+                    "key": "Europe (Milan) [eu-south-1]",
+                    "value": "eu-south-1"
+                },
+                {
+                    "key": "Europe (Stockholm) [eu-north-1]",
+                    "value": "eu-north-1"
+                },
+                {
+                    "key": "Middle East (Bahrain) [me-south-1]",
+                    "value": "me-south-1"
+                },
+                {
+                    "key": "South America (São Paulo) [sa-east-1]",
+                    "value": "sa-east-1"
+                }
+            ],
+            "default": "None",
+            "mandatory": true,
+            "description": "Region name to get AWS S3 Bucket from."
+        },
+        {
+            "label": "Bucket Name",
+            "key": "bucket_name",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "Bucket Name in which the data object will be stored."
+        },
+        {
+            "label": "Object Prefix",
+            "key": "obj_prefix",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "Object prefix for the data object name while pushing it to AWS S3."
+        },
+        {
+            "label": "Maximum File Size (in MBs)",
+            "key": "max_file_size",
+            "type": "number",
+            "default": 10,
+            "mandatory": true,
+            "description": "Maximum size of data object to be stored in the bucket. (Value should be between 0 to 100.)"
+        },
+        {
+            "label": "Maximum Duration (in Seconds)",
+            "key": "max_duration",
+            "type": "number",
+            "default": 30,
+            "mandatory": true,
+            "description": "Maximum duration after which the data object should be stored in the bucket."
+        }
+    ]
+}

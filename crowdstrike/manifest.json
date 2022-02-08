@@ -1,0 +1,115 @@
+{
+    "name": "CrowdStrike",
+    "id": "crowdstrike",
+    "version": "1.0.1",
+    "description": "This plugin is used to fetch File hashes and URL from CrowdStrike's Custom IOC. This plugin can share the indicator Hash or URL to CrowdStrike's Custom IOC. To access the plugin, you would need the API credentials. Refer the CrowdStrike documentation https://www.crowdstrike.com/blog/tech-center/get-access-falcon-apis/ for more details. \n\n **Sharing URL information from CTE to CrowdStrike is NOT recommended while CrowdStrike does not support ingesting the full URL string (it only supports ingesting domains as of August 2021).**",
+    "patch_supported": true,
+    "configuration": [
+        {
+            "label": "Base URL",
+            "key": "base_url",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Commercial cloud (api.crowdstrike.com)",
+                    "value": "https://api.crowdstrike.com"
+                },
+                {
+                    "key": "US 2 (api.us-2.crowdstrike.com)",
+                    "value": "https://api.us-2.crowdstrike.com"
+                },
+                {
+                    "key": "Falcon on GovCloud (api.laggar.gcw.crowdstrike.com)",
+                    "value": "https://api.laggar.gcw.crowdstrike.com"
+                },
+                {
+                    "key": "EU cloud (api.eu-1.crowdstrike.com)",
+                    "value": "https://api.eu-1.crowdstrike.com"
+                }
+            ],
+            "default": "https://api.crowdstrike.com",
+            "mandatory": true,
+            "description": "Base URL from which fetch the data."
+        },
+        {
+            "label": "Client ID",
+            "key": "client_id",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "API Client ID."
+        },
+        {
+            "label": "Client Secret",
+            "key": "client_secret",
+            "type": "password",
+            "default": "",
+            "mandatory": true,
+            "description": "API Client Secret."
+        },
+        {
+            "label": "Enable Polling",
+            "key": "is_pull_required",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Yes",
+                    "value": "Yes"
+                },
+                {
+                    "key": "No",
+                    "value": "No"
+                }
+            ],
+            "default": "Yes",
+            "mandatory": true,
+            "description": "Enable/Disable polling data from CrowdStrike."
+        },
+        {
+            "label": "Type of Threat data to pull",
+            "key": "threat_data_type",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Both",
+                    "value": "Both"
+                },
+                {
+                    "key": "Malware",
+                    "value": "Malware"
+                },
+                {
+                    "key": "URL",
+                    "value": "URL"
+                }
+            ],
+            "default": "Both",
+            "mandatory": true,
+            "description": "Type of Threat data to pull. Allowed values are Both, Malware and URL(For Malsite data)."
+        },
+        {
+            "label": "Initial Range (in days)",
+            "key": "days",
+            "type": "number",
+            "mandatory": true,
+            "default": 7,
+            "description": "Number of days to pull the data for the initial run."
+        },
+        {
+            "label": "Indicator Batch Size (Applicable only while sharing IoCs)",
+            "key": "batch_size",
+            "type": "number",
+            "mandatory": true,
+            "default": 200,
+            "description": "Number of Indicators to push in one API call."
+        },
+        {
+            "label": "IOC Source (Applicable only while sharing IoCs)",
+            "key": "source",
+            "type": "text",
+            "mandatory": false,
+            "default": "Netskope - Cloud Threat Exchange",
+            "description": "The source where this indicator originated. This can be used for tracking where this indicator was defined. Limit 200 characters."
+        }
+    ]
+}

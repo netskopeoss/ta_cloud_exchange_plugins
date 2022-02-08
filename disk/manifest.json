@@ -1,0 +1,44 @@
+{
+    "name": "Local Export",
+    "id": "disk",
+    "version": "0.0.1",
+    "mapping": "AWS S3 Default Mappings",
+    "types": [
+        "webtx"
+    ],
+    "description": "Use this plugin to deliver web transactions data to local path on disk.",
+    "configuration": [
+        {
+            "label": "Storage Path",
+            "key": "storage_path",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "Bucket Name in which the data object will be stored."
+        },
+        {
+            "label": "Object Prefix",
+            "key": "obj_prefix",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "Object prefix for the data object name while pushing it to AWS S3."
+        },
+        {
+            "label": "Maximum File Size (in MBs)",
+            "key": "max_file_size",
+            "type": "number",
+            "default": "",
+            "mandatory": true,
+            "description": "Maximum size of data object to be stored in the bucket."
+        },
+        {
+            "label": "Maximum Duration (in Seconds)",
+            "key": "max_duration",
+            "type": "number",
+            "default": "",
+            "mandatory": true,
+            "description": "Maximum duration after which the data object should be stored in the bucket."
+        }
+    ]
+}

@@ -1,0 +1,61 @@
+{
+    "name": "CrowdStrike",
+    "description": "Fetch ZTA scores from your CrowdStrike tenant.",
+    "id": "crowdstrike_cre",
+    "type": [
+        "host"
+    ],
+    "version": "1.0.0",
+    "configuration": [
+        {
+            "label": "Base URL",
+            "key": "base_url",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Commercial cloud (api.crowdstrike.com)",
+                    "value": "https://api.crowdstrike.com"
+                },
+                {
+                    "key": "US 2 (api.us-2.crowdstrike.com)",
+                    "value": "https://api.us-2.crowdstrike.com"
+                },
+                {
+                    "key": "Falcon on GovCloud (api.laggar.gcw.crowdstrike.com)",
+                    "value": "https://api.laggar.gcw.crowdstrike.com"
+                },
+                {
+                    "key": "EU cloud (api.eu-1.crowdstrike.com)",
+                    "value": "https://api.eu-1.crowdstrike.com"
+                }
+            ],
+            "default": "https://api.crowdstrike.com",
+            "mandatory": true,
+            "description": "API Base URL."
+        },
+        {
+            "label": "Client ID",
+            "key": "client_id",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "API Client ID."
+        },
+        {
+            "label": "Client Secret",
+            "key": "client_secret",
+            "type": "password",
+            "default": "",
+            "mandatory": true,
+            "description": "API Client Secret."
+        },
+        {
+            "label": "Minimum Score",
+            "key": "minimum_score",
+            "type": "number",
+            "default": 200,
+            "mandatory": true,
+            "description": "Only the hosts with score greater than the minimum score will be tracked."
+        }
+    ]
+}

@@ -1,0 +1,1 @@
+"""CrowdStrike cre Plugin Package."""

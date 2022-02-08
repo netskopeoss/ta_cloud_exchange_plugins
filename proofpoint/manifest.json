@@ -1,0 +1,91 @@
+{
+    "name": "Proofpoint",
+    "id": "proofpoint",
+    "version": "1.0.0",
+    "description": "The Proofpoint plugin fetches malicious file hashes and URLs from several types of TAP (Targeted Attack Protection) events. This plugin does not support sharing of Indicators to Proofpoint. To access the plugin, you would need Proofpoint username and password having Proofpoint API access.",
+    "patch_supported": false,
+    "push_supported": false,
+    "configuration": [
+        {
+            "label": "Proofpoint Base URL",
+            "key": "base_url",
+            "type": "text",
+            "mandatory": true,
+            "default": "https://tap-api-v2.proofpoint.com",
+            "description": "Proofpoint Base URL for REST APIs."
+        },
+        {
+            "label": "Username",
+            "key": "username",
+            "type": "text",
+            "mandatory": true,
+            "default": "",
+            "description": "Proofpoint username."
+        },
+        {
+            "label": "Password",
+            "key": "password",
+            "type": "password",
+            "mandatory": true,
+            "default": "",
+            "description": "Proofpoint password."
+        },
+        {
+            "label": "Event Type(s)",
+            "key": "event_types",
+            "type": "multichoice",
+            "choices": [
+                {
+                    "key": "Clicks Permitted",
+                    "value": "clicksPermitted"
+                },
+                {
+                    "key": "Clicks Blocked",
+                    "value": "clicksBlocked"
+                },
+                {
+                    "key": "Messages Delivered",
+                    "value": "messagesDelivered"
+                },
+                {
+                    "key": "Messages Blocked",
+                    "value": "messagesBlocked"
+                }
+            ],
+            "default": [
+                "clicksPermitted",
+                "clicksBlocked",
+                "messagesDelivered",
+                "messagesBlocked"
+            ],
+            "mandatory": true,
+            "description": "Only indicators with matching TAP event type(s) will be saved."
+        },
+        {
+            "label": "Enable Tagging",
+            "key": "enable_tagging",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Yes",
+                    "value": "yes"
+                },
+                {
+                    "key": "No",
+                    "value": "no"
+                }
+            ],
+            "default": "yes",
+            "mandatory": true,
+            "description": "Enable/Disable tagging functionality. If enabled, IoCs will be tagged based on Proofpoint event type."
+        },
+        {
+            "label": "Initial Range (in hours)",
+            "key": "hours",
+            "type": "number",
+            "mandatory": true,
+            "default": 12,
+            "description": "Number of hours to pull the data for the initial run."
+        }
+    ]
+}

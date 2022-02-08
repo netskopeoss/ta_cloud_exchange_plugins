@@ -1,0 +1,1 @@
+"""MCAS plugin."""

@@ -32,6 +32,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 """Chronicle Plugin constants."""
 
+DEFAULT_URL = "https://malachiteingestion-pa.googleapis.com"
+SCOPES = ["https://www.googleapis.com/auth/malachite-ingestion"]
 
 SEVERITY_LOW = "Low"
 SEVERITY_MEDIUM = "Medium"

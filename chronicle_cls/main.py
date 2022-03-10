@@ -40,6 +40,10 @@ import json
 import re
 from typing import List
 from jsonpath import jsonpath
+
+from google.oauth2 import service_account
+from google.auth.transport import requests
+
 from netskope.common.utils import add_user_agent
 from netskope.common.utils import AlertsHelper
 from netskope.integrations.cls.plugin_base import (
@@ -64,6 +68,9 @@ from .utils.chronicle_exceptions import (
 from .utils.chronicle_validator import (
     ChronicleValidator,
 )
+from .utils.chronicle_constants import (
+    SCOPES,
+)
 
 
 class ChroniclePlugin(PluginBase):
@@ -74,43 +81,46 @@ class ChroniclePlugin(PluginBase):
         chronicle_validator = ChronicleValidator(self.logger)
 
         if (
-            "base_url" not in configuration
-            or type(configuration["base_url"]) != str
-            or not configuration["base_url"].strip()
+            "service_account_key" not in configuration
+            or type(configuration["service_account_key"]) != str
+            or not configuration["service_account_key"].strip()
         ):
             self.logger.error(
                 "Chronicle Plugin: Validation error occurred. Error: "
-                "Invalid URL found in the configuration parameters."
+                "Invalid Service Account Key found in the configuration parameters."
             )
             return ValidationResult(
-                success=False, message="Invalid URL provided."
+                success=False, message="Invalid Service Account Key provided."
             )
 
         # validating api key
         if (
-            "api_key" not in configuration
-            or not configuration["api_key"].strip()
-            or type(configuration["api_key"]) != str
+            "customer_id" not in configuration
+            or not configuration["customer_id"].strip()
+            or type(configuration["customer_id"]) != str
         ):
             self.logger.error(
                 "Plugin Chronicle: Validation error occurred. Error: \
-                Invalid API key found in the configuration parameters."
+                Invalid Customer ID found in the configuration parameters."
             )
             return ValidationResult(
-                success=False, message="Invalid API key provided."
+                success=False, message="Invalid Customer ID provided."
             )
 
         try:
             self._validate_auth(configuration)
-        except Exception:
+        except Exception as ex:
             self.logger.error(
-                "Chronicle Plugin: Validation error occurred. Error: "
-                "Connection to Chronicle platform is not established."
+                re.sub(
+                    r"key=(.*?) ", "key=******** ",
+                    f"Chronicle Plugin: Validation error occurred. "
+                    f"Could not validate authentication credentials. Error: {repr(ex)}."
+                )
             )
             return ValidationResult(
                 success=False,
                 message="Error occurred while establishing connection with Chronicle server. "
-                "Make sure you have provided valid base url and API Token",
+                "Make sure you have provided valid Service Account Key and Customer ID.",
             )
 
         # validating mapping file
@@ -160,27 +170,11 @@ class ChroniclePlugin(PluginBase):
     def _validate_auth(self, configuration: dict) -> ValidationResult:
         """Validate API key by making REST API call."""
         try:
-            response = requests.get(
-                f"{configuration['base_url'].strip().strip('/')}/v1/logtypes",
-                params={"key": configuration["api_key"].strip()},
-                headers=add_user_agent()
+            credentials = service_account.Credentials.from_service_account_info(
+                json.loads(configuration['service_account_key']), scopes=SCOPES
             )
-            response.raise_for_status()
-            if response.status_code == 200 or response.status_code == 201:
-                return ValidationResult(
-                    success=True, message="Validation successful."
-                )
         except Exception as ex:
-            self.logger.error(
-                "Chronicle: Could not validate authentication credentials."
-            )
-            self.logger.error(
-                re.sub(r"key=(.*?) ", "key=******** ", str(repr(ex)))
-            )
-        return ValidationResult(
-            success=False,
-            message="Error occurred while validating account credentials.",
-        )
+            raise
 
     def push(self, transformed_data, data_type, subtype) -> PushResult:
         """Push the transformed_data to the 3rd party platform.
@@ -194,22 +188,17 @@ class ChroniclePlugin(PluginBase):
         Returns:
             PushResult: Result indicating ingesting outcome and message
         """
-        logger = self.logger
-        logger.info(
-            "Chronicle Plugin: Starting Pushing data for Chronicle plugin."
-        )
-        self.chronicle_client = ChronicleClient(
-            self.configuration, self.logger
-        )
         try:
-            self.chronicle_client._api_request(transformed_data)
+            chronicle_client = ChronicleClient(
+                self.configuration, self.logger
+            )
+            chronicle_client.ingest(transformed_data)
         except Exception as e:
-            self.logger.error(f"Error while pushing to Chronicle Plugin: {e}")
+            self.logger.error(
+                f"Error occurred while ingesting data to Chronicle Plugin."
+                f" Error: {e}"
+            )
             raise
-        logger.info(
-            "Chronicle Plugin: Finished Pushing data for Chronicle plugin."
-        )
-        return
 
     def get_mapping_value_from_json_path(self, data, json_path):
         """To Fetch the value from given JSON object using given JSON path.
@@ -510,7 +499,7 @@ class ChroniclePlugin(PluginBase):
             try:
                 transformed_data.append(
                     udm_generator.get_udm_event(
-                        header, extension, data_type, subtype
+                        data, header, extension, data_type, subtype
                     )
                 )
                 # pass

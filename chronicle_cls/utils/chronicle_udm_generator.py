@@ -30,7 +30,7 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
 
-"""Syslog Plugin."""
+"""Chronicle Plugin."""
 
 
 import io
@@ -39,6 +39,8 @@ import csv
 import datetime
 import datetime as dt
 import re
+
+from .chronicle_parser import UDMParser
 
 from .chronicle_constants import (
     SEVERITY_MAP,
@@ -471,7 +473,7 @@ class UDMGenerator(object):
         for configured_header in list(headers.keys()):
             if configured_header not in possible_headers:
                 self.logger.error(
-                    '[{}][{}]: Found invalid header configured in syslog mapping file: "{}". Header '
+                    '[{}][{}]: Found invalid header configured in chronicle mapping file: "{}". Header '
                     "field will be ignored.".format(
                         data_type, subtype, configured_header
                     )
@@ -490,20 +492,10 @@ class UDMGenerator(object):
         )
         return udm_field_data
 
-    def json_converter(self, header_pairs, extension_pairs):
+    def json_converter(self, all_pairs):
         """JSON Converter."""
         udm_data = {}
-        for key, value in header_pairs.items():
-            levels = key.split(".")
-            if len(levels) == 1:
-                udm_data[levels[0]] = value
-            else:
-                data = udm_data.get(levels[0], {})
-                udm_data[levels[0]] = self.get_json_structure(
-                    data, ".".join(levels[1:]), value
-                )
-
-        for key, value in extension_pairs.items():
+        for key, value in all_pairs.items():
             levels = key.split(".")
             if len(levels) == 1:
                 udm_data[levels[0]] = value
@@ -515,10 +507,11 @@ class UDMGenerator(object):
 
         return udm_data
 
-    def get_udm_event(self, headers, extensions, data_type, subtype):
+    def get_udm_event(self, data, headers, extensions, data_type, subtype):
         """To Produce a UDM compliant message from the arguments.
 
         Args:
+            data: Raw json data from netskope
             data_type: type of data being transformed (alert/event)
             subtype: subtype of data being transformed
             headers: Headers of UDM event
@@ -599,5 +592,21 @@ class UDMGenerator(object):
                         )
                     )
 
-        udm_data = self.json_converter(header_pairs, extension_pairs)
+        all_pairs = {**header_pairs, **extension_pairs}
+
+        try:
+            udm_generator = UDMParser(
+                data, self.logger, all_pairs, data_type, subtype
+            )
+            all_pairs = udm_generator.parse_data()
+        except Exception as e:
+            print(e)
+            self.logger.error(
+                '[{}][{}]: An error occurred while generating UDM data for header field: "{}". Error: {}. '
+                "Fields will be ignored".format(
+                    data_type, subtype, header, str(err)
+                )
+            )
+
+        udm_data = self.json_converter(all_pairs)
         return udm_data

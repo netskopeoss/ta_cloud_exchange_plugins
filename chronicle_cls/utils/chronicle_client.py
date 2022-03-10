@@ -35,7 +35,15 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import requests
 import json
-from netskope.common.utils import add_user_agent
+
+from google.oauth2 import service_account
+from google.auth.transport import requests as gRequest
+
+
+from .chronicle_constants import (
+    SCOPES,
+    DEFAULT_URL,
+)
 
 
 class ChronicleClient:
@@ -45,80 +53,61 @@ class ChronicleClient:
         """Initialize."""
         self.configuration = configuration
         self.logger = logger
+        self.create_session()
 
-    def _api_request(self, transformed_data):
+    def create_session(self):
+        """To Create a new session with credentials to make push requests."""
+        try:
+            credentials = (
+                service_account.Credentials.from_service_account_info(
+                    json.loads(self.configuration["service_account_key"]),
+                    scopes=SCOPES,
+                )
+            )
+            self.http_session = gRequest.AuthorizedSession(credentials)
+        except Exception:
+            raise
+
+    def ingest(self, transformed_data):
         """Call the API for data Ingestion.
 
         :transformed_data : The transformed data to be ingested.
         """
         try:
-            base_url = self.configuration["base_url"]
-            url = f"{base_url.strip().strip('/')}/v1/udmevents"
-            data = {"events": transformed_data}
-            payload = json.dumps(data)
-            headers = {"Content-Type": "application/json"}
-            response = requests.request(
+            url = f"{DEFAULT_URL}/v2/udmevents:batchCreate"
+            payload = {
+                "customer_id": self.configuration["customer_id"],
+                "events": transformed_data,
+            }
+
+            response = self.http_session.request(
                 "POST",
                 url,
-                params={"key": self.configuration["api_key"].strip()},
-                headers=add_user_agent(headers),
-                data=payload,
+                json=payload,
             )
-            status_code = response.status_code
-            response_body = response.text
-            if status_code >= 500:
-                raise Exception(
-                    "Server Error : Status Code: {}. Response: {}".format(
-                        status_code, response_body
-                    )
-                )
-            elif status_code == 429:
-                raise Exception(
-                    f"Either out of resource quota or reaching rate limiting."
-                    f" Status Code: {status_code}. Response: {response_body}"
-                )
 
-            elif status_code in [400, 404]:
-                raise Exception(
-                    "Client specified an invalid argument . Status code: {}. Response: {}".format(
-                        status_code, response_body
-                    )
-                )
-            elif status_code == 499:
-                raise Exception(
-                    "Request Cancelled by the client :  Status code: {}. Response: {}".format(
-                        status_code, response_body
-                    )
-                )
-            elif status_code == 403:
-                raise Exception(
-                    "Invalid Authorization. Status code: {}. Response: {}".format(
-                        status_code, response_body
-                    )
-                )
+            response = response.json()
+
+            if response == {}:
+                return
+
+            status_code = response.get("error").get("code")
+            message = response.get("error").get("message")
+            status = response.get("error").get("status")
+
+            if status in ["FAILED_PRECONDITION", "PERMISSION_DENIED"]:
+                raise Exception(f"Invalid Customer ID provided. {message}")
+            if status in ["INVALID_ARGUMENT"]:
+                raise Exception(f"Invalid UDM event provided. {message}")
+            raise Exception(
+                f"status_code: {status_code}, message: {message}, status: {status}"
+            )
 
         except requests.exceptions.HTTPError as err:
-            self.logger.error(
-                "Chronicle: HTTP error occurred: {}.".format(err)
-            )
-            raise
+            raise Exception("HTTP error occurred: {}.".format(err))
         except requests.exceptions.ConnectionError as err:
-            self.logger.error(
-                "Chronicle: Connection error occurred: {}.".format(err)
-            )
-            raise
+            raise Exception("Connection error occurred: {}.".format(err))
         except requests.exceptions.Timeout as err:
-            self.logger.error("Chronicle: Request timed out: {}.".format(err))
-            raise
-        except requests.exceptions.RequestException as err:
-            self.logger.error(
-                f"Chronicle: An error occurred while making REST API call to"
-                f" Chronicle: {err}."
-            )
-            raise
-        except Exception as err:
-            self.logger.error(
-                f"Chronicle: An error occurred while processing the "
-                f"API response: {err}."
-            )
+            raise Exception("Request timed out: {}.".format(err))
+        except Exception:
             raise

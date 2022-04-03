@@ -1,7 +1,7 @@
 {
     "name": "Google Cloud SCC ",
     "id": "cscc",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "mapping": "CSCC Default Mappings",
     "types": [
         "alerts",

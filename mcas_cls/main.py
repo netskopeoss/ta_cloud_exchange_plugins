@@ -250,7 +250,7 @@ class MCASPlugin(PluginBase):
             raise
 
         cef_generator = CEFGenerator(
-            self.configuration["valid_extensions"],
+            self.mappings,
             delimiter,
             cef_version,
             self.logger,
@@ -406,22 +406,6 @@ class MCASPlugin(PluginBase):
                 success=False,
                 message="Invalid data source provided. Data source should contain "
                 "letters, numbers and special characters(_-)",
-            )
-
-        if (
-            "valid_extensions" not in configuration
-            or type(configuration["valid_extensions"]) != str
-            or not configuration["valid_extensions"].strip()
-            or not mcas_validator.validate_valid_extensions(
-                configuration["valid_extensions"]
-            )
-        ):
-            self.logger.error(
-                "MCAS Plugin: Validation error occurred. Error: "
-                "Invalid extensions found in the configuration parameters."
-            )
-            return ValidationResult(
-                success=False, message="Invalid extensions provided."
             )
 
         mappings = self.mappings.get("jsonData", None)

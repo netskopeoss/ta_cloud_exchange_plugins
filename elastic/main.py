@@ -126,22 +126,6 @@ class ElasticPlugin(PluginBase):
                 message="Invalid Elastic attribute mapping provided.",
             )
 
-        if (
-            "valid_extensions" not in configuration
-            or type(configuration["valid_extensions"]) != str
-            or not configuration["valid_extensions"].strip()
-            or not ecs_validator.validate_valid_extensions(
-                configuration["valid_extensions"]
-            )
-        ):
-            self.logger.error(
-                "Elastic Plugin: Validation error occurred. Error: "
-                "Invalid extensions found in the configuration parameters."
-            )
-            return ValidationResult(
-                success=False, message="Invalid extensions provided."
-            )
-
         try:
             self.test_server_connectivity(configuration)
         except Exception:
@@ -396,7 +380,7 @@ class ElasticPlugin(PluginBase):
 
         transformed_data = []
         ecs_generator = ECSGenerator(
-            self.configuration["valid_extensions"],
+            self.mappings,
             ecs_version,
             self.logger,
         )

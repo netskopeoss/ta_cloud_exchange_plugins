@@ -130,9 +130,10 @@ class ArcSightPlugin(PluginBase):
             header dict
         """
         headers = {}
-        helper = AlertsHelper()
-        tenant = helper.get_tenant_cls(self.source)
-        mapping_variables = {"$tenant_name": tenant.name}
+        if data_type != 'webtx':
+            helper = AlertsHelper()
+            tenant = helper.get_tenant_cls(self.source)
+            mapping_variables = {"$tenant_name": tenant.name}
 
         missing_fields = []
         # Iterate over mapped headers
@@ -273,7 +274,7 @@ class ArcSightPlugin(PluginBase):
             raise
 
         cef_generator = CEFGenerator(
-            self.configuration["valid_extensions"],
+            self.mappings,
             delimiter,
             cef_version,
             self.logger,
@@ -326,7 +327,7 @@ class ArcSightPlugin(PluginBase):
             try:
                 transformed_data.append(
                     cef_generator.get_cef_event(
-                        header, extension, data_type, subtype
+                        data, header, extension, data_type, subtype
                     )
                 )
             except EmptyExtensionError:
@@ -508,22 +509,6 @@ class ArcSightPlugin(PluginBase):
             return ValidationResult(
                 success=False,
                 message="Invalid ArcSight attribute mapping provided.",
-            )
-
-        if (
-            "valid_extensions" not in configuration
-            or type(configuration["valid_extensions"]) != str
-            or not configuration["valid_extensions"].strip()
-            or not arcsight_validator.validate_valid_extensions(
-                configuration["valid_extensions"]
-            )
-        ):
-            self.logger.error(
-                "ArcSight Plugin: Validation error occurred. Error: "
-                "Invalid extensions found in the configuration parameters."
-            )
-            return ValidationResult(
-                success=False, message="Invalid extensions provided."
             )
 
         if configuration["arcsight_protocol"].upper() == "TLS" and (

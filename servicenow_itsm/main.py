@@ -140,14 +140,16 @@ class ServiceNowPlugin(PluginBase):
 
     def update_task(self, task: Task, alert: Alert, mappings, queue):
         """Update existing task."""
+        if mappings.get("work_notes", None):
+            data = mappings["work_notes"]
+        else:
+            data = f"New alert received at {str(alert.timestamp)}."
         response = requests.patch(
             (
                 f"{self.configuration['auth']['url'].strip('/')}/api/now/table/"
                 f"{self.configuration['params']['table']}/{task.id}"
             ),
-            json={
-                "work_notes": f"New alert received at {str(alert.timestamp)}."
-            },
+            json={"work_notes": data},
             auth=(
                 self.configuration["auth"]["username"].strip(),
                 self.configuration["auth"]["password"],
@@ -228,6 +230,12 @@ class ServiceNowPlugin(PluginBase):
                     lambda item: MappingField(
                         label=item.get("column_label"),
                         value=item.get("element"),
+                    )
+                    if item.get("element") not in ["work_notes"]
+                    else MappingField(
+                        label=item.get("column_label"),
+                        value=item.get("element"),
+                        updateAble=True,
                     ),
                     response.json().get("result"),
                 )
@@ -239,21 +247,24 @@ class ServiceNowPlugin(PluginBase):
 
     def get_default_mappings(self, configuration):
         """Get default mappings."""
-        return [
-            FieldMapping(
-                extracted_field="custom_message",
-                destination_field="short_description",
-                custom_message="Netskope $appCategory alert: $alertName",
-            ),
-            FieldMapping(
-                extracted_field="custom_message",
-                destination_field="description",
-                custom_message=(
-                    "Alert ID: $id\nApp: $app\nAlert Name: $alertName\n"
-                    "Alert Type: $alertType\nApp Category: $appCategory\nUser: $user"
+        return {
+            "mappings": [
+                FieldMapping(
+                    extracted_field="custom_message",
+                    destination_field="short_description",
+                    custom_message="Netskope $appCategory alert: $alertName",
                 ),
-            ),
-        ]
+                FieldMapping(
+                    extracted_field="custom_message",
+                    destination_field="description",
+                    custom_message=(
+                        "Alert ID: $id\nApp: $app\nAlert Name: $alertName\n"
+                        "Alert Type: $alertType\nApp Category: $appCategory\nUser: $user"
+                    ),
+                ),
+            ],
+            "dedup": [],
+        }
 
     def get_queues(self):
         """Get list of ServiceNow groups as queues."""

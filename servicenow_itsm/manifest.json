@@ -1,8 +1,8 @@
 {
     "name": "ServiceNow",
-    "description": "Create incidents on ServiceNow platform.",
+    "description": "Create incidents on ServiceNow platform. This is NOT the same integration as ServiceNow's DLP Incident Response product, nor does it work with that solution.",
     "id": "servicenow_itsm",
-    "version": "1.0.0",
+    "version": "1.0.2_1",
     "pulling_supported": false,
     "receiving_supported": true,
     "configuration": [

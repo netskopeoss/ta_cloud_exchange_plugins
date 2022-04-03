@@ -98,6 +98,7 @@ def validate_header(instance):
     properties_schema = {
         "default_value": {"type": "string"},
         "mapping_field": {"type": "string"},
+        "transformation": {"type": "string"},
     }
 
     one_of_sub_schema = [
@@ -120,7 +121,7 @@ def validate_header(instance):
         "type": "object",
         "properties": properties_schema,
         "minProperties": 0,
-        "maxProperties": 2,
+        "maxProperties": 3,
         "oneOf": one_of_sub_schema,
     }
 
@@ -153,9 +154,10 @@ def validate_extension_field(instance):
             "mapping_field": {"type": "string"},
             "default_value": {"type": "string"},
             "is_json_path": {"type": "boolean"},
+            "transformation": {"type": "string"},
         },
         "minProperties": 0,
-        "maxProperties": 3,
+        "maxProperties": 4,
         "oneOf": [  # both empty are not allowed. So schema will be: one of (one of (both), both)
             {
                 "oneOf": [

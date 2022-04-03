@@ -34,8 +34,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
 GCP_SCOPE = ["https://www.googleapis.com/auth/cloud-platform"]
-GCP_URL = "https://securitycenter.googleapis.com/v1beta1/organizations"
+GCP_URL = "https://securitycenter.googleapis.com/v1/organizations"
 RESOURCE_NAME_URL = "//cloudresourcemanager.googleapis.com/projects"
 GET_PROJECT_NUMBER_URL = (
-    "https://cloudresourcemanager.googleapis.com/v1beta1/projects"
+    "https://cloudresourcemanager.googleapis.com/v1/projects"
 )

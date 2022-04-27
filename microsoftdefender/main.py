@@ -91,7 +91,7 @@ class MicrosoftDefenderEndpointPluginV2(PluginBase):
                     "key": "action",
                     "type": "choice",
                     "choices": [
-                        {"key": action, "value": action} for action in actions
+                        {"key": action.capitalize(), "value": action} for action in actions
                     ],
                     "default": "unknown",
                     "mandatory": True,
@@ -102,7 +102,7 @@ class MicrosoftDefenderEndpointPluginV2(PluginBase):
                     "key": "targetProduct",
                     "type": "choice",
                     "choices": [
-                        {"key": tp, "value": tp} for tp in target_products] +
+                        {"key": tp , "value": tp} for tp in target_products] +
                         [{"key": "Both", "value": "both"}
                     ],
                     "default": "Azure Sentinel",
@@ -114,7 +114,7 @@ class MicrosoftDefenderEndpointPluginV2(PluginBase):
                     "key": "tlpLevel",
                     "type": "choice",
                     "choices": [
-                        {"key": tlp_level, "value": tlp_level} for tlp_level in tlp_levels
+                        {"key": tlp_level.capitalize(), "value": tlp_level} for tlp_level in tlp_levels
                     ],
                     "default": "unknown",
                     "mandatory": True,
@@ -217,6 +217,7 @@ class MicrosoftDefenderEndpointPluginV2(PluginBase):
             response = requests.get(
                 url,
                 headers=add_user_agent(headers),
+                proxies=self.proxy
             )
             response.raise_for_status()  # check back later to see what this actually does
             res = response.json()
@@ -415,7 +416,7 @@ class MicrosoftDefenderEndpointPluginV2(PluginBase):
                     json_body["targetProduct"] = target
                     payload_list.append(json_body.copy())
             else:
-                json_body["targetProduct"] = target
+                json_body["targetProduct"] = target_product
                 payload_list.append(json_body.copy())
         return payload_list
 
@@ -435,6 +436,7 @@ class MicrosoftDefenderEndpointPluginV2(PluginBase):
                     "client_secret": appsecret,
                     "grant_type": "client_credentials",
                 },
+                proxies=self.proxy
             )
             if response.status_code == 200:
                 return ValidationResult(
@@ -462,6 +464,9 @@ class MicrosoftDefenderEndpointPluginV2(PluginBase):
                 "Microsoft Defender for Endpoint Plugin v2: "
                 "No Tenant ID found in the configuration parameters."
             )
+            return ValidationResult(
+                success=False, message="Invalid Tenant ID provided."
+            )
 
         if (
             "appid" not in configuration
@@ -477,7 +482,7 @@ class MicrosoftDefenderEndpointPluginV2(PluginBase):
 
         if (
             "appsecret" not in configuration
-            or not configuration["appsecret"]
+            or not configuration["appsecret"].strip()
         ):
             self.logger.error(
                 "Microsoft Defender for Endpoint Plugin: "
@@ -491,5 +496,5 @@ class MicrosoftDefenderEndpointPluginV2(PluginBase):
         return self._validate_credentials(
             configuration["tenantid"].strip(),
             configuration["appid"].strip(),
-            configuration["appsecret"],
+            configuration["appsecret"].strip(),
         )

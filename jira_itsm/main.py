@@ -260,17 +260,14 @@ class JiraPlugin(PluginBase):
         """Add a comment in existing Jira issue."""
         params = self.configuration["auth"]
         if mappings.get("comment_while_create", None):
-            comment = {
-                "body": self._get_atlassian_document(
-                    mappings["comment_while_create"]
-                )
-            }
-        else:
-            comment = {
-                "body": self._get_atlassian_document(
-                    f"New alert received at {str(alert.timestamp)}."
-                )
-            }
+            data = mappings["comment_while_create"]
+        elif mappings.get("comment", None):
+            data = mappings["comment"]
+        else:  # default
+            data = f"New alert received at {str(alert.timestamp)}."
+        comment = {
+            "body": self._get_atlassian_document(data)
+        }
         response = requests.post(
             f"{params['url'].strip('/')}/rest/api/3/issue/{task.id}/comment",
             headers=add_user_agent(),
@@ -386,6 +383,12 @@ class JiraPlugin(PluginBase):
                 map(
                     lambda item: MappingField(
                         label=item.get("name"), value=item.get("key")
+                    )
+                    if item.get("key") not in ["comment"]
+                    else MappingField(
+                        label=item.get("name"),
+                        value=item.get("key"),
+                        updateAble=True,
                     ),
                     response.json(),
                 )
@@ -395,23 +398,28 @@ class JiraPlugin(PluginBase):
                 "Jira ITSM: Could not fetch available fields from Jira."
             )
 
-    def get_default_mappings(self, configuration: dict) -> List[FieldMapping]:
+    def get_default_mappings(
+        self, configuration: dict
+    ) -> Dict[str, List[FieldMapping]]:
         """Get default mappings."""
-        return [
-            FieldMapping(
-                extracted_field="custom_message",
-                destination_field="summary",
-                custom_message="Netskope $appCategory alert: $alertName",
-            ),
-            FieldMapping(
-                extracted_field="custom_message",
-                destination_field="description",
-                custom_message=(
-                    "Alert ID: $id\nApp: $app\nAlert Name: $alertName\n"
-                    "Alert Type: $alertType\nApp Category: $appCategory\nUser: $user"
+        return {
+            "mappings": [
+                FieldMapping(
+                    extracted_field="custom_message",
+                    destination_field="summary",
+                    custom_message="Netskope $appCategory alert: $alertName",
                 ),
-            ),
-        ]
+                FieldMapping(
+                    extracted_field="custom_message",
+                    destination_field="description",
+                    custom_message=(
+                        "Alert ID: $id\nApp: $app\nAlert Name: $alertName\n"
+                        "Alert Type: $alertType\nApp Category: $appCategory\nUser: $user"
+                    ),
+                ),
+            ],
+            "dedup": [],
+        }
 
     def get_queues(self) -> List[Queue]:
         """Get list of Jira projects as queues."""

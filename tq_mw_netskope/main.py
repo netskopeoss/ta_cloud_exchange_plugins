@@ -57,7 +57,7 @@ string_types = (str,)
 if sys.version_info < (3,):
     string_types += (str, unicode)  # noqa: F821
 
-supported_types = ["URL", "MD5", "SHA-256"]
+supported_types = ["URL", "MD5", "SHA-256", "IP Address", "FQDN"]
 
 
 class ThreatQ(PluginBase):
@@ -213,6 +213,10 @@ class ThreatQ(PluginBase):
             return IndicatorType.MD5
         elif itype == "SHA-256":
             return IndicatorType.SHA256
+        elif itype == "IP Address":
+            return IndicatorType.URL
+        elif itype == "FQDN":
+            return IndicatorType.URL
 
     def get_actions(self):
         """Get available actions."""

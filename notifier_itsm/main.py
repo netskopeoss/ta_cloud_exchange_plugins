@@ -216,17 +216,22 @@ class NotifierPlugin(PluginBase):
             )
         return fields
 
-    def get_default_mappings(self, configuration: dict) -> List[FieldMapping]:
+    def get_default_mappings(
+        self, configuration: dict
+    ) -> Dict[str, List[FieldMapping]]:
         """Get default mappings."""
         platform = configuration.get("platform").get("name")
-        return [
-            FieldMapping(
-                extracted_field="custom_message",
-                custom_message="",
-                destination_field=field,
-            )
-            for field in MAPPED_FIELDS.get(platform, [])
-        ]
+        return {
+            "mappings": [
+                FieldMapping(
+                    extracted_field="custom_message",
+                    custom_message="",
+                    destination_field=field,
+                )
+                for field in MAPPED_FIELDS.get(platform, [])
+            ],
+            "dedup": [],
+        }
 
     def get_fields(self, name: str, configuration: dict):
         """Get available fields."""

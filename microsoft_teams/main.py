@@ -57,18 +57,23 @@ from typing import List, Dict
 class MicrosoftPlugin(PluginBase):
     """Microsoft plugin implementation."""
 
-    def get_default_mappings(self, configuration: dict) -> List[FieldMapping]:
+    def get_default_mappings(
+        self, configuration: dict
+    ) -> Dict[str, List[FieldMapping]]:
         """Get default mappings."""
-        return [
-            FieldMapping(
-                extracted_field="custom_message",
-                destination_field="message",
-                custom_message=(
-                    "Alert ID: $id\nApp: $app\nAlert Name: $alertName\n"
-                    "Alert Type: $alertType\nApp Category: $appCategory\nUser: $user"
+        return {
+            "mappings": [
+                FieldMapping(
+                    extracted_field="custom_message",
+                    destination_field="message",
+                    custom_message=(
+                        "Alert ID: $id\nApp: $app\nAlert Name: $alertName\n"
+                        "Alert Type: $alertType\nApp Category: $appCategory\nUser: $user"
+                    ),
                 ),
-            ),
-        ]
+            ],
+            "dedup": [],
+        }
 
     def get_available_fields(self, configuration: dict) -> List[MappingField]:
         """Get list of all the mappable fields."""
@@ -127,9 +132,7 @@ class MicrosoftPlugin(PluginBase):
                 success=False,
                 message="Invalid Webhook URL provided.",
             )
-        return ValidationResult(
-            success=True, message="Validation successful."
-        )
+        return ValidationResult(success=True, message="Validation successful.")
 
     def _validate_url(self, url: str) -> bool:
         """Validate the given URL."""

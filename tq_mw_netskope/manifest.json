@@ -1,7 +1,7 @@
 {
     "name": "ThreatQ",
     "id": "tq_mw_netskope",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "description": "ThreatQ Plugin for Netskope",
     "patch_supported": false,
     "push_supported": false,

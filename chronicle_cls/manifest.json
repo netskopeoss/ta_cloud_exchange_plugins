@@ -1,7 +1,7 @@
 {
   "name": "Chronicle",
   "id": "chronicle",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "mapping": "Chronicle Default Mappings",
   "description": "This plugin is used to deliver alerts and events data to Chronicle platform, The required API keys are linked to customers and are provided by your Chronicle representative.",
   "types": ["events", "alerts"],
@@ -21,14 +21,6 @@
       "default": "",
       "mandatory": true,
       "description": "Unique identifier (UUID) corresponding to a particular Chronicle instance. Provided by your Chronicle representative.."
-    },
-    {
-      "label": "Valid Extensions",
-      "key": "valid_extensions",
-      "type": "textarea",
-      "default": "Full Name,UDM Key Name,Length,Data Type\r\nNetskopeJustificationType,netskope.justification_type,,String\r\nNetskopeJustificationReason,netskope.justification_reason,,String\r\nbytesIn,network.received_bytes,,Integer\r\nbytesOut,network.sent_bytes,,Integer\r\ndestinationAddress,target.ip,,IP Address\r\ndestinationHostName,target.hostname,,String\r\ndestinationMacAddress,target.mac,,MAC Address\r\ndestinationNtDomain,target.administrative_domain,128,String\r\ndestinationPort,target.port,,Integer\r\ndestinationProcessId,target.process.pid,,String\r\ndestinationProcessName,target.process.command_line,,String\r\ndestinationServiceName,target.application,,String\r\ndestinationTranslatedAddress,target.nat_ip,,IP Address\r\ndestinationTranslatedPort,target.nat_port,,Integer\r\ndestinationUserId,target.user.userid,,String\r\ndestinationUserName,target.user.user_display_name,,String\r\ndestinationUserPrivileges,target.user.attribute.roles.name,,String\r\ndeviceAction,security_result.action_details,,String\r\ndeviceAction,network.application_protocol,,String\r\ndeviceAddress,about.ip,,IP Address\r\ndeviceDirection,network.direction,,String\r\ndeviceDirection,security_result.category_details,,String\r\ndeviceDirection,about.asset.asset_id,128,String\r\ndeviceHostName,about.hostname,,String\r\ndeviceMacAddress,about.mac,,MAC Address\r\ndeviceNtDomain,about.administrative_domain,128,String\r\ndevicePayloadId,metadata.product_log_id,,String\r\ndeviceProcessId,about.process.pid,,String\r\ndeviceProcessName,about.process.command_line,,String\r\ndeviceReceiptTime,metadata.event_timestamp,,Time Stamp\r\ndeviceTimeZone,metadata.event_timestamp,,Time Stamp\r\ndeviceTranslatedAddress,about.nat_ip,,IP Address\r\nfilePath,about.file.full_path,,String\r\nfilePermission,about.resource.attribute.permissions.name,,String\r\nfileSize,about.file.size,,Integer\r\nmessage,metadata.description,,String\r\noldFilePath,src.file.full_path,,String\r\noldFilePermission,src.resource.attribute.permissions.name,,String\r\noldFileSize,src.file.size,,Integer\r\nReason,security_result.summary,,String\r\nrequestClientApplication,network.http.user_agent,,String\r\nrequestMethod,network.http.method,,String\r\nrequestUrl,target.url,,String\r\nsourceAddress,principal.ip,,IP Address\r\nsourceHostName,principal.hostname,,String\r\nsourceMacAddress,principal.mac,,MAC Address\r\nsourceNtDomain,principal.administrative_domain,128,String\r\nsourcePort,principal.port,,Integer\r\nsourceProcessId,principal.process.pid,,String\r\nsourceProcessName,principal.process.command_line,,String\r\nsourceServiceName,principal.application,,String\r\nsourceTranslatedAddress,principal.nat_ip,,IP Address\r\nsourceTranslatedPort,principal.nat_port,,Integer\r\nsourceUserId,principal.user.userid,,String\r\nsourceUserName,principal.user.user_display_name,,String\r\nsourceUserPrivileges,principal.user.attribute.roles.name,,String\r\ntransportProtocol,network.ip_protocol,,String",
-      "mandatory": true,
-      "description": "Valid extensions in CSV format."
     }
   ]
 }

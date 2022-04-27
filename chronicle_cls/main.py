@@ -112,9 +112,10 @@ class ChroniclePlugin(PluginBase):
         except Exception as ex:
             self.logger.error(
                 re.sub(
-                    r"key=(.*?) ", "key=******** ",
+                    r"key=(.*?) ",
+                    "key=******** ",
                     f"Chronicle Plugin: Validation error occurred. "
-                    f"Could not validate authentication credentials. Error: {repr(ex)}."
+                    f"Could not validate authentication credentials. Error: {repr(ex)}.",
                 )
             )
             return ValidationResult(
@@ -147,31 +148,16 @@ class ChroniclePlugin(PluginBase):
                 message="Invalid Chronicle attribute mapping provided.",
             )
 
-        # validating valid extensions
-        if (
-            "valid_extensions" not in configuration
-            or type(configuration["valid_extensions"]) != str
-            or not configuration["valid_extensions"].strip()
-            or not chronicle_validator.validate_valid_extensions(
-                configuration["valid_extensions"]
-            )
-        ):
-            self.logger.error(
-                "Chronicle Plugin: Validation error occurred. Error: "
-                "Invalid extensions found in the configuration parameters."
-                " Check heading names of Valid Extensions."
-            )
-            return ValidationResult(
-                success=False, message="Invalid extensions provided."
-            )
-
         return ValidationResult(success=True, message="Validation successful.")
 
     def _validate_auth(self, configuration: dict) -> ValidationResult:
         """Validate API key by making REST API call."""
         try:
-            credentials = service_account.Credentials.from_service_account_info(
-                json.loads(configuration['service_account_key']), scopes=SCOPES
+            credentials = (
+                service_account.Credentials.from_service_account_info(
+                    json.loads(configuration["service_account_key"]),
+                    scopes=SCOPES,
+                )
             )
         except Exception as ex:
             raise
@@ -189,9 +175,7 @@ class ChroniclePlugin(PluginBase):
             PushResult: Result indicating ingesting outcome and message
         """
         try:
-            chronicle_client = ChronicleClient(
-                self.configuration, self.logger
-            )
+            chronicle_client = ChronicleClient(self.configuration, self.logger)
             chronicle_client.ingest(transformed_data)
         except Exception as e:
             self.logger.error(
@@ -452,7 +436,7 @@ class ChroniclePlugin(PluginBase):
 
         transformed_data = []
         udm_generator = UDMGenerator(
-            self.configuration["valid_extensions"],
+            self.mappings,
             udm_version,
             self.logger,
         )

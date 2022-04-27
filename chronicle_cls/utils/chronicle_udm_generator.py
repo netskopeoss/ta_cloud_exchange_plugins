@@ -33,12 +33,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """Chronicle Plugin."""
 
 
-import io
 import collections
-import csv
-import datetime
-import datetime as dt
-import re
 
 from .chronicle_parser import UDMParser
 
@@ -46,289 +41,32 @@ from .chronicle_constants import (
     SEVERITY_MAP,
     SEVERITY_UNKNOWN,
 )
-from .chronicle_exceptions import (
-    UDMValueError,
-    UDMTypeError,
-)
+from netskope.integrations.cls.utils.sanitizer import *
+from netskope.integrations.cls.utils.converter import *
 
 
 class UDMGenerator(object):
     """UDM Generator class."""
 
-    def __init__(self, extensions, udm_version, logger):
+    def __init__(self, mapping, udm_version, logger):
         """Init method."""
         self.logger = logger
         self.udm_version = udm_version  # Version of UDM being used
-        self.extensions = extensions  # CSV string having information of
-        # all the available UDM fields
+        self.mapping = mapping  # Mapping file content
         self.extension = collections.namedtuple(
             "Extension", ("key_name", "sanitizer")
         )
         self.extension_converter = collections.namedtuple(
             "Extension", ("key_name", "converter")
         )
-        self._prefix_field_str_sanitizer = self.str_sanitizer("[^\r\n]*")
-        self._prefix_field_float_sanitizer = self.float_sanitizer()
-        self._equals_escaper = self.escaper("=")
-        self._severity_sanitizer = self.str_sanitizer(
+        self._prefix_field_str_sanitizer = str_sanitizer("[^\r\n]*")
+        self._prefix_field_float_sanitizer = float_sanitizer()
+        self._equals_escaper = escaper("=")
+        self._severity_sanitizer = str_sanitizer(
             "UNKNOWN_SEVERITY|Low|Medium|High|Very-High"
         )
         self.valid_extensions = self._valid_extensions()
         self.extension_converters = self._type_converter()
-
-    def escaper(self, special_chars):
-        """Escapes the given special characters.
-
-        Args:
-            special_chars: The special characters to be escaped
-
-        Returns:
-            Escaped special characters
-        """
-        strip_escaped_re = re.compile(r"\\([{}\\])".format(special_chars))
-        do_escape_re = re.compile(r"([{}\\])".format(special_chars))
-
-        def escape(s):
-            stripped = strip_escaped_re.sub(r"\1", s)
-            return do_escape_re.sub(r"\\\1", stripped)
-
-        return escape
-
-    def ensure_in_range(self, debug_name, min, max, num):
-        """To Check whether the given value is in given range or not.
-
-        Args:
-            debug_name: The human readable name of the value being verified
-            min: Min value of threshold
-            max: Max value of threshold
-            num: The value to be verified
-
-        Raises:
-            UDMValueError in case of value is not in given threshold
-
-        Returns:
-            Escaped special characters
-        """
-        if max is None:
-            if min is not None and num < min:
-                raise UDMValueError(
-                    "{}: {} less than {}".format(debug_name, num, min)
-                )
-        elif min is None:
-            if max is not None and num > max:
-                raise UDMValueError(
-                    "{}: {} greater than {}".format(debug_name, num, max)
-                )
-        elif not min <= num <= max:
-            raise UDMValueError(
-                "{}: {} out of range {}-{}".format(debug_name, num, min, max)
-            )
-
-    def int_sanitizer(self, max=None, min=None):
-        """Wrap function for ensuring given value is integer & in given range.
-
-        Args:
-            min: Min value of threshold
-            max: Max value of threshold
-
-        Raises:
-            UDMTypeError in case of value other than integer
-
-        Returns:
-            Function to sanitize the given integer value
-        """
-
-        def sanitize(n, debug_name):
-            if not isinstance(n, int):
-                raise UDMTypeError(
-                    "{}: Expected int, got {}".format(debug_name, type(n))
-                )
-            self.ensure_in_range(debug_name, min, max, n)
-            return n
-
-        return sanitize
-
-    def float_sanitizer(self):
-        """Wrap function for ensuring the given value is float.
-
-        Raises:
-            UDMTypeError in case of value other than float
-
-        Returns:
-            Function to sanitize the given float value
-        """
-
-        def sanitize(n, debug_name):
-            if not isinstance(n, float):
-                raise UDMTypeError(
-                    "{}: Expected float, got {}".format(debug_name, type(n))
-                )
-            else:
-                return n
-
-        return sanitize
-
-    def str_sanitizer(
-        self, regex_str=".*", escape_chars="", min_len=0, max_len=None
-    ):
-        """Wrap func to check given value is string & has specific properties.
-
-        Args:
-            regex_str: The regex to be matched in given string
-            escape_chars: The characters to be escaped in given string
-            min_len: The min possible length of given string
-            max_len: The max possible length of given string
-
-        Raises:
-            UDMTypeError in case of value other than string
-
-        Returns:
-            Function to sanitize the given string
-        """
-        regex = re.compile("^{}$".format(regex_str), re.DOTALL)
-        escape = self.escaper(escape_chars)
-
-        def sanitize(s, debug_name):
-            if not isinstance(s, str):
-                raise UDMTypeError(
-                    "{}: Expected str, got {}".format(debug_name, type(s))
-                )
-            if not regex.match(s):
-                raise UDMTypeError(
-                    "{}: {!r} did not match regex {!r}".format(
-                        debug_name, s, regex_str
-                    )
-                )
-
-            s = s.encode("unicode_escape").decode("utf-8")
-            escaped = escape(s)
-            if max_len is None and not min_len:
-                return escaped
-
-            byte_len = len(escaped)
-            if (max_len is None) and (byte_len < min_len):
-                raise UDMTypeError(
-                    "{}: String shorter than {} bytes".format(
-                        debug_name, min_len
-                    )
-                )
-
-            if (max_len is not None) and not min_len <= byte_len <= max_len:
-                raise UDMTypeError(
-                    "{}: String length out of range {}-{}".format(
-                        debug_name, min_len, max_len
-                    )
-                )
-            return escaped
-
-        return sanitize
-
-    def datetime_sanitizer(self):
-        """Wrap function to check given value is a valid date time instance.
-
-        Raises:
-            UDMTypeError in case of value other than datetime
-
-        Returns:
-            Function to sanitize the given datetime value
-        """
-
-        def sanitize(t, debug_name):
-            if not isinstance(t, dt.datetime):
-                raise UDMTypeError(
-                    "{}: Expected datetime, got {}".format(debug_name, type(t))
-                )
-            else:
-                return str(t.timestamp()).split(".")[0]
-
-        return sanitize
-
-    def string_converter(self):
-        """Wrap function for converting given value to string.
-
-        Raises:
-            UDMTypeError in case when value is not string compatible
-
-        Returns:
-            Function to convert type of given value to string
-        """
-
-        def convert(val, debug_name):
-            try:
-                return str(val)
-            except Exception:
-                raise UDMTypeError(
-                    "{}: Error occurred while converting to string".format(
-                        debug_name
-                    )
-                )
-
-        return convert
-
-    def int_converter(self):
-        """Wrap function for converting given value to integer.
-
-        Raises:
-            UDMTypeError in case when value is not integer compatible
-
-        Returns:
-            Function to convert type of given value to integer
-        """
-
-        def convert(val, debug_name):
-            try:
-                return int(val)
-            except Exception:
-                raise UDMTypeError(
-                    "{}: Error occurred while converting to integer".format(
-                        debug_name
-                    )
-                )
-
-        return convert
-
-    def float_converter(self):
-        """Wrap function for converting given value to floating point.
-
-        Raises:
-            UDMTypeError in case when value is not float compatible
-
-        Returns:
-            Function to convert type of given value to float
-        """
-
-        def convert(val, debug_name):
-            try:
-                return float(val)
-            except Exception:
-                raise UDMTypeError(
-                    "{}: Error occurred while converting to float".format(
-                        debug_name
-                    )
-                )
-
-        return convert
-
-    def datetime_converter(self):
-        """Wrap function for converting given value to datetime object.
-
-        Raises:
-            UDMTypeError in case when value is not datetime compatible
-
-        Returns:
-            Function to convert type of given value to datetime
-        """
-
-        def convert(val, debug_name):
-            try:
-                return datetime.datetime.fromtimestamp(val)
-            except Exception as err:
-                raise UDMTypeError(
-                    f"{debug_name}: Error occurred while converting to "
-                    f"datetime: {err}."
-                )
-
-        return convert
 
     def _type_converter(self):
         """To Parse the UDM extension CSV string and creates the dict for data type converters.
@@ -336,31 +74,29 @@ class UDMGenerator(object):
         Returns:
             Dict object having details of all the available UDM fields and its type converters
         """
-        converters = {
-            "String": self.string_converter(),
-            "Time Stamp": self.datetime_converter(),
-            "Integer": self.int_converter(),
-            "Floating Point": self.float_converter(),
-            "IPv4 Address": self.string_converter(),
-            "IPv6 address": self.string_converter(),
-            "MAC Address": self.string_converter(),
-            "IP Address": self.string_converter(),
-        }
+        converters = type_converter()
 
-        # Parse the CSV and create key-converter dict
+        # Parse the transformation mapping and create key-converter dict
         try:
-            return {
-                record["UDM Key Name"]: self.extension_converter(
-                    key_name=record["UDM Key Name"],
-                    converter=converters[record["Data Type"]],
-                )
-                for record in csv.DictReader(
-                    io.StringIO(self.extensions), strict=True
-                )
-            }
+            field_converters = {}
+            mapping = self.mapping["taxonomy"]
+
+            for data_type, data_mapping in mapping.items():
+                for subtype, subtype_mapping in data_mapping.items():
+                    for key, value in subtype_mapping.items():
+                        for field, field_mapping in value.items():
+                            field_converters[field] = self.extension_converter(
+                                key_name=field,
+                                converter=converters[
+                                    field_mapping.get(
+                                        "transformation", "String"
+                                    )
+                                ],
+                            )
+            return field_converters
         except Exception as err:
             self.logger.error(
-                "Error occurred while parsing UDM validation CSV. Error: {}".format(
+                "Error occurred while parsing CEF transformation field. Error: {}".format(
                     str(err)
                 )
             )
@@ -372,74 +108,29 @@ class UDMGenerator(object):
         Returns:
             Dict object having details of all the available UDM fields and its sanitizers
         """
-        # Initialize the sanitizers for different data types
-        # ipv4_addr_re = r"\.".join([r"\d{1,3}"] * 4)
-        ipv4_addr_re = (
-            r"^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4]"
-            r"[0-9]|25[0-5])$"
-        )
-        ipv4_addr = self.str_sanitizer(ipv4_addr_re)
-        IPV4SEG = r"(?:25[0-5]|(?:2[0-4]|1{0,1}[0-9]){0,1}[0-9])"
-        IPV4ADDR = r"(?:(?:" + IPV4SEG + r"\.){3,3}" + IPV4SEG + r")"
-        IPV6SEG = r"(?:(?:[0-9a-fA-F]){1,4})"
-        IPV6GROUPS = (
-            r"(?:" + IPV6SEG + r":){7,7}" + IPV6SEG,
-            r"(?:" + IPV6SEG + r":){1,7}:",
-            r"(?:" + IPV6SEG + r":){1,6}:" + IPV6SEG,
-            r"(?:" + IPV6SEG + r":){1,5}(?::" + IPV6SEG + r"){1,2}",
-            r"(?:" + IPV6SEG + r":){1,4}(?::" + IPV6SEG + r"){1,3}",
-            r"(?:" + IPV6SEG + r":){1,3}(?::" + IPV6SEG + r"){1,4}",
-            r"(?:" + IPV6SEG + r":){1,2}(?::" + IPV6SEG + r"){1,5}",
-            IPV6SEG + r":(?:(?::" + IPV6SEG + r"){1,6})",
-            r":(?:(?::" + IPV6SEG + r"){1,7}|:)",
-            r"fe80:(?::" + IPV6SEG + r"){0,4}%[0-9a-zA-Z]{1,}",
-            r"::(?:ffff(?::0{1,4}){0,1}:){0,1}[^\s:]" + IPV4ADDR,
-            r"(?:" + IPV6SEG + r":){1,6}:?[^\s:]" + IPV4ADDR,
-        )
+        sanitizers = get_sanitizers()
 
-        ipv6_addr_re = "|".join(["(?:{})".format(g) for g in IPV6GROUPS[::-1]])
-        ipv6_addr = self.str_sanitizer(ipv6_addr_re)
-        ip_addr = self.str_sanitizer(
-            r"(" + ipv6_addr_re + r"|" + ipv4_addr_re + r")"
-        )
-        mac_addr = self.str_sanitizer(r"\:".join(["[0-9a-fA-F]{2}"] * 6))
-        str_lens = [31, 40, 63, 100, 128, 200, 255, 1023, 2048, 4000, 8000]
-        sanitizers = {
-            "IPv4 Address": {"": ipv4_addr},
-            "IPv6 address": {"": ipv6_addr},
-            "IP Address": {"": ip_addr},
-            "MAC Address": {"": mac_addr},
-            "Time Stamp": {"": self.datetime_sanitizer()},
-            "Floating Point": {"": self.float_sanitizer()},
-            "Integer": {
-                "": self.int_sanitizer(),
-                "65535": self.int_sanitizer(min=0, max=65535),
-            },
-            "String": dict(
-                [("", self.str_sanitizer())]
-                + [
-                    (str(str_len), self.str_sanitizer(max_len=str_len))
-                    for str_len in str_lens
-                ]
-            ),
-        }
-
-        # Parse the CSV and create key-sanitizer dict
+        # Parse the transformation mapping and create key-sanitizer dict
         try:
-            return {
-                record["UDM Key Name"]: self.extension(
-                    key_name=record["UDM Key Name"],
-                    sanitizer=sanitizers[record["Data Type"]][
-                        record["Length"]
-                    ],
-                )
-                for record in csv.DictReader(
-                    io.StringIO(self.extensions), strict=True
-                )
-            }
+            field_sanitizers = {}
+            mapping = self.mapping["taxonomy"]
+
+            for data_type, data_mapping in mapping.items():
+                for subtype, subtype_mapping in data_mapping.items():
+                    for key, value in subtype_mapping.items():
+                        for field, field_mapping in value.items():
+                            field_sanitizers[field] = self.extension(
+                                key_name=field,
+                                sanitizer=sanitizers[
+                                    field_mapping.get(
+                                        "transformation", "String"
+                                    )
+                                ],
+                            )
+            return field_sanitizers
         except Exception as err:
             self.logger.error(
-                "Error occurred while parsing UDM validation CSV. Error: {}".format(
+                "Error occurred while parsing CEF transformation field. Error: {}".format(
                     str(err)
                 )
             )

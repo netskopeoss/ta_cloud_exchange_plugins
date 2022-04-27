@@ -1,10 +1,10 @@
 {
-    "name": "Microsoft Defender for Endpoint",
-    "id": "microsoftdefender",
-    "version": "1.0.0",
-    "description": "This plugin is used to fetch alerts from Microsoft Defender for Endpoint platform and extract indicators from them. To get required details for creating a new configuration, visit https://securitycenter.windows.com/preferences2/siem/private. This plugin does not support sharing of indicators to Microsoft Defender for Endpoint.",
-    "patch_supported": false,
-    "push_supported": false,
+    "name": "Microsoft Defender for Enpoint - Graph API",
+    "id": "microsoftdefenderv2",
+    "version": "1.1.0_1",
+    "description": "This plugin is used to pull IoC data from Microsoft Defender for Endpoint. For details, visit {INSERT_BEST_MS_LINK_HERE}.",
+    "push_supported": true,
+    "patch_supported": true,
     "configuration": [
         {
             "label": "Tenant ID",
@@ -12,7 +12,7 @@
             "type": "text",
             "mandatory": true,
             "default": "",
-            "description": "Microsoft Defender for Endpoint Tenant Id."
+            "description": "Directory/Tenant ID."
         },
         {
             "label": "App ID",
@@ -20,7 +20,7 @@
             "type": "text",
             "mandatory": true,
             "default": "",
-            "description": "Microsoft Defender for Endpoint App Id."
+            "description": "Client ID of your AzureAD Application"
         },
         {
             "label": "App Secret",
@@ -28,45 +28,15 @@
             "type": "password",
             "mandatory": true,
             "default": "",
-            "description": "Microsoft Defender for Endpoint App Secret."
+            "description": "AzureAD App Secret"
         },
         {
-            "label": "Region",
-            "key": "region",
-            "type": "choice",
-            "choices": [
-                {
-                    "key": "European Union",
-                    "value": "eu"
-                },
-                {
-                    "key": "United States",
-                    "value": "us"
-                },
-                {
-                    "key": "United Kingdom",
-                    "value": "uk"
-                }
-            ],
-            "default":"us",
-            "mandatory": true,
-            "description": "Select Applicable Region."
-        },
-        {
-            "label": "Device Groups",
-            "key": "machinegroup",
+            "label": "IOC Source (Applicable only while sharing IoCs)",
+            "key": "source",
             "type": "text",
             "mandatory": false,
-            "default": "",
-            "description": "Specific device groups to pull alerts from. Separate multiple values with comma. Leave blank to fetch all device group's alerts."
-        },
-        {
-            "label": "Initial Range (in days)",
-            "key": "days",
-            "type": "number",
-            "mandatory": true,
-            "default": 7,
-            "description": "Number of days to pull the data for the initial run."
+            "default": "Netskope - Cloud Threat Exchange",
+            "description": "The source where this indicator originated. This can be used for tracking where this indicator was defined. Limit 200 characters."
         }
     ]
 }

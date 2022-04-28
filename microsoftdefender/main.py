@@ -1,3 +1,38 @@
+"""
+BSD 3-Clause License
+
+Copyright (c) 2021, Netskope OSS
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its
+   contributors may be used to endorse or promote products derived from
+   this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+"""
+
+"""Microsoft Defender for Endpoint implementation pull/push the data."""
+
+
 import requests
 from .lib import msal
 from datetime import datetime
@@ -91,7 +126,7 @@ class MicrosoftDefenderEndpointPluginV2(PluginBase):
                     "key": "action",
                     "type": "choice",
                     "choices": [
-                        {"key": action, "value": action} for action in actions
+                        {"key": action.capitalize(), "value": action} for action in actions
                     ],
                     "default": "unknown",
                     "mandatory": True,
@@ -102,7 +137,7 @@ class MicrosoftDefenderEndpointPluginV2(PluginBase):
                     "key": "targetProduct",
                     "type": "choice",
                     "choices": [
-                        {"key": tp, "value": tp} for tp in target_products] +
+                        {"key": tp , "value": tp} for tp in target_products] +
                         [{"key": "Both", "value": "both"}
                     ],
                     "default": "Azure Sentinel",
@@ -114,7 +149,7 @@ class MicrosoftDefenderEndpointPluginV2(PluginBase):
                     "key": "tlpLevel",
                     "type": "choice",
                     "choices": [
-                        {"key": tlp_level, "value": tlp_level} for tlp_level in tlp_levels
+                        {"key": tlp_level.capitalize(), "value": tlp_level} for tlp_level in tlp_levels
                     ],
                     "default": "unknown",
                     "mandatory": True,
@@ -217,6 +252,7 @@ class MicrosoftDefenderEndpointPluginV2(PluginBase):
             response = requests.get(
                 url,
                 headers=add_user_agent(headers),
+                proxies=self.proxy
             )
             response.raise_for_status()  # check back later to see what this actually does
             res = response.json()
@@ -415,7 +451,7 @@ class MicrosoftDefenderEndpointPluginV2(PluginBase):
                     json_body["targetProduct"] = target
                     payload_list.append(json_body.copy())
             else:
-                json_body["targetProduct"] = target
+                json_body["targetProduct"] = target_product
                 payload_list.append(json_body.copy())
         return payload_list
 
@@ -435,6 +471,7 @@ class MicrosoftDefenderEndpointPluginV2(PluginBase):
                     "client_secret": appsecret,
                     "grant_type": "client_credentials",
                 },
+                proxies=self.proxy
             )
             if response.status_code == 200:
                 return ValidationResult(
@@ -462,6 +499,9 @@ class MicrosoftDefenderEndpointPluginV2(PluginBase):
                 "Microsoft Defender for Endpoint Plugin v2: "
                 "No Tenant ID found in the configuration parameters."
             )
+            return ValidationResult(
+                success=False, message="Invalid Tenant ID provided."
+            )
 
         if (
             "appid" not in configuration
@@ -477,7 +517,7 @@ class MicrosoftDefenderEndpointPluginV2(PluginBase):
 
         if (
             "appsecret" not in configuration
-            or not configuration["appsecret"]
+            or not configuration["appsecret"].strip()
         ):
             self.logger.error(
                 "Microsoft Defender for Endpoint Plugin: "
@@ -491,5 +531,5 @@ class MicrosoftDefenderEndpointPluginV2(PluginBase):
         return self._validate_credentials(
             configuration["tenantid"].strip(),
             configuration["appid"].strip(),
-            configuration["appsecret"],
+            configuration["appsecret"].strip(),
         )

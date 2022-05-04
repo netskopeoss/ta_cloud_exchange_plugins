@@ -341,11 +341,17 @@ class CarbonBlackPlugin(PluginBase):
                 report["iocs_v2"][0]["values"].append(indicator.value)
         report["id"] = str(hash(json.dumps(reports)))
         report["iocs_v2"][0]["id"] = str(hash(json.dumps(reports)))
+        total_md5 = len(report["iocs"]["md5"])
+        total_sha256 = len(report["iocs_v2"][0]["values"])
         if (
-            len(report["iocs"]["md5"]) == 0
-            and len(report["iocs_v2"][0]["values"]) == 0
+            total_md5 == 0
+            and total_sha256 == 0
         ):
             return PushResult(success=True, message="Nothing to push.")
+        if total_md5 == 0:
+            del report["iocs"]
+        if total_sha256 == 0:
+            del report["iocs_v2"]
         headers = self._get_headers()
         response = requests.post(
             (

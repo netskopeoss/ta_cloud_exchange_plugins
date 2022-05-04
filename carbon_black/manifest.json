@@ -1,7 +1,7 @@
 {
     "name": "Carbon Black",
     "id": "carbon_black",
-    "version": "1.0.3",
+    "version": "1.0.4",
     "description": "The Carbon Black plugin fetches alerts with reputation \"Known Malware\" from Cloud NGAV and Cloud EDR. The alert data is processed and Indicators are reported to Netskope CTE. The plugin supports sharing Indicators to Carbon Black via the ThreatHunter API. The indicators shared with Carbon Black would be reported to a ThreatHunter Feed named \"CTE Threat Feed\". To access the plugin, you would need API credentials with RBAC permissions to READ \"org.alerts\" and CREATE \"threathunter.feeds\".",
     "patch_supported": false,
     "configuration": [

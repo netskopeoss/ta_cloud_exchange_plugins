@@ -1,10 +1,10 @@
 {
     "name": "SentinelOne",
     "id": "sentinelone",
-    "version": "1.0.0",
-    "description": "The SentinelOne plugin fetches threats from the SentinelOne site. The threat data is processed and Indicators are reported to Netskope CTE. This plugin does not support sharing of Indicators to SentinelOne.",
-    "patch_supported": false,
-    "push_supported": false,
+    "version": "1.1.0",
+    "description": "The SentinelOne plugin fetches threats from the SentinelOne site. The threat data is processed and Indicators are reported to Netskope CTE. This plugin does support sharing of Indicators to SentinelOne.",
+    "patch_supported": true,
+    "push_supported": true,
     "configuration": [
         {
             "label": "Management URL",

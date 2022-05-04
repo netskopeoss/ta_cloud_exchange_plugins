@@ -30,20 +30,26 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
 
-"""Netskope Plugin implementation to push and pull the data from Netskope Tenant."""
-
+"""SentinelOne Plugin implementation to push and pull the data from SentinelOne
+Platform."""
 
 import requests
 from netskope.common.utils import add_user_agent
 from datetime import datetime, timedelta
-from netskope.integrations.cte.plugin_base import PluginBase, ValidationResult
+from netskope.integrations.cte.plugin_base import (
+    PluginBase,
+    ValidationResult,
+    PushResult,
+)
 from netskope.integrations.cte.models import Indicator, IndicatorType
 from netskope.integrations.cte.models.business_rule import (
     Action,
+    ActionWithoutParams,
 )
-
+from typing import List, Dict
 
 MAX_PAGE_SIZE = 50
+LIMIT = 2500
 
 
 class SentinelOnePlugin(PluginBase):
@@ -145,6 +151,115 @@ class SentinelOnePlugin(PluginBase):
             if params["cursor"] is None:
                 break
         return indicators
+
+    def _api_call(self, request):
+        """API Calling Function.
+
+        Args:
+            request (function): API resquest function.
+
+        Returns:
+            Response: Return response getting from API endpoint.
+
+        """
+        try:
+            return request()
+        except requests.exceptions.ProxyError as err:
+            self.logger.error(
+                "Plugin: SentinelOne, Invalid proxy configuration."
+            )
+            raise err
+        except requests.exceptions.ConnectionError as err:
+            self.logger.error(
+                f"Plugin: SentinelOne, " f"Connection Error occured: {err}."
+            )
+            raise err
+        except requests.exceptions.RequestException as err:
+            self.logger.error(
+                f"Plugin: SentinelOne, " f"Request Exception occured: {err}."
+            )
+            raise err
+        except Exception as err:
+            self.logger.error(
+                f"Plugin: SentinelOne, " f"Exception occured: {err}."
+            )
+            raise err
+
+    def divide_in_chunks(self, indicators, chunk_size):
+        """Return Fixed size chunks from list."""
+        for i in range(0, len(indicators), chunk_size):
+            yield indicators[i : i + chunk_size]  # noqa
+
+    def push(
+        self, indicators: List[Indicator], action_dict: Dict
+    ) -> PushResult:
+        """Push indicators to the SentinelOne.
+
+        Args:
+            indicators (List[Indicator]): List of Indicators
+            action_dict (dict): Action dictionary
+
+        Returns:
+            PushResult : return PushResult with success and message parameters.
+        """
+        indicators_data = []
+        headers = {"Authorization": f"ApiToken {self.configuration['token']}"}
+        error_occur = False
+        ioc_url = f"{self.configuration['url']}/web/api/v2.1/threat-intelligence/iocs"
+        if action_dict["value"] == "create_iocs":
+            # Threat IoCs
+            for indicator in indicators:
+                indicators_data.append(
+                    {
+                        "value": indicator.value,
+                        "type": indicator.type.upper(),
+                        "source": "Netskope",
+                        "externalId": indicator.value,
+                        "method": "EQUALS",
+                        "creationTime": indicator.firstSeen.strftime(
+                            "%Y-%m-%dT%H:%M:%SZ",
+                        ),
+                        "validUntil": indicator.expiresAt.strftime(
+                            "%Y-%m-%dT%H:%M:%SZ",
+                        )
+                        if indicator.expiresAt
+                        else None,
+                        "description": indicator.comments,
+                    }
+                )
+
+            for chunked_list in self.divide_in_chunks(indicators_data, LIMIT):
+                indicator_json_data = {
+                    "data": chunked_list,
+                    "filter": {},
+                }
+                response = self._api_call(
+                    lambda: requests.post(
+                        ioc_url,
+                        headers=headers,
+                        json=indicator_json_data,
+                    )
+                )
+                if response.status_code == 200 or response.status_code == 201:
+                    continue
+                else:
+                    self.logger.error(
+                        f"SentinelOne, Status code: {response.status_code} "
+                        f"Error: {response.json()['errors'][0]['detail']}"
+                    )
+                    error_occur = True
+                    break
+
+            if not error_occur:
+                return PushResult(
+                    success=True,
+                    message="Indicators pushed successfully to SentinelOne.",
+                )
+            else:
+                return PushResult(
+                    success=False,
+                    message="Indicators failed to push to SentinelOne.",
+                )
 
     def _validate_credentials(
         self, url: str, token: str, site: str
@@ -266,10 +381,17 @@ class SentinelOnePlugin(PluginBase):
 
     def get_actions(self):
         """Get available actions."""
-        return []
+        return [
+            ActionWithoutParams(
+                label="Create IoCs",
+                value="create_iocs",
+            ),
+        ]
 
     def validate_action(self, action: Action):
-        """Validate SentinelOne configuration."""
+        """Validate SentinelOne Action Configuration."""
+        if action.value not in ["create_iocs"]:
+            return ValidationResult(success=False, message="Invalid action.")
         return ValidationResult(success=True, message="Validation successful.")
 
     def get_action_fields(self, action: Action):

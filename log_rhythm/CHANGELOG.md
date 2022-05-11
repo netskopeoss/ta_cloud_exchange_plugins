@@ -1,3 +1,7 @@
+# 1.1.1
+## Added
+- Updated webTx mappings.
+
 # 1.1.0
 ## Changed
 - Removed valid extension from plugin configuration.

@@ -295,7 +295,7 @@ class CEFGenerator(object):
         if data_type == "webtx":
             date = self.webtx_timestamp(raw_data)
             if date:
-                extension_strs["timestamp"] = date
+                extension_strs["rt"] = date
 
         extensions_str = " ".join(
             sorted("{}={}".format(k, v) for k, v in extension_strs.items())

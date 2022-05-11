@@ -1,74 +1,70 @@
 {
-    "name": "ArcSight",
-    "id": "arcsight",
-    "version": "1.1.0_2",
-    "mapping": "ArcSight Default Mappings",
-    "types": [
-        "alerts",
-        "events",
-        "webtx"
-    ],
-    "description": "This plugin is used to ingest alerts and events data to the ArcSight platform.",
-    "configuration": [
+  "name": "ArcSight",
+  "id": "arcsight",
+  "version": "1.1.1",
+  "mapping": "ArcSight Default Mappings",
+  "types": ["alerts", "events", "webtx"],
+  "description": "This plugin is used to ingest alerts and events data to the ArcSight platform.",
+  "configuration": [
+    {
+      "label": "ArcSight Server",
+      "key": "arcsight_server",
+      "type": "text",
+      "default": "",
+      "mandatory": true,
+      "description": "IP address/FQDN of ArcSight server in which data will be ingested."
+    },
+    {
+      "label": "ArcSight Format",
+      "key": "arcsight_format",
+      "type": "choice",
+      "choices": [
         {
-            "label": "ArcSight Server",
-            "key": "arcsight_server",
-            "type": "text",
-            "default": "",
-            "mandatory": true,
-            "description": "IP address/FQDN of ArcSight server in which data will be ingested."
-        },
-        {
-            "label": "ArcSight Format",
-            "key": "arcsight_format",
-            "type": "choice",
-            "choices": [
-                {
-                    "key": "CEF",
-                    "value": "CEF"
-                }
-            ],
-            "default": "CEF",
-            "mandatory": true,
-            "description": "Data format required to ingest data."
-        },
-        {
-            "label": "ArcSight Protocol",
-            "key": "arcsight_protocol",
-            "type": "choice",
-            "choices": [
-                {
-                    "key": "TLS",
-                    "value": "TLS"
-                },
-                {
-                    "key": "UDP",
-                    "value": "UDP"
-                },
-                {
-                    "key": "TCP",
-                    "value": "TCP"
-                }
-            ],
-            "default": "UDP",
-            "mandatory": true,
-            "description": "Protocol to be used while ingesting data."
-        },
-        {
-            "label": "ArcSight Port",
-            "key": "arcsight_port",
-            "type": "number",
-            "default": "",
-            "mandatory": true,
-            "description": "ArcSight port"
-        },
-        {
-            "label": "ArcSight Certificate",
-            "key": "arcsight_certificate",
-            "type": "textarea",
-            "default": "",
-            "mandatory": false,
-            "description": "certificate is required only for TLS protocol."
+          "key": "CEF",
+          "value": "CEF"
         }
-    ]
+      ],
+      "default": "CEF",
+      "mandatory": true,
+      "description": "Data format required to ingest data."
+    },
+    {
+      "label": "ArcSight Protocol",
+      "key": "arcsight_protocol",
+      "type": "choice",
+      "choices": [
+        {
+          "key": "TLS",
+          "value": "TLS"
+        },
+        {
+          "key": "UDP",
+          "value": "UDP"
+        },
+        {
+          "key": "TCP",
+          "value": "TCP"
+        }
+      ],
+      "default": "UDP",
+      "mandatory": true,
+      "description": "Protocol to be used while ingesting data."
+    },
+    {
+      "label": "ArcSight Port",
+      "key": "arcsight_port",
+      "type": "number",
+      "default": "",
+      "mandatory": true,
+      "description": "ArcSight port"
+    },
+    {
+      "label": "ArcSight Certificate",
+      "key": "arcsight_certificate",
+      "type": "textarea",
+      "default": "",
+      "mandatory": false,
+      "description": "certificate is required only for TLS protocol."
+    }
+  ]
 }

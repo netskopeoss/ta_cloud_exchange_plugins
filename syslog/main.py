@@ -128,6 +128,7 @@ class SyslogPlugin(PluginBase):
             header dict
         """
         headers = {}
+        mapping_variables = {}
         if data_type != 'webtx':
             helper = AlertsHelper()
             tenant = helper.get_tenant_cls(self.source)

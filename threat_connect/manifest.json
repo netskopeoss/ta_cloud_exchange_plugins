@@ -1,0 +1,100 @@
+{
+    "name": "ThreatConnect",
+    "id": "threat_connect",
+    "version": "1.0.0",
+    "description": "The ThreatConnect plugin fetches indicators of type \"Malware\" and \"URL\". The data is processed and indicators are reported to Netskope CTE. The Plugin also support of sharing indicators to ThreatConnect Platform. To configure the plugin, you will need Access Id and Secret Key from ThreatConnect.",
+    "patch_supported": true,
+    "push_supported": true,
+    "configuration": [
+        {
+            "label": "Base URL",
+            "key": "base_url",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "ThreatConnect API Base URL."
+        },
+        {
+            "label": "Access ID",
+            "key": "access_id",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "ThreatConnect API Access ID."
+        },
+        {
+            "label": "Secret Key",
+            "key": "secret_key",
+            "type": "password",
+            "default": "",
+            "mandatory": true,
+            "description": "ThreatConnect API Secret Key."
+        },
+        {
+            "label": "Type of Threat IoC",
+            "key": "threat_type",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Both",
+                    "value": "Both"
+                },
+                {
+                    "key": "Malware",
+                    "value": "File"
+                },
+                {
+                    "key": "URL",
+                    "value": "URL"
+                }
+            ],
+            "mandatory": true,
+            "default":"Both",
+            "description": "Type of threat IoC you want to pull from ThreatConnect."
+        },
+        {
+            "label": "Enable Tagging",
+            "key": "enable_tagging",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Yes",
+                    "value": "Yes"
+                },
+                {
+                    "key": "No",
+                    "value": "No"
+                }
+            ],
+            "default": "No",
+            "mandatory": false,
+            "description": "Enable/Disable tagging functionality."
+        },
+        {
+            "label": "Enable Polling",
+            "key": "is_pull_required",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Yes",
+                    "value": "Yes"
+                },
+                {
+                    "key": "No",
+                    "value": "No"
+                }
+            ],
+            "default": "Yes",
+            "mandatory": false,
+            "description": "Enable/Disable polling data from ThreatConnect."
+        },
+        {
+            "label": "Initial Range (in days)",
+            "key": "days",
+            "type": "number",
+            "mandatory": false,
+            "default": 7,
+            "description": "Number of days to pull the data for the initial run."
+        }
+    ]
+}

@@ -1,0 +1,51 @@
+{
+    "name": "Microsoft Azure AD",
+    "description": "Fetches users and user scores and performs actions for members in group/groups.",
+    "id": "microsoft_azure_AD",
+    "type": [
+        "user"
+    ],
+    "version": "1.0.0",
+    "configuration": [
+        {
+            "label": "Client (Application) ID",
+            "key": "client_id",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "Application ID."
+        },
+        {
+            "label": "Client Secret ID",
+            "key": "client_secret",
+            "type": "password",
+            "default": "",
+            "mandatory": true,
+            "description": "Secret ID of your Client ID."
+        },
+        {
+            "label": "Tenant ID",
+            "key": "tenant_id",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "Tenant ID."
+        },
+        {
+            "label": "Microsoft Azure AD URL",
+            "key": "base_url",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "Microsoft Azure AD URL."
+        },
+        {
+            "label": "Microsoft Graph Token URL",
+            "key": "token_login_url",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "Microsoft Graph Token URL."
+        }
+    ]
+}

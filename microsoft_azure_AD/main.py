@@ -40,8 +40,8 @@ class MicrosoftAzureADPlugin(PluginBase):
 
         Args:
             configuration (Dict): Dict object having all the Plugin
-                configuration parameters: token_login_url, base_url,
-                client_id, client_secret, and tenant_id.
+                configuration parameters: client_id, client_secret, 
+                and tenant_id.
             email (str): Principle email of member to add
             group_id (str): Group ID of the group.
 
@@ -62,7 +62,7 @@ class MicrosoftAzureADPlugin(PluginBase):
             f"directoryObjects/{id}"
         }
         response = self.handle_request_exception(lambda: requests.post(
-                f"{configuration.get('base_url').strip()}/v1.0/"
+                f"https://graph.microsoft.com/v1.0/"
                 f"groups/{group_id}/members/$ref",
                 headers=add_user_agent(headers),
                 proxies=self.proxy,
@@ -100,8 +100,8 @@ class MicrosoftAzureADPlugin(PluginBase):
 
         Args:
             configuration (Dict): Dict object having all the Plugin
-                configuration parameters:token_login_url, base_url,
-                client_id, client_secret, and tenant_id.
+                configuration parameters: client_id, client_secret, 
+                and tenant_id.
             email (str): Principle email of member to remove.
             group_id (str): Group ID of the group.
 
@@ -116,7 +116,7 @@ class MicrosoftAzureADPlugin(PluginBase):
         headers["Content-Type"] = "application/json"
 
         response = self.handle_request_exception(lambda: requests.delete(
-                f"{configuration.get('base_url').strip()}/v1.0/"
+                f"https://graph.microsoft.com/v1.0/"
                 f"groups/{group_id}/members/{id}/$ref",
                 headers=add_user_agent(headers),
                 proxies=self.proxy,
@@ -155,8 +155,8 @@ class MicrosoftAzureADPlugin(PluginBase):
 
         Args:
             configuration (Dict): Dict object having all the Plugin
-                configuration parameters: token_login_url, base_url,
-                client_id, client_secret, and tenant_id.
+                configuration parameters: client_id, client_secret,
+                and tenant_id.
             name (str): Name of the group to create.
             description (str): Group decription.
 
@@ -177,7 +177,7 @@ class MicrosoftAzureADPlugin(PluginBase):
         headers["Content-Type"] = "application/json"
 
         response = self.handle_request_exception(lambda: requests.post(
-                f"{configuration.get('base_url').strip()}/v1.0/groups",
+                f"https://graph.microsoft.com/v1.0/groups",
                 headers=add_user_agent(headers),
                 proxies=self.proxy,
                 verify=self.ssl_validation,
@@ -201,14 +201,14 @@ class MicrosoftAzureADPlugin(PluginBase):
 
         Args:
             configuration (dict): Dict object having all the Plugin
-                configuration parameters: token_login_url, base_url,
-                client_id, client_secret, and tenant_id
+                configuration parameters: client_id, client_secret,
+                and tenant_id
 
         Returns:
             total_group_name_array (list): List of group names
 
         """
-        url = f"{configuration.get('base_url')}/v1.0/groups?$top=" + PAGE_SIZE
+        url = f"https://graph.microsoft.com/v1.0/groups?$top=" + PAGE_SIZE
         headers = self.reload_auth_token(configuration)
         headers["Content-Type"] = "application/json"
         # all the group names will be added in this variable
@@ -284,7 +284,7 @@ class MicrosoftAzureADPlugin(PluginBase):
 
         """
 
-        url = f"{configuration.get('base_url')}/v1.0/users?$top=" + PAGE_SIZE
+        url = f"https://graph.microsoft.com/v1.0/users?$top=" + PAGE_SIZE
         headers = self.reload_auth_token(configuration)
         headers["Content-Type"] = "application/json"
 
@@ -553,10 +553,7 @@ class MicrosoftAzureADPlugin(PluginBase):
                 client_secret (str): Client Secret required to generate
                     OAUTH2 token.
                 tenant_id (str): Tenant ID that user wants
-                base_url (str): Base URL of Microsoft Azure AD and the
-                    resource in body of GET request.
-                token_login_url (str): The microsoft login token URL
-                    requried to generate OAUTH2 token.
+               
         Returns:
             json: JSON response data in case of Success.
         """
@@ -567,18 +564,16 @@ class MicrosoftAzureADPlugin(PluginBase):
         client_id = configuration.get("client_id").strip()
         client_secret = configuration.get("client_secret").strip()
         tenant_id = configuration.get("tenant_id").strip()
-        base_url = configuration.get("base_url").strip()
-        token_login_url = configuration.get("token_login_url").strip()
 
         # This is the token link.
         # Looks like https://login.microsoftonline.com/xxxxxxxx
         # -xxxx-xxxx-xxxx-xxxxxxxxxxxx/oauth2/token
-        auth_endpoint = f"{token_login_url}/{tenant_id}/oauth2/token"
+        auth_endpoint = f"https://login.microsoftonline.com/{tenant_id}/oauth2/token"
         auth_params = {
             "grant_type": "client_credentials",
             "client_id": client_id,
             "client_secret": client_secret,
-            "resource": base_url,
+            "resource": "https://graph.microsoft.com",
         }
 
         resp = self.handle_request_exception(lambda: requests.get(
@@ -652,10 +647,7 @@ class MicrosoftAzureADPlugin(PluginBase):
                 client_secret (str): Client Secret required to generate
                     OAUTH2 token.
                 tenant_id (str): Tenant ID that user wants
-                base_url (str): Base URL of Microsoft Azure AD and the
-                    resource in body of GET request.
-                token_login_url (str): The microsoft login token URL required
-                    to generate OAUTH2 token.
+               
         Returns:.
 
             cte.plugin_base.ValidateResult: ValidateResult object with success
@@ -665,35 +657,6 @@ class MicrosoftAzureADPlugin(PluginBase):
         self.logger.info(
             "Plugin: Executing validate method for Microsoft Azure AD plugin"
         )
-
-        if (
-            "token_login_url" not in configuration
-            or not configuration["token_login_url"].strip()
-            or type(configuration["token_login_url"]) != str
-        ):
-            self.logger.error(
-                "Plugin: Microsoft Azure AD Validation error occurred. "
-                "Error: Token not found or Type of Token Login URL should "
-                "be non-empty string."
-            )
-            return ValidationResult(
-                success=False,
-                message="Invalid Token Login URL provided.",
-            )
-
-        if (
-            "base_url" not in configuration
-            or not configuration["base_url"].strip()
-            or type(configuration["base_url"]) != str
-        ):
-            self.logger.error(
-                "Plugin: Microsoft Azure AD Validation error occurred. "
-                "Error: Type of Base URL should be a non-empty string."
-            )
-            return ValidationResult(
-                success=False,
-                message="Invalid Base URL provided.",
-            )
 
         if (
             "client_id" not in configuration
@@ -747,10 +710,7 @@ class MicrosoftAzureADPlugin(PluginBase):
             client_secret (str): Client Secret required to generate
                 OAUTH2 token.
             tenant_id (str): Tenant ID that user wants
-            base_url (str): Base URL of Microsoft Azure AD and the resource
-                in body of GET request.
-            token_login_url (str): The microsoft login token URL requried to
-                generate OAUTH2 token.
+        
         Returns:
             ValidationResult: ValidationResult object having validation
             results after making an API call.
@@ -808,7 +768,7 @@ class MicrosoftAzureADPlugin(PluginBase):
 
     def check_url_valid(self, configuration):
         """
-        Validate the base URL of Microsoft Azure AD platform.
+        Validate the URL of Microsoft Azure AD platform.
 
         Args:
             Args: configuration (dict): Contains the below keys:
@@ -816,15 +776,10 @@ class MicrosoftAzureADPlugin(PluginBase):
                 client_secret (str): Client Secret required to generate
                     OAUTH2 token.
                 tenant_id (str): Tenant ID that user wants
-                base_url (str): Base URL of Microsoft Azure AD and the
-                    resource in body of GET request.
-                token_login_url (str): The microsoft login token URL
-                    requried to generate OAUTH2 token.
+               
         Returns:
             Raise error if valid base url is not selected.
         """
-
-        base_url = configuration.get("base_url")
 
         auth_json = self.get_auth_json(configuration)
         auth_token = auth_json.get("access_token")
@@ -833,7 +788,7 @@ class MicrosoftAzureADPlugin(PluginBase):
 
         # get the top 1 user from Microsoft Graph for checking
         # whether we are connected to the API
-        query_endpoint = f"{base_url}/v1.0/users?$top=1"
+        query_endpoint = f"https://graph.microsoft.com/v1.0/users?$top=1"
         all_agent_resp = requests.get(
             query_endpoint,
             headers=add_user_agent(headers),
@@ -859,7 +814,7 @@ class MicrosoftAzureADPlugin(PluginBase):
         Returns:
             List[Record]: List of records to be stored on the platform.
         """
-        url = f"{self.configuration.get('base_url')}/v1.0/identityProtection/riskyUsers?$top=" + PAGE_RECORD_SCORE
+        url = f"https://graph.microsoft.com/v1.0/identityProtection/riskyUsers?$top=" + PAGE_RECORD_SCORE
         headers = self.reload_auth_token(self.configuration)
         headers["Content-Type"] = "application/json"
         
@@ -917,7 +872,7 @@ class MicrosoftAzureADPlugin(PluginBase):
         Returns:
             List: List of users with scores assigned.
         """
-        url = f"{self.configuration.get('base_url')}/v1.0/identityProtection/riskyUsers?$top=" + PAGE_RECORD_SCORE
+        url = f"https://graph.microsoft.com/v1.0/identityProtection/riskyUsers?$top=" + PAGE_RECORD_SCORE
         headers = self.reload_auth_token(self.configuration)
         headers["Content-Type"] = "application/json"
 
@@ -974,15 +929,15 @@ class MicrosoftAzureADPlugin(PluginBase):
                     )
                 elif value == "low":
                     total_scores.append(
-                        Record(uid=key, type=RecordType.USER, score=300)
+                        Record(uid=key, type=RecordType.USER, score=875)
                     )
                 elif value == "medium":
                     total_scores.append(
-                        Record(uid=key, type=RecordType.USER, score=600)
+                        Record(uid=key, type=RecordType.USER, score=625)
                     )
                 elif value == "high":
                     total_scores.append(
-                        Record(uid=key, type=RecordType.USER, score=900)
+                        Record(uid=key, type=RecordType.USER, score=375)
                     )
                 
         return total_scores

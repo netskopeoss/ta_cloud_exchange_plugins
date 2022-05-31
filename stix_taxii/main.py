@@ -39,7 +39,8 @@ from urllib.parse import urlparse
 from datetime import datetime, timedelta
 import pytz
 from cabby import create_client
-from taxii2client.v20 import ApiRoot, as_pages
+from .lib.taxii2client.v20 import ApiRoot as ApiRoot20, as_pages as as_pages20
+from .lib.taxii2client.v21 import ApiRoot as ApiRoot21, as_pages as as_pages21
 from stix.core import STIXPackage
 from cybox.objects.file_object import File
 from cybox.objects.uri_object import URI
@@ -134,7 +135,8 @@ class STIXTAXIIPlugin(PluginBase):
                 )
             if indicator.likely_impact:
                 data["severity"] = LIKELY_IMPACT_TO_SEVERITY.get(
-                    str(indicator.likely_impact.value), SeverityType.UNKNOWN,
+                    str(indicator.likely_impact.value),
+                    SeverityType.UNKNOWN,
                 )
             return data
         self._ids[observable.idref] = {}
@@ -150,7 +152,8 @@ class STIXTAXIIPlugin(PluginBase):
             self._ids[observable.idref][
                 "severity"
             ] = LIKELY_IMPACT_TO_SEVERITY.get(
-                str(indicator.likely_impact.value), SeverityType.UNKNOWN,
+                str(indicator.likely_impact.value),
+                SeverityType.UNKNOWN,
             )
         return self._ids[observable.idref]
 
@@ -308,7 +311,8 @@ class STIXTAXIIPlugin(PluginBase):
 
         for collection in filtered_collections:
             content_blocks = client.poll(
-                collection_name=collection, begin_date=start_time,
+                collection_name=collection,
+                begin_date=start_time,
             )
             for block in content_blocks:
                 temp = tempfile.TemporaryFile()
@@ -325,9 +329,21 @@ class STIXTAXIIPlugin(PluginBase):
         for kind in OBSERVABLE_REGEXES:
             matches = re.findall(kind["regex"], pattern, re.IGNORECASE)
             for match in matches:
-                observables.append(
-                    Indicator(value=match[1], type=kind["type"], **data)
-                )
+                if (
+                    kind["type"] == IndicatorType.SHA256
+                    or kind["type"] == IndicatorType.MD5
+                ):
+                    observables.append(
+                        Indicator(
+                            value=match.replace("'", ""),
+                            type=kind["type"],
+                            **data,
+                        )
+                    )
+                else:
+                    observables.append(
+                        Indicator(value=match[1], type=kind["type"], **data)
+                    )
         return observables
 
     def _extract_indicators_2x(self, objects):
@@ -346,10 +362,10 @@ class STIXTAXIIPlugin(PluginBase):
             )
         return indicators
 
-    def pull_2x(self, start_time):
+    def pull_20x(self, start_time):
         """Pull implementation for version 2.x."""
         indicators = []
-        apiroot = ApiRoot(
+        apiroot = ApiRoot20(
             self.configuration["discovery_url"].strip(),
             user=self.configuration["username"].strip(),
             password=self.configuration["password"],
@@ -367,7 +383,41 @@ class STIXTAXIIPlugin(PluginBase):
             lambda x: x.title in filtered_collections, apiroot.collections
         ):
             try:
-                for bundle in as_pages(
+                for bundle in as_pages20(
+                    collection.get_objects,
+                    per_request=100,
+                    added_after=start_time,
+                ):
+                    indicators = indicators + self._extract_indicators_2x(
+                        bundle.get("objects", [])
+                    )
+            except KeyError:
+                # if there is no data in a collection
+                pass
+        return indicators
+
+    def pull_21x(self, start_time):
+        """Pull implementation for version 2.x."""
+        indicators = []
+        apiroot = ApiRoot21(
+            self.configuration["discovery_url"].strip(),
+            user=self.configuration["username"].strip(),
+            password=self.configuration["password"],
+            verify=self.ssl_validation,
+            proxies=self.proxy,
+        )
+        all_collections = [c.title for c in apiroot.collections]
+        filtered_collections = self._filter_collections(
+            all_collections, self.configuration["collection_names"]
+        )
+        self.logger.info(
+            f"Plugin STIX/TAXII: Following collections will be fetched - {', '.join(filtered_collections)}"
+        )
+        for collection in filter(
+            lambda x: x.title in filtered_collections, apiroot.collections
+        ):
+            try:
+                for bundle in as_pages21(
                     collection.get_objects,
                     per_request=100,
                     added_after=start_time,
@@ -391,8 +441,10 @@ class STIXTAXIIPlugin(PluginBase):
             start_time = pytz.utc.localize(self.last_run_at)
         if self.configuration["version"] == "1":
             indicators = self.pull_1x(start_time)
-        elif self.configuration["version"] == "2":
-            indicators = self.pull_2x(start_time)
+        elif self.configuration["version"] == "2.0":
+            indicators = self.pull_20x(start_time)
+        elif self.configuration["version"] == "2.1":
+            indicators = self.pull_21x(start_time)
         return list(
             filter(
                 lambda x: x.severity.value in self.configuration["severity"]
@@ -416,8 +468,17 @@ class STIXTAXIIPlugin(PluginBase):
             if configuration["version"] == "1":
                 client = self._build_client(configuration)
                 all_collections = self._get_collections(client)
-            elif configuration["version"] == "2":
-                apiroot = ApiRoot(
+            elif configuration["version"] == "2.0":
+                apiroot = ApiRoot20(
+                    configuration["discovery_url"].strip(),
+                    user=configuration["username"].strip(),
+                    password=configuration["password"],
+                    verify=self.ssl_validation,
+                    proxies=self.proxy,
+                )
+                all_collections = [c.title for c in apiroot.collections]
+            elif configuration["version"] == "2.1":
+                apiroot = ApiRoot21(
                     configuration["discovery_url"].strip(),
                     user=configuration["username"].strip(),
                     password=configuration["password"],
@@ -502,7 +563,8 @@ class STIXTAXIIPlugin(PluginBase):
                 )
         except ValueError:
             return ValidationResult(
-                success=False, message="Invalid reputation provided.",
+                success=False,
+                message="Invalid reputation provided.",
             )
 
         try:
@@ -515,11 +577,13 @@ class STIXTAXIIPlugin(PluginBase):
                     "Plugin STIX/TAXII: Validation error occured Error: Invalid days provided."
                 )
                 return ValidationResult(
-                    success=False, message="Invalid Number of days provided.",
+                    success=False,
+                    message="Invalid Number of days provided.",
                 )
         except ValueError:
             return ValidationResult(
-                success=False, message="Invalid Number of days provided.",
+                success=False,
+                message="Invalid Number of days provided.",
             )
 
         return self._validate_collections(configuration)

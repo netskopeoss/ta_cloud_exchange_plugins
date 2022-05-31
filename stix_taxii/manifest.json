@@ -1,131 +1,129 @@
 {
-    "name": "STIX/TAXII Plugin",
-    "id": "stix_taxii",
-    "version": "1.0.0",
-    "description": "The STIX/TAXII plugin polls TAXII feeds and extracts observables from them. This plugin does not support sharing of indicators to TAXII feeds.",
-    "patch_supported": false,
-    "push_supported": false,
-    "configuration": [
+  "name": "STIX/TAXII Plugin",
+  "id": "stix_taxii",
+  "version": "2.0.0",
+  "description": "The STIX/TAXII plugin polls TAXII feeds and extracts observables from them. This plugin does not support sharing of indicators to TAXII feeds.",
+  "patch_supported": false,
+  "push_supported": false,
+  "configuration": [
+    {
+      "label": "STIX/TAXII Version",
+      "key": "version",
+      "type": "choice",
+      "choices": [
         {
-            "label": "STIX/TAXII Version",
-            "key": "version",
-            "type": "choice",
-            "choices": [
-                {
-                    "key": "1.1",
-                    "value": "1"
-                },
-                {
-                    "key": "2.0",
-                    "value": "2"
-                }
-            ],
-            "mandatory": true,
-            "default": "1"
+          "key": "1.1",
+          "value": "1"
         },
         {
-            "label": "Discovery URL",
-            "key": "discovery_url",
-            "type": "text",
-            "default": "",
-            "mandatory": true,
-            "description": "Discovery/Feed url of TAXII server."
+          "key": "2.0",
+          "value": "2.0"
         },
         {
-            "label": "Username",
-            "key": "username",
-            "type": "text",
-            "mandatory": false,
-            "description": "Username required for authentication if any."
-        },
-        {
-            "label": "Password",
-            "key": "password",
-            "type": "password",
-            "mandatory": false,
-            "description": "Password required for authentication if any."
-        },
-        {
-            "label": "Collection Names",
-            "key": "collection_names",
-            "type": "text",
-            "default": "",
-            "mandatory": false,
-            "description": "Collections (CSV) from which data need to fetch. Leave empty to fetch data from all of the collections."
-        },
-        {
-            "label": "Initial Range (in days)",
-            "key": "days",
-            "type": "number",
-            "mandatory": true,
-            "default": 7,
-            "description": "Number of days to pull the data for the initial run."
-        },
-        {
-            "label": "Type of Threat data to pull",
-            "key": "type",
-            "type": "choice",
-            "choices": [
-                {
-                    "key": "Both",
-                    "value": "both"
-                },
-                {
-                    "key": "Malware",
-                    "value": "malware"
-                },
-                {
-                    "key": "URL",
-                    "value": "url"
-                }
-            ],
-            "default": "both",
-            "mandatory": true,
-            "description": "Type of Threat data to pull. Allowed values are Both, Malware and URL(For Malsite data)."
-        },
-        {
-            "label": "Severity",
-            "key": "severity",
-            "type": "multichoice",
-            "choices": [
-                {
-                    "key": "Unknown",
-                    "value": "unknown"
-                },
-                {
-                    "key": "Low",
-                    "value": "low"
-                },
-                {
-                    "key": "Medium",
-                    "value": "medium"
-                },
-                {
-                    "key": "High",
-                    "value": "high"
-                },
-                {
-                    "key": "Critical",
-                    "value": "critical"
-                }
-            ],
-            "default": [
-                "critical",
-                "high",
-                "medium",
-                "low",
-                "unknown"
-            ],
-            "mandatory": false,
-            "description": "Only indicators with matching severity will be saved."
-        },
-        {
-            "label": "Reputation",
-            "key": "reputation",
-            "type": "number",
-            "mandatory": true,
-            "default": 5,
-            "description": "Only indicators with reputation equal to or greater than this will be saved."
+          "key": "2.1",
+          "value": "2.1"
         }
-    ]
+      ],
+      "mandatory": true,
+      "default": "1"
+    },
+    {
+      "label": "Discovery URL",
+      "key": "discovery_url",
+      "type": "text",
+      "default": "",
+      "mandatory": true,
+      "description": "Discovery/Feed url of TAXII server."
+    },
+    {
+      "label": "Username",
+      "key": "username",
+      "type": "text",
+      "mandatory": false,
+      "description": "Username required for authentication if any."
+    },
+    {
+      "label": "Password",
+      "key": "password",
+      "type": "password",
+      "mandatory": false,
+      "description": "Password required for authentication if any."
+    },
+    {
+      "label": "Collection Names",
+      "key": "collection_names",
+      "type": "text",
+      "default": "",
+      "mandatory": false,
+      "description": "Collections (CSV) from which data need to fetch. Leave empty to fetch data from all of the collections."
+    },
+    {
+      "label": "Initial Range (in days)",
+      "key": "days",
+      "type": "number",
+      "mandatory": true,
+      "default": 7,
+      "description": "Number of days to pull the data for the initial run."
+    },
+    {
+      "label": "Type of Threat data to pull",
+      "key": "type",
+      "type": "choice",
+      "choices": [
+        {
+          "key": "Both",
+          "value": "both"
+        },
+        {
+          "key": "Malware",
+          "value": "malware"
+        },
+        {
+          "key": "URL",
+          "value": "url"
+        }
+      ],
+      "default": "both",
+      "mandatory": true,
+      "description": "Type of Threat data to pull. Allowed values are Both, Malware and URL(For Malsite data)."
+    },
+    {
+      "label": "Severity",
+      "key": "severity",
+      "type": "multichoice",
+      "choices": [
+        {
+          "key": "Unknown",
+          "value": "unknown"
+        },
+        {
+          "key": "Low",
+          "value": "low"
+        },
+        {
+          "key": "Medium",
+          "value": "medium"
+        },
+        {
+          "key": "High",
+          "value": "high"
+        },
+        {
+          "key": "Critical",
+          "value": "critical"
+        }
+      ],
+      "default": ["critical", "high", "medium", "low", "unknown"],
+      "mandatory": false,
+      "description": "Only indicators with matching severity will be saved."
+    },
+    {
+      "label": "Reputation",
+      "key": "reputation",
+      "type": "number",
+      "mandatory": true,
+      "default": 5,
+      "description": "Only indicators with reputation equal to or greater than this will be saved."
+    }
+  ]
 }

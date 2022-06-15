@@ -1,0 +1,34 @@
+{
+  "name": "DigitalShadows",
+  "id": "digitalshadows",
+  "version": "1.0.0",
+  "description": "This plugin is used to fetch impersonating domains from Digital Shadows.",
+  "patch_supported": false,
+  "push_supported": false,
+  "configuration": [
+    {
+      "label": "API Key",
+      "key": "api_key",
+      "type": "text",
+      "mandatory": true,
+      "default": "",
+      "description": "Digital Shadows API key associated with your tenant."
+    },
+    {
+      "label": "API Secret",
+      "key": "api_secret",
+      "type": "password",
+      "mandatory": true,
+      "default": "",
+      "description": "Digital Shadows API secret associated with your tenant."
+    },
+    {
+      "label": "Searchlight Account ID",
+      "key": "searchlight_account_id",
+      "type": "text",
+      "mandatory": true,
+      "default": "",
+      "description": "Searchlight Account ID."
+    }
+  ]
+}

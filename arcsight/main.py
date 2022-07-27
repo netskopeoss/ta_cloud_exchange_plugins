@@ -131,7 +131,7 @@ class ArcSightPlugin(PluginBase):
         """
         headers = {}
         mapping_variables = {}
-        if data_type != 'webtx':
+        if data_type != "webtx":
             helper = AlertsHelper()
             tenant = helper.get_tenant_cls(self.source)
             mapping_variables = {"$tenant_name": tenant.name}
@@ -328,7 +328,14 @@ class ArcSightPlugin(PluginBase):
             try:
                 transformed_data.append(
                     cef_generator.get_cef_event(
-                        data, header, extension, data_type, subtype
+                        data,
+                        header,
+                        extension,
+                        data_type,
+                        subtype,
+                        self.configuration.get(
+                            "log_source_identifier", "netskopece"
+                        ),
                     )
                 )
             except EmptyExtensionError:
@@ -524,6 +531,21 @@ class ArcSightPlugin(PluginBase):
             return ValidationResult(
                 success=False,
                 message="Invalid ArcSight certificate mapping provided.",
+            )
+
+        if (
+            "log_source_identifier" not in configuration
+            or type(configuration["log_source_identifier"]) != str
+            or not configuration["log_source_identifier"].strip()
+            or " " in configuration["log_source_identifier"].strip()
+        ):
+            self.logger.error(
+                "ArcSight Plugin: Validation error occurred. Error: "
+                "Invalid Log Source Identifier found in the configuration parameters."
+            )
+            return ValidationResult(
+                success=False,
+                message="Invalid Log Source Identifier provided.",
             )
 
         # Validate Server connection.

@@ -53,9 +53,7 @@ class CEFGenerator(object):
         self.logger = logger
         self.cef_version = cef_version  # Version of CEF being used
         self.mapping = mapping  # Mapping file content
-        self.extension = collections.namedtuple(
-            "Extension", ("key_name", "sanitizer")
-        )
+        self.extension = collections.namedtuple("Extension", ("key_name", "sanitizer"))
         self.extension_converter = collections.namedtuple(
             "Extension", ("key_name", "converter")
         )
@@ -64,12 +62,10 @@ class CEFGenerator(object):
         )
         self._prefix_field_float_sanitizer = float_sanitizer()
         self._equals_escaper = escaper("=")
-        self._severity_sanitizer = str_sanitizer(
-            "Unknown|Low|Medium|High|Very-High"
-        )
+        self._severity_sanitizer = str_sanitizer("Unknown|Low|Medium|High|Very-High")
         self.valid_extensions = self._valid_extensions()
         self.extension_converters = self._type_converter()
-        self.delimiter = delimiter        
+        self.delimiter = delimiter
 
     def _type_converter(self):
         """To Parse the CEF transformation mapping and creates the dict for data type converters.
@@ -92,7 +88,7 @@ class CEFGenerator(object):
                                 key_name=field,
                                 converter=converters[
                                     field_mapping.get("transformation", "String")
-                                ]
+                                ],
                             )
             return field_converters
         except Exception as err:
@@ -124,7 +120,7 @@ class CEFGenerator(object):
                                 key_name=field,
                                 sanitizer=sanitizers[
                                     field_mapping.get("transformation", "String")
-                                ]
+                                ],
                             )
             return field_sanitizers
         except Exception as err:
@@ -149,9 +145,7 @@ class CEFGenerator(object):
             return self._severity_sanitizer(headers[header], header)
         return self._prefix_field_str_sanitizer(headers[header], header)
 
-    def log_invalid_header(
-        self, possible_headers, headers, data_type, subtype
-    ):
+    def log_invalid_header(self, possible_headers, headers, data_type, subtype):
         """Issues log in case of invalid header found in mappings.
 
         Args:
@@ -169,33 +163,14 @@ class CEFGenerator(object):
                     )
                 )
 
-    @staticmethod
-    def _get_hostname():
-        """To Fetch hostname if available, else fetches IP Address.
-
-        Returns:
-            Hostname
-        """
-        hostname = socket.gethostname()
-        if hostname:
-            return hostname
-
-        # Get IP Address
-        socket_obj = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        socket_obj.connect(("8.8.8.8", 80))  # NOSONAR
-        hostname = socket_obj.getsockname()[0]
-        socket_obj.close()
-
-        return hostname
-
     def webtx_timestamp(self, raw_data):
-        date = raw_data.get('date', None)
-        time = raw_data.get('time', None)
+        date = raw_data.get("date", None)
+        time = raw_data.get("time", None)
         if date and time:
             return f"{date}T{time}Z"
         return None
 
-    def get_cef_event(self, raw_data, headers, extensions, data_type, subtype):
+    def get_cef_event(self, raw_data, headers, extensions, data_type, subtype, log_source_identifier):
         """To Produce a CEF compliant message from the arguments.
 
         Args:
@@ -203,6 +178,7 @@ class CEFGenerator(object):
             subtype: subtype of data being transformed
             headers: Headers of CEF event
             extensions (dict): key-value pairs for event metadata.
+            log_source_identifier: prefix for the logs sent
         """
         extension_strs = {}
         for name, value in extensions.items():
@@ -221,9 +197,7 @@ class CEFGenerator(object):
             except Exception as err:
                 self.logger.error(
                     '[{}][{}]: An error occurred while generating CEF data for field: "{}". Error: {}. '
-                    "Field will be ignored".format(
-                        data_type, subtype, name, str(err)
-                    )
+                    "Field will be ignored".format(data_type, subtype, name, str(err))
                 )
                 continue
 
@@ -233,9 +207,7 @@ class CEFGenerator(object):
                 if isinstance(sanitized_value, str):
                     sanitized_value = self._equals_escaper(sanitized_value)
 
-                extension_strs[
-                    self.valid_extensions[name].key_name
-                ] = sanitized_value
+                extension_strs[self.valid_extensions[name].key_name] = sanitized_value
             except KeyError:
                 self.logger.error(
                     '[{}][{}]: An error occurred while generating CEF data for field: "{}". Could not '
@@ -246,9 +218,7 @@ class CEFGenerator(object):
             except Exception as err:
                 self.logger.error(
                     '[{}][{}]: An error occurred while generating CEF data for field: "{}". Error: {}. '
-                    "Field will be ignored".format(
-                        data_type, subtype, name, str(err)
-                    )
+                    "Field will be ignored".format(data_type, subtype, name, str(err))
                 )
 
         possible_headers = [
@@ -262,7 +232,7 @@ class CEFGenerator(object):
 
         self.log_invalid_header(possible_headers, headers, data_type, subtype)
 
-        hostname = self._get_hostname()
+        hostname = log_source_identifier
 
         # Append the CEF version
         cef_components = [
@@ -281,9 +251,7 @@ class CEFGenerator(object):
                         headers[header] = SEVERITY_MAP.get(
                             str(headers[header]).lower(), SEVERITY_UNKNOWN
                         )
-                    cef_components.append(
-                        self.get_header_value(header, headers)
-                    )
+                    cef_components.append(self.get_header_value(header, headers))
                 except Exception as err:
                     self.logger.error(
                         '[{}][{}]: An error occurred while generating CEF data for header field: "{}". Error: {}. '

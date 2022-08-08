@@ -1,3 +1,11 @@
+# 1.2.1
+## Changed
+- Updated the mapping file for timestamp related fields
+
+# 1.2.0
+## Added
+- Added Log Source Identifier as configurable field.
+
 # 1.1.1
 ## Added
 - Updated webTx mappings.

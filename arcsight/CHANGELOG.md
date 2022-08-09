@@ -1,3 +1,7 @@
+# 1.2.0
+## Added
+- Added Log Source Identifier as configurable field.
+
 # 1.1.1
 ## Added
 - Updated webTx mappings.

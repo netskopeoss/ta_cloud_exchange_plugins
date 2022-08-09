@@ -163,6 +163,8 @@ class JiraPlugin(PluginBase):
         # Set fields with nested structure
         body["fields"]["issuetype"] = {"name": issue_type}
         body["fields"]["project"] = {"id": project_id}
+        if "summary" in mappings:
+            body["fields"]["summary"] = body["fields"]["summary"].replace('\n', ' ')
         if "description" in mappings:
             body["fields"]["description"] = self._get_atlassian_document(
                 mappings["description"]

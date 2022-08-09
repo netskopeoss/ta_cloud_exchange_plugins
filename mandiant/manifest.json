@@ -1,0 +1,52 @@
+{
+    "name": "Mandiant",
+    "id": "mandiant",
+    "version": "1.0.0",
+    "description": "The Mandiant plugin fetches IOCs of the type URL, MD5, FQDN, IPV4 and IPV6 from from Mandiant platform. This plugin does not support sharing of Indicators to Mandiant. To access the plugin, you would need Mandiant key ID and key secret.",
+    "patch_supported": false,
+    "push_supported": false,
+    "configuration": [
+        {
+            "label": "Key ID",
+            "key": "key_id",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "APIv3_key for authentication."
+        },
+        {
+            "label": "Key Secret",
+            "key": "key_secret",
+            "type": "password",
+            "default": "",
+            "mandatory": true,
+            "description": "APIv3_secret for authentication."
+        },
+        {
+            "label": "Initial Range (in hours) ",
+            "key": "hours",
+            "type": "number",
+            "mandatory": true,
+            "default": 1,
+            "description": "Number of hours to pull the data for the initial run."
+        },
+        {
+            "label": "Enable Tagging",
+            "key": "enable_tagging",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Yes",
+                    "value": "Yes"
+                },
+                {
+                    "key": "No",
+                    "value": "No"
+                }
+            ],
+            "default": "No",
+            "mandatory": false,
+            "description": "Enable/Disable tagging functionality."
+        }
+    ]
+}

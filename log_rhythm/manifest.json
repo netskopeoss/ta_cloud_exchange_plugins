@@ -1,12 +1,13 @@
 {
     "name": "LogRhythm",
     "id": "log_rhythm",
-    "version": "1.1.1",
+    "version": "1.2.0",
     "mapping": "LogRhythm Default Mappings",
     "types": [
         "alerts",
         "events",
-        "webtx"
+        "webtx",
+        "logs"
     ],
     "description": "This plugin is used to ingest data to LogRhythm platform. To access the plugin, you would need the credentials of LogRhythm platform .",
     "configuration": [
@@ -69,6 +70,14 @@
             "default": "",
             "mandatory": false,
             "description": "certificate is required only for TLS protocol."
+        },
+        {
+            "label": "Log Source Identifier",
+            "key": "log_source_identifier",
+            "type": "text",
+            "default": "netskopece",
+            "mandatory": true,
+            "description": "This will be added as prefix to all the logs. (The log source identifier should not contain the whitespace)."
         }
     ]
 }

@@ -1,0 +1,74 @@
+{
+    "name": "AlienVault",
+    "id": "alienvault",
+    "version": "1.0.0",
+    "mapping": "AlienVault Default Mappings",
+    "types": [
+        "alerts",
+        "events",
+        "webtx"
+    ],
+    "description": "This plugin is used to ingest data to AlienVault platform. To access the plugin, you would need the credentials of AlienVault platform .",
+    "configuration": [
+        {
+            "label": "AlienVault Server",
+            "key": "alienvault_server",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "IP address/FQDN of AlienVault server in which data will be ingested."
+        },
+        {
+            "label": "AlienVault Format",
+            "key": "alienvault_format",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "CEF",
+                    "value": "CEF"
+                }
+            ],
+            "default": "CEF",
+            "mandatory": true,
+            "description": "Data format required to ingest data."
+        },
+        {
+            "label": "AlienVault Protocol",
+            "key": "alienvault_protocol",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "TLS",
+                    "value": "TLS"
+                },
+                {
+                    "key": "UDP",
+                    "value": "UDP"
+                },
+                {
+                    "key": "TCP",
+                    "value": "TCP"
+                }
+            ],
+            "default": "UDP",
+            "mandatory": true,
+            "description": "Protocol to be used while ingesting data."
+        },
+        {
+            "label": "AlienVault Port",
+            "key": "alienvault_port",
+            "type": "number",
+            "default": "",
+            "mandatory": true,
+            "description": "AlienVault port"
+        },
+        {
+            "label": "AlienVault Certificate",
+            "key": "alienvault_certificate",
+            "type": "textarea",
+            "default": "",
+            "mandatory": false,
+            "description": "certificate is required only for TLS protocol."
+        }
+    ]
+}

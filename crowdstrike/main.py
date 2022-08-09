@@ -67,6 +67,8 @@ INTERNAL_TYPES_TO_CROWDSTRIKE = {
 }
 
 
+PAGE_SIZE = 1000
+
 class CrowdStrikePlugin(PluginBase):
     """CrowdStrikePlugin class having concrete implementation for pulling and pushing threat information."""
 
@@ -182,6 +184,7 @@ class CrowdStrikePlugin(PluginBase):
                 json=json_payload,
                 verify=self.ssl_validation,
                 proxies=self.proxy,
+                timeout=60,
             )
             resp_json = self.handle_error(ioc_resp)
             if resp_json.get("errors"):
@@ -327,39 +330,47 @@ class CrowdStrikePlugin(PluginBase):
             ]
         elif threat_type == "URL":
             ioc_types = ["domain"]
-        query_params["limit"] = 9999
         ioc_ids = []
         for ioc_type in ioc_types:
-            filter_query = (
-                f"last_behavior:>'{last_run_time}'"
-                f"+behaviors.ioc_type:'{ioc_type}'"
-            )
-            query_params["filter"] = filter_query
-            headers = self.reload_auth_token(headers)
-            all_ioc_resp = requests.get(
-                query_endpoint,
-                headers=add_user_agent(headers),
-                params=query_params,
-                verify=self.ssl_validation,
-                proxies=self.proxy,
-            )
-            ioc_resp_json = self.handle_error(all_ioc_resp)
-            errors = ioc_resp_json.get("errors")
-            if errors:
-                err_msg = errors[0].get("message", "")
-                self.notifier.error(
-                    "Plugin: CrowdStrike Unable to Fetch Indicators, "
-                    f"Error: {err_msg}"
+            offset = 0
+            while True:
+                filter_query = (
+                    f"last_behavior:>'{last_run_time}'"
+                    f"+behaviors.ioc_type:'{ioc_type}'"
                 )
-                self.logger.error(
-                    "Plugin: CrowdStrike Unable to Fetch Indicators, "
-                    f"Error: {err_msg}"
+                query_params["limit"] = PAGE_SIZE
+                query_params["filter"] = filter_query
+                query_params["offset"] = offset
+                headers = self.reload_auth_token(headers)
+                all_ioc_resp = requests.get(
+                    query_endpoint,
+                    headers=add_user_agent(headers),
+                    params=query_params,
+                    verify=self.ssl_validation,
+                    proxies=self.proxy,
+                    timeout=60,
                 )
-                raise requests.HTTPError(
-                    f"Plugin: CrowdStrike Unable to Fetch Indicators, "
-                    f"Error: {err_msg}"
-                )
-            ioc_ids.extend(ioc_resp_json.get("resources", []))
+                ioc_resp_json = self.handle_error(all_ioc_resp)
+                errors = ioc_resp_json.get("errors")
+                if errors:
+                    err_msg = errors[0].get("message", "")
+                    self.notifier.error(
+                        "Plugin: CrowdStrike Unable to Fetch Indicators, "
+                        f"Error: {err_msg}"
+                    )
+                    self.logger.error(
+                        "Plugin: CrowdStrike Unable to Fetch Indicators, "
+                        f"Error: {err_msg}"
+                    )
+                    raise requests.HTTPError(
+                        f"Plugin: CrowdStrike Unable to Fetch Indicators, "
+                        f"Error: {err_msg}"
+                    )
+                resources = ioc_resp_json.get("resources", [])
+                offset += PAGE_SIZE
+                ioc_ids.extend(resources)
+                if len(resources) < PAGE_SIZE:
+                    break
         return ioc_ids
 
     def pull(self):
@@ -873,7 +884,8 @@ class CrowdStrikePlugin(PluginBase):
             data=auth_params,
             verify=self.ssl_validation,
             proxies=self.proxy,
-            headers=add_user_agent()
+            headers=add_user_agent(),
+            timeout=60,
         )
         auth_json = self.handle_error(resp)
         auth_errors = auth_json.get("errors")

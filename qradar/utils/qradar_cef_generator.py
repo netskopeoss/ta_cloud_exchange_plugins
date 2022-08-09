@@ -106,6 +106,35 @@ class CEFGenerator(object):
             Dict object having details of all the available CEF fields and its sanitizers
         """
         sanitizers = get_sanitizers()
+        
+        def custom_datetime_sanitizer():
+            """Wrap function to check given value is a valid date time instance.
+
+            Raises:
+                UDMTypeError in case of value other than datetime
+
+            Returns:
+                Function to sanitize the given datetime value
+            """
+
+            def sanitize(t, debug_name):
+                if not isinstance(t, datetime.datetime):
+                    raise Exception(
+                        "{}: Expected datetime, got {}".format(
+                            debug_name,
+                            type(t)
+                        )
+                    )
+                else:
+                    epoch = int(str(t.timestamp()).split(".")[0])
+                    return datetime.datetime.fromtimestamp(
+                        epoch,
+                        datetime.timezone.utc
+                    ).isoformat('T', 'seconds')
+
+            return sanitize
+
+        sanitizers["Time Stamp"] = custom_datetime_sanitizer()
 
         # Parse the transformation mapping and create key-sanitizer dict
         try:

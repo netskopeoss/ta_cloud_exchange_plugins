@@ -60,10 +60,12 @@ class AzureSentinelValidator(object):
                     "properties": {
                         "alerts": {"type": "object"},
                         "events": {"type": "object"},
+                        "webtx": {"type": "object"}
                     },
                     "anyOf": [
                         {"required": ["alerts"]},
                         {"required": ["events"]},
+                        {"required": ["webtx"]},
                     ],
                 }
             },

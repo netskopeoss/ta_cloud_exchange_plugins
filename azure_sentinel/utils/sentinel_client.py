@@ -62,6 +62,7 @@ class DataTypes(Enum):
 
     ALERT = "alerts"
     EVENT = "events"
+    WEBTX = "webtx"
 
 
 class AzureSentinelClient:
@@ -265,14 +266,18 @@ class AzureSentinelClient:
         self.data_length = len(data)
         self.data_type = data_type
 
+        log_type = self.configuration.get("alerts_log_type_name")
+        if data_type == DataTypes.WEBTX.value:
+            log_type = self.configuration.get("webtx_log_type_name")
+        elif data_type == DataTypes.EVENT.value:
+            log_type = self.configuration.get("events_log_type_name")
+
         try:
             self._post_data(
                 self.configuration.get("workspace_id"),
                 self.configuration.get("primary_key"),
                 json.dumps(data),
-                self.configuration.get("alerts_log_type_name")
-                if data_type == DataTypes.ALERT.value
-                else self.configuration.get("events_log_type_name"),
+                log_type,
             )
         except MaxRetriesExceededError as err:
             raise err

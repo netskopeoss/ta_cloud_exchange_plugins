@@ -316,6 +316,43 @@ class AzureSentinelPlugin(PluginBase):
                 "Log Type Name should contain atleast 1 letter.",
             )
 
+        if (
+            "webtx_log_type_name" not in configuration
+            or type(configuration["webtx_log_type_name"]) != str
+            or not configuration["webtx_log_type_name"].strip()
+        ):
+            self.logger.error(
+                "Azure Sentinel Plugin: Validation error occurred. Error: "
+                "Invalid WebTX Log Type Name in the configuration parameters."
+            )
+            return ValidationResult(
+                success=False, message="Invalid WebTX Log Type Name provided."
+            )
+
+        if len(configuration["webtx_log_type_name"]) > 100:
+            self.logger.error(
+                "Azure Sentinel Plugin: Validation error occurred. Error: "
+                "Log Type Name for webtx should not exceed the length of 100 characters."
+            )
+            return ValidationResult(
+                success=False,
+                message="Log Type Name for webtx should not exceed the length of 100 characters.",
+            )
+
+        if not re.match(
+            r"^[a-zA-Z0-9_]+$", str(configuration["webtx_log_type_name"])
+        ) or re.match(r"^[\d_]+$", str(configuration["webtx_log_type_name"])):
+            self.logger.error(
+                "Azure Sentinel Plugin: Validation error occurred. Error: "
+                "Log Type Name for webtx should only contain letters, numbers and underscores. "
+                "Log Type Name should contain atleast 1 letter."
+            )
+            return ValidationResult(
+                success=False,
+                message="Log Type Name for webtx should only contain letters, numbers and underscores. "
+                "Log Type Name should contain atleast 1 letter.",
+            )
+
         mappings = self.mappings.get("jsonData", None)
         mappings = json.loads(mappings)
         if type(mappings) != dict or not sentinel_validator.validate_mappings(

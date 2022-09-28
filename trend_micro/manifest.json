@@ -1,0 +1,76 @@
+{
+    "name": "Trend Micro",
+    "id": "trend_micro",
+    "version": "1.0.0",
+    "description": "The Trend Micro plugin retrieves information about domains, file SHA-256 values, IP addresses, and URLs that are in the Suspicious Object List. This plugin can share the indicator domains, file SHA-256 values, IP addresses, or URLs to Trend Micro's Suspicious Object list or Suspicious Object Exception list. For suspicious objects added through third-party intelligence and manual operations, there is a maximum limit for each object type. Refer [this](https://docs.trendmicro.com/en-us/enterprise/trend-micro-vision-one/threat-intelligence-/suspicious-object-ma/user-defined-suspici.aspx) page for more details. To configure the plugin, you will need the Authentication Token. For more details visit [this](https://docs.trendmicro.com/en-us/enterprise/trend-micro-vision-one/administrative-setti/administration/user-accounts/obtaining-api-keys-f.aspx) page.",
+    "patch_supported": true,
+    "configuration": [
+        {
+            "label": "Data Region",
+            "key": "base_url",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Australia (api.au.xdr.trendmicro.com)",
+                    "value": "https://api.au.xdr.trendmicro.com"
+                },
+                {
+                    "key": "European Union (api.eu.xdr.trendmicro.com)",
+                    "value": "https://api.eu.xdr.trendmicro.com"
+                },
+                {
+                    "key": "India (api.in.xdr.trendmicro.com)",
+                    "value": "https://api.in.xdr.trendmicro.com"
+                },
+                {
+                    "key": "Japan (api.xdr.trendmicro.co.jp)",
+                    "value": "https://api.xdr.trendmicro.co.jp"
+                },
+                {
+                    "key": "Singapore (api.sg.xdr.trendmicro.com)",
+                    "value": "https://api.sg.xdr.trendmicro.com"
+                },
+                {
+                    "key": "United States (api.xdr.trendmicro.com)",
+                    "value": "https://api.xdr.trendmicro.com"
+                }
+            ],
+            "mandatory": true,
+            "description": "Base URL on the basis of data regions from which fetch the data."
+        },
+        {
+            "label": "Authentication Token",
+            "key": "token",
+            "type": "password",
+            "default": "",
+            "mandatory": true,
+            "description": "Authentication Token to access Trend Micro Vision One apis."
+        },
+        {
+            "label": "Enable Polling",
+            "key": "is_pull_required",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Yes",
+                    "value": "Yes"
+                },
+                {
+                    "key": "No",
+                    "value": "No"
+                }
+            ],
+            "default": "Yes",
+            "mandatory": true,
+            "description": "Enable/Disable polling data from Trend Micro."
+        },
+        {
+            "label": "Initial Range (in days)",
+            "key": "initial_range",
+            "type": "number",
+            "mandatory": true,
+            "default": 7,
+            "description": "Number of days to pull the data for the initial run."
+        }
+    ]
+}

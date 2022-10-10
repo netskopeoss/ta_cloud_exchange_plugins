@@ -1,3 +1,7 @@
+# 1.0.3
+## Added
+- Added support for labels while creating issues.
+
 # 1.0.2
 ## Fixed
 - Fixed newline error while adding summary in queue.

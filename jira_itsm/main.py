@@ -35,6 +35,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 from typing import List, Dict
 import requests
+import json
 from requests.auth import HTTPBasicAuth
 
 from netskope.integrations.itsm.plugin_base import (
@@ -158,18 +159,33 @@ class JiraPlugin(PluginBase):
             )
         create_meta = create_meta.get("projects")[0].get("issuetypes")[0]
         mappings = self._filter_mappings(create_meta, mappings)
-
         body = {"fields": mappings}
         # Set fields with nested structure
         body["fields"]["issuetype"] = {"name": issue_type}
         body["fields"]["project"] = {"id": project_id}
         if "summary" in mappings:
-            body["fields"]["summary"] = body["fields"]["summary"].replace('\n', ' ')
+            body["fields"]["summary"] = body["fields"]["summary"].replace(
+                "\n", " "
+            )
         if "description" in mappings:
             body["fields"]["description"] = self._get_atlassian_document(
                 mappings["description"]
             )
-
+        if "labels" in body["fields"]:
+            try:
+                body["fields"]["labels"] = [
+                    label.strip()
+                    for label in json.loads(body["fields"]["labels"])
+                ]
+            except json.decoder.JSONDecodeError:
+                body["fields"]["labels"] = [
+                    label.strip()
+                    for label in body["fields"]["labels"].split(",")
+                ]
+            except Exception as err:
+                self.logger.error(
+                    f"JIRA ITSM: Error occurred while parsing label: {err}"
+                )
         headers = {
             "Accept": "application/json",
             "Content-Type": "application/json",
@@ -267,9 +283,7 @@ class JiraPlugin(PluginBase):
             data = mappings["comment"]
         else:  # default
             data = f"New alert received at {str(alert.timestamp)}."
-        comment = {
-            "body": self._get_atlassian_document(data)
-        }
+        comment = {"body": self._get_atlassian_document(data)}
         response = requests.post(
             f"{params['url'].strip('/')}/rest/api/3/issue/{task.id}/comment",
             headers=add_user_agent(),

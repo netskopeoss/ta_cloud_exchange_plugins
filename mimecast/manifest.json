@@ -1,8 +1,8 @@
 {
     "name": "Mimecast Plugin",
     "id": "mimecast",
-    "version": "1.0.0",
-    "description": "This plugin is used to fetch File hashes from Mimecast. This plugin can share the indicator Hash to Mimecast. To access the plugin, you would need an API application on Mimecast and user credentials. Refer these Mimecast guides for detailed steps: https://www.mimecast.com/tech-connect/authentication-scripts-server-apps/ and https://community.mimecast.com/s/article/Managing-API-Applications-505230018.",
+    "version": "1.1.0",
+    "description": "This plugin is used to fetch File hashes and URL from Mimecast. This plugin can share Hash and URL type of IoCs to Mimecast. To access the plugin, you would need an API application on Mimecast and user credentials. Refer these Mimecast guides [here](https://integrations.mimecast.com/documentation/) for detailed steps.",
     "patch_supported": true,
     "push_supported": true,
     "configuration": [
@@ -54,29 +54,36 @@
                 {
                     "key": "Malware Grid",
                     "value": "malware_grid"
+                },
+                {
+                    "key": "Malsite",
+                    "value": "malsite"
                 }
             ],
             "mandatory": false,
             "default": "malware_customer",
-            "description": "The scope of data to fetch, either for the account, or for the regions grid."
+            "description": "The scope of data to fetch, from the account, region grid and malsite."
         },
         {
-            "label": "Push Enabled",
-            "key": "push_enabled",
-            "type": "choice",
+            "label": "Types of Malware to Pull",
+            "key": "indicator_type",
+            "type": "multichoice",
             "choices": [
                 {
-                    "key": "Yes",
-                    "value": "yes"
+                    "key": "MD5",
+                    "value": "MD5"
                 },
                 {
-                    "key": "No",
-                    "value": "no"
+                    "key": "SHA256",
+                    "value": "SHA256"
                 }
             ],
-            "mandatory": true,
-            "default": "yes",
-            "description": "Whether to push indicators to Mimecast or not."
+            "mandatory": false,
+            "default": [
+                "MD5",
+                "SHA256"
+            ],
+            "description": "Malware indicators of selected types will be extracted from Mimecast malware alerts and stored on CTE, in customer and grid."
         },
         {
             "label": "Initial Range (in days)",

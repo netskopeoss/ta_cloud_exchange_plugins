@@ -64,6 +64,8 @@ class MandiantPlugin(PluginBase):
                     "Plugin: Mandiant, "
                     "Exception occurred while parsing JSON response."
                 )
+        if resp.status_code == 204:
+            return {}
         elif resp.status_code == 400:
             auth_reponse = resp.text
             result_dict = json.loads(auth_reponse)
@@ -152,11 +154,16 @@ class MandiantPlugin(PluginBase):
                 self.logger.error(f"Mandiant Error: {e}")
             else:
                 tag_names.append(tag.strip())
-        return tag_names
+        tag_names = set(tag_names)
+        return list(tag_names)
 
     def get_indicators(self, headers):
         indicator_list = []
         query_endpoint = "https://api.intelligence.fireeye.com/v4/indicator"
+        if self.configuration.get("exclude_osint") == "Yes":
+            self.configuration["exclude_osint"] = True
+        else:
+            self.configuration["exclude_osint"] = False
         if not self.last_run_at:
             start_time = datetime.datetime.now() - timedelta(
                 hours=int(self.configuration["hours"])
@@ -170,6 +177,8 @@ class MandiantPlugin(PluginBase):
             "start_epoch": int(epoch_time),
             "end_epoch": int(current_time),
             "limit": 1000,
+            "gte_mscore": self.configuration.get("mscore", 50),
+            "exclude_osint": self.configuration["exclude_osint"]
         }
         while True:
             try:
@@ -249,8 +258,9 @@ class MandiantPlugin(PluginBase):
                 if "next" not in resp_json or "next" == "":
                     break
                 else:
-                    query_params["start_epoch"] = ""
-                    query_params["end_epoch"] = ""
+                    if "start_epoch" and "end_epoch" in query_params.keys():
+                        del query_params["start_epoch"]
+                        del query_params["end_epoch"]
                     query_params["next"] = resp_json["next"]
 
             except requests.ConnectionError:
@@ -400,12 +410,37 @@ class MandiantPlugin(PluginBase):
                 message="Error: Type of Initial Range should be "
                         "non-zero positive integer less than or equal to 24.",
             )
-
+        if (
+            "mscore" not in data
+            or not isinstance(data["mscore"], int)
+            or not (0 <= data["mscore"] <= 100)
+        ):
+            self.logger.error(
+                "Plugin: Mandiant, Validation error occurred. "
+                "Error: Value of Minimum Indicator Confidential Score (IC-Score) "
+                "should be in range of 0 to 100."
+            )
+            return ValidationResult(
+                success=False,
+                message="Invalid IC-Score value provided.",
+            )
+        if "exclude_osint" not in data or data[
+            "exclude_osint"
+        ] not in ["Yes", "No"]:
+            self.logger.error(
+                "Mandiant Plugin: "
+                "Value of Exclude Open Source indicators should be 'Yes' or 'No'."
+            )
+            return ValidationResult(
+                success=False,
+                message="Invalid value for 'Exclude Open Source indicators' provided."
+                "Allowed values are 'Yes', or 'No'.",
+            )
         if "enable_tagging" not in data or data[
             "enable_tagging"
         ] not in ["Yes", "No"]:
             self.logger.error(
-                "ThreatConnect Plugin: "
+                "Mandiant Plugin: "
                 "Value of Enable Tagging should be 'Yes' or 'No'."
             )
             return ValidationResult(

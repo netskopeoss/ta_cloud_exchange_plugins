@@ -1,7 +1,7 @@
 {
     "name": "Mandiant",
     "id": "mandiant",
-    "version": "1.0.0",
+    "version": "1.0.2",
     "description": "The Mandiant plugin fetches IOCs of the type URL, MD5, FQDN, IPV4 and IPV6 from from Mandiant platform. This plugin does not support sharing of Indicators to Mandiant. To access the plugin, you would need Mandiant key ID and key secret.",
     "patch_supported": false,
     "push_supported": false,
@@ -21,6 +21,32 @@
             "default": "",
             "mandatory": true,
             "description": "APIv3_secret for authentication."
+        },
+        {
+            "label": "Minimum Indicator Confidential Score (IC-Score)",
+            "key": "mscore",
+            "type": "number",
+            "default": 50,
+            "mandatory": true,
+            "description": "Enter the IC-Score from the range 0 to 100. Only the indicators with IC-Score greater than or equal to the specified score will be fetched."
+        },
+        {
+            "label": "Exclude Open Source Indicators",
+            "key": "exclude_osint",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Yes",
+                    "value": "Yes"
+                },
+                {
+                    "key": "No",
+                    "value": "No"
+                }
+            ],
+            "default": "Yes",
+            "mandatory": false,
+            "description": "Exclude open source indicator from Mandiant."
         },
         {
             "label": "Initial Range (in hours) ",

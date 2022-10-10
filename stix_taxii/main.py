@@ -38,7 +38,7 @@ import tempfile
 from urllib.parse import urlparse
 from datetime import datetime, timedelta
 import pytz
-from cabby import create_client
+from cabby import create_client, exceptions
 from .lib.taxii2client.v20 import ApiRoot as ApiRoot20, as_pages as as_pages20
 from .lib.taxii2client.v21 import ApiRoot as ApiRoot21, as_pages as as_pages21
 from stix.core import STIXPackage
@@ -121,7 +121,7 @@ class STIXTAXIIPlugin(PluginBase):
             if set(selected_collections) - set(all_collections):
                 self.logger.error(
                     f"Plugin STIX/TAXII: Following collections could not be "
-                    f"found - {', '.join(set(selected_collections) - set(all_collections))}"
+                    f"found - {', '.join(set(selected_collections) - set(all_collections))}."
                 )
             return set(selected_collections).intersection(set(all_collections))
 
@@ -160,15 +160,20 @@ class STIXTAXIIPlugin(PluginBase):
     def _extract_from_indicator(self, package_indicators):
         """Extract ioc from indicators."""
         indicators = []
+        is_skipped = False
         for indicator in package_indicators:
             for observable in indicator.observables:
                 data = self._extract_fields_from_indicator(
                     indicator, observable
                 )
                 if not observable.object_:
+                    is_skipped = True
                     continue
                 properties = observable.object_.properties
-                if type(properties) is File and properties.hashes.md5:
+                if not properties:
+                    is_skipped = True
+                    continue
+                if type(properties) is File and properties.hashes and properties.hashes.md5:
                     indicators.append(
                         Indicator(
                             value=str(properties.hashes.md5),
@@ -181,7 +186,7 @@ class STIXTAXIIPlugin(PluginBase):
                             ),
                         )
                     )
-                if type(properties) is File and properties.hashes.sha256:
+                elif type(properties) is File and properties.hashes and properties.hashes.sha256:
                     indicators.append(
                         Indicator(
                             value=str(properties.hashes.sha256),
@@ -194,7 +199,7 @@ class STIXTAXIIPlugin(PluginBase):
                             ),
                         )
                     )
-                if type(properties) in [URI, DomainName]:
+                elif type(properties) in [URI, DomainName] and properties.value:
                     indicators.append(
                         Indicator(
                             value=str(properties.value),
@@ -207,16 +212,23 @@ class STIXTAXIIPlugin(PluginBase):
                             ),
                         )
                     )
-        return indicators
+                else:
+                    is_skipped = True
+        return indicators, is_skipped
 
     def _extract_from_observables(self, observables):
         """Extract iocs from observables."""
         indicators = []
+        is_skipped = False
         for observable in observables:
             if not observable.object_:
+                is_skipped = True
                 continue
             properties = observable.object_.properties
-            if type(properties) is File and properties.hashes.md5:
+            if not properties:
+                is_skipped = True
+                continue
+            if type(properties) is File and properties.hashes and properties.hashes.md5:
                 indicators.append(
                     Indicator(
                         value=str(properties.hashes.md5),
@@ -225,7 +237,7 @@ class STIXTAXIIPlugin(PluginBase):
                         comments=str(observable.description or ""),
                     )
                 )
-            if type(properties) is File and properties.hashes.sha256:
+            elif type(properties) is File and properties.hashes and properties.hashes.sha256:
                 indicators.append(
                     Indicator(
                         value=str(properties.hashes.sha256),
@@ -234,7 +246,7 @@ class STIXTAXIIPlugin(PluginBase):
                         comments=str(observable.description or ""),
                     )
                 )
-            if type(properties) in [URI, DomainName]:
+            elif type(properties) in [URI, DomainName] and properties.value:
                 indicators.append(
                     Indicator(
                         value=str(properties.value),
@@ -242,7 +254,9 @@ class STIXTAXIIPlugin(PluginBase):
                         comments=str(observable.description or ""),
                     )
                 )
-        return indicators
+            else:
+                is_skipped = True
+        return indicators, is_skipped
 
     def _extract_indicators(self, package):
         """Extract iocs from a STIX package."""
@@ -251,7 +265,7 @@ class STIXTAXIIPlugin(PluginBase):
         elif package.observables:
             return self._extract_from_observables(package.observables)
         else:
-            return []
+            return [], True
 
     def _build_client(self, configuration):
         parsed_url = urlparse(configuration["discovery_url"].strip())
@@ -271,13 +285,17 @@ class STIXTAXIIPlugin(PluginBase):
                 use_https=True if parsed_url.scheme == "https" else False,
                 discovery_path=discovery_url,
             )
-        client.set_auth(verify_ssl=self.ssl_validation)
         client.set_proxies(self.proxy)
 
         if configuration["username"].strip() and configuration["password"]:
             client.set_auth(
                 username=configuration["username"].strip(),
                 password=configuration["password"],
+                verify_ssl=self.ssl_validation
+            )
+        else:
+            client.set_auth(
+                verify_ssl=self.ssl_validation
             )
         return client
 
@@ -290,44 +308,72 @@ class STIXTAXIIPlugin(PluginBase):
                 break
         if collection_uri is None:
             self.logger.error(
-                "Plugin STIX/TAXII: failed to find collection management."
+                "Plugin STIX/TAXII: Failed to find collection management."
             )
             return None
         # to get collection form server
         return [c.name for c in client.get_collections(uri=collection_uri)]
 
-    def pull_1x(self, start_time):
+    def pull_1x(self, configuration, start_time):
         """Pull implementation for version 1.x."""
         self._ids = {}
-        client = self._build_client(self.configuration)
+        client = self._build_client(configuration)
         collections = self._get_collections(client)
         filtered_collections = self._filter_collections(
-            collections, self.configuration["collection_names"]
+            collections, configuration["collection_names"]
         )
         self.logger.info(
-            f"Plugin STIX/TAXII: Following collections will be fetched - {', '.join(filtered_collections)}"
+            f"Plugin STIX/TAXII: Following collections will be fetched - {', '.join(filtered_collections)}."
         )
         indicators = []
 
         for collection in filtered_collections:
+            self.logger.info(
+                f"Plugin STIX/TAXII: Parsing collection - {collection}."
+            )
             content_blocks = client.poll(
                 collection_name=collection,
                 begin_date=start_time,
             )
+            block_id = 1
             for block in content_blocks:
-                temp = tempfile.TemporaryFile()
-                temp.write(block.content)
-                temp.seek(0)
-                stix_package = STIXPackage.from_xml(temp)
-                extracted = self._extract_indicators(stix_package)
-                indicators = indicators + extracted
-                temp.close()
+                try:
+                    temp = tempfile.TemporaryFile()
+                    temp.write(block.content)
+                    temp.seek(0)
+                    stix_package = STIXPackage.from_xml(temp)
+                    extracted, is_skipped = self._extract_indicators(stix_package)
+                    indicators += extracted
+                    if is_skipped is True:
+                        self.logger.info(
+                            f"Plugin STIX/TAXII: Block-{block_id} parsed, {len(extracted)} indicator(s) pulled, some indicators might have been discarded."
+                        )
+                    else:
+                        self.logger.info(
+                            f"Plugin STIX/TAXII: Block-{block_id} parsed, {len(extracted)} indicator(s) pulled."
+                        )
+                    temp.close()
+                except Exception as e:
+                    self.logger.info(
+                        f"Plugin STIX/TAXII: Couldn't parse Block-{block_id}."
+                    )
+                    self.logger.error(
+                        f"Plugin STIX/TAXII: Following exception occured while extracting indicator(s) from Block-{block_id} - {repr(e)}"
+                    )
+                    block_id += 1
+                    continue
+                block_id += 1
         return indicators
 
     def _extract_observables_2x(self, pattern: str, data: dict):
         observables = []
+        is_skipped = False
         for kind in OBSERVABLE_REGEXES:
             matches = re.findall(kind["regex"], pattern, re.IGNORECASE)
+            if len(matches) == 0:
+                is_skipped = is_skipped or False
+            else:
+                is_skipped = is_skipped or True
             for match in matches:
                 if (
                     kind["type"] == IndicatorType.SHA256
@@ -344,12 +390,14 @@ class STIXTAXIIPlugin(PluginBase):
                     observables.append(
                         Indicator(value=match[1], type=kind["type"], **data)
                     )
-        return observables
+        return observables, not(is_skipped)
 
     def _extract_indicators_2x(self, objects):
         indicators = []
+        is_skipped = False
         for o in objects:
             if o.get("type").lower() != "indicator":
+                is_skipped = True
                 continue
             data = {
                 "comments": o.get("description") or o.get("pattern") or "",
@@ -357,111 +405,143 @@ class STIXTAXIIPlugin(PluginBase):
                 "firstSeen": self._str_to_datetime(o.get("created")),
                 "lastSeen": self._str_to_datetime(o.get("created")),
             }
-            indicators = indicators + self._extract_observables_2x(
+            extracted, is_skipped = self._extract_observables_2x(
                 o.get("pattern", ""), data
             )
-        return indicators
+            indicators += extracted
+        return indicators, is_skipped
 
-    def pull_20x(self, start_time):
+    def pull_20x(self, configuration, start_time):
         """Pull implementation for version 2.x."""
         indicators = []
         apiroot = ApiRoot20(
-            self.configuration["discovery_url"].strip(),
-            user=self.configuration["username"].strip(),
-            password=self.configuration["password"],
+            configuration["discovery_url"].strip(),
+            user=configuration["username"].strip(),
+            password=configuration["password"],
             verify=self.ssl_validation,
             proxies=self.proxy,
         )
         all_collections = [c.title for c in apiroot.collections]
         filtered_collections = self._filter_collections(
-            all_collections, self.configuration["collection_names"]
+            all_collections, configuration["collection_names"]
         )
         self.logger.info(
-            f"Plugin STIX/TAXII: Following collections will be fetched - {', '.join(filtered_collections)}"
+            f"Plugin STIX/TAXII: Following collections will be fetched - {', '.join(filtered_collections)}."
         )
         for collection in filter(
             lambda x: x.title in filtered_collections, apiroot.collections
         ):
+            bundle_id = 1
             try:
+                self.logger.info(
+                    f"Plugin STIX/TAXII: Parsing collection - {collection.title}."
+                )
                 for bundle in as_pages20(
                     collection.get_objects,
                     per_request=100,
                     added_after=start_time,
                 ):
-                    indicators = indicators + self._extract_indicators_2x(
+                    extracted, is_skipped = self._extract_indicators_2x(
                         bundle.get("objects", [])
                     )
+                    indicators += extracted
+                    if is_skipped is True:
+                        self.logger.info(
+                            f"Plugin STIX/TAXII: Bundle-{bundle_id} parsed, {len(extracted)} indicator(s) pulled, some indicators might have been discarded."
+                        )
+                    else:
+                        self.logger.info(
+                            f"Plugin STIX/TAXII: Bundle-{bundle_id} parsed, {len(extracted)} indicator(s) pulled."
+                        )
+                    bundle_id += 1
             except KeyError:
                 # if there is no data in a collection
                 pass
         return indicators
 
-    def pull_21x(self, start_time):
+    def pull_21x(self, configuration, start_time):
         """Pull implementation for version 2.x."""
         indicators = []
         apiroot = ApiRoot21(
-            self.configuration["discovery_url"].strip(),
-            user=self.configuration["username"].strip(),
-            password=self.configuration["password"],
+            configuration["discovery_url"].strip(),
+            user=configuration["username"].strip(),
+            password=configuration["password"],
             verify=self.ssl_validation,
             proxies=self.proxy,
         )
         all_collections = [c.title for c in apiroot.collections]
         filtered_collections = self._filter_collections(
-            all_collections, self.configuration["collection_names"]
+            all_collections, configuration["collection_names"]
         )
         self.logger.info(
-            f"Plugin STIX/TAXII: Following collections will be fetched - {', '.join(filtered_collections)}"
+            f"Plugin STIX/TAXII: Following collections will be fetched - {', '.join(filtered_collections)}."
         )
         for collection in filter(
             lambda x: x.title in filtered_collections, apiroot.collections
         ):
+            bundle_id = 1
             try:
+                self.logger.info(
+                    f"Plugin STIX/TAXII: Parsing collection - {collection.title}."
+                )
                 for bundle in as_pages21(
                     collection.get_objects,
                     per_request=100,
                     added_after=start_time,
                 ):
-                    indicators = indicators + self._extract_indicators_2x(
+                    extracted, is_skipped = self._extract_indicators_2x(
                         bundle.get("objects", [])
                     )
+                    indicators += extracted
+                    if is_skipped is True:
+                        self.logger.info(
+                            f"Plugin STIX/TAXII: Bundle-{bundle_id} parsed, {len(extracted)} indicator(s) pulled, some indicators might have been discarded."
+                        )
+                    else:
+                        self.logger.info(
+                            f"Plugin STIX/TAXII: Bundle-{bundle_id} parsed, {len(extracted)} indicator(s) pulled."
+                        )
+                    bundle_id += 1
             except KeyError:
                 # if there is no data in a collection
                 pass
         return indicators
-
-    def pull(self):
-        """Pull indicators from TAXII server."""
-        if not self.last_run_at:
+    
+    def _pull(self, configuration, last_run_at):
+        if not last_run_at:
             start_time = pytz.utc.localize(
                 datetime.now()
-                - timedelta(days=int(self.configuration["days"]))
+                - timedelta(days=int(configuration["days"]))
             )
         else:
-            start_time = pytz.utc.localize(self.last_run_at)
-        if self.configuration["version"] == "1":
-            indicators = self.pull_1x(start_time)
-        elif self.configuration["version"] == "2.0":
-            indicators = self.pull_20x(start_time)
-        elif self.configuration["version"] == "2.1":
-            indicators = self.pull_21x(start_time)
+            start_time = pytz.utc.localize(last_run_at)
+        if configuration["version"] == "1":
+            indicators = self.pull_1x(configuration, start_time)
+        elif configuration["version"] == "2.0":
+            indicators = self.pull_20x(configuration, start_time)
+        elif configuration["version"] == "2.1":
+            indicators = self.pull_21x(configuration, start_time)
         return list(
             filter(
-                lambda x: x.severity.value in self.configuration["severity"]
-                and x.reputation >= int(self.configuration["reputation"])
+                lambda x: x.severity.value in configuration["severity"]
+                and x.reputation >= int(configuration["reputation"])
                 and (
                     (
                         x.type in [IndicatorType.SHA256, IndicatorType.MD5]
-                        and self.configuration["type"] in ["both", "malware"]
+                        and configuration["type"] in ["both", "malware"]
                     )
                     or (
                         x.type is IndicatorType.URL
-                        and self.configuration["type"] in ["both", "url"]
+                        and configuration["type"] in ["both", "url"]
                     )
                 ),
                 indicators,
             )
         )
+
+    def pull(self):
+        """Pull indicators from TAXII server."""
+        return self._pull(self.configuration, self.last_run_at)
 
     def _validate_collections(self, configuration):
         try:
@@ -498,11 +578,49 @@ class STIXTAXIIPlugin(PluginBase):
             return ValidationResult(
                 success=True, message="Validated successfully."
             )
+        except exceptions.UnsuccessfulStatusError as ex:
+            if ex.status == 'UNAUTHORIZED':
+                self.logger.error(f"Plugin STIX/TAXII: {repr(ex)}")
+                return ValidationResult(
+                    success=False,
+                    message="Invalid/Blank Username/Password provided.",
+                )
+            else:
+                self.logger.error(f"Plugin STIX/TAXII: {repr(ex)}")
+                return ValidationResult(
+                    success=False, message="Check logs for more details."
+                )
         except Exception as ex:
             self.logger.error(f"Plugin STIX/TAXII: {repr(ex)}")
             return ValidationResult(
                 success=False,
                 message="Could not fetch the collection list from the server. Check all of the parameters.",
+            )
+    
+    def _validate_uname_pass(self, configuration):
+        try:
+            self._pull(configuration, datetime.now())
+        except exceptions.UnsuccessfulStatusError as ex:
+            if ex.status == 'UNAUTHORIZED':
+                self.logger.error(f"Plugin STIX/TAXII: {repr(ex)}")
+                return ValidationResult(
+                    success=False,
+                    message="Invalid/Blank Username/Password provided.",
+                )
+            else:
+                self.logger.error(f"Plugin STIX/TAXII: {repr(ex)}")
+                return ValidationResult(
+                    success=False, message="Check logs for more details."
+                )
+        except Exception as ex:
+            self.logger.error(f"Plugin STIX/TAXII: {repr(ex)}")
+            return ValidationResult(
+                success=False,
+                message="Check logs for more details.",
+            )
+        else:
+            return ValidationResult(
+                success=True, message="Validated successfully."
             )
 
     def validate(self, configuration):
@@ -542,7 +660,7 @@ class STIXTAXIIPlugin(PluginBase):
             return ValidationResult(
                 success=False,
                 message=(
-                    "Invalid value for 'Type of Threat data to pull' provided. "
+                    "Invalid value for 'Type of Threat data to pull' provided."
                     "Allowed values are 'Both', 'Malware' or 'URL'."
                 ),
             )
@@ -585,8 +703,18 @@ class STIXTAXIIPlugin(PluginBase):
                 success=False,
                 message="Invalid Number of days provided.",
             )
-
-        return self._validate_collections(configuration)
+        
+        validate_collections = self._validate_collections(configuration)
+        validate_uname_pass = self._validate_uname_pass(configuration)
+        
+        if validate_collections.success == False:
+            return validate_collections
+        elif validate_uname_pass.success == False:
+            return validate_uname_pass
+        
+        return ValidationResult(
+            success=True, message="Validated successfully."
+        )
 
     def get_actions(self):
         """Get available actions."""

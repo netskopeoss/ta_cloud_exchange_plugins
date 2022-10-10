@@ -57,9 +57,9 @@ from .lib.notifiers.utils import requests as notifier_requests
 
 
 MAPPED_FIELDS = {
-    "email": ["message", "subject"],
+    "email": ["message", "subject", "to_"],
     "gitter": ["message"],
-    "gmail": ["message", "subject"],
+    "gmail": ["message", "subject", "to_"],
     "hipchat": ["message"],
     "join": ["message", "clipboard", "title"],
     "mailgun": ["message", "html", "subject"],
@@ -225,6 +225,12 @@ class NotifierPlugin(PluginBase):
             "mappings": [
                 FieldMapping(
                     extracted_field="custom_message",
+                    custom_message="$user",
+                    destination_field=field,
+                )
+                if field == "to_"
+                else FieldMapping(
+                    extracted_field="custom_message",
                     custom_message="",
                     destination_field=field,
                 )
@@ -248,7 +254,7 @@ class NotifierPlugin(PluginBase):
                     continue
                 if key in MAPPED_FIELDS.get(
                     platform, []
-                ) or key in EXCLUDED_FIELDS.get(platform, []):
+                    ) or key in EXCLUDED_FIELDS.get(platform, []):
                     continue
                 keys.add(key)
                 if val.get("type") == "string":

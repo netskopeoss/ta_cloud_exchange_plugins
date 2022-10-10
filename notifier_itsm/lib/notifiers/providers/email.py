@@ -2,10 +2,15 @@ import getpass
 import mimetypes
 import smtplib
 import socket
+import re
 from email.message import EmailMessage
 from email.utils import formatdate
 from pathlib import Path
-from smtplib import SMTPAuthenticationError, SMTPServerDisconnected, SMTPSenderRefused
+from smtplib import (
+    SMTPAuthenticationError,
+    SMTPServerDisconnected,
+    SMTPSenderRefused
+)
 from typing import Tuple, List
 
 from ..core import Provider, Response
@@ -28,13 +33,26 @@ class SMTP(Provider):
     _schema = {
         "type": "object",
         "properties": {
-            "message": {"type": "string", "title": "the content of the email message"},
-            "subject": {"type": "string", "title": "the subject of the email message"},
+            "message": {
+                "type": "string",
+                "title": "the content of the email message"
+            },
+            "subject": {
+                "type": "string",
+                "title": "the subject of the email message"
+            },
             "to": one_or_more(
                 {
                     "type": "string",
                     "format": "email",
                     "title": "one or more email addresses to use",
+                }
+            ),
+            "to_": one_or_more(
+                {
+                    "type": "string",
+                    "title": "one or more email addresses to use",
+                    "duplicate": True,
                 }
             ),
             "from": {
@@ -65,15 +83,24 @@ class SMTP(Provider):
                 "format": "port",
                 "title": "the port number to use",
             },
-            "username": {"type": "string", "title": "username if relevant"},
-            "password": {"type": "string", "title": "password if relevant"},
+            "username": {
+                "type": "string",
+                "title": "username if relevant"
+            },
+            "password": {
+                "type": "string",
+                "title": "password if relevant"
+            },
             "tls": {"type": "boolean", "title": "should TLS be used"},
             "ssl": {"type": "boolean", "title": "should SSL be used"},
             "html": {
                 "type": "boolean",
                 "title": "should the email be parse as an HTML file",
             },
-            "login": {"type": "boolean", "title": "Trigger login to server"}
+            "login": {
+                "type": "boolean",
+                "title": "Trigger login to server"
+            }
         },
         "dependencies": {
             "username": ["password"],
@@ -115,6 +142,14 @@ class SMTP(Provider):
     def _prepare_data(self, data: dict) -> dict:
         if isinstance(data["to"], list):
             data["to"] = list_to_commas(data["to"])
+        #combining to field from plugin configuration and queue configuration
+        additional_email_list =  re.findall(
+            r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+",
+            data.get("to_","").replace(',', ' ')
+        )
+        if additional_email_list:
+            data["to"] += "," + list_to_commas(additional_email_list)
+            data["to"]  = ','.join(set(data["to"].split(',')))
         # A workaround since `from` is a reserved word
         if data.get("from_"):
             data["from"] = data.pop("from_")
@@ -135,7 +170,10 @@ class SMTP(Provider):
         for attachment in attachments:
             attachment = Path(attachment)
             maintype, subtype = self._get_mimetype(attachment)
-            email.add_attachment(attachment.read_bytes(), maintype=maintype, subtype=subtype, filename=attachment.name)
+            email.add_attachment(
+                attachment.read_bytes(),
+                maintype=maintype, subtype=subtype, filename=attachment.name
+            )
 
     def _connect_to_server(self, data: dict):
         self.smtp_server = smtplib.SMTP_SSL if data["ssl"] else smtplib.SMTP

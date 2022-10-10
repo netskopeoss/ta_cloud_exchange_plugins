@@ -1,5 +1,5 @@
 """
-BSD 3-Clause License
+BSD 3-Clause License.
 
 Copyright (c) 2021, Netskope OSS
 All rights reserved.
@@ -30,8 +30,7 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
 
-"""Mimecast Plugin implementation to push and pull the data from Netskope Tenant."""
-
+"""Mimecast Plugin implementation to push and pull the data from Mimecast."""
 
 import re
 import csv
@@ -55,6 +54,10 @@ from netskope.integrations.cte.models.business_rule import (
 )
 from netskope.common.utils import add_user_agent
 
+PAGE_SIZE = 100
+MAX_REQUEST_URL = 25
+MAX_CREATE_URL = 20
+
 
 class MimecastPlugin(PluginBase):
     """The Mimecast plugin implementation."""
@@ -68,7 +71,7 @@ class MimecastPlugin(PluginBase):
         return messages
 
     def _parse_csv(
-        self, raw_csv: str, indicator_key: str = "MD5"
+        self, raw_csv: str, indicator_key
     ) -> List[Indicator]:
         """Parse given raw CSV string based on given feed type."""
         indicators = []
@@ -80,12 +83,20 @@ class MimecastPlugin(PluginBase):
 
         reader = csv.DictReader(raw_csv, delimiter="|")
         for row in reader:
-            indicator = row.get(indicator_key)
-            if indicator:
+            list_indicators = []
+            if "MD5" in indicator_key:
+                indicator = row.get("MD5")
+                if indicator:
+                    list_indicators.append({"indicator": indicator, "type": "MD5"})
+            if "SHA256" in indicator_key:
+                indicator = row.get("SHA256")
+                if indicator:
+                    list_indicators.append({"indicator": indicator, "type": "SHA256"})
+            for obj in list_indicators:
                 indicators.append(
                     Indicator(
-                        value=indicator,
-                        type=IndicatorType[indicator_key],
+                        value=obj["indicator"],
+                        type=IndicatorType[obj["type"]],
                         comments=f"Sent from {row.get('SenderAddress')}"
                         if row.get("SenderAddress")
                         else "",
@@ -93,105 +104,37 @@ class MimecastPlugin(PluginBase):
                 )
         return indicators
 
-    def pull(self) -> List[Indicator]:
-        """Pull the indicators from Mimecast."""
+    def get_rewritten_urls(self, start_time) -> List[Dict]:
+        """Return rewritten urls from mimecast.
+
+        Args:
+            start_time (str): start time from where you want the data.
+
+        Returns:
+            List[Dict]: return list of dictionary of rewritten url from
+            mimecast.
+        """
+        # REWRITTEN URL
         url, headers = self._get_auth_headers(
-            self.configuration, "/api/ttp/threat-intel/get-feed"
+            self.configuration, "/api/ttp/url/get-logs"
         )
-        # Get start time based on checkpoint
-        if not self.last_run_at:
-            self.logger.info(
-                f"Mimecast Plugin: This is initial data fetch for indicator feed since "
-                f"checkpoint is empty. Querying indicators for last {self.configuration['days']} day(s)."
-            )
-            start_time = datetime.now() - timedelta(
-                days=int(self.configuration["days"])
-            )
-        else:
-            start_time = self.last_run_at
-
-        body = {
-            "data": [
-                {
-                    "fileType": "csv",
-                    "start": f"{start_time.replace(microsecond=0).astimezone().isoformat()}",
-                    "feedType": self.configuration["feed_type"],
-                }
-            ]
-        }
-
-        response = requests.post(
-            url,
-            json=body,
-            headers=add_user_agent(headers),
-            proxies=self.proxy,
-            verify=self.ssl_validation,
-        )
-        response.raise_for_status()
-
-        indicators = []
-        if response.status_code == 200:
-            try:
-                indicators = self._parse_csv(response.text)
-            except Exception as ex:
-                self.logger.error(
-                    f"Mimecast Plugin: Error occurred while parsing CSV response: {repr(ex)}"
-                )
-        return indicators
-
-    def push(
-        self, indicators: List[Indicator], action_dict: Dict
-    ) -> PushResult:
-        """Push the given list of indicators to Mimecast."""
-        # First check if push is enabled
-        action_dict = action_dict.get("parameters")
-        if self.configuration["push_enabled"] != "yes":
-            return PushResult(
-                success=False,
-                message="Push is disabled for Mimecast plugin. Skipping.",
-            )
-
-        # Prepare list of only file hashes
-        hashes = []
-        for indicator in indicators:
-            if indicator.type in [IndicatorType.MD5, IndicatorType.SHA256]:
-                hashes.append(
-                    {
-                        "hash": indicator.value,
-                        # Length of description is required to be <= 20 on Mimecast.
-                        "description": indicator.comments
-                        if len(indicator.comments) <= 20
-                        else "",
+        rewritten_urls = []
+        pagetoken = ""
+        start_time = start_time.replace(microsecond=0)
+        while True:
+            body = {
+                "meta": {
+                    "pagination": {
+                        "pageSize": PAGE_SIZE,
+                        "pageToken": pagetoken,
                     }
-                )
-
-        # If all the indicators are of type other than file hash, skip.
-        if len(hashes) == 0:
-            return PushResult(
-                success=False,
-                message="Found no indicators eligible for pushing to Mimecast. Only file hashes are supported. "
-                "Skipping.",
-            )
-
-        body = {
-            "data": [
-                {
-                    "hashList": [],
-                    "operationType": action_dict.get("operation_type"),
-                }
-            ]
-        }
-
-        # Mimecast only supports "push" in batch of 1000 indicators at a time
-        batch_size = 1000
-        for pos in range(0, len(hashes), batch_size):
-            url, headers = self._get_auth_headers(
-                self.configuration, "/api/byo-threat-intelligence/create-batch"
-            )
-            body["data"][0]["hashList"] = hashes[
-                pos : pos + batch_size  # noqa
-            ]
-
+                },
+                "data": [
+                    {
+                        "from": f"{start_time.astimezone().isoformat()}",
+                    }
+                ],
+            }
             response = requests.post(
                 url,
                 json=body,
@@ -200,16 +143,305 @@ class MimecastPlugin(PluginBase):
                 verify=self.ssl_validation,
             )
             response.raise_for_status()
-            failures = response.json().get("fail", [])
-            if failures:
-                return PushResult(
-                    success=False,
-                    message=", ".join(self._parse_errors(failures)),
+            response = response.json()
+            if failures := response.get("fail", []):
+                self.logger.error(
+                    "Error: " + ",".join(self._parse_errors(failures))
+                )
+            elif response.get("data", []):
+                rewritten_urls.extend(
+                    single_response["url"]
+                    for single_response in response.get("data", [])[0].get(
+                        "clickLogs", []
+                    )
+                    if single_response.get("url", None) not in [" ", None]
+                    and single_response.get("scanResult", "") == "malicious"
+                )
+            pagetoken = response["meta"]["pagination"].get("next", None)
+            if not pagetoken:
+                return rewritten_urls
+
+    def make_indicators(self, indicators_data) -> List[Indicator]:
+        """Make netskope indicators from indicator data.
+
+        Args:
+            indicators_data (List[Dict]): List of dictionary contain url info.
+
+        Raises:
+            requests.exceptions.HTTPError: Raise error while getting response.
+
+        Returns:
+            List[Indicator]: Returns list of indicators.
+        """
+        indicators = []
+        invalid_iocs = 0
+        for index in range(0, len(indicators_data), MAX_REQUEST_URL):
+            decode_url, headers = self._get_auth_headers(
+                self.configuration, "/api/ttp/url/decode-url"
+            )
+            response = requests.post(
+                decode_url,
+                json={
+                    "data": indicators_data[index: index + MAX_REQUEST_URL]
+                },
+                headers=add_user_agent(headers),
+                proxies=self.proxy,
+                verify=self.ssl_validation,
+            )
+            response.raise_for_status()
+            response = response.json()
+            if response.get("data", []):
+                indicators.extend(
+                    Indicator(
+                        value=urls_info.get("url", " "),
+                        type=IndicatorType.URL,
+                    )
+                    for urls_info in response.get("data", [])
                 )
 
-        return PushResult(
-            success=True, message="Pushed all the indicators successfully."
-        )
+            if response.get("fail", []):
+                for urls_info in response.get("fail", []):
+                    if not urls_info.get("errors", []):
+                        indicators.append(
+                            Indicator(
+                                value=urls_info.get("key", "").get("url", ""),
+                                type=IndicatorType.URL,
+                            )
+                        )
+                    elif "Token is invalid" in urls_info.get("errors", [])[
+                        0
+                    ].get("message", " "):
+                        invalid_iocs += 1
+                    else:
+                        raise requests.exceptions.HTTPError(
+                            f"Error while pulling data from mimecast, "
+                            f"{urls_info.get('errors', []).get('message', '')}"
+                        )
+        if invalid_iocs != 0:
+            self.logger.warn(
+                f"Skipping, {invalid_iocs} invalid IoC(s) from Pulling."
+            )
+        return indicators
+
+    def get_decoded_urls(self, rewritten_urls) -> List[Indicator]:
+        """Return decoded url from rewritten url.
+
+        Args:
+            rewritten_urls (List): List of rewritten url.
+
+        Returns:
+            List[Indicator]: Return list of Indicators.
+        """
+        indicators = []
+        indicators_data = [{"url": url} for url in rewritten_urls]
+        try:
+            indicators += self.make_indicators(indicators_data)
+            return indicators
+        except Exception as e:
+            self.logger.error(str(e))
+
+    def pull(self) -> List[Indicator]:
+        """Pull the indicators from Mimecast."""
+        # Get start time based on checkpoint
+        if not self.last_run_at:
+            self.logger.info(
+                f"Mimecast Plugin: This is initial data fetch for indicator "
+                f"feed since "
+                f"checkpoint is empty. Querying indicators for last "
+                f"{self.configuration['days']} day(s)."
+            )
+            start_time = datetime.now() - timedelta(
+                days=int(self.configuration["days"])
+            )
+        else:
+            start_time = self.last_run_at
+
+        indicators = []
+
+        # MALWARE
+        if self.configuration["feed_type"] in [
+            "malware_customer",
+            "malware_grid",
+        ]:
+            url, headers = self._get_auth_headers(
+                self.configuration, "/api/ttp/threat-intel/get-feed"
+            )
+            start_time = start_time.replace(microsecond=0)
+            current_time = datetime.now()
+            while start_time < current_time:
+                body = {
+                    "data": [
+                        {
+                            "fileType": "csv",
+                            "start": f"{start_time.astimezone().isoformat()}",
+                            "feedType": self.configuration["feed_type"],
+                        }
+                    ]
+                }
+
+                response = requests.post(
+                    url,
+                    json=body,
+                    headers=add_user_agent(headers),
+                    proxies=self.proxy,
+                    verify=self.ssl_validation,
+                )
+                response.raise_for_status()
+                if response.status_code == 200:
+                    try:
+                        indicators += self._parse_csv(
+                            response.text,
+                            self.configuration.get("indicator_type", ["MD5", "SHA256"])
+                        )
+                    except Exception as ex:
+                        self.logger.error(
+                            f"Mimecast Plugin: Error occurred while parsing CSV "
+                            f"response: {repr(ex)}"
+                        )
+                start_time = start_time + timedelta(days=1)
+        # MALSITE
+        else:
+            rewritten_urls = self.get_rewritten_urls(start_time)
+            indicators = self.get_decoded_urls(rewritten_urls)
+        return indicators
+
+    def push(
+        self, indicators: List[Indicator], action_dict: Dict
+    ) -> PushResult:
+        """Push the given list of indicators to Mimecast."""
+        # First check if push is enabled
+        if action_dict["value"] == "operation":
+            # Prepare list of only file hashes
+            hashes = []
+            for indicator in indicators:
+                if indicator.type in [IndicatorType.MD5, IndicatorType.SHA256]:
+                    hashes.append(
+                        {
+                            "hash": indicator.value,
+                            # Length of description is required to be <= 20 on
+                            # Mimecast.
+                            "description": indicator.comments
+                            if len(indicator.comments) <= 20
+                            else "",
+                        }
+                    )
+
+            # If all the indicators are of type other than file hash, skip.
+            if len(hashes) == 0:
+                return PushResult(
+                    success=False,
+                    message="Found no indicators eligible for pushing to "
+                    "Mimecast. Only file hashes are supported. Skipping.",
+                )
+
+            body = {
+                "data": [
+                    {
+                        "hashList": [],
+                        "operationType": action_dict.get("parameters", {}).get("operation_type", ""),
+                    }
+                ]
+            }
+
+            # Mimecast only supports "push" in batch of 1000 indicators at a
+            # time
+            batch_size = 1000
+            for pos in range(0, len(hashes), batch_size):
+                url, headers = self._get_auth_headers(
+                    self.configuration,
+                    "/api/byo-threat-intelligence/create-batch",
+                )
+                body["data"][0]["hashList"] = hashes[
+                    pos : pos + batch_size  # noqa
+                ]
+
+                response = requests.post(
+                    url,
+                    json=body,
+                    headers=add_user_agent(headers),
+                    proxies=self.proxy,
+                    verify=self.ssl_validation,
+                )
+                response.raise_for_status()
+                failures = response.json().get("fail", [])
+                if failures:
+                    return PushResult(
+                        success=False,
+                        message=", ".join(self._parse_errors(failures)),
+                    )
+
+            return PushResult(
+                success=True, message="Pushed all the indicators successfully."
+            )
+        # PUSH URL
+        elif action_dict["value"] == "managed_url":
+            indicators_data = []
+            for indicator in indicators:
+                if indicator.type == IndicatorType.URL and len(
+                    indicator.value
+                ):
+                    indicators_data.append(
+                        {
+                            "url": indicator.value,
+                            "action": action_dict.get("parameters").get(
+                                "action_type"
+                            ),
+                        }
+                    )
+            invalid_urls = 0
+            already_exists = 0
+            for index in range(0, len(indicators_data), MAX_CREATE_URL):
+                url, headers = self._get_auth_headers(
+                    self.configuration, "/api/ttp/url/create-managed-url"
+                )
+                response = requests.post(
+                    url,
+                    json={
+                        "data": indicators_data[index: index + MAX_CREATE_URL]
+                    },
+                    headers=add_user_agent(headers),
+                    proxies=self.proxy,
+                    verify=self.ssl_validation,
+                )
+                response.raise_for_status()
+                response = response.json()
+                if response.get("fail", []):
+                    for urls_info in response.get("fail", []):
+                        errors = urls_info.get("errors", [])
+                        if not errors:
+                            continue
+                        elif "The URL is invalid" in errors[0].get(
+                            "message", " "
+                        ):
+                            invalid_urls += 1
+                        elif errors[0].get("code", " ") in [
+                            "err_managed_url_exists_code",
+                            "err_managed_url_create_failure",
+                        ]:
+                            already_exists += 1
+                        else:
+                            self.logger.error(
+                                f"Error while pushing IoC(s): "
+                                f"{errors[0].get('message',' ')}"
+                            )
+                            return PushResult(
+                                success=False,
+                                message=f"Error while pushing IoC(s): "
+                                f"{errors[0].get('message',' ')}",
+                            )
+            if invalid_urls:
+                self.logger.warn(
+                    f"Skipping, {invalid_urls} invalid URL(s) while pushing."
+                )
+            if already_exists:
+                self.logger.warn(
+                    f"Skipping, {already_exists} IoC(s) as they already exist "
+                    f"on Mimecast."
+                )
+            return PushResult(
+                success=True,
+                message="Pushed all the indicators successfully.",
+            )
 
     def _get_auth_headers(
         self, configuration: dict, endpoint: str
@@ -221,7 +453,8 @@ class MimecastPlugin(PluginBase):
             datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S") + " UTC"
         )
 
-        # Create the HMAC SHA1 of the Base64 decoded secret key for the Authorization header
+        # Create the HMAC SHA1 of the Base64 decoded secret key for the
+        # Authorization header
         hmac_sha1 = hmac.new(
             base64.b64decode(configuration.get("secret_key")),
             ":".join(
@@ -285,7 +518,8 @@ class MimecastPlugin(PluginBase):
                 return (
                     ValidationResult(
                         success=False,
-                        message="Incorrect access key or secret key or application key provided.",
+                        message="Incorrect access key or secret key or "
+                        "application key provided.",
                     ),
                     None,
                 )
@@ -294,8 +528,9 @@ class MimecastPlugin(PluginBase):
                     ValidationResult(
                         success=False,
                         message=(
-                            f"An HTTP error occurred while validating configuration "
-                            f"parameters. Status code {response.status_code}."
+                            f"An HTTP error occurred while validating "
+                            f"configuration parameters. "
+                            f"Status code {response.status_code}."
                         ),
                     ),
                     None,
@@ -314,7 +549,8 @@ class MimecastPlugin(PluginBase):
             return (
                 ValidationResult(
                     success=False,
-                    message="Error occurred while validating configuration parameters. Check logs for more detail.",
+                    message="Error occurred while validating configuration "
+                    "parameters. Check logs for more detail.",
                 ),
                 None,
             )
@@ -327,7 +563,8 @@ class MimecastPlugin(PluginBase):
             or type(configuration["url"]) != str
         ):
             self.logger.error(
-                "Mimecast Plugin: Mimecast base URL must be a valid non-empty string."
+                "Mimecast Plugin: Mimecast base URL must be a valid non-empty "
+                "string."
             )
             return ValidationResult(
                 success=False,
@@ -340,7 +577,8 @@ class MimecastPlugin(PluginBase):
             or type(configuration["app_id"]) != str
         ):
             self.logger.error(
-                "Mimecast Plugin: Application ID must be a valid non-empty string."
+                "Mimecast Plugin: Application ID must be a valid non-empty "
+                "string."
             )
             return ValidationResult(
                 success=False,
@@ -353,7 +591,8 @@ class MimecastPlugin(PluginBase):
             or type(configuration["app_key"]) != str
         ):
             self.logger.error(
-                "Mimecast Plugin: Application Key must be a valid non-empty string."
+                "Mimecast Plugin: Application Key must be a valid non-empty "
+                "string."
             )
             return ValidationResult(
                 success=False,
@@ -380,12 +619,14 @@ class MimecastPlugin(PluginBase):
             or
             # Base 64 check
             not re.match(
-                r"^([A-Za-z0-9+/]{4})*([A-Za-z0-9+/]{3}=|[A-Za-z0-9+/]{2}==)?$",
+                r"^([A-Za-z0-9+/]{4})"
+                r"*([A-Za-z0-9+/]{3}=|[A-Za-z0-9+/]{2}==)?$",
                 configuration["secret_key"],
             )
         ):
             self.logger.error(
-                "Mimecast Plugin: Access Secret must be a valid non-empty string."
+                "Mimecast Plugin: Access Secret must be a valid non-empty "
+                "string."
             )
             return ValidationResult(
                 success=False,
@@ -413,33 +654,37 @@ class MimecastPlugin(PluginBase):
 
         if "feed_type" not in configuration or configuration[
             "feed_type"
-        ] not in [
-            "malware_customer",
-            "malware_grid",
-        ]:
+        ] not in ["malware_customer", "malware_grid", "malsite"]:
             self.logger.error(
-                "Mimecast Plugin: Value of Feed Type must be either 'malware_customer' or 'malware_grid'."
+                "Mimecast Plugin: Value of Feed Type must be either "
+                "'malware_customer' or 'malware_grid'."
             )
             return ValidationResult(
                 success=False,
-                message="Invalid value for 'Feed Type' provided. Allowed values "
-                "are 'malware_customer' or 'malware_grid'.",
+                message="Invalid value for 'Feed Type' provided. Allowed "
+                "values are 'malware_customer' or 'malware_grid'.",
             )
 
-        if "push_enabled" not in configuration or configuration[
-            "push_enabled"
-        ] not in [
-            "yes",
-            "no",
-        ]:
-            self.logger.error(
-                "Mimecast Plugin: Invalid value provided for 'Push Enabled'."
-                " Allowed value is one of 'yes' or 'no'."
-            )
+        try:
+            if (
+                configuration["feed_type"] in ["malware_customer", "malware_grid"]
+                and configuration["indicator_type"]
+                not in [["MD5"], ["SHA256"], ["MD5", "SHA256"], ["SHA256", "MD5"]]
+            ):
+                self.logger.error(
+                    "Mimecast Plugin: Value of Indicator type must be either "
+                    "'MD5' or 'SHA256'."
+                )
+                return ValidationResult(
+                    success=False,
+                    message="Mimecast Plugin: Value of Indicator type must be either "
+                    "'MD5' or 'SHA256'.",
+                )
+        except ValueError:
             return ValidationResult(
                 success=False,
-                message="Invalid value provided for 'Push Enabled'."
-                " Allowed value is one of 'yes' or 'no'.",
+                message="Mimecast Plugin: Value of Indicator type must be either "
+                "'MD5' or 'SHA256'.",
             )
 
         validation_result, packages = self._validate_credentials(configuration)
@@ -448,37 +693,37 @@ class MimecastPlugin(PluginBase):
         if not validation_result.success:
             return validation_result
 
-        # If credentials are valid but package is not enabled and push is configured
-        if (
-            configuration["push_enabled"] == "yes"
-            and "BYO: Threat Intelligence [1089]" not in packages
-        ):
-            self.logger.error(
-                "Mimecast Plugin: 'Bring Your Own Threat Intel' package is not enabled in "
-                "configured account and hence push is not supported. Disable push and try again."
-            )
-            return ValidationResult(
-                success=False,
-                message="'Bring Your Own Threat Intel' package is not enabled in configured "
-                "account and hence push is not supported. Disable push and try again.",
-            )
-
         return validation_result
 
     def get_actions(self):
         """Get available actions."""
         return [
             ActionWithoutParams(label="Perform Operation", value="operation"),
+            ActionWithoutParams(
+                label="Create Managed URL", value="managed_url"
+            ),
         ]
 
     def validate_action(self, action: Action):
         """Validate Mimecast configuration."""
-        if action.value not in ["operation"]:
+        if action.value not in ["operation", "managed_url"]:
             return ValidationResult(
                 success=False, message="Unsupported target provided."
             )
-
-        if action.parameters.get("operation_type") not in [
+        _, packages = self._validate_credentials(self.configuration)
+        if (
+            action.value == "operation"
+            and "BYO: Threat Intelligence [1089]" not in packages
+        ):
+            return ValidationResult(
+                success=False,
+                message="'Bring Your Own Threat Intel' package is not enabled "
+                "in configured account and hence push is not supported. "
+                "Disable push and try again.",
+            )
+        if action.value == "operation" and action.parameters.get(
+            "operation_type"
+        ) not in [
             "ALLOW",
             "BLOCK",
             "DELETE",
@@ -486,6 +731,16 @@ class MimecastPlugin(PluginBase):
             return ValidationResult(
                 success=False,
                 message="Invalid value of Operation Type provided.",
+            )
+        if action.value == "managed_url" and action.parameters.get(
+            "action_type"
+        ) not in [
+            "permit",
+            "block",
+        ]:
+            return ValidationResult(
+                success=False,
+                message="Invalid value of Action Type provided.",
             )
 
         return ValidationResult(success=True, message="Validation successful.")
@@ -505,8 +760,28 @@ class MimecastPlugin(PluginBase):
                     ],
                     "mandatory": True,
                     "default": "ALLOW",
-                    "description": "The action to take based on the batch of indicators. \
-                    For example, a file-hash can be added with a BLOCK action to prevent the delivery \
-                    of a message with an attachment matching that file-hash.",
+                    "description": "The action to take based on the "
+                    "batch of indicators. "
+                    "For example, a file-hash can be added with a BLOCK "
+                    "action to prevent the delivery "
+                    "of a message with an attachment matching that file-hash.",
+                }
+            ]
+        elif action.value == "managed_url":
+            return [
+                {
+                    "label": "Action Type",
+                    "key": "action_type",
+                    "type": "choice",
+                    "choices": [
+                        {"key": "BLOCK", "value": "block"},
+                        {"key": "PERMIT", "value": "permit"},
+                    ],
+                    "mandatory": True,
+                    "default": "permit",
+                    "description": "The action to take based on the "
+                    "batch of indicators. "
+                    "For example, a url can be black listed with a BLOCK "
+                    "action type and white listed with PERMIT action type.",
                 }
             ]

@@ -1,11 +1,48 @@
 {
   "name": "Chronicle",
   "id": "chronicle",
-  "version": "1.3.1",
+  "version": "1.4.1",
   "mapping": "Chronicle Default Mappings",
   "description": "This plugin is used to deliver alerts and events data to Chronicle platform, The required API keys are linked to customers and are provided by your Chronicle representative.",
-  "types": ["events", "alerts"],
+  "types": [
+    "events",
+    "alerts"
+  ],
   "configuration": [
+    {
+      "label": "Region",
+      "key": "region",
+      "type": "choice",
+      "choices": [
+        {
+          "key": "United States",
+          "value": "usa"
+        },
+        {
+          "key": "European Union",
+          "value": "europe"
+        },
+        {
+          "key": "Asia",
+          "value": "asia"
+        },
+        {
+          "key": "Custom Region",
+          "value": "custom"
+        }
+      ],
+      "default": "usa",
+      "mandatory": true,
+      "description": "Region where your Chronicle customer account is provisioned."
+    },
+    {
+      "label": "Custom Region URL",
+      "key": "custom_region",
+      "type": "text",
+      "default": "",
+      "mandatory": false,
+      "description": "Enter a custom region base URL if you've selected Custom Region for the value of Region."
+    },
     {
       "label": "Service Account Key",
       "key": "service_account_key",

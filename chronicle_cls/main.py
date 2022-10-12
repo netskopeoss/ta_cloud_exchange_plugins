@@ -38,12 +38,12 @@ import datetime
 import requests
 import json
 import re
+import urllib
 from typing import List
 from jsonpath import jsonpath
 
 from google.oauth2 import service_account
-from google.auth.transport import requests
-
+from google.auth.transport import requests as gRequest
 from netskope.common.utils import add_user_agent
 from netskope.common.utils import AlertsHelper
 from netskope.integrations.cls.plugin_base import (
@@ -69,7 +69,7 @@ from .utils.chronicle_validator import (
     ChronicleValidator,
 )
 from .utils.chronicle_constants import (
-    SCOPES,
+    SCOPES, DUMMY_DATA, DEFAULT_URL
 )
 
 
@@ -107,6 +107,20 @@ class ChroniclePlugin(PluginBase):
                 success=False, message="Invalid Customer ID provided."
             )
 
+        if (
+            "region" not in configuration
+            or not configuration["region"].strip()
+            or type(configuration["region"]) != str
+            or configuration["region"].strip() not in ["usa", "europe", "asia", "custom"]
+        ):
+            self.logger.error(
+                "Plugin Chronicle: Validation error occurred. Error: \
+                Invalid Region found in the configuration parameters."
+            )
+            return ValidationResult(
+                success=False, message="Invalid Region provided."
+            )
+
         try:
             self._validate_auth(configuration)
         except Exception as ex:
@@ -120,8 +134,8 @@ class ChroniclePlugin(PluginBase):
             )
             return ValidationResult(
                 success=False,
-                message="Error occurred while establishing connection with Chronicle server. "
-                "Make sure you have provided valid Service Account Key and Customer ID.",
+                message="Error while connecting to Chronicle. "
+                "Please check Service Account Key.",
             )
 
         # validating mapping file
@@ -147,9 +161,99 @@ class ChroniclePlugin(PluginBase):
                 success=False,
                 message="Invalid Chronicle attribute mapping provided.",
             )
-
+            
+        try:   
+            if ((configuration.get("region","") != "custom")
+            and not self._check_dummy_post(configuration)):
+                self.logger.error(
+                    "Chronicle Plugin: Validation error occurred. Error: "
+                    "Invalid credentials"
+                )
+                return ValidationResult(
+                    success=False,
+                    message="Invalid credentials or region.",
+                )           
+        except requests.ConnectionError as ex:
+            self.logger.error(
+                f"Chronicle Plugin: Connection Error. Check custom URL. "
+                f"Exception: {repr(ex)}.",
+            )
+            return ValidationResult(
+                success=False,
+                message="Connection Error, "
+                "please check custom URL and logs",
+            )
+        except Exception as ex:
+            self.logger.error(
+                f"Chronicle Plugin: Exception occurred. "
+                f"Exception: {repr(ex)}.",
+            )
+            return ValidationResult(
+                success=False,
+                message="Error occurred with Chronicle server. "
+                "Please check logs",
+            )
+            
+        try: 
+            
+            flag, url_path_value = self.udm_events_url_check(configuration)
+            toast_message = f"Please enter the URL without {url_path_value} ."
+            if(not flag):
+                self.logger.error(
+                    "Chronicle Plugin: Validation error occurred. Error: "
+                    f"URL path has {url_path_value} in it."
+                )
+                return ValidationResult(
+                    success=False,
+                    message=toast_message,
+                )
+              
+            if (configuration.get("region","") == "custom"
+            and (not self._check_dummy_post(configuration)
+            or configuration.get("custom_region","") == "")):
+                self.logger.error(
+                    "Chronicle Plugin: Validation error occurred. Error: "
+                    "Invalid Chronicle custom URL"
+                )
+                return ValidationResult(
+                    success=False,
+                    message="Invalid Chronicle custom URL.",
+                )
+        except requests.ConnectionError as ex:
+            self.logger.error(
+                f"Chronicle Plugin: Connection Error. "
+                f"Exception: {repr(ex)}.",
+            )
+            return ValidationResult(
+                success=False,
+                message="Connection Error, "
+                "please check custom region URL and logs",
+            )
+            
+        except Exception as ex:
+            self.logger.error(
+                f"Chronicle Plugin: Exception occurred. "
+                f"Exception: {repr(ex)}.",
+            )
+            return ValidationResult(
+                success=False,
+                message="Error occurred with Chronicle server. "
+                "Please check logs",
+            )
+       
         return ValidationResult(success=True, message="Validation successful.")
 
+    def udm_events_url_check(self, configuration):
+        BASE_URL = configuration.get("custom_region", "").strip()               
+        parsed = urllib.parse.urlparse(BASE_URL.strip())
+        if not (parsed.scheme in ["http", "https"]
+            and parsed.netloc != ""):
+            return True, ""
+        if (parsed.path.strip() == "/" or parsed.path == ""):
+            return True, parsed.path.strip()
+        else:
+            return False, parsed.path.strip()
+    
     def _validate_auth(self, configuration: dict) -> ValidationResult:
         """Validate API key by making REST API call."""
         try:
@@ -161,6 +265,52 @@ class ChroniclePlugin(PluginBase):
             )
         except Exception as ex:
             raise
+        
+    def _check_dummy_post(self, configuration: dict): 
+
+        try:
+            credentials = (
+                service_account.Credentials.from_service_account_info(
+                    json.loads(configuration["service_account_key"]),
+                    scopes=SCOPES,
+                )
+            )
+            self.http_session = gRequest.AuthorizedSession(credentials)
+            
+            if configuration.get("region", "") == "custom":
+                BASE_URL = configuration.get("custom_region", "").strip()               
+            else:  
+                BASE_URL = DEFAULT_URL[configuration.get("region", "usa")]
+            if (not self._url_valid(BASE_URL)
+            and configuration.get("region","") == "custom"):
+                return False
+            
+            url = f"{BASE_URL}/v2/udmevents:batchCreate"      
+            payload = {
+                "customer_id": configuration["customer_id"].strip(),
+                "events": DUMMY_DATA,
+            }
+            response = self.http_session.request(
+                "POST",
+                url,
+                json=payload,
+            )
+            
+            if response.status_code == 200:
+                return True
+            else:
+                return False
+            
+        except Exception:
+            raise
+        
+    def _url_valid(self, base_url):
+        parsed = urllib.parse.urlparse(base_url.strip())
+        if (parsed.scheme in ["http", "https"]
+            and parsed.netloc != ""):
+            return True
+        else:
+            return False
 
     def push(self, transformed_data, data_type, subtype) -> PushResult:
         """Push the transformed_data to the 3rd party platform.

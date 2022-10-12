@@ -74,9 +74,13 @@ class ChronicleClient:
         :transformed_data : The transformed data to be ingested.
         """
         try:
-            url = f"{DEFAULT_URL}/v2/udmevents:batchCreate"
+            if self.configuration.get("region", "") == "custom":
+                BASE_URL = self.configuration.get("custom_region", "")
+            else:
+                BASE_URL = DEFAULT_URL[self.configuration.get("region", "usa")]
+            url = f"{BASE_URL}/v2/udmevents:batchCreate"
             payload = {
-                "customer_id": self.configuration["customer_id"],
+                "customer_id": self.configuration["customer_id"].strip(),
                 "events": transformed_data,
             }
 

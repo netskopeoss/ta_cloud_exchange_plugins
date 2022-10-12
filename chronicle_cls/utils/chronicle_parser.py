@@ -281,7 +281,6 @@ class UDMParser(object):
                         "intermediary.user.email_addresses"
                     ] = shared_with_users
         except Exception as e:
-            print(e)
             self.logger.warn(
                 f"[{self.data_type}][{self.subtype}]: An error occurred while generating "
                 f'UDM data for field: "shared_with", Error: {e}. '

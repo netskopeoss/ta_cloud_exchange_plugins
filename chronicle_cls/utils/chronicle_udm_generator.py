@@ -291,7 +291,6 @@ class UDMGenerator(object):
             )
             all_pairs = udm_generator.parse_data()
         except Exception as e:
-            print(e)
             self.logger.error(
                 '[{}][{}]: An error occurred while generating UDM data for header field: "{}". Error: {}. '
                 "Fields will be ignored".format(

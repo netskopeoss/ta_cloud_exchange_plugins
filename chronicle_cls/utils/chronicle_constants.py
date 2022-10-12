@@ -32,7 +32,11 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 """Chronicle Plugin constants."""
 
-DEFAULT_URL = "https://malachiteingestion-pa.googleapis.com"
+DEFAULT_URL = {
+   "usa": "https://malachiteingestion-pa.googleapis.com",
+   "europe": "https://europe-malachiteingestion-pa.googleapis.com",
+   "asia": "https://asia-southeast1-malachiteingestion-pa.googleapis.com",
+}
 SCOPES = ["https://www.googleapis.com/auth/malachite-ingestion"]
 
 SEVERITY_LOW = "Low"
@@ -60,3 +64,29 @@ SEVERITY_MAP = {
     "9": SEVERITY_VERY_HIGH,
     "10": SEVERITY_VERY_HIGH,
 }
+
+DUMMY_DATA = [
+   {
+      "metadata":{
+         "event_timestamp":"2022-07-04T06:39:49Z",
+         "product_name":"Netskope Alert",
+         "product_version":"NULL",
+         "product_event_type":"[test] - test",
+         "event_type":"GENERIC_EVENT",
+         "product_log_id":"111111111111111111111111",
+         "vendor_name":"Netskope",
+         "description":"test"
+      },
+      "security_result":{
+         "severity":"Low",
+         "action_details":"no action"
+      },
+      "principal":{
+         "user":{
+            "user_display_name":"testurl@xyz.com",
+            "userid":"testurl@xyz.com",
+            "email_addresses":"testurl@xyz.com"
+         }
+      }
+   }
+]

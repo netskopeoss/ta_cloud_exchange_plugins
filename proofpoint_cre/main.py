@@ -33,9 +33,12 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """Netskope CRE plugin."""
 
 
+import json
 from typing import List, Dict
 
 import requests
+from os.path import join
+import tempfile
 from requests.exceptions import ConnectionError
 
 from netskope.common.utils import add_user_agent
@@ -48,6 +51,8 @@ from netskope.integrations.cre.models import (
     Action,
 )
 
+PAGE_SIZE = 1000
+SCORE_FILE = "proofpoint_scores.json"
 
 class ProofpointPlugin(PluginBase):
     """Proofpoint plugin implementation."""
@@ -56,109 +61,86 @@ class ProofpointPlugin(PluginBase):
         """Fetch list of users."""
         USERS_URL = self.configuration.get("proofpoint_url").strip()
         offset = 1
-        SIZE = 3
         res = []
-        while True:
-            users = requests.get(
-                f"{USERS_URL}/v2/people/vap",
-                auth=(
-                    self.configuration.get("proofpoint_username").strip(),
-                    self.configuration.get("proofpoint_password").strip(),
-                ),
-                params={
-                    "window": self.configuration.get("window"),
-                    "page": offset,
-                    "size": SIZE,
-                },
-                proxies=self.proxy,
-                headers=add_user_agent(),
-            )
-            users_resp_json = self.handle_error(users)
-            errors = users_resp_json.get("errors")
+        with open(join(tempfile.gettempdir(), SCORE_FILE), "w") as score_file:
+            while True:
+                users = requests.get(
+                    f"{USERS_URL}/v2/people/vap",
+                    auth=(
+                        self.configuration.get("proofpoint_username").strip(),
+                        self.configuration.get("proofpoint_password").strip(),
+                    ),
+                    params={
+                        "window": self.configuration.get("window"),
+                        "page": offset,
+                        "size": PAGE_SIZE,
+                    },
+                    proxies=self.proxy,
+                    headers=add_user_agent(),
+                )
+                users_resp_json = self.handle_error(users)
+                errors = users_resp_json.get("errors")
 
-            if errors:
-                err_msg = errors[0].get("message", "")
+                if errors:
+                    err_msg = errors[0].get("message", "")
 
-                self.logger.error(
-                    "Plugin: Proofpoint CRE Unable to Fetch Users, "
-                    f"Error: {err_msg}"
-                )
-                self.logger.error(
-                    "Plugin: Proofpoint CRE Unable to Fetch Users, "
-                    f"Error: {err_msg}"
-                )
-                raise requests.HTTPError(
-                    f"Plugin: Proofpoint CRE Unable to Fetch Users, "
-                    f"Error: {err_msg}"
-                )
-            self.logger.info("Proofpoint CRE: Processing users.")
-            users = users_resp_json["users"]
-            for user in users:
-                res.append(
-                    Record(
-                        uid=user["identity"]["emails"][0],
-                        type=RecordType.USER,
-                        score=None,
+                    self.logger.error(
+                        "Plugin: Proofpoint CRE Unable to Fetch Users, "
+                        f"Error: {err_msg}"
                     )
-                )
-            offset += 1
-            if len(users) < SIZE:
-                break
+                    self.logger.error(
+                        "Plugin: Proofpoint CRE Unable to Fetch Users, "
+                        f"Error: {err_msg}"
+                    )
+                    raise requests.HTTPError(
+                        f"Plugin: Proofpoint CRE Unable to Fetch Users, "
+                        f"Error: {err_msg}"
+                    )
+                self.logger.info("Proofpoint CRE: Processing users.")
+                users = users_resp_json["users"]
+                for user in users:
+                    res.append(
+                        Record(
+                            uid=user["identity"]["emails"][0],
+                            type=RecordType.USER,
+                            score=None,
+                        )
+                    )
+                offset += 1
+                score_file.write(f"{json.dumps(users_resp_json)}\n")
+                if len(users) < PAGE_SIZE:
+                    break
         return res
 
     def fetch_scores(self, res):
         """Fetch user scores."""
-        USERS_URL = self.configuration.get("proofpoint_url").strip()
         scored_users = []
         score_users = {}
-        offset = 1
-        SIZE = 3
-        while True:
-            proofpoint_fetch_users = requests.get(
-                f"{USERS_URL}/v2/people/vap",
-                auth=(
-                    self.configuration.get("proofpoint_username").strip(),
-                    self.configuration.get("proofpoint_password").strip(),
-                ),
-                params={
-                    "window": self.configuration.get("window"),
-                    "page": offset,
-                    "size": SIZE,
-                },
-                proxies=self.proxy,
-                headers=add_user_agent(),
+        try:
+            with open(join(tempfile.gettempdir(), SCORE_FILE), "r") as score_file:
+                for line in score_file:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        data = json.loads(line)
+                        users = data["users"]
+                        for user in users:
+                            for re in res:
+                                if user["identity"]["emails"][0] in re.uid:
+                                    score_users[user["identity"]["emails"][0]] = user[
+                                        "threatStatistics"
+                                    ]["attackIndex"]
+                    except json.JSONDecodeError:
+                        self.logger.warn(
+                            f"Plugin: Proofpoint CRE Unable to fetch scores, "
+                            "could not parse a line."
+                        )
+        except FileNotFoundError:
+            self.logger.warn(
+                f"Plugin: Proofpoint CRE Unable to fetch scores, "
+                f"score file does not exist."
             )
-            proofpoint_fetch_users.raise_for_status()
-            users_resp_json = self.handle_error(proofpoint_fetch_users)
-            errors = users_resp_json.get("errors")
-
-            if errors:
-                err_msg = errors[0].get("message", "")
-
-                self.logger.error(
-                    "Plugin: Proofpoint CRE Unable to Fetch Scores, "
-                    f"Error: {err_msg}"
-                )
-                self.logger.error(
-                    "Plugin: Proofpoint CRE Unable to Fetch Scores, "
-                    f"Error: {err_msg}"
-                )
-                raise requests.HTTPError(
-                    f"Plugin: Proofpoint CRE Unable to Fetch Scores, "
-                    f"Error: {err_msg}"
-                )
-
-            self.logger.info("Proofpoint CRE: processing scores.")
-            users = users_resp_json["users"]
-            for user in users:
-                for re in res:
-                    if user["identity"]["emails"][0] in re.uid:
-                        score_users[user["identity"]["emails"][0]] = user[
-                            "threatStatistics"
-                        ]["attackIndex"]
-            offset += 1
-            if len(users) < SIZE:
-                break
         if score_users:
             all_values = score_users.values()
             minvalue = min(all_values)

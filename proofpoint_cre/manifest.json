@@ -1,12 +1,12 @@
 {
     "name": "Proofpoint",
-    "description": "Fetch attack index of users from your Proofpoint instance using the VAP module.",
+    "description": "Fetch attack index of users from your Proofpoint instance using the VAP module. \n\n CRE score calculation =>  (1 - ((user's attack index - min of user's attack index) / (max of user's attack index - min of user's attack index)) * 999) + 1.",
     "id": "proofpoint_cre",
     "type": [
         "user"
     ],
     "netskope": false,
-    "version": "1.0.0",
+    "version": "1.0.1",
     "configuration": [
         {
             "label": "Proofpoint URL",

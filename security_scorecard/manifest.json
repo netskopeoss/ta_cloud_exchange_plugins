@@ -1,0 +1,86 @@
+{
+    "name": "SecurityScorecard",
+    "id": "security_scorecard",
+    "version": "1.0.0",
+    "description": "CTE Plugin for SecurityScorecard.",
+    "push_supported": false,
+    "patch_supported": false,
+    "configuration": [
+        {
+            "label": "API Token",
+            "key": "api_token",
+            "type": "password",
+            "mandatory": true,
+            "default": "",
+            "description": "API Token for Authentication."
+        },
+        {
+            "label": "Portfolios",
+            "key": "portfolio_names",
+            "type": "text",
+            "mandatory": true,
+            "default": "",
+            "description": "Comma separated Portfolio names. (Make sure you write the exact portfolio names without any unnecessary spaces before and after comma)"
+        },
+        {
+            "label": "Company Grade Threshold",
+            "key": "grade",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "A",
+                    "value": "A,B,C,D,F"
+                },
+                {
+                    "key": "B",
+                    "value": "B,C,D,F"
+                },
+                {
+                    "key": "C",
+                    "value": "C,D,F"
+                },
+                {
+                    "key": "D",
+                    "value": "D,F"
+                },
+                {
+                    "key": "F",
+                    "value": "F"
+                }
+            ],
+            "mandatory": true,
+            "default": "",
+            "description": "Company grade threshold filter. If selected 'A' all the grades from 'A' to 'F' will be selected, if selected 'B' all the grades from 'B' to 'F' will be selected and likewise."
+        },
+        {
+            "label": "Tag Severity",
+            "key": "tag_severity",
+            "type": "multichoice",
+            "choices": [
+                {
+                    "key": "Positive",
+                    "value": "positive"
+                },
+                {
+                    "key": "Info",
+                    "value": "info"
+                },
+                {
+                    "key": "Low",
+                    "value": "low"
+                },
+                {
+                    "key": "Medium",
+                    "value": "medium"
+                },
+                {
+                    "key": "High",
+                    "value": "high"
+                }
+            ],
+            "mandatory": false,
+            "default": ["medium", "high"],
+            "description": "Tags for Issues with specified severity will be added."
+        }
+    ]
+}

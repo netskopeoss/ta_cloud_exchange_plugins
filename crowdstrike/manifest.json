@@ -1,8 +1,8 @@
 {
     "name": "CrowdStrike",
     "id": "crowdstrike",
-    "version": "1.0.2",
-    "description": "This plugin is used to fetch File hashes and URL from CrowdStrike's Custom IOC. This plugin can share the indicator Hash or URL to CrowdStrike's Custom IOC. To access the plugin, you would need the API credentials. Refer the CrowdStrike documentation https://www.crowdstrike.com/blog/tech-center/get-access-falcon-apis/ for more details. \n\n **Sharing URL information from CTE to CrowdStrike is NOT recommended while CrowdStrike does not support ingesting the full URL string (it only supports ingesting domains as of August 2021).**",
+    "version": "1.0.3",
+    "description": "This plugin is used to fetch File hashes and URL from CrowdStrike's Custom IOC. This plugin can share the indicator Hash or URL to CrowdStrike's Custom IOC. **CrowdStrike prevention only applies to filehashes. URL shared to CrowdStrike can not be used to trigger prevent actions.** To access the plugin, you would need the API credentials. Refer the CrowdStrike documentation https://www.crowdstrike.com/blog/tech-center/get-access-falcon-apis/ for more details. \n\n **Sharing URL information from CTE to CrowdStrike is NOT recommended while CrowdStrike does not support ingesting the full URL string (it only supports ingesting domains as of August 2021).**",
     "patch_supported": true,
     "configuration": [
         {

@@ -1,3 +1,7 @@
+# 1.0.3
+## Fixed
+- Fixed an issue with unsupported detection types.
+
 # 1.0.2
 ## Added
 - Added pagination and timeout support in pull method's API calls.

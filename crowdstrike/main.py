@@ -52,6 +52,7 @@ from netskope.integrations.cte.models import (
     SeverityType,
 )
 from netskope.common.utils import add_user_agent
+
 CROWDSTRIKE_TO_INTERNAL_TYPE = {
     "hash_md5": IndicatorType.MD5,
     "hash_sha256": IndicatorType.SHA256,
@@ -68,6 +69,7 @@ INTERNAL_TYPES_TO_CROWDSTRIKE = {
 
 
 PAGE_SIZE = 1000
+
 
 class CrowdStrikePlugin(PluginBase):
     """CrowdStrikePlugin class having concrete implementation for pulling and pushing threat information."""
@@ -175,6 +177,7 @@ class CrowdStrikePlugin(PluginBase):
         indicator_endpoint = f"{self.configuration['base_url']}/detects/entities/summaries/GET/v1"
         indicator_list = []
         json_payload = {}
+        skip_count = 0
         for ioc_chunks in self.divide_in_chunks(ioc_ids, 1000):
             json_payload["ids"] = list(ioc_chunks)
             headers = self.reload_auth_token(headers)
@@ -198,13 +201,16 @@ class CrowdStrikePlugin(PluginBase):
                     f"Error: {err_msg}"
                 )
             indicators_json_list = resp_json.get("resources", [])
+
             for indicator_json in indicators_json_list:
                 behaviors = indicator_json.get("behaviors", [])
                 if behaviors:
                     for behavior_info in behaviors:
                         if (
-                            len(behavior_info.get("ioc_value")) > 0
-                            and len(behavior_info.get("ioc_type")) > 0
+                            len(behavior_info.get("ioc_value", "")) > 0
+                            and len(behavior_info.get("ioc_type", "")) > 0
+                            and behavior_info.get("ioc_type")
+                            in CROWDSTRIKE_TO_INTERNAL_TYPE
                         ):
                             indicator_list.append(
                                 Indicator(
@@ -229,9 +235,11 @@ class CrowdStrikePlugin(PluginBase):
                                 )
                             )
                         else:
-                            self.logger.warn(
-                                "Plugin: CrowdStrike: Skipping the record as IOC value and/or IOC type not found."
-                            )
+                            skip_count += 1
+        if skip_count > 0:
+            self.logger.warn(
+                f"Plugin CrowdStrike: Skipping {skip_count} record(s) as IOC value and/or IOC type not compatible."
+            )
         return indicator_list
 
     def get_ioc_ids(self, threat_type, headers):

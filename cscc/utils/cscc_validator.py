@@ -58,9 +58,19 @@ class CSCCValidator(object):
                 "taxonomy": {
                     "type": "object",
                     "properties": {
-                        "alerts": {"type": "object"},
-                        "events": {"type": "object"},
-                    },
+                        "json": {
+                            "patternProperties": {
+                                ".*": {
+                                    "type": "object",
+                                    "patternProperties": {
+                                        ".*": {
+                                            "type": "array",
+                                        }
+                                    }
+                                }
+                            }
+                        }               
+                    }
                 }
             },
         }

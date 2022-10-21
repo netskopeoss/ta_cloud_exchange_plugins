@@ -153,7 +153,7 @@ def get_cscc_mappings(mappings, data_type):
     :param data_type: Data type (alert/event) for which the mappings are to be fetched
     :return: Read mappings
     """
-    mappings = mappings["taxonomy"][data_type]
+    mappings = mappings["taxonomy"]["json"][data_type]
 
     # Validate each subtype
     for subtype, subtype_map in mappings.items():

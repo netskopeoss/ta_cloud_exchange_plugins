@@ -39,6 +39,7 @@ import time
 
 from .alienvault_constants import (
     SEVERITY_MAP,
+    AUDIT_SEVERITY_MAP,
     SEVERITY_UNKNOWN,
 )
 from netskope.integrations.cls.utils.sanitizer import *
@@ -65,7 +66,7 @@ class CEFGenerator(object):
         self._prefix_field_float_sanitizer = float_sanitizer()
         self._equals_escaper = escaper("=")
         self._severity_sanitizer = str_sanitizer(
-            "Unknown|Low|Medium|High|Very-High"
+            "Unknown|Low|Medium|High|Info|Very-High"
         )
         self.valid_extensions = self._valid_extensions()
         self.extension_converters = self._type_converter()
@@ -85,6 +86,8 @@ class CEFGenerator(object):
             mapping = self.mapping["taxonomy"]
 
             for data_type, data_mapping in mapping.items():
+                if data_type == "json":	
+                    continue
                 for subtype, subtype_mapping in data_mapping.items():
                     for key, value in subtype_mapping.items():
                         for field, field_mapping in value.items():
@@ -119,6 +122,8 @@ class CEFGenerator(object):
             mapping = self.mapping["taxonomy"]
 
             for data_type, data_mapping in mapping.items():
+                if data_type == "json":	
+                    continue
                 for subtype, subtype_mapping in data_mapping.items():
                     for key, value in subtype_mapping.items():
                         for field, field_mapping in value.items():
@@ -274,9 +279,14 @@ class CEFGenerator(object):
             if header in headers:
                 try:
                     if header == "Severity":
-                        headers[header] = SEVERITY_MAP.get(
-                            str(headers[header]).lower(), SEVERITY_UNKNOWN
-                        )
+                        if subtype in ["audit"]:
+                            headers[header] = AUDIT_SEVERITY_MAP.get(
+                                str(headers[header]).lower(), SEVERITY_UNKNOWN
+                            )
+                        else:
+                            headers[header] = SEVERITY_MAP.get(
+                                str(headers[header]).lower(), SEVERITY_UNKNOWN
+                            )
                     cef_components.append(
                         self.get_header_value(header, headers)
                     )

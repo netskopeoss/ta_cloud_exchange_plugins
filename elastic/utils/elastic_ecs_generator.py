@@ -39,10 +39,9 @@ import datetime
 from .elastic_constants import (
     SEVERITY_MAP,
     SEVERITY_UNKNOWN,
+    BOOLEAN_FIELDS,
 )
-from .elastic_exceptions import (
-    ECSTypeError
-)
+from .elastic_exceptions import ECSTypeError
 from netskope.integrations.cls.utils.sanitizer import *
 from netskope.integrations.cls.utils.converter import *
 
@@ -129,14 +128,18 @@ class ECSGenerator(object):
             mapping = self.mapping["taxonomy"]
 
             for data_type, data_mapping in mapping.items():
+                if data_type == "json":		
+                    continue
                 for subtype, subtype_mapping in data_mapping.items():
                     for key, value in subtype_mapping.items():
                         for field, field_mapping in value.items():
                             field_converters[field] = self.extension_converter(
                                 key_name=field,
                                 converter=converters[
-                                    field_mapping.get("transformation", "String")
-                                ]
+                                    field_mapping.get(
+                                        "transformation", "String"
+                                    )
+                                ],
                             )
             return field_converters
         except Exception as err:
@@ -164,14 +167,18 @@ class ECSGenerator(object):
             mapping = self.mapping["taxonomy"]
 
             for data_type, data_mapping in mapping.items():
+                if data_type == "json":		
+                    continue
                 for subtype, subtype_mapping in data_mapping.items():
                     for key, value in subtype_mapping.items():
                         for field, field_mapping in value.items():
                             field_sanitizers[field] = self.extension(
                                 key_name=field,
                                 sanitizer=sanitizers[
-                                    field_mapping.get("transformation", "String")
-                                ]
+                                    field_mapping.get(
+                                        "transformation", "String"
+                                    )
+                                ],
                             )
             return field_sanitizers
         except Exception as err:
@@ -284,12 +291,18 @@ class ECSGenerator(object):
                     )
                 )
                 continue
-
             # Validate and sanitise (if required) the incoming value from Netskope before mapping it ECS
             try:
-                extension_pairs[
-                    self.valid_extensions[name].key_name
-                ] = self.valid_extensions[name].sanitizer(value, name)
+                current = self.valid_extensions[name].key_name
+                extension_pairs[current] = self.valid_extensions[
+                    name
+                ].sanitizer(value, name)
+
+                if (current in BOOLEAN_FIELDS) and (
+                    extension_pairs[current]
+                    not in ["Yes", "No", True, False, "", "True", "False"]
+                ):
+                    extension_pairs[current] = ""
             except KeyError:
                 self.logger.error(
                     '[{}][{}]: An error occurred while generating ECS data for field: "{}". Could not '

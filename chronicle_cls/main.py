@@ -44,8 +44,7 @@ from jsonpath import jsonpath
 
 from google.oauth2 import service_account
 from google.auth.transport import requests as gRequest
-from netskope.common.utils import add_user_agent
-from netskope.common.utils import AlertsHelper
+from netskope.common.utils import AlertsHelper, add_user_agent
 from netskope.integrations.cls.plugin_base import (
     PluginBase,
     ValidationResult,
@@ -163,8 +162,8 @@ class ChroniclePlugin(PluginBase):
             )
             
         try:   
-            if ((configuration.get("region","") != "custom")
-            and not self._check_dummy_post(configuration)):
+            if (not self._check_dummy_post(configuration)
+            and configuration.get("region","") != "custom"):
                 self.logger.error(
                     "Chronicle Plugin: Validation error occurred. Error: "
                     "Invalid credentials"
@@ -279,8 +278,9 @@ class ChroniclePlugin(PluginBase):
             
             if configuration.get("region", "") == "custom":
                 BASE_URL = configuration.get("custom_region", "").strip()               
-            else:  
+            else:   
                 BASE_URL = DEFAULT_URL[configuration.get("region", "usa")]
+                
             if (not self._url_valid(BASE_URL)
             and configuration.get("region","") == "custom"):
                 return False
@@ -550,6 +550,25 @@ class ChroniclePlugin(PluginBase):
             # because of validation (case #3 and case #5)
             return extension_mapping["default_value"]
 
+    def map_json_data(self, mappings, data, data_type, subtype):
+        """Filter the raw data and returns the filtered data.
+
+        :param mappings: List of fields to be pushed
+        :param data: Data to be mapped (retrieved from Netskope)
+        :param logger: Logger object for logging purpose
+        :return: Mapped data based on fields given in mapping file
+        """
+        
+        if mappings == []:
+            return data
+
+        mapped_dict = {}
+        for key in mappings:
+            if key in data:
+                mapped_dict[key] = data[key]
+        
+        return mapped_dict
+
     def transform(self, raw_data, data_type, subtype) -> List:
         """Transform the raw data into target platform supported data formats.
 
@@ -565,88 +584,136 @@ class ChroniclePlugin(PluginBase):
         Returns:
             List: list of transformed data.
         """
-        try:
-            udm_version, chronicle_mappings = get_chronicle_mappings(
-                self.mappings, data_type
-            )
-        except KeyError as err:
-            self.logger.error(
-                "Error in chronicle mapping file. Error: {}.".format(str(err))
-            )
-            raise
-        except MappingValidationError as err:
-            self.logger.error(str(err))
-            raise
-        except Exception as err:
-            self.logger.error(
-                f"An error occurred while mapping data using given json "
-                f"mappings. Error: {str(err)}."
-            )
-            raise
+        if not self.configuration.get("transformData", True):
+            if data_type not in ["alerts", "events"]:
+                return raw_data
 
-        transformed_data = []
-        udm_generator = UDMGenerator(
-            self.mappings,
-            udm_version,
-            self.logger,
-        )
+            try:
+                udm_version, chronicle_mappings = get_chronicle_mappings(
+                    self.mappings, "json"
+                )
+            except KeyError as err:
+                self.logger.error(
+                    "Error in chronicle mapping file. Error: {}".format(str(err))
+                )
+                raise
+            except MappingValidationError as err:
+                self.logger.error(str(err))
+                raise
+            except Exception as err:
+                self.logger.error(
+                    "An error occurred while mapping data using given json mappings. Error: {}".format(
+                        str(err)
+                    )
+                )
+                raise
 
-        for data in raw_data:
-            # First retrieve the mapping of subtype being transformed
             try:
                 subtype_mapping = self.get_subtype_mapping(
-                    chronicle_mappings[data_type], subtype
+                    chronicle_mappings["json"][data_type], subtype
                 )
             except Exception:
                 self.logger.error(
-                    f"Error occurred while retrieving mappings for subtype"
-                    f" '{subtype}'. Transformation of current record will be"
-                    f" skipped."
-                )
-                continue
-
-            # Generating the UDM header
-            try:
-                header = self.get_headers(
-                    subtype_mapping["header"], data, data_type, subtype
-                )
-            except Exception as err:
-                self.logger.error(
-                    f"[{data_type}][{subtype}]: Error occurred while creating "
-                    f"UDM header: {str(err)}. Transformation of "
-                    f"current record will be skipped."
-                )
-                continue
-
-            try:
-                extension = self.get_extensions(
-                    subtype_mapping["extension"], data, data_type, subtype
-                )
-            except Exception as err:
-                self.logger.error(
-                    f"[{data_type}][{subtype}]: Error occurred while creating"
-                    f" UDM extension: {str(err)}."
-                    f" Transformation of the current record will be skipped."
-                )
-                continue
-
-            try:
-                transformed_data.append(
-                    udm_generator.get_udm_event(
-                        data, header, extension, data_type, subtype
-                    )
-                )
-                # pass
-            except EmptyExtensionError:
-                self.logger.error(
-                    "[{}][{}]: Got empty extension during transformation."
-                    "Transformation of current record will be skipped.".format(
+                    'Error occurred while retrieving mappings for datatype: "{}" (subtype "{}"). '
+                    "Transformation will be skipped.".format(
                         data_type, subtype
                     )
                 )
+                raise
+
+            transformed_data = []
+
+            for data in raw_data:
+                transformed_data.append(
+                    self.map_json_data(subtype_mapping, data, data_type, subtype)
+                )
+
+            return transformed_data
+                
+
+        else:
+            try:
+                udm_version, chronicle_mappings = get_chronicle_mappings(
+                    self.mappings, data_type
+                )
+            except KeyError as err:
+                self.logger.error(
+                    "Error in chronicle mapping file. Error: {}.".format(str(err))
+                )
+                raise
+            except MappingValidationError as err:
+                self.logger.error(str(err))
+                raise
             except Exception as err:
                 self.logger.error(
-                    "[{}][{}]: An error occurred during transformation."
-                    " Error: {}.".format(data_type, subtype, str(err))
+                    f"An error occurred while mapping data using given json "
+                    f"mappings. Error: {str(err)}."
                 )
-        return transformed_data
+                raise
+
+            transformed_data = []
+            udm_generator = UDMGenerator(
+                self.mappings,
+                udm_version,
+                self.logger,
+            )
+
+            for data in raw_data:
+                # First retrieve the mapping of subtype being transformed
+                try:
+                    subtype_mapping = self.get_subtype_mapping(
+                        chronicle_mappings[data_type], subtype
+                    )
+                except Exception:
+                    self.logger.error(
+                        f"Error occurred while retrieving mappings for subtype"
+                        f" '{subtype}'. Transformation of current record will be"
+                        f" skipped."
+                    )
+                    continue
+
+                # Generating the UDM header
+                try:
+                    header = self.get_headers(
+                        subtype_mapping["header"], data, data_type, subtype
+                    )
+                except Exception as err:
+                    self.logger.error(
+                        f"[{data_type}][{subtype}]: Error occurred while creating "
+                        f"UDM header: {str(err)}. Transformation of "
+                        f"current record will be skipped."
+                    )
+                    continue
+
+                try:
+                    extension = self.get_extensions(
+                        subtype_mapping["extension"], data, data_type, subtype
+                    )
+                except Exception as err:
+                    self.logger.error(
+                        f"[{data_type}][{subtype}]: Error occurred while creating"
+                        f" UDM extension: {str(err)}."
+                        f" Transformation of the current record will be skipped."
+                    )
+                    continue
+
+                try:
+                    transformed_data.append(
+                        udm_generator.get_udm_event(
+                            data, header, extension, data_type, subtype
+                        )
+                    )
+                    # pass
+                except EmptyExtensionError:
+                    self.logger.error(
+                        "[{}][{}]: Got empty extension during transformation."
+                        "Transformation of current record will be skipped.".format(
+                            data_type, subtype
+                        )
+                    )
+                except Exception as err:
+                    self.logger.error(
+                        "[{}][{}]: An error occurred during transformation."
+                        " Error: {}.".format(data_type, subtype, str(err))
+                    )
+            return transformed_data

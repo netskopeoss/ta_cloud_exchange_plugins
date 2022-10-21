@@ -1,9 +1,10 @@
-# 1.4.1
+# 2.0.0
+## Added
+- Added support to sent raw data to the SIEM Platform.
+
+# 1.4.0
 ## Added
 - Added support for region selection.
-
-## Fixed
-- Removed invalid UDM fields from the default mapping file.
 
 # 1.3.1
 ## Changed

@@ -67,6 +67,31 @@ class ChronicleValidator(object):
 
         validate(instance=instance, schema=schema)
 
+    def validate_json(self, instance):
+        """Validate the schema of given taxonomy JSON.
+
+        Args:
+            instance: The JSON object to be validated
+
+        Returns:
+            True if the schema is valid, False otherwise
+        """
+        schema = {
+            "type": "object",
+            "patternProperties": {
+                ".*": {
+                    "type": "object",
+                    "patternProperties": {
+                        ".*": {
+                            "type": "array",
+                        }
+                    }
+                },
+            },
+        }
+
+        validate(instance=instance, schema=schema)
+
     def validate_mapping_schema(self, mappings):
         """Validate mapping schema.
 
@@ -104,17 +129,20 @@ class ChronicleValidator(object):
 
         # Validate the schema of all taxonomy
         for data_type, dtype_taxonomy in mappings["taxonomy"].items():
-            for subtype, subtype_taxonomy in dtype_taxonomy.items():
-                try:
-                    self.validate_taxonomy(subtype_taxonomy)
-                except JsonSchemaValidationError as err:
-                    self.logger.error(
-                        "Chronicle Plugin: Validation error occurred. Error: "
-                        'while validating JSON schema for type "{}" and subtype "{}": '
-                        "{}".format(data_type, subtype, err)
-                    )
-                    return False
-        return True
+            if data_type == "json":
+                self.validate_json(dtype_taxonomy)
+            else:
+                for subtype, subtype_taxonomy in dtype_taxonomy.items():
+                    try:
+                        self.validate_taxonomy(subtype_taxonomy)
+                    except JsonSchemaValidationError as err:
+                        self.logger.error(
+                            "Chronicle Plugin: Validation error occurred. Error: "
+                            'while validating JSON schema for type "{}" and subtype "{}": '
+                            "{}".format(data_type, subtype, err)
+                        )
+                        return False
+            return True
 
     def validate_chronicle_map(self, mappings):
         """Validate field JSON mappings.

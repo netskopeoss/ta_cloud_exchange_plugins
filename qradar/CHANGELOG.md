@@ -1,3 +1,16 @@
+# 2.0.0
+## Added
+- Added support to sent raw data to the SIEM Platform.
+
+# 1.2.2
+# 1.2.3
+## Fixed
+- Fixed Severity mappings for Audit events.
+
+# 1.2.2-beta
+## Added
+- Added support for Syslog service plugin for Netskope CE.
+
 # 1.2.1
 ## Changed
 - Updated the mapping file for timestamp related fields

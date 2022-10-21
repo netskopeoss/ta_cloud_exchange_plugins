@@ -192,6 +192,9 @@ def get_syslog_mappings(mappings, data_type):
     """
     data_type_specific_mapping = mappings["taxonomy"][data_type]
 
+    if data_type == "json":
+        return mappings["delimiter"], mappings["cef_version"], mappings["taxonomy"]
+
     # Validate the headers of each mapped subtype
     for subtype, subtype_map in data_type_specific_mapping.items():
         subtype_header = subtype_map["header"]

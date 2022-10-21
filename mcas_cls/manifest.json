@@ -1,7 +1,7 @@
 {
     "name": "Microsoft Defender for Cloud Apps",
     "id": "mcas_cls",
-    "version": "1.1.0",
+    "version": "2.0.0",
     "mapping": "Microsoft Defender for Cloud Apps Default Mappings",
     "types": [
         "alerts",

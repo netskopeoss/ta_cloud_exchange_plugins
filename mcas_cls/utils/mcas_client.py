@@ -34,6 +34,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
 import time
+import json
 import requests
 import threading
 
@@ -164,7 +165,7 @@ class MCASClient:
                     )
 
                 elif req_type == "put":
-                    put_data = str.encode("\n".join(data))
+                    put_data = str.encode("\n".join(json.dumps(x) for x in data))
                     file_name = self.datafile.format(threading.get_ident())
                     files = {"file": (file_name, put_data)}
                     response = requests.put(

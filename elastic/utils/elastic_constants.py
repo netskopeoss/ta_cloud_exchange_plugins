@@ -58,3 +58,10 @@ SEVERITY_MAP = {
     "9": SEVERITY_VERY_HIGH,
     "10": SEVERITY_VERY_HIGH,
 }
+
+BOOLEAN_FIELDS = [
+    "netskope.alerts.ml_detection",
+    "netskope.alerts.obfuscate",
+    "netskope.alerts.is_web_universal_connector",
+    "netskope.events.obfuscate",
+]

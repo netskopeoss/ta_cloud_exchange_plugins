@@ -252,105 +252,172 @@ class ArcSightPlugin(PluginBase):
             # If mapping is not present, 'default_value' must be there because of validation (case #3 and case #5)
             return extension_mapping["default_value"]
 
+    def map_json_data(self, mappings, data, data_type, subtype):
+        """Filter the raw data and returns the filtered data.
+
+        :param mappings: List of fields to be pushed
+        :param data: Data to be mapped (retrieved from Netskope)
+        :param logger: Logger object for logging purpose
+        :return: Mapped data based on fields given in mapping file
+        """
+        
+        if mappings == []:
+            return data
+
+        mapped_dict = {}
+        for key in mappings:
+            if key in data:
+                mapped_dict[key] = data[key]
+        
+        return mapped_dict
+
     def transform(self, raw_data, data_type, subtype) -> List:
         """To Transform the raw netskope JSON data into target platform supported data formats."""
-        try:
-            delimiter, cef_version, arcsight_mappings = get_arcsight_mappings(
-                self.mappings, data_type
-            )
-        except KeyError as err:
-            self.logger.error(
-                "Error in arcsight mapping file. Error: {}".format(str(err))
-            )
-            raise
-        except MappingValidationError as err:
-            self.logger.error(str(err))
-            raise
-        except Exception as err:
-            self.logger.error(
-                "An error occurred while mapping data using given json mappings. Error: {}".format(
-                    str(err)
+        if not self.configuration.get("transformData", True):
+            if data_type not in ["alerts", "events"]:
+                return raw_data
+
+            try:
+                delimiter, cef_version, arcsight_mappings = get_arcsight_mappings(
+                    self.mappings, "json"
                 )
-            )
-            raise
+            except KeyError as err:
+                self.logger.error(
+                    "Error in arcsight mapping file. Error: {}".format(str(err))
+                )
+                raise
+            except MappingValidationError as err:
+                self.logger.error(str(err))
+                raise
+            except Exception as err:
+                self.logger.error(
+                    "An error occurred while mapping data using given json mappings. Error: {}".format(
+                        str(err)
+                    )
+                )
+                raise
 
-        cef_generator = CEFGenerator(
-            self.mappings,
-            delimiter,
-            cef_version,
-            self.logger,
-        )
-
-        transformed_data = []
-        for data in raw_data:
-
-            # First retrieve the mapping of subtype being transformed
             try:
                 subtype_mapping = self.get_subtype_mapping(
-                    arcsight_mappings[data_type], subtype
+                    arcsight_mappings["json"][data_type], subtype
                 )
             except Exception:
                 self.logger.error(
-                    'Error occurred while retrieving mappings for subtype "{}". '
-                    "Transformation of current record will be skipped.".format(
-                        subtype
-                    )
-                )
-                continue
-
-            # Generating the CEF header
-            try:
-                header = self.get_headers(
-                    subtype_mapping["header"], data, data_type, subtype
-                )
-            except Exception as err:
-                self.logger.error(
-                    "[{}][{}]: Error occurred while creating CEF header: {}. Transformation of "
-                    "current record will be skipped.".format(
-                        data_type, subtype, str(err)
-                    )
-                )
-                continue
-
-            try:
-                extension = self.get_extensions(
-                    subtype_mapping["extension"], data, data_type, subtype
-                )
-            except Exception as err:
-                self.logger.error(
-                    "[{}][{}]: Error occurred while creating CEF extension: {}. Transformation of "
-                    "the current record will be skipped".format(
-                        data_type, subtype, str(err)
-                    )
-                )
-                continue
-
-            try:
-                transformed_data.append(
-                    cef_generator.get_cef_event(
-                        data,
-                        header,
-                        extension,
-                        data_type,
-                        subtype,
-                        self.configuration.get(
-                            "log_source_identifier", "netskopece"
-                        ),
-                    )
-                )
-            except EmptyExtensionError:
-                self.logger.error(
-                    "[{}][{}]: Got empty extension during transformation."
-                    "Transformation of current record will be skipped".format(
+                    'Error occurred while retrieving mappings for datatype: "{}" (subtype "{}"). '
+                    "Transformation will be skipped.".format(
                         data_type, subtype
                     )
                 )
+                raise
+
+            transformed_data = []
+
+            for data in raw_data:
+                transformed_data.append(
+                    self.map_json_data(subtype_mapping, data, data_type, subtype)
+                )
+
+            return transformed_data
+                
+
+        else:
+            try:
+                delimiter, cef_version, arcsight_mappings = get_arcsight_mappings(
+                    self.mappings, data_type
+                )
+            except KeyError as err:
+                self.logger.error(
+                    "Error in arcsight mapping file. Error: {}".format(str(err))
+                )
+                raise
+            except MappingValidationError as err:
+                self.logger.error(str(err))
+                raise
             except Exception as err:
                 self.logger.error(
-                    "[{}][{}]: An error occurred during transformation."
-                    " Error: {}".format(data_type, subtype, str(err))
+                    "An error occurred while mapping data using given json mappings. Error: {}".format(
+                        str(err)
+                    )
                 )
-        return transformed_data
+                raise
+
+            cef_generator = CEFGenerator(
+                self.mappings,
+                delimiter,
+                cef_version,
+                self.logger,
+            )
+
+            transformed_data = []
+            for data in raw_data:
+
+                # First retrieve the mapping of subtype being transformed
+                try:
+                    subtype_mapping = self.get_subtype_mapping(
+                        arcsight_mappings[data_type], subtype
+                    )
+                except Exception:
+                    self.logger.error(
+                        'Error occurred while retrieving mappings for subtype "{}". '
+                        "Transformation of current record will be skipped.".format(
+                            subtype
+                        )
+                    )
+                    continue
+
+                # Generating the CEF header
+                try:
+                    header = self.get_headers(
+                        subtype_mapping["header"], data, data_type, subtype
+                    )
+                except Exception as err:
+                    self.logger.error(
+                        "[{}][{}]: Error occurred while creating CEF header: {}. Transformation of "
+                        "current record will be skipped.".format(
+                            data_type, subtype, str(err)
+                        )
+                    )
+                    continue
+
+                try:
+                    extension = self.get_extensions(
+                        subtype_mapping["extension"], data, data_type, subtype
+                    )
+                except Exception as err:
+                    self.logger.error(
+                        "[{}][{}]: Error occurred while creating CEF extension: {}. Transformation of "
+                        "the current record will be skipped".format(
+                            data_type, subtype, str(err)
+                        )
+                    )
+                    continue
+
+                try:
+                    transformed_data.append(
+                        cef_generator.get_cef_event(
+                            data,
+                            header,
+                            extension,
+                            data_type,
+                            subtype,
+                            self.configuration.get(
+                                "log_source_identifier", "netskopece"
+                            ),
+                        )
+                    )
+                except EmptyExtensionError:
+                    self.logger.error(
+                        "[{}][{}]: Got empty extension during transformation."
+                        "Transformation of current record will be skipped".format(
+                            data_type, subtype
+                        )
+                    )
+                except Exception as err:
+                    self.logger.error(
+                        "[{}][{}]: An error occurred during transformation."
+                        " Error: {}".format(data_type, subtype, str(err))
+                    )
+            return transformed_data
 
     def init_handler(self, configuration):
         """Initialize unique ArcSight handler per thread based on configured protocol."""

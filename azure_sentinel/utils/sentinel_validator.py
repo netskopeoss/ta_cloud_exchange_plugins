@@ -58,18 +58,21 @@ class AzureSentinelValidator(object):
                 "taxonomy": {
                     "type": "object",
                     "properties": {
-                        "alerts": {"type": "object"},
-                        "events": {"type": "object"},
-                        "webtx": {"type": "object"}
-                    },
-                    "anyOf": [
-                        {"required": ["alerts"]},
-                        {"required": ["events"]},
-                        {"required": ["webtx"]},
-                    ],
+                        "json": {
+                            "patternProperties": {
+                                ".*": {
+                                    "type": "object",
+                                    "patternProperties": {
+                                        ".*": {
+                                            "type": "array",
+                                        }
+                                    }
+                                }
+                            }
+                        }               
+                    }
                 }
             },
-            "required": ["taxonomy"],
         }
 
         # If no exception is raised by validate(), the instance is valid.

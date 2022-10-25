@@ -31,8 +31,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
 
 """Crowdstrike CRE plugin."""
-
-
 import json
 import datetime
 import requests
@@ -48,7 +46,16 @@ from netskope.common.utils import add_user_agent
 from typing import List
 from .lib.falconpy.api_complete import APIHarness
 
-PAGE_SIZE = 1000
+PAGE_SIZE = 5000
+BATCH_SIZE = 1000
+MAC_PUT_DIR = "/Users"
+PLATFORM_TO_SCRIPT_MAPPING = {
+    "Windows": {
+        "script_name": "windows_agent_restart_script.ps1",
+        "description": "Windows Netskope restart agent script.",
+    },
+    "Mac": {"script_name": "mac_agent_restart_script"},
+}
 
 
 class CrowdstrikeException(Exception):
@@ -64,9 +71,11 @@ class CrowdstrikePlugin(PluginBase):
         """Handle the different HTTP response code.
 
         Args:
-            resp (requests.models.Response): Response object returned from API call.
+            resp (requests.models.Response): Response object returned from API
+            call.
         Returns:
-            dict: Returns the dictionary of response JSON when the response code is 200.
+            dict: Returns the dictionary of response JSON when the response
+            code is 200.
         Raises:
             HTTPError: When the response code is not 200.
         """
@@ -75,37 +84,53 @@ class CrowdstrikePlugin(PluginBase):
                 return resp.json()
             except ValueError:
                 raise CrowdstrikeException(
-                    "Plugin: CrowdStrike,"
+                    "Crowdstrike CRE Plugin: "
                     "Exception occurred while parsing JSON response."
                 )
 
         elif resp.status_code == 401:
             raise CrowdstrikeException(
-                "Plugin: CrowdStrike, "
+                "Crowdstrike CRE Plugin: "
                 "Received exit code 401, Authentication Error"
             )
 
         elif resp.status_code == 403:
             raise CrowdstrikeException(
-                "Plugin: CrowdStrike, "
+                "Crowdstrike CRE Plugin: "
                 "Received exit code 403, Forbidden User"
             )
+        elif resp.status_code == 404:
 
+            try:
+                resp = resp.json()
+            except Exception as exp:
+                self.logger.error(
+                    message="Crowdstrike CRE Plugin: response code 404 "
+                    "received. Error while parsing response in json.",
+                    details=exp.with_traceback(),
+                )
+                return
+            self.logger.error(
+                message="Crowdstrike CRE Plugin: One or more assessment ids "
+                "are not found in crowdstrike.",
+                details=str(resp.get("errors", "")),
+            )
+            return resp
         elif resp.status_code >= 400 and resp.status_code < 500:
             raise CrowdstrikeException(
-                f"Plugin: CrowdStrike, "
+                f"Crowdstrike CRE Plugin: "
                 f"Received exit code {resp.status_code}, HTTP client Error"
             )
 
         elif resp.status_code >= 500 and resp.status_code < 600:
             raise CrowdstrikeException(
-                f"Plugin: CrowdStrike, "
+                f"Crowdstrike CRE Plugin: "
                 f"Received exit code {resp.status_code}, HTTP server Error"
             )
 
         else:
             raise CrowdstrikeException(
-                f"Plugin: CrowdStrike, "
+                f"Crowdstrike CRE Plugin: "
                 f"Received exit code {resp.status_code}, HTTP Error"
             )
 
@@ -128,32 +153,25 @@ class CrowdstrikePlugin(PluginBase):
             return agent_ids
 
         except requests.exceptions.ProxyError:
-            self.notifier.error(
-                "Plugin: CrowdStrike Invalid proxy configuration."
-            )
-            self.logger.error(
-                "Plugin: CrowdStrike Invalid proxy configuration."
-            )
-            raise requests.HTTPError(
-                "Plugin: CrowdStrike Invalid proxy configuration."
-            )
+            error_msg = "Crowdstrike CRE Plugin: Invalid proxy configuration."
+            self.notifier.error(error_msg)
+            self.logger.error(error_msg)
+            raise requests.HTTPError(error_msg)
         except requests.exceptions.ConnectionError:
-            self.notifier.error(
-                "Plugin: CrowdStrike Unable to establish connection with CrowdStrike platform. "
-                "Proxy server or CrowdStrike API is not reachable."
+            error_msg = " ".join(
+                [
+                    "Crowdstrike CRE Plugin: Unable to establish connection",
+                    "with CrowdStrike platform. Proxy server or CrowdStrike",
+                    "API is not reachable.",
+                ]
             )
-            self.logger.error(
-                "Plugin: CrowdStrike Unable to establish connection with CrowdStrike platform. "
-                "Proxy server or CrowdStrike API is not reachable."
-            )
-            raise requests.HTTPError(
-                "Plugin: CrowdStrike Unable to establish connection with CrowdStrike platform. "
-                "Proxy server or CrowdStrike API is not reachable."
-            )
+            self.notifier.error(error_msg)
+            self.logger.error(error_msg)
+            raise requests.HTTPError(error_msg)
         except requests.exceptions.RequestException as e:
             self.logger.error(
-                "Plugin: CrowdStrike "
-                "Exception occurred while making an API call to CrowdStrike platform"
+                "Plugin: CrowdStrike Exception occurred while making"
+                "an API call to CrowdStrike platform."
             )
             raise e
 
@@ -180,37 +198,45 @@ class CrowdstrikePlugin(PluginBase):
         Returns:
             dict: JSON response dict received from query endpoint.
         """
-        query_endpoint = f"{self.configuration['base_url'].strip()}/devices/queries/devices/v1"
+        base_url = self.configuration["base_url"].strip()
+        query_endpoint = f"{base_url}/devices/queries/devices-scroll/v1"
         agent_ids = []
-        offset = 0
+        offset = ""
         while True:
             headers = self.reload_auth_token(headers)
+            params = {"limit": PAGE_SIZE, "offset": offset}
+            if self.last_run_at:
+                formatted_date = self.last_run_at.strftime(
+                    "%Y-%m-%dT%H:%M:%SZ"
+                )
+                params.update({"filter": f"first_seen: > '{formatted_date}'"})
             all_agent_resp = requests.get(
                 query_endpoint,
                 headers=add_user_agent(headers),
-                params={"limit": PAGE_SIZE, "offset": offset},
+                params=params,
                 proxies=self.proxy,
             )
             agent_resp_json = self.handle_error(all_agent_resp)
             errors = agent_resp_json.get("errors")
             if errors:
-                err_msg = errors[0].get("message", "")
-                self.notifier.error(
-                    "Plugin: CrowdStrike Unable to Fetch agents, "
-                    f"Error: {err_msg}"
+                err_msg = " ".join(
+                    [
+                        "Crowdstrike CRE Plugin: Unable to Fetch agents",
+                        f"Error: {errors[0].get('message', '')}",
+                    ]
                 )
-                self.logger.error(
-                    "Plugin: CrowdStrike Unable to Fetch Agents, "
-                    f"Error: {err_msg}"
-                )
-                raise requests.HTTPError(
-                    f"Plugin: CrowdStrike Unable to Fetch Agents, "
-                    f"Error: {err_msg}"
-                )
+
+                self.notifier.error(err_msg)
+                self.logger.error(err_msg)
+                raise requests.HTTPError(err_msg)
             resources = agent_resp_json.get("resources", [])
-            offset += PAGE_SIZE
+            offset = (
+                agent_resp_json.get("meta", {})
+                .get("pagination", {})
+                .get("offset", "")
+            )
             agent_ids.extend(resources)
-            if len(resources) < PAGE_SIZE:
+            if offset.strip() == "" or len(offset) == 0:
                 break
         return agent_ids
 
@@ -236,8 +262,8 @@ class CrowdstrikePlugin(PluginBase):
             PAYLOAD = {
                 "description": f"file representing a zta score of {scores[i]}",
                 "name": f"{files[i]}",
-                "comments_for_audit_log": f"uploaded file representing a zta score \
-                    of {scores[i]} for Netskope ZTA-RTR integration",
+                "comments_for_audit_log": f"uploaded file representing a zta \
+                    score of {scores[i]} for Netskope ZTA-RTR integration",
             }
             file_upload = [("file", "Netskope ZTA-RTR Integration")]
             response = falcon.command(
@@ -251,8 +277,8 @@ class CrowdstrikePlugin(PluginBase):
                         != "file with given name already exists"
                     ):
                         raise Exception(
-                            f"Error while uploading file {files[i]}\
-                            to cloud: {error['message']}"
+                            f"Crowdstrike CRE Plugin: Error while uploading"
+                            f" file {files[i]}to cloud: {error['message']}"
                         )
             else:
                 self.logger.info(
@@ -269,6 +295,7 @@ class CrowdstrikePlugin(PluginBase):
             str: Session id of the connection.
         """
         try:
+            base_url = self.configuration["base_url"].strip()
             auth_json = self.get_auth_json(
                 self.configuration.get("client_id").strip(),
                 self.configuration.get("client_secret").strip(),
@@ -279,10 +306,12 @@ class CrowdstrikePlugin(PluginBase):
                 "Authorization": f"Bearer {auth_token}",
                 "Content-Type": "application/json",
             }
-            query_endpoint = f"{self.configuration['base_url'].strip()}/real-time-response/entities/sessions/v1"
+            query_endpoint = (
+                f"{base_url}/real-time-response/entities/sessions/v1"
+            )
             body = {
                 "device_id": device_id,
-                "origin": "netskope",
+                "origin": "Netskope",
                 "queue_offline": True,
             }
             resp = requests.post(
@@ -300,32 +329,30 @@ class CrowdstrikePlugin(PluginBase):
             return session_id
 
         except requests.exceptions.ProxyError:
-            self.notifier.error(
-                "Plugin: CrowdStrike Invalid proxy configuration."
+            err_msg = " ".join(
+                [
+                    "Crowdstrike CRE Plugin: CrowdStrike Invalid",
+                    "proxy configuration.",
+                ]
             )
-            self.logger.error(
-                "Plugin: CrowdStrike Invalid proxy configuration."
-            )
-            raise requests.HTTPError(
-                "Plugin: CrowdStrike Invalid proxy configuration."
-            )
+            self.notifier.error(err_msg)
+            self.logger.error(err_msg)
+            raise requests.HTTPError(err_msg)
         except requests.exceptions.ConnectionError:
-            self.notifier.error(
-                "Plugin: CrowdStrike Unable to establish connection with CrowdStrike platform. "
-                "Proxy server or CrowdStrike API is not reachable."
+            err_msg = " ".join(
+                [
+                    "Crowdstrike CRE Plugin: CrowdStrike Unable to establish",
+                    "connection with CrowdStrike platform."
+                    "Proxy server or CrowdStrike API is not reachable.",
+                ]
             )
-            self.logger.error(
-                "Plugin: CrowdStrike Unable to establish connection with CrowdStrike platform. "
-                "Proxy server or CrowdStrike API is not reachable."
-            )
-            raise requests.HTTPError(
-                "Plugin: CrowdStrike Unable to establish connection with CrowdStrike platform. "
-                "Proxy server or CrowdStrike API is not reachable."
-            )
+            self.notifier.error(err_msg)
+            self.logger.error(err_msg)
+            raise requests.HTTPError(err_msg)
         except Exception as e:
             self.logger.error(
-                "Plugin: CrowdStrike "
-                f"Exception occurred while creating session with device id {device_id}."
+                "Crowdstrike CRE Plugin: Exception occurred while "
+                f"creating session with device id {device_id}."
             )
             raise Exception(
                 e.response.json().get(
@@ -334,7 +361,9 @@ class CrowdstrikePlugin(PluginBase):
                 )
             )
 
-    def _remove_files_from_device(self, session_id: str, device_id: str):
+    def _remove_files_from_device(
+        self, session_id: str, device_id: str, platform_name: str
+    ):
         """Remove files from the remote host.
 
         Args:
@@ -347,13 +376,33 @@ class CrowdstrikePlugin(PluginBase):
             "crwd_zta_51_75.txt",
             "crwd_zta_76_100.txt",
         ]
+
         for i in range(4):
-            self._execute_command(
-                "rm", f"rm '{files[i]}'", session_id, device_id
+            cmd = f"rm '{files[i]}'"
+            if platform_name == "Mac":
+                cmd = f"rm '{MAC_PUT_DIR}/{files[i]}'"
+            self._execute_command("rm", cmd, session_id, device_id)
+
+    def _block_until_completed(
+        self, status: bool, cloud_request_id: str, device_id: str, cmd: str
+    ):
+        """Block execution until command successfully executed.
+
+        Args:
+            status (bool): Status of command.
+            cloud_request_id (str): Cloud request Id of the request.
+            device_id (str): Device ID.
+            cmd (str): Command to be executed.
+        """
+        while status is False:
+            status = self._check_command_status(
+                cloud_request_id=cloud_request_id,
+                device_id=device_id,
+                cmd=cmd,
             )
 
     def _put_file_on_device(
-        self, session_id: str, score: int, device_id: str
+        self, session_id: str, score: int, device_id: str, platform_name: str
     ) -> str:
         """Put file on the remote host.
 
@@ -361,23 +410,49 @@ class CrowdstrikePlugin(PluginBase):
             session_id (str): Session id to put files against.
             score (int): score to determine which file is to be put.
             device_id (str): Id of the remote host.
-
-        Returns:
-            str: cloud request id to check the status of put command.
+            platform_name (str): Platform name of the host.
         """
+        file = None
         score = int(score / 10)
-        if score >= 1 and score <= 25:
+        if score <= 25:
             file = "crwd_zta_1_25.txt"
         elif score >= 26 and score <= 50:
             file = "crwd_zta_26_50.txt"
         elif score >= 51 and score <= 75:
             file = "crwd_zta_51_75.txt"
-        elif score >= 76 and score <= 100:
+        else:
             file = "crwd_zta_76_100.txt"
-        id = self._execute_command(
+        if platform_name == "Mac":
+            cmd = f"cd '{MAC_PUT_DIR}'"
+            cloud_request_id, is_queued = self._execute_command(
+                "cd", cmd, session_id, device_id
+            )
+            status = self._check_command_status(
+                cloud_request_id=cloud_request_id,
+                device_id=device_id,
+                cmd=cmd,
+            )
+            if status is False and is_queued is False:
+                self._block_until_completed(
+                    status=status,
+                    cloud_request_id=cloud_request_id,
+                    device_id=device_id,
+                    cmd=cmd,
+                )
+
+        cloud_request_id, is_queued = self._execute_command(
             "put", f"put '{file}'", session_id, device_id
         )
-        return id, file
+        status = self._check_command_status(
+            cloud_request_id, device_id, f"put {file}"
+        )
+        if status is False and is_queued is False:
+            self._block_until_completed(
+                status=status,
+                cloud_request_id=cloud_request_id,
+                device_id=device_id,
+                cmd=f"put {file}",
+            )
 
     def _execute_command(
         self,
@@ -398,6 +473,7 @@ class CrowdstrikePlugin(PluginBase):
             str: Cloud request id to check status of the command.
         """
         try:
+            base_url = self.configuration["base_url"].strip()
             auth_json = self.get_auth_json(
                 self.configuration.get("client_id").strip(),
                 self.configuration.get("client_secret").strip(),
@@ -408,7 +484,10 @@ class CrowdstrikePlugin(PluginBase):
                 "Authorization": f"Bearer {auth_token}",
                 "Content-Type": "application/json",
             }
-            query_endpoint = f"{self.configuration['base_url'].strip()}/real-time-response/entities/admin-command/v1"
+
+            query_endpoint = (
+                f"{base_url}/real-time-response/entities/admin-command/v1"
+            )
             body = {
                 "base_command": base_command,
                 "command_string": command_string,
@@ -423,39 +502,38 @@ class CrowdstrikePlugin(PluginBase):
             )
             resp.raise_for_status()
             response = resp.json()
-            cloud_request_id = ""
+            cloud_request_id, is_queued = "", False
             resources = response.get("resources", [])
             if resources:
                 cloud_request_id = resources[0].get("cloud_request_id", "")
-            return cloud_request_id
+                is_queued = resources[0].get("queued_command_offline")
+            return cloud_request_id, is_queued
 
         except requests.exceptions.ProxyError:
-            self.notifier.error(
-                "Plugin: CrowdStrike Invalid proxy configuration."
+            err_msg = " ".join(
+                [
+                    "Crowdstrike CRE Plugin: CrowdStrike Invalid",
+                    "proxy configuration.",
+                ]
             )
-            self.logger.error(
-                "Plugin: CrowdStrike Invalid proxy configuration."
-            )
-            raise requests.HTTPError(
-                "Plugin: CrowdStrike Invalid proxy configuration."
-            )
+            self.notifier.error(err_msg)
+            self.logger.error(err_msg)
+            raise requests.HTTPError(err_msg)
         except requests.exceptions.ConnectionError:
-            self.notifier.error(
-                "Plugin: CrowdStrike Unable to establish connection with CrowdStrike platform. "
-                "Proxy server or CrowdStrike API is not reachable."
+            err_msg = " ".join(
+                [
+                    "Crowdstrike CRE Plugin: Unable to establish connection ",
+                    "with CrowdStrike platform.Proxy server or CrowdStrike"
+                    "API is not reachable.",
+                ]
             )
-            self.logger.error(
-                "Plugin: CrowdStrike Unable to establish connection with CrowdStrike platform. "
-                "Proxy server or CrowdStrike API is not reachable."
-            )
-            raise requests.HTTPError(
-                "Plugin: CrowdStrike Unable to establish connection with CrowdStrike platform. "
-                "Proxy server or CrowdStrike API is not reachable."
-            )
+            self.notifier.error(err_msg)
+            self.logger.error(err_msg)
+            raise requests.HTTPError(err_msg)
         except Exception as e:
             self.logger.error(
-                "Plugin: CrowdStrike "
-                f"Exception occurred while executing an command {command_string} on device {device_id}."
+                "Crowdstrike CRE Plugin: CrowdStrike Exception occurred while "
+                f"executing an command {command_string} on device {device_id}."
             )
             raise HTTPError(
                 e.response.json().get(
@@ -465,16 +543,18 @@ class CrowdstrikePlugin(PluginBase):
             )
 
     def _check_command_status(
-        self, cloud_request_id: str, device_id: str, fileName: str
+        self, cloud_request_id: str, device_id: str, cmd: str
     ):
         """Check the status of the executed command.
 
         Args:
-            cloud_request_id (str): Cloud request id generated from execute command.
+            cloud_request_id (str): Cloud request id generated from execute
+            command.
             device_id (str): Device id on which the command was executed.
-            fileName (str): File name to be put.
+            cmd (str): Command that was
         """
         try:
+            base_url = self.configuration["base_url"]
             auth_json = self.get_auth_json(
                 self.configuration.get("client_id"),
                 self.configuration.get("client_secret"),
@@ -485,7 +565,9 @@ class CrowdstrikePlugin(PluginBase):
                 "Authorization": f"Bearer {auth_token}",
                 "Content-Type": "application/json",
             }
-            query_endpoint = f"{self.configuration['base_url']}/real-time-response/entities/admin-command/v1"
+            query_endpoint = (
+                f"{base_url}/real-time-response/entities/admin-command/v1"
+            )
             params = {"cloud_request_id": cloud_request_id, "sequence_id": 0}
             resp = requests.get(
                 query_endpoint,
@@ -496,51 +578,61 @@ class CrowdstrikePlugin(PluginBase):
             resp.raise_for_status()
             response = resp.json()
             resources = response.get("resources", [])
+
             if resources:
                 stderr = resources[0].get("stderr", "")
-                if resources[0].get("complete") == False:
+                if resources[0].get("complete") is False and stderr != "":
                     raise CrowdstrikeException(
-                        f"Unable to execute the put command on the device {device_id}."
+                        f"Unable to execute the {cmd} command on the "
+                        f"device {device_id}."
                     )
+
+                elif resources[0].get("complete") is False and stderr == "":
+                    self.logger.info(
+                        f"Crowdstrike CRE Plugin: Execution of {cmd} is still "
+                        "in progress."
+                    )
+                    return False
+                elif resources[0].get("complete") is True:
+                    self.logger.info(
+                        f"Crowdstrike CRE Plugin: execution of {cmd} "
+                        "is completed."
+                    )
+                    return True
+
                 if stderr and "already exists" not in stderr:
                     raise CrowdstrikeException(stderr)
                 self.logger.info(
-                    f"File {fileName} uploaded successfully on the device {device_id}."
+                    f"Crowdstrike CRE Plugin: {cmd} is successfully executed."
+                    f"for device {device_id}"
                 )
 
         except requests.exceptions.ProxyError:
-            self.notifier.error(
-                "Plugin: CrowdStrike Invalid proxy configuration."
-            )
-            self.logger.error(
-                "Plugin: CrowdStrike Invalid proxy configuration."
-            )
-            raise requests.HTTPError(
-                "Plugin: CrowdStrike Invalid proxy configuration."
-            )
+            err_msg = "Crowdstrike CRE Plugin: Invalid proxy configuration."
+            self.notifier.error(err_msg)
+            self.logger.error(err_msg)
+            raise requests.HTTPError(err_msg)
         except requests.exceptions.ConnectionError:
-            self.notifier.error(
-                "Plugin: CrowdStrike Unable to establish connection with CrowdStrike platform. "
-                "Proxy server or CrowdStrike API is not reachable."
+            err_msg = " ".join(
+                [
+                    "Crowdstrike CRE Plugin: Unable to establish connection",
+                    "with CrowdStrike platform. Proxy server or ",
+                    "CrowdStrike API is not reachable.",
+                ]
             )
-            self.logger.error(
-                "Plugin: CrowdStrike Unable to establish connection with CrowdStrike platform. "
-                "Proxy server or CrowdStrike API is not reachable."
-            )
-            raise requests.HTTPError(
-                "Plugin: CrowdStrike Unable to establish connection with CrowdStrike platform. "
-                "Proxy server or CrowdStrike API is not reachable."
-            )
+            self.notifier.error(err_msg)
+            self.logger.error(err_msg)
+            raise requests.HTTPError(err_msg)
         except CrowdstrikeException as e:
             self.logger.error(
-                "Plugin: CrowdStrike "
-                f"Exception occurred while uploading file to the device {device_id}."
+                "Crowdstrike CRE Plugin: Exception occurred "
+                f"while uploading file to the device {device_id}."
             )
             raise Exception(str(e))
         except Exception as e:
             self.logger.error(
-                "Plugin: CrowdStrike "
-                f"Exception occurred while checking command status for device {device_id}."
+                "Crowdstrike CRE Plugin: Exception occurred "
+                f"while checking command status for device {device_id}."
             )
             raise HTTPError(
                 e.response.json().get(
@@ -567,7 +659,7 @@ class CrowdstrikePlugin(PluginBase):
                 "Authorization": f"Bearer {auth_token}",
                 "Content-Type": "application/json",
             }
-            query_endpoint = f"{self.configuration['base_url'].strip()}/real-time-response/entities/sessions/v1"
+            query_endpoint = f"{self.configuration['base_url'].strip()}/real-time-response/entities/sessions/v1"  # noqa
             params = {"session_id": session_id}
             resp = requests.delete(
                 query_endpoint,
@@ -578,38 +670,31 @@ class CrowdstrikePlugin(PluginBase):
             resp.raise_for_status()
 
         except requests.exceptions.ProxyError:
-            self.notifier.error(
-                "Plugin: CrowdStrike Invalid proxy configuration."
-            )
-            self.logger.error(
-                "Plugin: CrowdStrike Invalid proxy configuration."
-            )
-            raise requests.HTTPError(
-                "Plugin: CrowdStrike Invalid proxy configuration."
-            )
+            err_msg = "Crowdstrike CRE Plugin: Invalid proxy configuration."
+            self.notifier.error(err_msg)
+            self.logger.error(err_msg)
+            raise requests.HTTPError(err_msg)
         except requests.exceptions.ConnectionError:
-            self.notifier.error(
-                "Plugin: CrowdStrike Unable to establish connection with CrowdStrike platform. "
-                "Proxy server or CrowdStrike API is not reachable."
+            err_msg = " ".join(
+                [
+                    "Crowdstrike CRE Plugin: Unable to establish connection",
+                    "with CrowdStrike platform. Proxy server or CrowdStrike",
+                    "API is not reachable.",
+                ]
             )
-            self.logger.error(
-                "Plugin: CrowdStrike Unable to establish connection with CrowdStrike platform. "
-                "Proxy server or CrowdStrike API is not reachable."
-            )
-            raise requests.HTTPError(
-                "Plugin: CrowdStrike Unable to establish connection with CrowdStrike platform. "
-                "Proxy server or CrowdStrike API is not reachable."
-            )
+            self.notifier.error(err_msg)
+            self.logger.error(err_msg)
+            raise requests.HTTPError(err_msg)
         except Exception as e:
             self.logger.error(
-                "Plugin: CrowdStrike "
-                f"Exception occurred while deleting session with session id "
+                "Crowdstrike CRE Plugin: Exception occurred "
+                "while deleting session with session id "
                 f"{session_id} and device id {device_id}."
             )
             raise Exception(
                 e.response.json().get(
-                    "errors",
-                    f"Unable to delete session with session id {session_id} and device id {device_id}.",
+                    "errors Unable to delete session with session id ",
+                    f"{session_id} and device id {device_id}.",
                 )
             )
 
@@ -642,32 +727,25 @@ class CrowdstrikePlugin(PluginBase):
             return uids_names
 
         except requests.exceptions.ProxyError:
-            self.notifier.error(
-                "Plugin: CrowdStrike Invalid proxy configuration."
-            )
-            self.logger.error(
-                "Plugin: CrowdStrike Invalid proxy configuration."
-            )
-            raise requests.HTTPError(
-                "Plugin: CrowdStrike Invalid proxy configuration."
-            )
+            err_msg = "Crowdstrike CRE Plugin: Invalid proxy configuration."
+            self.notifier.error(err_msg)
+            self.logger.error(err_msg)
+            raise requests.HTTPError(err_msg)
         except requests.exceptions.ConnectionError:
-            self.notifier.error(
-                "Plugin: CrowdStrike Unable to establish connection with CrowdStrike platform. "
-                "Proxy server or CrowdStrike API is not reachable."
+            err_msg = " ".join(
+                [
+                    "Crowdstrike CRE Plugin: Unable to establish connection",
+                    "with CrowdStrike platform. Proxy server or CrowdStrike"
+                    "API is not reachable.",
+                ]
             )
-            self.logger.error(
-                "Plugin: CrowdStrike Unable to establish connection with CrowdStrike platform. "
-                "Proxy server or CrowdStrike API is not reachable."
-            )
-            raise requests.HTTPError(
-                "Plugin: CrowdStrike Unable to establish connection with CrowdStrike platform. "
-                "Proxy server or CrowdStrike API is not reachable."
-            )
+            self.notifier.error(err_msg)
+            self.logger.error(err_msg)
+            raise requests.HTTPError(err_msg)
         except requests.exceptions.RequestException as e:
             self.logger.error(
-                "Plugin: CrowdStrike "
-                "Exception occurred while making an API call to CrowdStrike platform."
+                "Crowdstrike CRE Plugin: Exception occurred while making "
+                "an API call to CrowdStrike platform."
             )
             raise e
 
@@ -690,64 +768,61 @@ class CrowdstrikePlugin(PluginBase):
                 if ids.type == RecordType.HOST:
                     aids.append(ids.uid)
 
-            auth_token = auth_json.get("access_token")
-            headers = {"Authorization": f"Bearer {auth_token}"}
-            query_endpoint = f"{self.configuration['base_url']}/zero-trust-assessment/entities/assessments/v1"
-            payload = {"ids": aids}
-            headers = self.reload_auth_token(headers)
-            resp = requests.get(
-                query_endpoint,
-                headers=add_user_agent(headers),
-                params=payload,
-                proxies=self.proxy,
-            )
-            all_scores_json = resp.json()
-            scores = all_scores_json.get("resources", [])
-            dict1 = {}
-            for sub in scores:
-                dict1[sub["aid"]] = sub["assessment"]["overall"] * 10
+            scores = {}
+            for i in range(0, len(aids), BATCH_SIZE):
+                aid_batch = aids[i : i + BATCH_SIZE]
+                auth_token = auth_json.get("access_token")
+                headers = {"Authorization": f"Bearer {auth_token}"}
+                query_endpoint = f"{self.configuration['base_url']}/zero-trust-assessment/entities/assessments/v1"  # noqa
+                payload = {"ids": aid_batch}
+                headers = self.reload_auth_token(headers)
+                resp = requests.get(
+                    query_endpoint,
+                    headers=add_user_agent(headers),
+                    params=payload,
+                    proxies=self.proxy,
+                )
+                all_scores_json = self.handle_error(resp=resp)
+                if all_scores_json:
+                    for sub in all_scores_json.get("resources", []):
+
+                        scores[sub["aid"]] = sub["assessment"]["overall"] * 10
+
             scored_uids = []
             count_host = 0
-            for ids, score in dict1.items():
+            for aid, score in scores.items():
                 if score <= int(self.configuration["minimum_score"]):
-                    count_host = count_host + 1
+                    count_host += 1
                     continue
                 else:
                     scored_uids.append(
-                        Record(uid=ids, type=RecordType.HOST, score=score)
+                        Record(uid=aid, type=RecordType.HOST, score=score)
                     )
             self.logger.info(
-                "Plugin: CrowdStrike "
-                f"Unable to store scores of {count_host} Hosts to CrowdStrike."
+                "Crowdstrike CRE Plugin: Successfully fetched scores of "
+                f"{count_host} Host(s) from CrowdStrike."
             )
             return scored_uids
         except requests.exceptions.ProxyError:
-            self.notifier.error(
-                "Plugin: CrowdStrike Invalid proxy configuration."
-            )
-            self.logger.error(
-                "Plugin: CrowdStrike Invalid proxy configuration."
-            )
-            raise requests.HTTPError(
-                "Plugin: CrowdStrike Invalid proxy configuration."
-            )
+            err_msg = "Crowdstrike CRE Plugin: Invalid proxy configuration."
+            self.notifier.error(err_msg)
+            self.logger.error(err_msg)
+            raise requests.HTTPError(err_msg)
         except requests.exceptions.ConnectionError:
-            self.notifier.error(
-                "Plugin: CrowdStrike Unable to establish connection with CrowdStrike platform. "
-                "Proxy server or CrowdStrike API is not reachable."
+            err_msg = " ".join(
+                [
+                    "Crowdstrike CRE Plugin: Unable to establish connection",
+                    "with CrowdStrike platform. Proxy server or CrowdStrike",
+                    "API is not reachable.",
+                ]
             )
-            self.logger.error(
-                "Plugin: CrowdStrike Unable to establish connection with CrowdStrike platform. "
-                "Proxy server or CrowdStrike API is not reachable."
-            )
-            raise requests.HTTPError(
-                "Plugin: CrowdStrike Unable to establish connection with CrowdStrike platform. "
-                "Proxy server or CrowdStrike API is not reachable."
-            )
+            self.notifier.error(err_msg)
+            self.logger.error(err_msg)
+            raise requests.HTTPError(err_msg)
         except requests.exceptions.RequestException as e:
             self.logger.error(
-                "Plugin: CrowdStrike "
-                "Exception occurred while making an API call to CrowdStrike platform."
+                "Crowdstrike CRE Plugin: Exception occurred while "
+                "making an API call to CrowdStrike platform."
             )
             raise e
 
@@ -771,20 +846,189 @@ class CrowdstrikePlugin(PluginBase):
         """Get fields required for an action."""
         return []
 
+    def _get_script_name(self, platform_name: str, falcon, device_id: str):
+        """Get script name.
+
+        Args:
+            platform_name (str): Operation
+            falcon: Falcon object
+            device_id (str): Device ID
+        """
+        try:
+            script_name = PLATFORM_TO_SCRIPT_MAPPING.get(
+                platform_name, {}
+            ).get("script_name")
+            filter = f"platform:['{platform_name}']+name:'{script_name}'"
+
+            response = falcon.command(
+                "RTR_ListScripts",
+                filter=filter,
+            )
+            if response.get("body", {}).get("resources", []):
+                self._create_script(platform_name, device_id, falcon)
+
+            return script_name
+        except Exception as exp:
+            self.logger.error(
+                "Crowdstrike CRE Plugin: "
+                f"Error occurred while getting script for {device_id}."
+                f"Cause {exp}"
+            )
+
+    def _create_script(self, platform_name: str, device_id: str, falcon):
+        """Create Script for different platform.
+
+        Args:
+            platform_name (str): Platform name
+            device_id (str): Device ID
+            falcon: Falcon object
+        """
+        if platform_name not in PLATFORM_TO_SCRIPT_MAPPING.keys():
+            self.logger.error(
+                f"Crowdstrike CRE Plugin: {platform_name} is not supported "
+                "by crowdstrike plugin."
+            )
+            return
+        cmd = None
+        if platform_name == "Windows":
+            cmd1 = r"cd 'C:\Program Files (x86)\Netskope\STAgent'"
+            cmd2 = r".\stAgentSvc.exe -stop"
+            cmd3 = r".\stAgentSvc.exe -start"
+            cmd = "\n".join([cmd1, cmd2, cmd3])
+
+        elif platform_name == "Mac":
+            cmd1 = "sudo launchctl unload /Library/LaunchDaemons/com.netskope.client.auxsvc.plist"  # noqa
+            cmd2 = "sudo launchctl load /Library/LaunchDaemons/com.netskope.client.auxsvc.plist"  # noqa
+            cmd = "\n".join([cmd1, cmd2])
+
+        script_name = PLATFORM_TO_SCRIPT_MAPPING.get(platform_name, {}).get(
+            "script_name"
+        )
+
+        PAYLOAD = {
+            "description": PLATFORM_TO_SCRIPT_MAPPING.get(
+                platform_name, {}
+            ).get("description"),
+            "name": script_name,
+            "permission_type": "public",
+            "content": cmd,
+            "platform": [platform_name.lower()],
+        }
+
+        file_upload = [
+            (
+                "file",
+                (
+                    script_name,
+                    "application/script",
+                ),
+            )
+        ]
+        try:
+            response = falcon.command(
+                "RTR_CreateScripts", data=PAYLOAD, files=file_upload
+            )
+            if (
+                response.get("status_code")
+                and response.get("status_code") != 200
+            ):
+                self.logger.error(
+                    "Crowdstrike CRE Plugin: Error occurred while "
+                    f"creating script for device id {device_id}."
+                    f"Cause: {response.get('body',{}).get('errors')}"
+                )
+                return
+        except Exception as exp:
+            self.logger.error(
+                "Crowdstrike CRE Plugin: Error occurred while creating"
+                f" script for {device_id}:  Cause {exp}"
+            )
+
+    def _get_host_platform_name(self, host_id):
+        url = f"{self.configuration['base_url']}/devices/entities/devices/v2"
+        auth_json = self.get_auth_json(
+            self.configuration.get("client_id").strip(),
+            self.configuration.get("client_secret").strip(),
+            self.configuration.get("base_url").strip(),
+        )
+        auth_token = auth_json.get("access_token")
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        headers = self.reload_auth_token(headers)
+        params = {"ids": [host_id]}
+        response = requests.get(
+            url,
+            headers=add_user_agent(headers),
+            proxies=self.proxy,
+            params=params,
+        )
+        resp_json = self.handle_error(response)
+
+        platform_name = resp_json.get("resources", [])[0].get(
+            "platform_name", ""
+        )
+        return platform_name
+
+    def _restart_agent(
+        self, session_id: str, host_id: str, platform_name: str
+    ):
+        """Restart Netskope Agent.
+
+        Args:
+            session_id (str): Session ID
+            host_id (str): Host ID
+            platform_name (str): Platform Name
+        """
+        falcon = self._get_falcon()
+        script_name = self._get_script_name(platform_name, falcon, host_id)
+        if script_name:
+            script = f"runscript -CloudFile='{script_name}' -CommandLine="
+            body = {
+                "session_id": session_id,
+                "command_string": script,
+                "optional_hosts": [host_id],
+                "persist_all": True,
+            }
+            try:
+                response = falcon.command("RTR_ExecuteAdminCommand", body=body)
+                if response.get("status_code") and response.get(
+                    "status_code"
+                ) in [
+                    201,
+                    200,
+                ]:
+                    self.logger.info(
+                        "Crowdstrike CRE Plugin: Successfully restarted "
+                        f"Netskope agent for host {host_id}"
+                    )
+                else:
+                    self.logger.error(
+                        "Crowdstrike CRE Plugin: Error occurred while "
+                        f"executing script for device id {host_id}. "
+                        f"Cause: {response.get('body',{}).get('errors')}"
+                    )
+
+                    return
+            except Exception as exp:
+                self.logger.error(
+                    "Crowdstrike CRE Plugin: Error occurred in while "
+                    f"restarting host id {host_id}. Cause {exp}"
+                )
+
     def execute_action(self, record: Record, action: Action):
         """Execute action on the record."""
         if (
             action.value == "generate"
             or record.type != RecordType.HOST
-            or record.scores == None
+            or record.scores
         ):
             pass
         device = record.uid
         devices = self.get_all_devices()
         match = self._find_device_by_id(devices, device)
-        if match is None:
+        if match:
             self.logger.warn(
-                f"CrowdStrike CRE: Host with id {device} not found on CrowdStrike."
+                f"Crowdstrike CRE Plugin: Host with id {device} not "
+                "found on CrowdStrike."
             )
             return
         if action.value == "rtr":
@@ -794,16 +1038,25 @@ class CrowdstrikePlugin(PluginBase):
                     score_to_be_put = score.current
             if score_to_be_put is None:
                 self.logger.error(
-                    f"CrowdStrike CRE: Could not find user score for {record.uid}."
+                    "CrowdStrike CRE: Could not find user"
+                    f" score for {record.uid}."
                 )
                 return
             self._put_files_on_rtr_cloud()
             session_id = self._get_session_id(device)
-            self._remove_files_from_device(session_id, device)
-            cloud_request_id, fileName = self._put_file_on_device(
-                session_id, score_to_be_put, device
+            platform_name = self._get_host_platform_name(host_id=record.uid)
+            self._remove_files_from_device(session_id, device, platform_name)
+            self._put_file_on_device(
+                session_id=session_id,
+                score=score_to_be_put,
+                device_id=device,
+                platform_name=platform_name,
             )
-            self._check_command_status(cloud_request_id, device, fileName)
+            self._restart_agent(
+                session_id=session_id,
+                host_id=record.uid,
+                platform_name=platform_name,
+            )
             self._delete_session(session_id, device)
 
     def reload_auth_token(self, headers):
@@ -818,7 +1071,8 @@ class CrowdstrikePlugin(PluginBase):
             headers = {"Authorization": f"Bearer {auth_token}"}
         elif self.storage["token_expiry"] < datetime.datetime.now():
             self.logger.info(
-                "Plugin: Crowdstrike OAUTH2 token expired generating new token"
+                "Crowdstrike CRE Plugin: OAUTH2 token expired generating "
+                "new token"
             )
             auth_json = self.get_auth_json(
                 self.configuration.get("client_id"),
@@ -833,12 +1087,15 @@ class CrowdstrikePlugin(PluginBase):
         """Validate the Plugin configuration parameters.
 
         Args:
-            data (dict): Dict object having all the Plugin configuration parameters.
+            data (dict): Dict object having all the Plugin configuration
+            parameters.
         Returns:
-            cte.plugin_base.ValidateResult: ValidateResult object with success flag and message.
+            cte.plugin_base.ValidateResult: ValidateResult object with success
+            flag and message.
         """
         self.logger.info(
-            "Plugin: CrowdStrike Executing validate method for CrowdStrike plugin"
+            "Crowdstrike CRE Plugin: Executing validate method "
+            "for CrowdStrike plugin"
         )
 
         if "base_url" not in data or data["base_url"].strip() not in [
@@ -848,7 +1105,7 @@ class CrowdstrikePlugin(PluginBase):
             "https://api.eu-1.crowdstrike.com",
         ]:
             self.logger.error(
-                "Plugin: CrowdStrike Validation error occurred "
+                "Crowdstrike CRE Plugin: Validation error occurred "
                 "Error: Type of Pulling configured should be non-empty string."
             )
             return ValidationResult(
@@ -862,7 +1119,7 @@ class CrowdstrikePlugin(PluginBase):
             or type(data["client_id"]) != str
         ):
             self.logger.error(
-                "Plugin: CrowdStrike Validation error occurred"
+                "Crowdstrike CRE Plugin: Validation error occurred"
                 "Error: Type of Client ID should be non-empty string."
             )
             return ValidationResult(
@@ -877,12 +1134,14 @@ class CrowdstrikePlugin(PluginBase):
             or 1000 < int(data["minimum_score"])
         ):
             self.logger.error(
-                "Plugin: CrowdStrike Validation error occurred"
+                "Crowdstrike CRE Plugin: Validation error occurred"
                 "Error: Type of minimum_score should be non-empty integer."
             )
             return ValidationResult(
                 success=False,
-                message="Invalid minimum_score provided.Range is from 1 to 1000.",
+                message="".join(
+                    "Invalid minimum_score provided. Range is from 1 to 1000."
+                ),
             )
 
         if (
@@ -891,7 +1150,7 @@ class CrowdstrikePlugin(PluginBase):
             or type(data["client_secret"]) != str
         ):
             self.logger.error(
-                "Plugin: CrowdStrike Validation error occurred"
+                "Crowdstrike CRE Plugin: Validation error occurred"
                 "Error: Type of Client Secret should be non-empty string."
             )
             return ValidationResult(
@@ -908,10 +1167,12 @@ class CrowdstrikePlugin(PluginBase):
 
         Args:
             client_id (str): Client ID required to generate OAUTH2 token.
-            client_secret (str): Client Secret required to generate OAUTH2 token.
+            client_secret (str): Client Secret required to generate OAUTH2
+            token.
             base_url (str): Base url of crowd strike
         Returns:
-            ValidationResult: ValidationResult object having validation results after making
+            ValidationResult: ValidationResult object having validation
+            results after making
             an API call.
         """
         try:
@@ -922,7 +1183,7 @@ class CrowdstrikePlugin(PluginBase):
             )
         except requests.exceptions.ProxyError:
             self.logger.error(
-                "Plugin: CrowdStrike Validation Error, "
+                "Crowdstrike CRE Plugin: Validation Error, "
                 "Invalid proxy configuration."
             )
             return ValidationResult(
@@ -930,23 +1191,26 @@ class CrowdstrikePlugin(PluginBase):
                 message="Validation Error, Invalid proxy configuration.",
             )
         except requests.exceptions.ConnectionError:
-            self.logger.error(
-                "Plugin: CrowdStrike Validation Error, "
-                "Unable to establish connection with CrowdStrike Platform API"
+            err_msg = " ".join(
+                [
+                    "Validation Error, Unable to establish ",
+                    "connection with CrowdStrike Platform API",
+                ]
             )
+            self.logger.error(f"Crowdstrike CRE Plugin: {err_msg}")
             return ValidationResult(
                 success=False,
-                message="Validation Error, Unable to establish connection with CrowdStrike Platform API",
+                message=err_msg,
             )
         except requests.HTTPError as err:
-            self.logger.error(
-                f"Plugin: CrowdStrike Validation Error, "
-                f"Error in validating Credentials {repr(err)}"
+            err_msg = " ".join(
+                [
+                    "Validation Error, Error in ",
+                    f"validating Credentials {repr(err)}",
+                ]
             )
-            return ValidationResult(
-                success=False,
-                message=f"Validation Error, Error in validating Credentials {repr(err)}",
-            )
+            self.logger.error(f"Crowdstrike CRE Plugin: {err_msg}")
+            return ValidationResult(success=False, message=err_msg)
 
     def check_url_valid(self, client_id, client_secret, base_url):
         """
@@ -954,7 +1218,8 @@ class CrowdstrikePlugin(PluginBase):
 
         Args:
             client_id (str): Client ID required to generate OAUTH2 token.
-            client_secret (str): Client Secret required to generate OAUTH2 token.
+            client_secret (str): Client Secret required to generate OAUTH2
+            token.
             base_url (str): Base url of crowd strike
         Returns:
             Raise error if valid base url is not selected.
@@ -972,27 +1237,26 @@ class CrowdstrikePlugin(PluginBase):
         agent_resp_json = self.handle_error(all_agent_resp)
         errors = agent_resp_json.get("errors")
         if errors:
-            err_msg = errors[0].get("message", "")
-            self.notifier.error(
-                "Plugin: CrowdStrike Unable to Fetch agents, "
-                f"Error: {err_msg}"
+
+            err_msg = " ".join(
+                [
+                    "Crowdstrike CRE Plugin: Unable to Fetch agents,",
+                    f"Error: {errors[0].get('message', '')}",
+                ]
             )
-            self.logger.error(
-                "Plugin: CrowdStrike Unable to Fetch Agents, "
-                f"Error: {err_msg}"
-            )
-            raise requests.HTTPError(
-                f"Plugin: CrowdStrike Unable to Fetch Agents, "
-                f"Error: {err_msg}"
-            )
+            self.notifier.error(err_msg)
+            self.logger.error(err_msg)
+            raise requests.HTTPError(err_msg)
         return agent_resp_json
 
     def get_auth_json(self, client_id, client_secret, base_url):
-        """Get the OAUTH2 Json object with access token from CrowdStrike platform.
+        """Get the OAUTH2 Json object with access token from CrowdStrike
+        platform.
 
         Args:
             client_id (str): Client ID required to generate OAUTH2 token.
-            client_secret (str): Client Secret required to generate OAUTH2 token.
+            client_secret (str): Client Secret required to generate OAUTH2
+            token.
             base_url (str): Base URL of crowdstrike.
         Returns:
             json: JSON response data in case of Success.
@@ -1016,19 +1280,15 @@ class CrowdstrikePlugin(PluginBase):
         auth_json = self.handle_error(resp)
         auth_errors = auth_json.get("errors")
         if auth_errors:
-            err_msg = auth_errors[0].get("message", "")
-            self.notifier.error(
-                "Plugin: CrowdStrike Unable to generate Auth token. "
-                f"Error: {err_msg}"
+            err_msg = " ".join(
+                [
+                    "Crowdstrike CRE Plugin: Unable to generate Auth token. ",
+                    f"Error: {auth_errors[0].get('message', '')}",
+                ]
             )
-            self.logger.error(
-                "Plugin: CrowdStrike Unable to generate Auth token. "
-                f"Error: {err_msg}"
-            )
-            raise requests.HTTPError(
-                f"Plugin: CrowdStrike Unable to generate Auth token. "
-                f"Error: {err_msg}"
-            )
+            self.notifier.error(err_msg)
+            self.logger.error(err_msg)
+            raise requests.HTTPError(err_msg)
         if self.storage is not None:
             self.storage[
                 "token_expiry"

@@ -1,7 +1,7 @@
 {
   "name": "Microsoft Defender for Endpoint",
   "id": "microsoftdefenderv2",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "This plugin is used to pull and push IoC data from Microsoft Defender for Endpoint. For details, visit [here](https://docs.microsoft.com/en-us/graph/api/resources/tiindicator?view=graph-rest-beta).",
   "push_supported": true,
   "patch_supported": true,
@@ -37,6 +37,14 @@
       "mandatory": false,
       "default": "Netskope - Cloud Threat Exchange",
       "description": "The source where this indicator originated. This can be used for tracking where this indicator was defined. Limit 200 characters."
+    },
+    {
+      "label": "Initial Range (in days)",
+      "key": "initial_range",
+      "type": "number",
+      "mandatory": true,
+      "default": 7,
+      "description": "Number of days to pull the data for the initial run."
     }
   ]
 }

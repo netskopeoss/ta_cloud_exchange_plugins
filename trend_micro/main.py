@@ -1,4 +1,4 @@
-"""TrendMicro Plugin to push and pull the data from TrendMicro Platform."""
+"""Trend Micro Vision One Plugin to push and pull the data from Trend Micro Vision One Platform."""
 
 from time import sleep
 from typing import List
@@ -23,6 +23,8 @@ from netskope.integrations.cte.models import (
     IndicatorType,
     SeverityType,
 )
+
+USER_AGENT = "Netskope-TMV1-1.0.1"
 
 TRENDMICRO_TO_INTERNAL_TYPE = {
     "url": IndicatorType.URL,
@@ -67,7 +69,7 @@ def check_url_domain_ip(type):
 
 
 class TrendMicroPlugin(PluginBase):
-    """TrendMicroPlugin class for pulling and pushing threat indicators."""
+    """Trend Micro Vision One Plugin class for pulling and pushing threat indicators."""
 
     def handle_error(self, resp):
         """Handle the different HTTP response code.
@@ -86,23 +88,23 @@ class TrendMicroPlugin(PluginBase):
                 return resp.json()
             except ValueError:
                 self.notifier.error(
-                    "Plugin: TrendMicro,"
+                    "Plugin: Trend Micro Vision One,"
                     "Exception occurred while parsing JSON response."
                 )
                 self.logger.error(
-                    "Plugin: TrendMicro, "
+                    "Plugin: Trend Micro Vision One, "
                     "Exception occurred while parsing JSON response."
                 )
         elif resp.status_code == 400:
             err_resp = resp.json()
             err_msg = err_resp.get("message")
             self.notifier.error(
-                "Plugin: TrendMicro, "
+                "Plugin: Trend Micro Vision One, "
                 "Received exit code 400, Bad Request. "
                 f"Error: {err_msg}"
             )
             self.logger.error(
-                "Plugin: TrendMicro, "
+                "Plugin: Trend Micro Vision One, "
                 "Received exit code 400, Bad Request. "
                 f"Error: {err_msg}"
             )
@@ -110,12 +112,12 @@ class TrendMicroPlugin(PluginBase):
             err_resp = resp.json()
             err_msg = err_resp.get("message")
             self.notifier.error(
-                "Plugin: TrendMicro, "
+                "Plugin: Trend Micro Vision One, "
                 "Received exit code 401, Unauthorized. "
                 f"Error: {err_msg}"
             )
             self.logger.error(
-                "Plugin: TrendMicro, "
+                "Plugin: Trend Micro Vision One, "
                 "Received exit code 401, Unauthorized. "
                 f"Error: {err_msg}"
             )
@@ -123,12 +125,12 @@ class TrendMicroPlugin(PluginBase):
             err_resp = resp.json()
             err_msg = err_resp.get("message")
             self.notifier.error(
-                "Plugin: TrendMicro, "
+                "Plugin: Trend Micro Vision One, "
                 "Received exit code 403, Access Denied. "
                 f"Error: {err_msg}"
             )
             self.logger.error(
-                "Plugin: TrendMicro, "
+                "Plugin: Trend Micro Vision One, "
                 "Received exit code 403, Access Denied. "
                 f"Error: {err_msg}"
             )
@@ -136,12 +138,12 @@ class TrendMicroPlugin(PluginBase):
             err_resp = resp.json()
             err_msg = err_resp.get("message")
             self.notifier.error(
-                "Plugin: TrendMicro, "
+                "Plugin: Trend Micro Vision One, "
                 "Received exit code 429, Too Many Requests. "
                 f"Error: {err_msg}"
             )
             self.logger.error(
-                "Plugin: TrendMicro, "
+                "Plugin: Trend Micro Vision One, "
                 "Received exit code 429, Too Many Requests. "
                 f"Error: {err_msg}"
             )
@@ -149,43 +151,43 @@ class TrendMicroPlugin(PluginBase):
             err_resp = resp.json()
             err_msg = err_resp.get("message")
             self.notifier.error(
-                "Plugin: Trend Micro, "
+                "Plugin: Trend Micro Vision One, "
                 "Received exit code 500, Internal server Error. "
                 f"Error: {err_msg}"
             )
             self.logger.error(
-                "Plugin: Trend Micro, "
+                "Plugin: Trend Micro Vision One, "
                 "Received exit code 500, Internal server Error. "
                 f"Error: {err_msg}"
             )
         elif resp.status_code == 413:
             self.notifier.error(
-                "Plugin: Trend Micro, "
+                "Plugin: Trend Micro Vision One, "
                 "Received exit code 413, Payload Too Large. "
             )
             self.notifier.error(
-                "Plugin: Trend Micro, "
+                "Plugin: Trend Micro Vision One, "
                 "Received exit code 413, Payload Too Large. "
             )
         else:
             self.notifier.error(
-                "Plugin: Trend Micro, "
+                "Plugin: Trend Micro Vision One, "
                 f"Received exit code {resp.status_code}, HTTP Error"
             )
             self.logger.error(
-                "Plugin: Trend Micro, "
+                "Plugin: Trend Micro Vision One, "
                 f"Received exit code {resp.status_code}, HTTP Error"
             )
         resp.raise_for_status()
 
     def get_indicators(self, headers):
-        """Get indicators from TrendMicro.
+        """Get indicators from Trend Micro Vision One.
 
         Args:
             headers (dict): Header dict object having authentication token.
         Returns:
             List[dict]: List of python dict object of JSON response model
-            as per TrendMicro API.
+            as per Trend Micro Vision One API.
         """
         skip_count = 0
         indicator_list = []
@@ -218,7 +220,7 @@ class TrendMicroPlugin(PluginBase):
                 if ioc_response.status_code == 429:
                     retry_after = ioc_response.headers.get("Retry-After", 60)
                     self.logger.info(
-                        "Plugin: TrendMicro, 429 Client Error - "
+                        "Plugin: Trend Micro Vision One, 429 Client Error - "
                         "Too Many Requests, Retrying after "
                         f"{retry_after} seconds"
                     )
@@ -226,7 +228,7 @@ class TrendMicroPlugin(PluginBase):
                     continue
                 if ioc_response.status_code == 500:
                     self.logger.info(
-                        "Plugin: TrendMicro, 500 Internal Server Error - "
+                        "Plugin: Trend Micro Vision One, 500 Internal Server Error - "
                         f"Retrying after {retry_time} seconds."
                     )
                     sleep(retry_time)
@@ -238,7 +240,7 @@ class TrendMicroPlugin(PluginBase):
             if resp_json.get("errors"):
                 err_msg = resp_json.get("errors")[0].get("message")
                 message = (
-                    f"Plugin: TrendMicro, "
+                    f"Plugin: Trend Micro Vision One, "
                     f"Unable to Fetch Indicator Details, "
                     f"Error: {err_msg}"
                 )
@@ -286,58 +288,59 @@ class TrendMicroPlugin(PluginBase):
                 query_endpoint = resp_json["nextLink"]
         if skip_count > 0:
             self.logger.warn(
-                f"Plugin: TrendMicro: {skip_count} indicator(s) were "
+                f"Plugin: Trend Micro Vision One: {skip_count} indicator(s) were "
                 f"skipped due to unsupported indicator type."
             )
 
         return indicator_list
 
     def pull(self):
-        """Pull the Threat information from TrendMicro platform.
+        """Pull the Threat information from Trend Micro Vision One platform.
 
         Returns : List[cte.models.Indicators] :
-        List of indicator objects received from the TrendMicro platform.
+        List of indicator objects received from the Trend Micro Vision One platform.
         """
         if self.configuration["is_pull_required"] == "Yes":
             headers = {
                 "Authorization": "Bearer "
-                f"{self.configuration['token'].strip()}"
+                f"{self.configuration['token'].strip()}",
+                "User-Agent": USER_AGENT,
             }
             try:
                 return self.get_indicators(headers)
             except requests.exceptions.ProxyError:
                 self.logger.error(
-                    "Plugin: TrendMicro, Invalid proxy configuration."
+                    "Plugin: Trend Micro Vision One, Invalid proxy configuration."
                 )
                 raise requests.HTTPError(
-                    "Plugin: TrendMicro, Invalid proxy configuration."
+                    "Plugin: Trend Micro Vision One, Invalid proxy configuration."
                 )
             except requests.exceptions.ConnectionError:
                 self.logger.error(
-                    "Plugin: TrendMicro, Unable to establish "
-                    "connection with TrendMicro platform. Proxy server or "
-                    "TrendMicro API is not reachable."
+                    "Plugin: Trend Micro Vision One, Unable to establish "
+                    "connection with Trend Micro Vision One platform. Proxy server or "
+                    "Trend Micro Vision One API is not reachable."
                 )
                 raise requests.HTTPError(
-                    "Plugin: TrendMicro, Unable to establish "
-                    "connection with TrendMicro platform. Proxy server or "
-                    "TrendMicro API is not reachable."
+                    "Plugin: Trend Micro Vision One, Unable to establish "
+                    "connection with Trend Micro Vision One platform. Proxy server or "
+                    "Trend Micro Vision One API is not reachable."
                 )
             except requests.exceptions.RequestException as e:
                 self.logger.error(
-                    "Plugin: TrendMicro, "
+                    "Plugin: Trend Micro Vision One, "
                     "Exception occurred while making an API call to "
-                    "TrendMicro platform"
+                    "Trend Micro Vision One platform"
                 )
                 raise e
         else:
             self.logger.info(
-                "TrendMicro Plugin: Polling is disabled, skipping."
+                "Trend Micro Vision One Plugin: Polling is disabled, skipping."
             )
             return []
 
     def push_indicators_to_trendmicro(self, json_payload, action_value):
-        """Push Indicators to TrendMicro's selected Target List."""
+        """Push Indicators to Trend Micro Vision One's selected Target List."""
         if action_value == "suspicious_object":
             push_endpoint = (
                 f"{self.configuration['base_url']}/v3.0"
@@ -351,6 +354,7 @@ class TrendMicroPlugin(PluginBase):
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.configuration['token']}",
+            "User-Agent": USER_AGENT,
         }
         try:
             retry_time = 15
@@ -364,7 +368,7 @@ class TrendMicroPlugin(PluginBase):
                 if response.status_code == 429:
                     retry_after = response.headers.get("Retry-After", 60)
                     self.logger.info(
-                        "Plugin: TrendMicro, 429 Client Error - "
+                        "Plugin: Trend Micro Vision One, 429 Client Error - "
                         "Too Many Requests, Retrying after "
                         f"{retry_after} seconds"
                     )
@@ -372,7 +376,7 @@ class TrendMicroPlugin(PluginBase):
                     continue
                 if response.status_code == 500:
                     self.logger.info(
-                        "Plugin: TrendMicro, 500 Internal Server Error - "
+                        "Plugin: Trend Micro Vision One, 500 Internal Server Error - "
                         f"Retrying after {retry_time} seconds."
                     )
                     sleep(retry_time)
@@ -384,19 +388,19 @@ class TrendMicroPlugin(PluginBase):
 
         except requests.exceptions.RequestException as e:
             self.notifier.error(
-                "Plugin: TrendMicro "
+                "Plugin: Trend Micro Vision One "
                 "Exception occurred "
-                f"while making an API call to TrendMicro platform {repr(e)}"
+                f"while making an API call to Trend Micro Vision One platform {repr(e)}"
             )
             self.logger.error(
-                "Plugin: TrendMicro "
+                "Plugin: Trend Micro Vision One "
                 "Exception occurred "
-                f"while making an API call to TrendMicro platform {repr(e)}"
+                f"while making an API call to Trend Micro Vision One platform {repr(e)}"
             )
             return {}
 
     def push(self, indicators: List[Indicator], action_dict: Action):
-        """Push indicators to Trend Micro."""
+        """Push indicators to Trend Micro Vision One."""
         action_value = action_dict.get("value")
         action_params = action_dict.get("parameters", {})
         invalid_indicator_count = 0
@@ -414,13 +418,13 @@ class TrendMicroPlugin(PluginBase):
                 ):
                     self.logger.info(
                         f"Shared {shared_indicators} indicator(s) to "
-                        "Trend Micro. Remaining indicators were not "
+                        "Trend Micro Vision One. Remaining indicators were not "
                         "shared because the number of objects exceeded "
                         "the maximum limit. Remove objects and try again."
                     )
                     return PushResult(
                         success=False,
-                        message="Failed to push indicators to TrendMicro. "
+                        message="Failed to push indicators to Trend Micro Vision One. "
                         "Number of objects exceeded the maximum limit.",
                     )
                 if response.status_code != 207:
@@ -438,7 +442,7 @@ class TrendMicroPlugin(PluginBase):
 
             if invalid_indicator_count > 0:
                 self.logger.info(
-                    f"{shared_indicators} indicator(s) were shared to Trend Micro, "
+                    f"{shared_indicators} indicator(s) were shared to Trend Micro Vision One, "
                     f"{invalid_indicator_count} indicator(s) were not shared "
                     "due to invalid Indicator value or type."
                 )
@@ -450,61 +454,61 @@ class TrendMicroPlugin(PluginBase):
 
         except requests.exceptions.ProxyError:
             self.notifier.error(
-                "Plugin: TrendMicro Invalid proxy configuration."
+                "Plugin: Trend Micro Vision One Invalid proxy configuration."
             )
             self.logger.error(
-                "Plugin: TrendMicro Invalid proxy configuration."
+                "Plugin: Trend Micro Vision One Invalid proxy configuration."
             )
             return PushResult(
                 success=False,
                 message=(
-                    "Failed to push indicators to TrendMicro "
+                    "Failed to push indicators to Trend Micro Vision One "
                     "Invalid proxy configuration"
                 ),
             )
 
         except requests.exceptions.ConnectionError:
             self.notifier.error(
-                "Plugin: TrendMicro "
-                "Unable to establish connection with TrendMicro platform. "
-                "Proxy server or TrendMicro API is not reachable."
+                "Plugin: Trend Micro Vision One "
+                "Unable to establish connection with Trend Micro Vision One platform. "
+                "Proxy server or Trend Micro Vision One API is not reachable."
             )
             self.logger.error(
-                "Plugin: TrendMicro "
-                "Unable to establish connection with TrendMicro platform. "
-                "Proxy server or TrendMicro API is not reachable."
+                "Plugin: Trend Micro Vision One "
+                "Unable to establish connection with Trend Micro Vision One platform. "
+                "Proxy server or Trend Micro Vision One API is not reachable."
             )
             return PushResult(
                 success=False,
                 message=(
-                    "Failed to push indicators to TrendMicro "
-                    "Unable to establish connection with TrendMicro platform."
+                    "Failed to push indicators to Trend Micro Vision One "
+                    "Unable to establish connection with Trend Micro Vision One platform."
                 ),
             )
 
         except requests.exceptions.RequestException as e:
             self.logger.error(
-                "Plugin: TrendMicro Exception occurred "
-                "while making an API call to TrendMicro platform"
+                "Plugin: Trend Micro Vision One Exception occurred "
+                "while making an API call to Trend Micro Vision One platform"
             )
             return PushResult(
                 success=False,
                 message=(
                     "Exception occurred "
-                    "while making an API call to TrendMicro platform "
+                    "while making an API call to Trend Micro Vision One platform "
                     f"Error :{repr(e)}"
                 ),
             )
         except Exception as err:
             self.logger.error(
-                "Plugin: TrendMicro Exception occurred "
+                "Plugin: Trend Micro Vision One Exception occurred "
                 f"while pushing Indicators : {err}"
             )
             return PushResult(
                 success=False,
                 message=(
                     "Exception occurred "
-                    "while making an API call to TrendMicro platform "
+                    "while making an API call to Trend Micro Vision One platform "
                     f"Error :{repr(err)}"
                 ),
             )
@@ -519,7 +523,7 @@ class TrendMicroPlugin(PluginBase):
             and plateforms for sharing.
         Returns:
             List[dict]: List of python dict object of JSON response model
-            as per TrendMicro API.
+            as per Trend Micro Vision One API.
         """
         md5 = 0
         payload_list = []
@@ -558,7 +562,7 @@ class TrendMicroPlugin(PluginBase):
                 md5 += 1
         if md5 > 0:
             self.logger.warn(
-                "Plugin: Trend Micro "
+                "Plugin: Trend Micro Vision One "
                 f"Skipping {md5} md5 indicators."
             )
         return payload_list
@@ -626,12 +630,12 @@ class TrendMicroPlugin(PluginBase):
             with success flag and message.
         """
         self.logger.info(
-            "Plugin: Trend Micro "
-            "Executing validate method for Trend Micro plugin"
+            "Plugin: Trend Micro Vision One"
+            "Executing validate method for Trend Micro Vision One plugin"
         )
         if "base_url" not in data or not data["base_url"]:
             self.logger.error(
-                "Plugin: TrendMicro Validation error occurred "
+                "Plugin: Trend Micro Vision One Validation error occurred "
                 "Error: Empty value for data region provided."
             )
             return ValidationResult(
@@ -647,7 +651,7 @@ class TrendMicroPlugin(PluginBase):
             "https://api.xdr.trendmicro.com",
         ]:
             self.logger.error(
-                "Plugin: TrendMicro Validation error occurred "
+                "Plugin: Trend Micro Vision One Validation error occurred "
                 "Error: Type of Base URL should be non-empty string."
             )
             return ValidationResult(
@@ -658,7 +662,7 @@ class TrendMicroPlugin(PluginBase):
 
         if "token" not in data or not data["token"]:
             self.logger.error(
-                "Plugin: TrendMicro Validation error occurred"
+                "Plugin: Trend Micro Vision One Validation error occurred"
                 "Error: Authentication String is Empty."
             )
             return ValidationResult(
@@ -668,7 +672,7 @@ class TrendMicroPlugin(PluginBase):
 
         elif not isinstance(data["token"], str):
             self.logger.error(
-                "Plugin: TrendMicro Validation error occurred"
+                "Plugin: Trend Micro Vision One Validation error occurred"
                 "Error: Type of authentication Token should be "
                 "non-empty string."
             )
@@ -679,7 +683,7 @@ class TrendMicroPlugin(PluginBase):
 
         if "is_pull_required" not in data or not data["is_pull_required"]:
             self.logger.error(
-                "Plugin: TrendMicro, Validation error occurred. "
+                "Plugin: Trend Micro Vision One, Validation error occurred. "
                 "Error: Enable Polling field cannot be empty."
             )
             return ValidationResult(
@@ -692,7 +696,7 @@ class TrendMicroPlugin(PluginBase):
             "No",
         ]:
             self.logger.error(
-                "Plugin: TrendMicro, Validation error occurred. "
+                "Plugin: Trend Micro Vision One, Validation error occurred. "
                 "Error: Invalid value for 'Enable Polling' provided."
                 "Allowed values are 'Yes', or 'No'."
             )
@@ -704,7 +708,7 @@ class TrendMicroPlugin(PluginBase):
 
         if "initial_range" not in data or not data["initial_range"]:
             self.logger.error(
-                "Plugin: TrendMicro Validation error occurred "
+                "Plugin: Trend Micro Vision One Validation error occurred "
                 "Error: Type of Initial Range (in days) should be "
                 "non-zero positive integer."
             )
@@ -714,7 +718,7 @@ class TrendMicroPlugin(PluginBase):
             )
         elif not isinstance(data["initial_range"], int):
             self.logger.error(
-                "Plugin: TrendMicro Validation error occurred "
+                "Plugin: Trend Micro Vision One Validation error occurred "
                 "Initial Range should be an Integer value."
             )
             return ValidationResult(
@@ -724,7 +728,7 @@ class TrendMicroPlugin(PluginBase):
 
         elif data["initial_range"] < 0:
             self.logger.error(
-                "Plugin: TrendMicro Validation error occurred "
+                "Plugin: Trend Micro Vision One Validation error occurred "
                 "Initia Range should be a positive integer."
             )
             return ValidationResult(
@@ -737,7 +741,7 @@ class TrendMicroPlugin(PluginBase):
         return self.validate_auth_params(data["token"], data["base_url"])
 
     def validate_auth_params(self, auth_token, base_url):
-        """Validate the authentication params with TrendMicro platform.
+        """Validate the authentication params with Trend Micro Vision One platform.
 
         Args:
             auth_token (str): Authentication Token
@@ -751,7 +755,10 @@ class TrendMicroPlugin(PluginBase):
             query_params = {
                 "top": 1,
             }
-            headers = {"Authorization": f"Bearer {auth_token.strip()}"}
+            headers = {
+                "Authorization": f"Bearer {auth_token.strip()}",
+                "User-Agent": USER_AGENT,
+            }
             retry_time = 15
             for _ in range(3):
                 ioc_response = requests.get(
@@ -764,7 +771,7 @@ class TrendMicroPlugin(PluginBase):
                     if "Retry-After" in ioc_response.headers:
                         retry_after = ioc_response.headers["Retry-After"]
                         self.logger.info(
-                            "Plugin: TrendMicro, 429 Client Error - "
+                            "Plugin: Trend Micro Vision One, 429 Client Error - "
                             "Too Many Requests, Retrying after "
                             f"{retry_after} seconds"
                         )
@@ -772,7 +779,7 @@ class TrendMicroPlugin(PluginBase):
                         continue
                 if ioc_response.status_code == 500:
                     self.logger.info(
-                        "Plugin: TrendMicro, 500 Internal Server Error - "
+                        "Plugin: Trend Micro Vision One, 500 Internal Server Error - "
                         f"Retrying after {retry_time} seconds."
                     )
                     sleep(retry_time)
@@ -784,18 +791,18 @@ class TrendMicroPlugin(PluginBase):
             if ioc_response.status_code == 200:
                 return ValidationResult(
                     success=True,
-                    message="Validation successfull for TrendMicro Plugin",
+                    message="Validation successfull for Trend Micro Vision One Plugin",
                 )
             elif ioc_response.status_code == 429:
                 err_resp = ioc_response.json()
                 err_msg = err_resp.get("error").get("message")
                 self.notifier.error(
-                    f"Plugin: TrendMicro, "
+                    f"Plugin: Trend Micro Vision One, "
                     f"Received exit code 429, TooManyRequests. "
                     f"Error: {err_msg}"
                 )
                 self.logger.error(
-                    f"Plugin: TrendMicro, "
+                    f"Plugin: Trend Micro Vision One, "
                     f"Received exit code 429, TooManyRequests. "
                     f"Error: {err_msg}"
                 )
@@ -812,7 +819,7 @@ class TrendMicroPlugin(PluginBase):
 
         except requests.exceptions.ProxyError:
             self.logger.error(
-                "Plugin: TrendMicro Validation Error, "
+                "Plugin: Trend Micro Vision One Validation Error, "
                 "Invalid proxy configuration."
             )
             return ValidationResult(
@@ -821,17 +828,17 @@ class TrendMicroPlugin(PluginBase):
             )
         except requests.exceptions.ConnectionError:
             self.logger.error(
-                "Plugin: TrendMicro Validation Error, "
-                "Unable to establish connection with TrendMicro Platform API"
+                "Plugin: Trend Micro Vision One Validation Error, "
+                "Unable to establish connection with Trend Micro Vision One Platform API"
             )
             return ValidationResult(
                 success=False,
                 message="Validation Error, "
-                "Unable to establish connection with TrendMicro Platform API",
+                "Unable to establish connection with Trend Micro Vision One Platform API",
             )
         except requests.HTTPError as err:
             self.logger.error(
-                f"Plugin: TrendMicro Validation Error, "
+                f"Plugin: Trend Micro Vision One Validation Error, "
                 f"Error in validating Credentials {repr(err)}"
             )
             return ValidationResult(

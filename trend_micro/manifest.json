@@ -1,8 +1,8 @@
 {
-    "name": "Trend Micro",
+    "name": "Trend Micro Vision One",
     "id": "trend_micro",
-    "version": "1.0.0",
-    "description": "The Trend Micro plugin retrieves information about domains, file SHA-256 values, IP addresses, and URLs that are in the Suspicious Object List. This plugin can share the indicator domains, file SHA-256 values, IP addresses, or URLs to Trend Micro's Suspicious Object list or Suspicious Object Exception list. For suspicious objects added through third-party intelligence and manual operations, there is a maximum limit for each object type. Refer [this](https://docs.trendmicro.com/en-us/enterprise/trend-micro-vision-one/threat-intelligence-/suspicious-object-ma/user-defined-suspici.aspx) page for more details. To configure the plugin, you will need the Authentication Token. For more details visit [this](https://docs.trendmicro.com/en-us/enterprise/trend-micro-vision-one/administrative-setti/administration/user-accounts/obtaining-api-keys-f.aspx) page.",
+    "version": "1.0.1",
+    "description": "The Trend Micro Vision One plugin retrieves information about domains, file SHA-256 values, IP addresses, and URLs that are in the Suspicious Object List. This plugin can share the indicator domains, file SHA-256 values, IP addresses, or URLs to Trend Micro Vision One's Suspicious Object list or Suspicious Object Exception list. For suspicious objects added through third-party intelligence and manual operations, there is a maximum limit for each object type. Refer [this](https://docs.trendmicro.com/en-us/enterprise/trend-micro-vision-one/threat-intelligence-/suspicious-object-ma/user-defined-suspici.aspx) page for more details. To configure the plugin, you will need the Authentication Token. For more details visit [this](https://docs.trendmicro.com/en-us/enterprise/trend-micro-vision-one/administrative-setti/administration/user-accounts/obtaining-api-keys-f.aspx) page.",
     "patch_supported": true,
     "configuration": [
         {
@@ -62,7 +62,7 @@
             ],
             "default": "Yes",
             "mandatory": true,
-            "description": "Enable/Disable polling data from Trend Micro."
+            "description": "Enable/Disable polling data from Trend Micro Vision One."
         },
         {
             "label": "Initial Range (in days)",

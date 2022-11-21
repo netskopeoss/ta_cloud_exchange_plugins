@@ -1,66 +1,66 @@
 {
-    "name": "ServiceNow",
-    "description": "Create incidents on ServiceNow platform. This is NOT the same integration as ServiceNow's DLP Incident Response product, nor does it work with that solution.",
-    "id": "servicenow_itsm",
-    "version": "1.0.2_1",
-    "pulling_supported": false,
-    "receiving_supported": true,
-    "configuration": [
+  "name": "ServiceNow",
+  "description": "Create incidents on ServiceNow platform. This is NOT the same integration as ServiceNow's DLP Incident Response product, nor does it work with that solution.",
+  "id": "servicenow_itsm",
+  "version": "1.0.2",
+  "pulling_supported": false,
+  "receiving_supported": true,
+  "configuration": [
+    {
+      "label": "Authentication",
+      "name": "auth",
+      "type": "step",
+      "fields": [
         {
-            "label": "Authentication",
-            "name": "auth",
-            "type": "step",
-            "fields": [
-                {
-                    "label": "Instance URL",
-                    "key": "url",
-                    "type": "text",
-                    "default": "",
-                    "mandatory": true,
-                    "description": "ServiceNow instance URL."
-                },
-                {
-                    "label": "Username",
-                    "key": "username",
-                    "type": "text",
-                    "default": "",
-                    "mandatory": true,
-                    "description": "Instance username."
-                },
-                {
-                    "label": "Password",
-                    "key": "password",
-                    "type": "password",
-                    "default": "",
-                    "mandatory": true,
-                    "description": "Instance password."
-                }
-            ]
+          "label": "Instance URL",
+          "key": "url",
+          "type": "text",
+          "default": "",
+          "mandatory": true,
+          "description": "ServiceNow instance URL."
         },
         {
-            "label": "Configuration Parameters",
-            "name": "params",
-            "type": "step",
-            "fields": [
-                {
-                    "label": "Destination Table",
-                    "key": "table",
-                    "type": "choice",
-                    "choices": [
-                        {
-                            "key": "Security Incidents",
-                            "value": "sn_si_incident"
-                        },
-                        {
-                            "key": "Incidents",
-                            "value": "incident"
-                        }
-                    ],
-                    "default": "sn_si_incident",
-                    "mandatory": true,
-                    "description": "Name of the table where incidents will be created."
-                }
-            ]
+          "label": "Username",
+          "key": "username",
+          "type": "text",
+          "default": "",
+          "mandatory": true,
+          "description": "Instance username."
+        },
+        {
+          "label": "Password",
+          "key": "password",
+          "type": "password",
+          "default": "",
+          "mandatory": true,
+          "description": "Instance password."
         }
-    ]
+      ]
+    },
+    {
+      "label": "Configuration Parameters",
+      "name": "params",
+      "type": "step",
+      "fields": [
+        {
+          "label": "Destination Table",
+          "key": "table",
+          "type": "choice",
+          "choices": [
+            {
+              "key": "Security Incidents",
+              "value": "sn_si_incident"
+            },
+            {
+              "key": "Incidents",
+              "value": "incident"
+            }
+          ],
+          "default": "sn_si_incident",
+          "mandatory": true,
+          "description": "Name of the table where incidents will be created."
+        }
+      ]
+    }
+  ]
 }

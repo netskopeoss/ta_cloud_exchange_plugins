@@ -1,25 +1,25 @@
 {
-    "name": "Microsoft Teams",
-    "description": "Receive message notifications on Microsoft Teams.",
-    "id": "microsoft_teams",
-    "pulling_supported": false,
-    "receiving_supported": true,
-    "version": "1.0.1_1",
-    "configuration": [
+  "name": "Microsoft Teams",
+  "description": "Receive message notifications on Microsoft Teams.",
+  "id": "microsoft_teams",
+  "pulling_supported": false,
+  "receiving_supported": true,
+  "version": "1.0.1",
+  "configuration": [
+    {
+      "label": "Configuration Parameter",
+      "name": "params",
+      "type": "step",
+      "fields": [
         {
-            "label": "Configuration Parameter",
-            "name": "params",
-            "type": "step",
-            "fields": [
-                {
-                    "label": "Webhook URL",
-                    "key": "url",
-                    "type": "text",
-                    "default": "",
-                    "mandatory": true,
-                    "description": "Microsoft Teams Incoming Webhook URL to send data to your group."
-                }
-            ]
+          "label": "Webhook URL",
+          "key": "url",
+          "type": "text",
+          "default": "",
+          "mandatory": true,
+          "description": "Microsoft Teams Incoming Webhook URL to send data to your group."
         }
-    ]
+      ]
+    }
+  ]
 }

@@ -518,65 +518,91 @@ class ArcSightPlugin(PluginBase):
 
         if (
             "arcsight_server" not in configuration
-            or type(configuration["arcsight_server"]) != str
             or not configuration["arcsight_server"].strip()
         ):
+            self.logger.error(
+                "ArcSight Plugin: Validation error occurred. Error: "
+                "ArcSight Server IP/FQDN is a required field in the configuration parameters."
+            )
+            return ValidationResult(
+                success=False, message="ArcSight Server is a required field."
+            )
+        elif type(configuration["arcsight_server"]) != str:
             self.logger.error(
                 "ArcSight Plugin: Validation error occurred. Error: "
                 "Invalid ArcSight server IP/FQDN found in the configuration parameters."
             )
             return ValidationResult(
-                success=False, message="Invalid ArcSight server provided."
+                success=False, message="Invalid ArcSight Server provided."
             )
-
         if (
             "arcsight_format" not in configuration
-            or type(configuration["arcsight_format"]) != str
             or not configuration["arcsight_format"].strip()
+        ):
+            self.logger.error(
+                "ArcSight Plugin: Validation error occurred. Error: "
+                "ArcSight Format is a required field in the configuration parameters."
+            )
+            return ValidationResult(
+                success=False, message="ArcSight Format is a required field."
+            )
+        elif (
+            type(configuration["arcsight_format"]) != str
             or configuration["arcsight_format"] not in SYSLOG_FORMATS
         ):
             self.logger.error(
                 "ArcSight Plugin: Validation error occurred. Error: "
-                "Invalid ArcSight format found in the configuration parameters."
+                "Invalid ArcSight Format found in the configuration parameters."
             )
             return ValidationResult(
-                success=False, message="Invalid ArcSight format provided."
+                success=False, message="Invalid ArcSight Format provided."
             )
-
         if (
             "arcsight_protocol" not in configuration
-            or type(configuration["arcsight_protocol"]) != str
             or not configuration["arcsight_protocol"].strip()
+        ):
+            self.logger.error(
+                "ArcSight Plugin: Validation error occurred. Error: "
+                "ArcSight Protocol is a required field in the configuration parameters."
+            )
+            return ValidationResult(
+                success=False, message="ArcSight Protocol is a required field."
+            )
+        elif (
+            type(configuration["arcsight_protocol"]) != str
             or configuration["arcsight_protocol"] not in SYSLOG_PROTOCOLS
         ):
             self.logger.error(
                 "ArcSight Plugin: Validation error occurred. Error: "
-                "Invalid ArcSight protocol found in the configuration parameters."
+                "Invalid ArcSight Protocol found in the configuration parameters."
             )
             return ValidationResult(
-                success=False, message="Invalid ArcSight protocol provided."
+                success=False, message="Invalid ArcSight Protocol provided."
             )
-
         if (
             "arcsight_port" not in configuration
             or not configuration["arcsight_port"]
-            or not arcsight_validator.validate_arcsight_port(
-                configuration["arcsight_port"]
-            )
         ):
             self.logger.error(
                 "ArcSight Plugin: Validation error occurred. Error: "
-                "Invalid ArcSight port found in the configuration parameters."
+                "ArcSight Port is a required field in the configuration parameters."
             )
             return ValidationResult(
-                success=False, message="Invalid ArcSight port provided."
+                success=False, message="ArcSight Port is a required field."
             )
-
+        elif not arcsight_validator.validate_arcsight_port(configuration["arcsight_port"]):
+            self.logger.error(
+                "ArcSight Plugin: Validation error occurred. Error: "
+                "Invalid ArcSight Port found in the configuration parameters."
+            )
+            return ValidationResult(
+                success=False, message="Invalid ArcSight Port provided."
+            )
         mappings = self.mappings.get("jsonData", None)
         mappings = json.loads(mappings)
-        if type(
+        if type(mappings) != dict or not arcsight_validator.validate_arcsight_map(
             mappings
-        ) != dict or not arcsight_validator.validate_arcsight_map(mappings):
+        ):
             self.logger.error(
                 "ArcSight Plugin: Validation error occurred. Error: "
                 "Invalid ArcSight attribute mapping found in the configuration parameters."
@@ -585,25 +611,44 @@ class ArcSightPlugin(PluginBase):
                 success=False,
                 message="Invalid ArcSight attribute mapping provided.",
             )
-
         if configuration["arcsight_protocol"].upper() == "TLS" and (
             "arcsight_certificate" not in configuration
-            or type(configuration["arcsight_certificate"]) != str
             or not configuration["arcsight_certificate"].strip()
         ):
             self.logger.error(
                 "ArcSight Plugin: Validation error occurred. Error: "
-                "Invalid ArcSight certificate mapping found in the configuration parameters."
+                "ArcSight Certificate mapping is a required field when TLS is provided in the configuration parameters."
             )
             return ValidationResult(
                 success=False,
-                message="Invalid ArcSight certificate mapping provided.",
+                message="ArcSight Certificate mapping is a required field when TLS is provided.",
             )
-
+        elif (
+            configuration["arcsight_protocol"].upper() == "TLS"
+            and type(configuration["arcsight_certificate"]) != str
+        ):
+            self.logger.error(
+                "ArcSight Plugin: Validation error occurred. Error: "
+                "Invalid ArcSight Certificate mapping found in the configuration parameters."
+            )
+            return ValidationResult(
+                success=False,
+                message="Invalid ArcSight Certificate mapping provided.",
+            )
         if (
             "log_source_identifier" not in configuration
-            or type(configuration["log_source_identifier"]) != str
             or not configuration["log_source_identifier"].strip()
+        ):
+            self.logger.error(
+                "ArcSight Plugin: Validation error occurred. Error: "
+                "Log Source Identifier is a required field in the configuration parameters."
+            )
+            return ValidationResult(
+                success=False,
+                message="Log Source Identifier is a required field.",
+            )
+        elif (
+            type(configuration["log_source_identifier"]) != str
             or " " in configuration["log_source_identifier"].strip()
         ):
             self.logger.error(

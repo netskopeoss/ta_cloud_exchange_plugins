@@ -1,26 +1,50 @@
-""" This is the Microsoft Azure Plugin class.
-    It has generate, add, and remove actions for a user into groups.
-    This Plugin class does not ingest records or users, however performs
-    all other necessary functions like validate, execute actions,
-    get action fields, etc.
+"""
+BSD 3-Clause License
 
-    There is another class called MicrosoftAzureADException, which
-    helps in making the user understand that the exception comes from
-    the plugin of Microsoft Azure AD.
+Copyright (c) 2021, Netskope OSS
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its
+   contributors may be used to endorse or promote products derived from
+   this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
 
-from typing import List, Dict, Optional
-from netskope.integrations.cre.plugin_base import PluginBase, ValidationResult
+"""Microsoft Azure AD CRE Plugin."""
+
+import datetime
+import json
+from typing import Dict, List, Optional
+
+import requests
 from netskope.common.utils import add_user_agent
 from netskope.integrations.cre.models import (
+    Action,
+    ActionWithoutParams,
     Record,
     RecordType,
-    ActionWithoutParams,
-    Action,
 )
-import datetime
-import requests
-import json
+from netskope.integrations.cre.plugin_base import PluginBase, ValidationResult
 
 PAGE_SIZE = "999"
 PAGE_RECORD_SCORE = "500"
@@ -33,26 +57,23 @@ class MicrosoftAzureADException(Exception):
 
 
 class MicrosoftAzureADPlugin(PluginBase):
-    """Microsoft Azure AD Plugin plugin implementation."""
+    """Microsoft Azure AD plugin implementation."""
 
     def _add_to_group(self, configuration: Dict, email: str, group_id: str):
         """Add specified user to the specified group.
 
         Args:
             configuration (Dict): Dict object having all the Plugin
-                configuration parameters: client_id, client_secret, 
+                configuration parameters: client_id, client_secret,
                 and tenant_id.
             email (str): Principle email of member to add
             group_id (str): Group ID of the group.
 
-        Returns:
-
         Raises:
             HTTPError: If the group does not exist on Microsoft Azure AD.
         """
-
         headers = self.reload_auth_token(configuration)
-        # we convert email, which we recieved in parameters of method, into id
+        # we convert email, which we received in parameters of method, into id
         # as the API demands id for identifying the user
         id = self._get_email_to_id(self.configuration, email).get("id")
         headers["Content-Type"] = "application/json"
@@ -61,7 +82,8 @@ class MicrosoftAzureADPlugin(PluginBase):
             "@odata.id": f"https://graph.microsoft.com/v1.0/"
             f"directoryObjects/{id}"
         }
-        response = self.handle_request_exception(lambda: requests.post(
+        response = self.handle_request_exception(
+            lambda: requests.post(
                 f"https://graph.microsoft.com/v1.0/"
                 f"groups/{group_id}/members/$ref",
                 headers=add_user_agent(headers),
@@ -77,8 +99,10 @@ class MicrosoftAzureADPlugin(PluginBase):
             # more after adding the member to group
             return
         if response.status_code == 400:
-            self.logger.warn(f"Plugin: Microsoft Azure AD, cannot add as "
-                             f"{email} already exists in the group.")
+            self.logger.warn(
+                f"Plugin: Microsoft Azure AD, cannot add as "
+                f"{email} already exists in the group."
+            )
             return
 
         response_json = self.handle_error(response)
@@ -100,7 +124,7 @@ class MicrosoftAzureADPlugin(PluginBase):
 
         Args:
             configuration (Dict): Dict object having all the Plugin
-                configuration parameters: client_id, client_secret, 
+                configuration parameters: client_id, client_secret,
                 and tenant_id.
             email (str): Principle email of member to remove.
             group_id (str): Group ID of the group.
@@ -108,14 +132,12 @@ class MicrosoftAzureADPlugin(PluginBase):
         Raises:
             HTTPError: If the group does not exist on Microsoft Azure AD.
         """
-
         headers = self.reload_auth_token(configuration)
-        # we convert email, which we recieved in parameters of method, into id
-        # as the API demands id for identifying the user
         id = self._get_email_to_id(self.configuration, email).get("id")
         headers["Content-Type"] = "application/json"
 
-        response = self.handle_request_exception(lambda: requests.delete(
+        response = self.handle_request_exception(
+            lambda: requests.delete(
                 f"https://graph.microsoft.com/v1.0/"
                 f"groups/{group_id}/members/{id}/$ref",
                 headers=add_user_agent(headers),
@@ -125,14 +147,13 @@ class MicrosoftAzureADPlugin(PluginBase):
         )
 
         if response.status_code == 204:
-            # We return because there is an empty JSON response
-            # So it is successful and we do not need to anything
-            # more after adding the member to groups
             return
 
         if response.status_code == 404:
-            self.logger.warn(f"Plugin: Microsoft Azure AD, cannot remove as "
-                             f"{email} does not exist in the group.")
+            self.logger.warn(
+                f"Plugin: Microsoft Azure AD, cannot remove as "
+                f"{email} does not exist in the group."
+            )
             return
 
         response_json = self.handle_error(response)
@@ -176,8 +197,9 @@ class MicrosoftAzureADPlugin(PluginBase):
         headers = self.reload_auth_token(configuration)
         headers["Content-Type"] = "application/json"
 
-        response = self.handle_request_exception(lambda: requests.post(
-                f"https://graph.microsoft.com/v1.0/groups",
+        response = self.handle_request_exception(
+            lambda: requests.post(
+                "https://graph.microsoft.com/v1.0/groups",
                 headers=add_user_agent(headers),
                 proxies=self.proxy,
                 verify=self.ssl_validation,
@@ -208,14 +230,15 @@ class MicrosoftAzureADPlugin(PluginBase):
             total_group_name_array (list): List of group names
 
         """
-        url = f"https://graph.microsoft.com/v1.0/groups?$top=" + PAGE_SIZE
+        url = f"https://graph.microsoft.com/v1.0/groups?$top={PAGE_SIZE}"
         headers = self.reload_auth_token(configuration)
         headers["Content-Type"] = "application/json"
         # all the group names will be added in this variable
         total_group_name_array = []
 
         while True:
-            response = self.handle_request_exception(lambda: requests.get(
+            response = self.handle_request_exception(
+                lambda: requests.get(
                     url,
                     headers=add_user_agent(headers),
                     proxies=self.proxy,
@@ -233,7 +256,7 @@ class MicrosoftAzureADPlugin(PluginBase):
                 )
             # stores the number of groups in that particular pagination query
             current_group_array = response_json.get("value")
-            # number of groups recieved count
+            # number of groups received count
             current_group_count = len(current_group_array)
 
             for each_group in current_group_array:
@@ -284,14 +307,15 @@ class MicrosoftAzureADPlugin(PluginBase):
 
         """
 
-        url = f"https://graph.microsoft.com/v1.0/users?$top=" + PAGE_SIZE
+        url = f"https://graph.microsoft.com/v1.0/users?$top={PAGE_SIZE}"
         headers = self.reload_auth_token(configuration)
         headers["Content-Type"] = "application/json"
 
         total_users_id_list = []
 
         while True:
-            response = self.handle_request_exception(lambda: requests.get(
+            response = self.handle_request_exception(
+                lambda: requests.get(
                     url,
                     headers=add_user_agent(headers),
                     proxies=self.proxy,
@@ -339,17 +363,17 @@ class MicrosoftAzureADPlugin(PluginBase):
             email_and_id (Dict): Dict containing email and id
 
         """
-
         url = f"https://graph.microsoft.com/v1.0/users/{email}"
         # reload token for authentication
         headers = self.reload_auth_token(configuration)
         headers["Content-Type"] = "application/json"
 
-        response = self.handle_request_exception(lambda: requests.get(
+        response = self.handle_request_exception(
+            lambda: requests.get(
                 url,
                 headers=add_user_agent(headers),
                 proxies=self.proxy,
-                verify=self.ssl_validation
+                verify=self.ssl_validation,
             )
         )
 
@@ -362,13 +386,8 @@ class MicrosoftAzureADPlugin(PluginBase):
                 f"Plugin: Microsoft Azure AD, unable to get id from email. "
                 f"Error: {err_msg}."
             )
-        # store id from the response
         id = response_json["id"]
-        # create a variable that has both email and id both
-        email_and_id = {"email": email, "id": id}
-
-        # we return that variable with email and id finally
-        return email_and_id
+        return {"email": email, "id": id}
 
     def _match_user_by_email(self, user, all_users_ids_names):
         for each_user in all_users_ids_names:
@@ -390,14 +409,14 @@ class MicrosoftAzureADPlugin(PluginBase):
         return [
             ActionWithoutParams(label="Add to group", value="add"),
             ActionWithoutParams(label="Remove from group", value="remove"),
+            ActionWithoutParams(
+                label="Confirm compromised", value="confirm_compromised"
+            ),
             ActionWithoutParams(label="No actions", value="generate"),
         ]
 
     def execute_action(self, record: Record, action: Action):
         """Execute action on the user.
-        Calls _add_to_group or _remove_to_group in the case
-            of add or remove action
-        Passes when action is generate
 
         Args:
             record (Record): Record of a user you want to perform an action on
@@ -405,9 +424,7 @@ class MicrosoftAzureADPlugin(PluginBase):
 
         Returns:
             None
-
         """
-
         if action.value == "generate":
             return
         user = record.uid
@@ -454,6 +471,32 @@ class MicrosoftAzureADPlugin(PluginBase):
                 f"Microsoft Azure AD: Removed {user} from group with "
                 f"ID {action.parameters.get('group')}."
             )
+        elif action.value == "confirm_compromised":
+            user_info = self._get_email_to_id(
+                configuration=self.configuration, email=user
+            )
+            user_id = user_info.get("id")
+            url = "https://graph.microsoft.com/v1.0/identityProtection/riskyUsers/confirmCompromised"
+            headers = self.reload_auth_token(self.configuration)
+            data = {"userIds": [user_id]}
+            response = requests.post(
+                url=url,
+                headers=add_user_agent(headers),
+                json=data,
+                proxies=self.proxy,
+                verify=self.ssl_validation,
+            )
+            self.handle_error(resp=response)
+            if response.status_code == 204:
+                self.logger.info(
+                    "Microsoft Azure AD: Successfully performed Confirm "
+                    f"compromised action on user: {user_info.get('email')}."
+                )
+            else:
+                self.logger.error(
+                    "Microsoft Azure AD: Could not perform Confirm compromised"
+                    f" action on user {user_info.get('email')}."
+                )
 
     def get_action_fields(self, action: Action) -> List:
         """Get fields required for an action.
@@ -465,14 +508,10 @@ class MicrosoftAzureADPlugin(PluginBase):
             [...] (list): Returns a list of details for UI to display group
 
         """
-        # return nothing when action is generate
-        if action.value == "generate":
+        if action.value in ["generate", "confirm_compromised"]:
             return []
         groups = self._get_all_groups(self.configuration)
-        # sort the groups in ascending order by names
         groups = sorted(groups, key=lambda g: g.get("mail_nickname").lower())
-        # return the all details for add group option
-        # and all choices of groups to add user to
         if action.value == "add":
             return [
                 {
@@ -494,12 +533,10 @@ class MicrosoftAzureADPlugin(PluginBase):
                     "type": "text",
                     "default": "",
                     "mandatory": False,
-                    "description": "Create Microsoft Azure AD group with " +
-                    "given name if it does not exist.",
+                    "description": "Create Microsoft Azure AD group with "
+                    + "given name if it does not exist.",
                 },
             ]
-        # return the all details for add remove option
-        # and all choices of groups to remove user from
         elif action.value == "remove":
             return [
                 {
@@ -518,11 +555,16 @@ class MicrosoftAzureADPlugin(PluginBase):
 
     def validate_action(self, action: Action) -> ValidationResult:
         """Validate Microsoft Azure AD action configuration."""
-        if action.value not in ["add", "remove", "generate"]:
+        if action.value not in [
+            "add",
+            "remove",
+            "generate",
+            "confirm_compromised",
+        ]:
             return ValidationResult(
                 success=False, message="Unsupported action provided."
             )
-        if action.value == "generate":
+        if action.value in ["generate", "confirm_compromised"]:
             return ValidationResult(
                 success=True, message="Validation successful."
             )
@@ -553,7 +595,7 @@ class MicrosoftAzureADPlugin(PluginBase):
                 client_secret (str): Client Secret required to generate
                     OAUTH2 token.
                 tenant_id (str): Tenant ID that user wants
-               
+
         Returns:
             json: JSON response data in case of Success.
         """
@@ -568,7 +610,9 @@ class MicrosoftAzureADPlugin(PluginBase):
         # This is the token link.
         # Looks like https://login.microsoftonline.com/xxxxxxxx
         # -xxxx-xxxx-xxxx-xxxxxxxxxxxx/oauth2/token
-        auth_endpoint = f"https://login.microsoftonline.com/{tenant_id}/oauth2/token"
+        auth_endpoint = (
+            f"https://login.microsoftonline.com/{tenant_id}/oauth2/token"
+        )
         auth_params = {
             "grant_type": "client_credentials",
             "client_id": client_id,
@@ -576,7 +620,8 @@ class MicrosoftAzureADPlugin(PluginBase):
             "resource": "https://graph.microsoft.com",
         }
 
-        resp = self.handle_request_exception(lambda: requests.get(
+        resp = self.handle_request_exception(
+            lambda: requests.get(
                 auth_endpoint,
                 data=auth_params,
                 proxies=self.proxy,
@@ -622,10 +667,13 @@ class MicrosoftAzureADPlugin(PluginBase):
             return headers
 
         elif self.storage is not None:
-            if self.storage.get(
-                "token_expiry", datetime.datetime.now()
-                - datetime.timedelta(minutes=1)
-            ) < datetime.datetime.now():
+            if (
+                self.storage.get(
+                    "token_expiry",
+                    datetime.datetime.now() - datetime.timedelta(minutes=1),
+                )
+                < datetime.datetime.now()
+            ):
                 # Reload token
                 self.logger.info(
                     "Plugin: Microsoft Azure AD OAUTH2 token expired. "
@@ -642,18 +690,16 @@ class MicrosoftAzureADPlugin(PluginBase):
         """Validate the Plugin configuration parameters.
 
         Args:
-            Args: configuration (dict): Contains the below keys:
-                client_id (str): Client ID required to generate OAUTH2 token.
-                client_secret (str): Client Secret required to generate
-                    OAUTH2 token.
-                tenant_id (str): Tenant ID that user wants
-               
-        Returns:.
+            configuration (dict): Contains the below keys:
+            client_id (str): Client ID required to generate OAUTH2 token.
+            client_secret (str): Client Secret required to generate OAUTH2
+                                token.
+            tenant_id (str): Tenant ID that user wants
 
-            cte.plugin_base.ValidateResult: ValidateResult object with success
-                flag and message.
+        Returns:
+            ValidateResult: ValidateResult object with success flag and
+                            message.
         """
-
         self.logger.info(
             "Plugin: Executing validate method for Microsoft Azure AD plugin"
         )
@@ -710,7 +756,7 @@ class MicrosoftAzureADPlugin(PluginBase):
             client_secret (str): Client Secret required to generate
                 OAUTH2 token.
             tenant_id (str): Tenant ID that user wants
-        
+
         Returns:
             ValidationResult: ValidationResult object having validation
             results after making an API call.
@@ -725,8 +771,8 @@ class MicrosoftAzureADPlugin(PluginBase):
 
             return ValidationResult(
                 success=True,
-                message="Validation successful " +
-                "for Microsoft Azure AD Plugin.",
+                message="Validation successful "
+                + "for Microsoft Azure AD Plugin.",
             )
         except requests.exceptions.ProxyError:
             self.logger.error(
@@ -745,8 +791,8 @@ class MicrosoftAzureADPlugin(PluginBase):
             )
             return ValidationResult(
                 success=False,
-                message="Validation Error, unable to establish connection " +
-                "with API.",
+                message="Validation Error, unable to establish connection "
+                + "with API.",
             )
         except requests.HTTPError as err:
             self.logger.error(
@@ -758,9 +804,7 @@ class MicrosoftAzureADPlugin(PluginBase):
                 message="Validation Error, error in validating credentials.",
             )
         except Exception as e:
-            self.logger.error(
-                f"Microsoft Azure AD, Unexpected Exception: {e}"
-            )
+            self.logger.error(f"Microsoft Azure AD, Unexpected Exception: {e}")
             return ValidationResult(
                 success=False,
                 message="Validation Error (Check logs for more details).",
@@ -776,11 +820,10 @@ class MicrosoftAzureADPlugin(PluginBase):
                 client_secret (str): Client Secret required to generate
                     OAUTH2 token.
                 tenant_id (str): Tenant ID that user wants
-               
+
         Returns:
             Raise error if valid base url is not selected.
         """
-
         auth_json = self.get_auth_json(configuration)
         auth_token = auth_json.get("access_token")
 
@@ -788,7 +831,7 @@ class MicrosoftAzureADPlugin(PluginBase):
 
         # get the top 1 user from Microsoft Graph for checking
         # whether we are connected to the API
-        query_endpoint = f"https://graph.microsoft.com/v1.0/users?$top=1"
+        query_endpoint = "https://graph.microsoft.com/v1.0/users?$top=1"
         all_agent_resp = requests.get(
             query_endpoint,
             headers=add_user_agent(headers),
@@ -814,14 +857,18 @@ class MicrosoftAzureADPlugin(PluginBase):
         Returns:
             List[Record]: List of records to be stored on the platform.
         """
-        url = f"https://graph.microsoft.com/v1.0/identityProtection/riskyUsers?$top=" + PAGE_RECORD_SCORE
+        url = (
+            "https://graph.microsoft.com/v1.0/identityProtection/riskyUsers?$top="
+            + PAGE_RECORD_SCORE
+        )
         headers = self.reload_auth_token(self.configuration)
         headers["Content-Type"] = "application/json"
-        
+
         total_records = []
-        
+
         while True:
-            response = self.handle_request_exception(lambda: requests.get(
+            response = self.handle_request_exception(
+                lambda: requests.get(
                     url,
                     headers=add_user_agent(headers),
                     proxies=self.proxy,
@@ -839,13 +886,14 @@ class MicrosoftAzureADPlugin(PluginBase):
 
             current_user_list = response_json.get("value")
             current_user_count = len(current_user_list)
-            
+
             # We get all the user id and store it in total user id list
             for each_user in current_user_list:
-                currRecord = Record(uid=each_user.get("userPrincipalName"),
-                                    type=RecordType.USER,
-                                    score=None
-                                    )
+                currRecord = Record(
+                    uid=each_user.get("userPrincipalName"),
+                    type=RecordType.USER,
+                    score=None,
+                )
                 total_records.append(currRecord)
 
             # if number of groups is less than page size, we know that
@@ -857,12 +905,11 @@ class MicrosoftAzureADPlugin(PluginBase):
             # Hence, we break
             if "@odata.nextLink" not in response_json.keys():
                 break
-            
+
             url = response_json.get("@odata.nextLink")
 
         return total_records
-        
-        
+
     def fetch_scores(self, records: List[Record]) -> List[Record]:
         """Fetch user scores.
 
@@ -872,15 +919,19 @@ class MicrosoftAzureADPlugin(PluginBase):
         Returns:
             List: List of users with scores assigned.
         """
-        url = f"https://graph.microsoft.com/v1.0/identityProtection/riskyUsers?$top=" + PAGE_RECORD_SCORE
+        url = (
+            "https://graph.microsoft.com/v1.0/identityProtection/riskyUsers?$top="
+            + PAGE_RECORD_SCORE
+        )
         headers = self.reload_auth_token(self.configuration)
         headers["Content-Type"] = "application/json"
 
         score_users = {}
         total_scores = []
-        
+
         while True:
-            response = self.handle_request_exception(lambda: requests.get(
+            response = self.handle_request_exception(
+                lambda: requests.get(
                     url,
                     headers=add_user_agent(headers),
                     proxies=self.proxy,
@@ -899,31 +950,33 @@ class MicrosoftAzureADPlugin(PluginBase):
             current_user_list = response_json.get("value")
             current_user_count = len(current_user_list)
 
-            # current_user_list = [{userPrincipalName,riskLevel},{userPrincipalName,riskLevel}]
-            # records = [Record,Record,Record]
             record_uid_list = []
 
             # store just emails in an array
             for record in records:
                 record_uid_list.append(record.uid)
-            
+
             for each_user in current_user_list:
                 current_uid = each_user.get("userPrincipalName")
                 if current_uid in record_uid_list:
                     current_score = each_user.get("riskLevel")
                     # store email as key and score as value
                     score_users[current_uid] = current_score
-            
+
             if current_user_count < int(PAGE_RECORD_SCORE):
                 break
             if "@odata.nextLink" not in response_json.keys():
                 break
-            
+
             url = response_json.get("@odata.nextLink")
 
         if score_users:
             for key, value in score_users.items():
-                if value == "none" or value == "hidden" or value == "unknownFutureValue":
+                if (
+                    value == "none"
+                    or value == "hidden"
+                    or value == "unknownFutureValue"
+                ):
                     total_scores.append(
                         Record(uid=key, type=RecordType.USER, score=None)
                     )
@@ -939,7 +992,7 @@ class MicrosoftAzureADPlugin(PluginBase):
                     total_scores.append(
                         Record(uid=key, type=RecordType.USER, score=375)
                     )
-                
+
         return total_scores
 
     def handle_error(self, resp):
@@ -954,7 +1007,7 @@ class MicrosoftAzureADPlugin(PluginBase):
         Raises:
             HTTPError: When the response code is not 200.
         """
-        if resp.status_code == 200 or resp.status_code == 201:
+        if resp.status_code in [200, 201]:
             try:
                 return resp.json()
             except ValueError:
@@ -962,6 +1015,8 @@ class MicrosoftAzureADPlugin(PluginBase):
                     "Plugin: Microsoft Azure AD, "
                     "Exception occurred while parsing JSON response."
                 )
+        elif resp.status_code == 204:
+            return
         elif resp.status_code == 401:
             raise MicrosoftAzureADException(
                 "Plugin: Microsoft Azure AD, "
@@ -989,7 +1044,6 @@ class MicrosoftAzureADPlugin(PluginBase):
             )
 
     def handle_request_exception(self, one_request):
-        # exception handling
         try:
             return one_request()
         except requests.exceptions.ProxyError:

@@ -33,6 +33,10 @@
                 {
                     "key": "United States (api.xdr.trendmicro.com)",
                     "value": "https://api.xdr.trendmicro.com"
+                },
+                {
+                    "key": "UAE (api.uae.xdr.trendmicro.com)",
+                    "value": "https://api.uae.xdr.trendmicro.com"
                 }
             ],
             "mandatory": true,

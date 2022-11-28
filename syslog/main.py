@@ -514,63 +514,88 @@ class SyslogPlugin(PluginBase):
     def validate(self, configuration: dict) -> ValidationResult:
         """Validate the configuration parameters dict."""
         syslog_validator = SyslogValidator(self.logger)
-
         if (
             "syslog_server" not in configuration
-            or type(configuration["syslog_server"]) != str
             or not configuration["syslog_server"].strip()
         ):
             self.logger.error(
                 "Syslog Plugin: Validation error occurred. Error: "
-                "Invalid Syslog server IP/FQDN found in the configuration parameters."
+                "Syslog Server IP/FQDN is a required field in the configuration parameters."
             )
             return ValidationResult(
-                success=False, message="Invalid Syslog server provided."
+                success=False, message="Syslog Server is a required field."
             )
-
+        elif type(configuration["syslog_server"]) != str:
+            self.logger.error(
+                "Syslog Plugin: Validation error occurred. Error: "
+                "Invalid Syslog Server IP/FQDN found in the configuration parameters."
+            )
+            return ValidationResult(
+                success=False, message="Invalid Syslog Server provided."
+            )
         if (
             "syslog_format" not in configuration
-            or type(configuration["syslog_format"]) != str
             or not configuration["syslog_format"].strip()
+        ):
+            self.logger.error(
+                "Syslog Plugin: Validation error occurred. Error: "
+                "Syslog Format is a required field in the configuration parameters."
+            )
+            return ValidationResult(
+                success=False, message="Syslog Format is a required field."
+            )
+        elif (
+            type(configuration["syslog_format"]) != str
             or configuration["syslog_format"] not in SYSLOG_FORMATS
         ):
             self.logger.error(
                 "Syslog Plugin: Validation error occurred. Error: "
-                "Invalid Syslog format found in the configuration parameters."
+                "Invalid Syslog Format found in the configuration parameters."
             )
             return ValidationResult(
-                success=False, message="Invalid Syslog format provided."
+                success=False, message="Invalid Syslog Format provided."
             )
-
         if (
             "syslog_protocol" not in configuration
-            or type(configuration["syslog_protocol"]) != str
             or not configuration["syslog_protocol"].strip()
+        ):
+            self.logger.error(
+                "Syslog Plugin: Validation error occurred. Error: "
+                "Syslog Protocol is a required field in the configuration parameters."
+            )
+            return ValidationResult(
+                success=False, message="Syslog Protocol is a required field."
+            )
+        elif (
+            type(configuration["syslog_protocol"]) != str
             or configuration["syslog_protocol"] not in SYSLOG_PROTOCOLS
         ):
             self.logger.error(
                 "Syslog Plugin: Validation error occurred. Error: "
-                "Invalid Syslog protocol found in the configuration parameters."
+                "Invalid Syslog Protocol found in the configuration parameters."
             )
             return ValidationResult(
-                success=False, message="Invalid Syslog protocol provided."
+                success=False, message="Invalid Syslog Protocol provided."
             )
-
         if (
             "syslog_port" not in configuration
             or not configuration["syslog_port"]
-            or not syslog_validator.validate_syslog_port(
-                configuration["syslog_port"]
-            )
         ):
             self.logger.error(
                 "Syslog Plugin: Validation error occurred. Error: "
-                "Invalid Syslog port found in the configuration parameters."
+                "Syslog Port is a required field in the configuration parameters."
             )
             return ValidationResult(
-                success=False, message="Invalid Syslog port provided."
+                success=False, message="Syslog Port is a required field."
             )
-
+        elif not syslog_validator.validate_syslog_port(configuration["syslog_port"]):
+            self.logger.error(
+                "Syslog Plugin: Validation error occurred. Error: "
+                "Invalid Syslog Port found in the configuration parameters."
+            )
+            return ValidationResult(
+                success=False, message="Invalid Syslog Port provided."
+            )
         mappings = self.mappings.get("jsonData", None)
         mappings = json.loads(mappings)
         if type(mappings) != dict or not syslog_validator.validate_syslog_map(
@@ -584,25 +609,44 @@ class SyslogPlugin(PluginBase):
                 success=False,
                 message="Invalid Syslog attribute mapping provided.",
             )
-
         if configuration["syslog_protocol"].upper() == "TLS" and (
             "syslog_certificate" not in configuration
-            or type(configuration["syslog_certificate"]) != str
             or not configuration["syslog_certificate"].strip()
         ):
             self.logger.error(
                 "Syslog Plugin: Validation error occurred. Error: "
-                "Invalid Syslog certificate mapping found in the configuration parameters."
+                "Syslog Certificate mapping is a required field when TLS is provided in the configuration parameters."
             )
             return ValidationResult(
                 success=False,
-                message="Invalid Syslog certificate mapping provided.",
+                message="Syslog Certificate mapping is a required field when TLS is provided.",
             )
-
+        elif (
+            configuration["syslog_protocol"].upper() == "TLS"
+            and type(configuration["syslog_certificate"]) != str
+        ):
+            self.logger.error(
+                "Syslog Plugin: Validation error occurred. Error: "
+                "Invalid Syslog Certificate mapping found in the configuration parameters."
+            )
+            return ValidationResult(
+                success=False,
+                message="Invalid Syslog Certificate mapping provided.",
+            )
         if (
             "log_source_identifier" not in configuration
-            or type(configuration["log_source_identifier"]) != str
             or not configuration["log_source_identifier"].strip()
+        ):
+            self.logger.error(
+                "Syslog Plugin: Validation error occurred. Error: "
+                "Log Source Identifier is a required field in the configuration parameters."
+            )
+            return ValidationResult(
+                success=False,
+                message="Log Source Identifier is a required field.",
+            )
+        elif (
+            type(configuration["log_source_identifier"]) != str
             or " " in configuration["log_source_identifier"].strip()
         ):
             self.logger.error(
@@ -613,7 +657,6 @@ class SyslogPlugin(PluginBase):
                 success=False,
                 message="Invalid Log Source Identifier provided.",
             )
-
         # Validate Server connection.
         try:
             self.test_server_connectivity(configuration)
@@ -624,12 +667,10 @@ class SyslogPlugin(PluginBase):
             )
             return ValidationResult(
                 success=False,
-                message="Error occurred while establishing connection with Syslog server. "
+                message="Error occurred while establishing connection with Syslog Server. "
                 "Make sure you have provided correct Syslog Server, Port and Syslog Certificate(if required).",
             )
-
         return ValidationResult(success=True, message="Validation successful.")
-
     def chunk_size(self):
         """Chunk size to be ingested per thread."""
         return 2000

@@ -513,63 +513,88 @@ class QRadarPlugin(PluginBase):
     def validate(self, configuration: dict) -> ValidationResult:
         """Validate the configuration parameters dict."""
         qradar_validator = QRadarValidator(self.logger)
-
         if (
             "qradar_server" not in configuration
-            or type(configuration["qradar_server"]) != str
             or not configuration["qradar_server"].strip()
         ):
             self.logger.error(
                 "QRadar Plugin: Validation error occurred. Error: "
-                "Invalid QRadar server IP/FQDN found in the configuration parameters."
+                "QRadar Server IP/FQDN is a required field in the configuration parameters."
             )
             return ValidationResult(
-                success=False, message="Invalid QRadar server provided."
+                success=False, message="QRadar Server is a required field."
             )
-
+        elif type(configuration["qradar_server"]) != str:
+            self.logger.error(
+                "QRadar Plugin: Validation error occurred. Error: "
+                "Invalid QRadar Server IP/FQDN found in the configuration parameters."
+            )
+            return ValidationResult(
+                success=False, message="Invalid QRadar Server provided."
+            )
         if (
             "qradar_format" not in configuration
-            or type(configuration["qradar_format"]) != str
             or not configuration["qradar_format"].strip()
+        ):
+            self.logger.error(
+                "QRadar Plugin: Validation error occurred. Error: "
+                "QRadar Format is a required field in the configuration parameters."
+            )
+            return ValidationResult(
+                success=False, message="QRadar Format is a required field."
+            )
+        elif (
+            type(configuration["qradar_format"]) != str
             or configuration["qradar_format"] not in SYSLOG_FORMATS
         ):
             self.logger.error(
                 "QRadar Plugin: Validation error occurred. Error: "
-                "Invalid QRadar format found in the configuration parameters."
+                "Invalid QRadar Format found in the configuration parameters."
             )
             return ValidationResult(
-                success=False, message="Invalid QRadar format provided."
+                success=False, message="Invalid QRadar Format provided."
             )
-
         if (
             "qradar_protocol" not in configuration
-            or type(configuration["qradar_protocol"]) != str
             or not configuration["qradar_protocol"].strip()
+        ):
+            self.logger.error(
+                "QRadar Plugin: Validation error occurred. Error: "
+                "QRadar Protocol is a required field in the configuration parameters."
+            )
+            return ValidationResult(
+                success=False, message="QRadar Protocol is a required field."
+            )
+        elif (
+            type(configuration["qradar_protocol"]) != str
             or configuration["qradar_protocol"] not in SYSLOG_PROTOCOLS
         ):
             self.logger.error(
                 "QRadar Plugin: Validation error occurred. Error: "
-                "Invalid QRadar protocol found in the configuration parameters."
+                "Invalid QRadar Protocol found in the configuration parameters."
             )
             return ValidationResult(
-                success=False, message="Invalid QRadar protocol provided."
+                success=False, message="Invalid QRadar Protocol provided."
             )
-
         if (
             "qradar_port" not in configuration
             or not configuration["qradar_port"]
-            or not qradar_validator.validate_qradar_port(
-                configuration["qradar_port"]
-            )
         ):
             self.logger.error(
                 "QRadar Plugin: Validation error occurred. Error: "
-                "Invalid QRadar port found in the configuration parameters."
+                "QRadar Port is a required field in the configuration parameters."
             )
             return ValidationResult(
-                success=False, message="Invalid QRadar port provided."
+                success=False, message="QRadar Port is a required field."
             )
-
+        elif not qradar_validator.validate_qradar_port(configuration["qradar_port"]):
+            self.logger.error(
+                "QRadar Plugin: Validation error occurred. Error: "
+                "Invalid QRadar Port found in the configuration parameters."
+            )
+            return ValidationResult(
+                success=False, message="Invalid QRadar Port provided."
+            )
         mappings = self.mappings.get("jsonData", None)
         mappings = json.loads(mappings)
         if type(mappings) != dict or not qradar_validator.validate_qradar_map(
@@ -583,25 +608,44 @@ class QRadarPlugin(PluginBase):
                 success=False,
                 message="Invalid QRadar attribute mapping provided.",
             )
-
         if configuration["qradar_protocol"].upper() == "TLS" and (
             "qradar_certificate" not in configuration
-            or type(configuration["qradar_certificate"]) != str
             or not configuration["qradar_certificate"].strip()
         ):
             self.logger.error(
                 "QRadar Plugin: Validation error occurred. Error: "
-                "Invalid QRadar certificate mapping found in the configuration parameters."
+                "QRadar Certificate mapping is a required field when TLS is provided in the configuration parameters."
             )
             return ValidationResult(
                 success=False,
-                message="Invalid QRadar certificate mapping provided.",
+                message="QRadar Certificate mapping is a required field when TLS is provided.",
             )
-
+        elif (
+            configuration["qradar_protocol"].upper() == "TLS"
+            and type(configuration["qradar_certificate"]) != str
+        ):
+            self.logger.error(
+                "QRadar Plugin: Validation error occurred. Error: "
+                "Invalid QRadar Certificate mapping found in the configuration parameters."
+            )
+            return ValidationResult(
+                success=False,
+                message="Invalid QRadar Certificate mapping provided.",
+            )
         if (
             "log_source_identifier" not in configuration
-            or type(configuration["log_source_identifier"]) != str
             or not configuration["log_source_identifier"].strip()
+        ):
+            self.logger.error(
+                "QRadar Plugin: Validation error occurred. Error: "
+                "Log Source Identifier is a required field in the configuration parameters."
+            )
+            return ValidationResult(
+                success=False,
+                message="Log Source Identifier is a required field.",
+            )
+        elif (
+            type(configuration["log_source_identifier"]) != str
             or " " in configuration["log_source_identifier"].strip()
         ):
             self.logger.error(
@@ -612,7 +656,6 @@ class QRadarPlugin(PluginBase):
                 success=False,
                 message="Invalid Log Source Identifier provided.",
             )
-
         # Validate Server connection.
         try:
             self.test_server_connectivity(configuration)
@@ -623,12 +666,10 @@ class QRadarPlugin(PluginBase):
             )
             return ValidationResult(
                 success=False,
-                message="Error occurred while establishing connection with QRadar server. "
+                message="Error occurred while establishing connection with QRadar Server. "
                 "Make sure you have provided correct QRadar Server, Port and QRadar Certificate(if required).",
             )
-
         return ValidationResult(success=True, message="Validation successful.")
-
     def chunk_size(self):
         """Chunk size to be ingested per thread."""
         return 2000

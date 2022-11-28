@@ -131,7 +131,7 @@ class LogRhythmPlugin(PluginBase):
         """
         headers = {}
         mapping_variables = {}
-        if data_type != 'webtx':
+        if data_type != "webtx":
             helper = AlertsHelper()
             tenant = helper.get_tenant_cls(self.source)
             mapping_variables = {"$tenant_name": tenant.name}
@@ -260,7 +260,7 @@ class LogRhythmPlugin(PluginBase):
         :param logger: Logger object for logging purpose
         :return: Mapped data based on fields given in mapping file
         """
-        
+
         if mappings == []:
             return data
 
@@ -268,7 +268,7 @@ class LogRhythmPlugin(PluginBase):
         for key in mappings:
             if key in data:
                 mapped_dict[key] = data[key]
-        
+
         return mapped_dict
 
     def transform(self, raw_data, data_type, subtype) -> List:
@@ -278,12 +278,16 @@ class LogRhythmPlugin(PluginBase):
                 return raw_data
 
             try:
-                delimiter, cef_version, log_rhythm_mappings = get_log_rhythm_mappings(
-                    self.mappings, "json"
-                )
+                (
+                    delimiter,
+                    cef_version,
+                    log_rhythm_mappings,
+                ) = get_log_rhythm_mappings(self.mappings, "json")
             except KeyError as err:
                 self.logger.error(
-                    "Error in log_rhythm mapping file. Error: {}".format(str(err))
+                    "Error in log_rhythm mapping file. Error: {}".format(
+                        str(err)
+                    )
                 )
                 raise
             except MappingValidationError as err:
@@ -314,11 +318,12 @@ class LogRhythmPlugin(PluginBase):
 
             for data in raw_data:
                 transformed_data.append(
-                    self.map_json_data(subtype_mapping, data, data_type, subtype)
+                    self.map_json_data(
+                        subtype_mapping, data, data_type, subtype
+                    )
                 )
 
             return transformed_data
-                
 
         else:
             try:
@@ -329,7 +334,9 @@ class LogRhythmPlugin(PluginBase):
                 ) = get_log_rhythm_mappings(self.mappings, data_type)
             except KeyError as err:
                 self.logger.error(
-                    "Error in log_rhythm mapping file. Error: {}".format(str(err))
+                    "Error in log_rhythm mapping file. Error: {}".format(
+                        str(err)
+                    )
                 )
                 raise
             except MappingValidationError as err:
@@ -520,60 +527,93 @@ class LogRhythmPlugin(PluginBase):
 
         if (
             "log_rhythm_server" not in configuration
-            or type(configuration["log_rhythm_server"]) != str
             or not configuration["log_rhythm_server"].strip()
         ):
             self.logger.error(
                 "LogRhythm Plugin: Validation error occurred. Error: "
-                "Invalid LogRhythm server IP/FQDN found in the configuration parameters."
+                "LogRhythm Server IP/FQDN is a required field in the configuration parameters."
             )
             return ValidationResult(
-                success=False, message="Invalid LogRhythm server provided."
+                success=False, message="LogRhythm Server is a required field."
             )
 
+        elif type(configuration["log_rhythm_server"]) != str:
+            self.logger.error(
+                "LogRhythm Plugin: Validation error occurred. Error: "
+                "Invalid LogRhythm Server IP/FQDN found in the configuration parameters."
+            )
+            return ValidationResult(
+                success=False, message="Invalid LogRhythm Server provided."
+            )
         if (
             "log_rhythm_format" not in configuration
-            or type(configuration["log_rhythm_format"]) != str
             or not configuration["log_rhythm_format"].strip()
+        ):
+            self.logger.error(
+                "LogRhythm Plugin: Validation error occurred. Error: "
+                "LogRhythm Format is a required field in the configuration parameters."
+            )
+            return ValidationResult(
+                success=False, message="LogRhythm Format is a required field."
+            )
+        elif (
+            type(configuration["log_rhythm_format"]) != str
             or configuration["log_rhythm_format"] not in SYSLOG_FORMATS
         ):
             self.logger.error(
                 "LogRhythm Plugin: Validation error occurred. Error: "
-                "Invalid LogRhythm format found in the configuration parameters."
+                "Invalid LogRhythm Format found in the configuration parameters."
             )
             return ValidationResult(
-                success=False, message="Invalid LogRhythm format provided."
+                success=False, message="Invalid LogRhythm Format provided."
             )
 
         if (
             "log_rhythm_protocol" not in configuration
-            or type(configuration["log_rhythm_protocol"]) != str
             or not configuration["log_rhythm_protocol"].strip()
+        ):
+            self.logger.error(
+                "LogRhythm Plugin: Validation error occurred. Error: "
+                "LogRhythm Protocol is a required field in the configuration parameters."
+            )
+            return ValidationResult(
+                success=False,
+                message="LogRhythm Protocol is a required field.",
+            )
+        elif (
+            type(configuration["log_rhythm_protocol"]) != str
             or configuration["log_rhythm_protocol"] not in SYSLOG_PROTOCOLS
         ):
             self.logger.error(
                 "LogRhythm Plugin: Validation error occurred. Error: "
-                "Invalid LogRhythm protocol found in the configuration parameters."
+                "Invalid LogRhythm Protocol found in the configuration parameters."
             )
             return ValidationResult(
-                success=False, message="Invalid LogRhythm protocol provided."
+                success=False, message="Invalid LogRhythm Protocol provided."
             )
 
         if (
             "log_rhythm_port" not in configuration
             or not configuration["log_rhythm_port"]
-            or not log_rhythm_validator.validate_log_rhythm_port(
-                configuration["log_rhythm_port"]
-            )
         ):
             self.logger.error(
                 "LogRhythm Plugin: Validation error occurred. Error: "
-                "Invalid LogRhythm port found in the configuration parameters."
+                "LogRhythm Port is a required field in the configuration parameters."
             )
             return ValidationResult(
-                success=False, message="Invalid LogRhythm port provided."
+                success=False, message="LogRhythm Port is a required field."
             )
 
+        elif not log_rhythm_validator.validate_log_rhythm_port(
+            configuration["log_rhythm_port"]
+        ):
+            self.logger.error(
+                "LogRhythm Plugin: Validation error occurred. Error: "
+                "Invalid LogRhythm Port found in the configuration parameters."
+            )
+            return ValidationResult(
+                success=False, message="Invalid LogRhythm Port provided."
+            )
         mappings = self.mappings.get("jsonData", None)
         mappings = json.loads(mappings)
         if type(
@@ -592,22 +632,42 @@ class LogRhythmPlugin(PluginBase):
 
         if configuration["log_rhythm_protocol"].upper() == "TLS" and (
             "log_rhythm_certificate" not in configuration
-            or type(configuration["log_rhythm_certificate"]) != str
             or not configuration["log_rhythm_certificate"].strip()
         ):
             self.logger.error(
                 "LogRhythm Plugin: Validation error occurred. Error: "
-                "Invalid LogRhythm certificate mapping found in the configuration parameters."
+                "LogRhythm Certificate mapping is a required field when TLS is provided in the configuration parameters."
             )
             return ValidationResult(
                 success=False,
-                message="Invalid LogRhythm certificate mapping provided.",
+                message="LogRhythm Certificate mapping is a required field when TLS is provided.",
             )
-
+        elif (
+            configuration["log_rhythm_protocol"].upper() == "TLS"
+            and type(configuration["log_rhythm_certificate"]) != str
+        ):
+            self.logger.error(
+                "LogRhythm Plugin: Validation error occurred. Error: "
+                "Invalid LogRhythm Certificate mapping found in the configuration parameters."
+            )
+            return ValidationResult(
+                success=False,
+                message="Invalid LogRhythm Certificate mapping provided.",
+            )
         if (
             "log_source_identifier" not in configuration
-            or type(configuration["log_source_identifier"]) != str
             or not configuration["log_source_identifier"].strip()
+        ):
+            self.logger.error(
+                "LogRhythm Plugin: Validation error occurred. Error: "
+                "Log Source Identifier is a required field in the configuration parameters."
+            )
+            return ValidationResult(
+                success=False,
+                message="Log Source Identifier is a required field.",
+            )
+        elif (
+            type(configuration["log_source_identifier"]) != str
             or " " in configuration["log_source_identifier"].strip()
         ):
             self.logger.error(

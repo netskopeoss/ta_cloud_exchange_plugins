@@ -1,7 +1,7 @@
 {
     "name": "SolarWinds",
     "id": "solarwinds",
-    "version": "2.0.0",
+    "version": "2.0.1",
     "mapping": "SolarWinds Default Mappings",
     "types": [
         "alerts",

@@ -513,63 +513,88 @@ class SolarWindsPlugin(PluginBase):
     def validate(self, configuration: dict) -> ValidationResult:
         """Validate the configuration parameters dict."""
         solarwinds_validator = SolarWindsValidator(self.logger)
-
         if (
             "solarwinds_server" not in configuration
-            or type(configuration["solarwinds_server"]) != str
             or not configuration["solarwinds_server"].strip()
         ):
             self.logger.error(
                 "SolarWinds Plugin: Validation error occurred. Error: "
-                "Invalid SolarWinds server IP/FQDN found in the configuration parameters."
+                "SolarWinds Server IP/FQDN is a required field in the configuration parameters."
             )
             return ValidationResult(
-                success=False, message="Invalid SolarWinds server provided."
+                success=False, message="SolarWinds Server is a required field."
             )
-
+        elif type(configuration["solarwinds_server"]) != str:
+            self.logger.error(
+                "SolarWinds Plugin: Validation error occurred. Error: "
+                "Invalid SolarWinds Server IP/FQDN found in the configuration parameters."
+            )
+            return ValidationResult(
+                success=False, message="Invalid SolarWinds Server provided."
+            )
         if (
             "solarwinds_format" not in configuration
-            or type(configuration["solarwinds_format"]) != str
             or not configuration["solarwinds_format"].strip()
+        ):
+            self.logger.error(
+                "SolarWinds Plugin: Validation error occurred. Error: "
+                "SolarWinds Format is a required field in the configuration parameters."
+            )
+            return ValidationResult(
+                success=False, message="SolarWinds Format is a required field."
+            )
+        elif (
+            type(configuration["solarwinds_format"]) != str
             or configuration["solarwinds_format"] not in SOLARWINDS_FORMATS
         ):
             self.logger.error(
                 "SolarWinds Plugin: Validation error occurred. Error: "
-                "Invalid SolarWinds format found in the configuration parameters."
+                "Invalid SolarWinds Format found in the configuration parameters."
             )
             return ValidationResult(
-                success=False, message="Invalid SolarWinds format provided."
+                success=False, message="Invalid SolarWinds Format provided."
             )
-
         if (
             "solarwinds_protocol" not in configuration
-            or type(configuration["solarwinds_protocol"]) != str
             or not configuration["solarwinds_protocol"].strip()
+        ):
+            self.logger.error(
+                "SolarWinds Plugin: Validation error occurred. Error: "
+                "SolarWinds Protocol is a required field in the configuration parameters."
+            )
+            return ValidationResult(
+                success=False, message="SolarWinds Protocol is a required field."
+            )
+        elif (
+            type(configuration["solarwinds_protocol"]) != str
             or configuration["solarwinds_protocol"] not in SOLARWINDS_PROTOCOLS
         ):
             self.logger.error(
                 "SolarWinds Plugin: Validation error occurred. Error: "
-                "Invalid SolarWinds protocol found in the configuration parameters."
+                "Invalid SolarWinds Protocol found in the configuration parameters."
             )
             return ValidationResult(
-                success=False, message="Invalid SolarWinds protocol provided."
+                success=False, message="Invalid SolarWinds Protocol provided."
             )
-
         if (
             "solarwinds_port" not in configuration
             or not configuration["solarwinds_port"]
-            or not solarwinds_validator.validate_solarwinds_port(
-                configuration["solarwinds_port"]
-            )
         ):
             self.logger.error(
                 "SolarWinds Plugin: Validation error occurred. Error: "
-                "Invalid SolarWinds port found in the configuration parameters."
+                "SolarWinds Port is a required field in the configuration parameters."
             )
             return ValidationResult(
-                success=False, message="Invalid SolarWinds port provided."
+                success=False, message="SolarWinds Port is a required field."
             )
-
+        elif not solarwinds_validator.validate_solarwinds_port(configuration["solarwinds_port"]):
+            self.logger.error(
+                "SolarWinds Plugin: Validation error occurred. Error: "
+                "Invalid SolarWinds Port found in the configuration parameters."
+            )
+            return ValidationResult(
+                success=False, message="Invalid SolarWinds Port provided."
+            )
         mappings = self.mappings.get("jsonData", None)
         mappings = json.loads(mappings)
         if type(mappings) != dict or not solarwinds_validator.validate_solarwinds_map(
@@ -583,25 +608,44 @@ class SolarWindsPlugin(PluginBase):
                 success=False,
                 message="Invalid SolarWinds attribute mapping provided.",
             )
-
         if configuration["solarwinds_protocol"].upper() == "TLS" and (
             "solarwinds_certificate" not in configuration
-            or type(configuration["solarwinds_certificate"]) != str
             or not configuration["solarwinds_certificate"].strip()
         ):
             self.logger.error(
                 "SolarWinds Plugin: Validation error occurred. Error: "
-                "Invalid SolarWinds certificate mapping found in the configuration parameters."
+                "SolarWinds Certificate mapping is a required field when TLS is provided in the configuration parameters."
             )
             return ValidationResult(
                 success=False,
-                message="Invalid SolarWinds certificate mapping provided.",
+                message="SolarWinds Certificate mapping is a required field when TLS is provided.",
             )
-
+        elif (
+            configuration["solarwinds_protocol"].upper() == "TLS"
+            and type(configuration["solarwinds_certificate"]) != str
+        ):
+            self.logger.error(
+                "SolarWinds Plugin: Validation error occurred. Error: "
+                "Invalid SolarWinds Certificate mapping found in the configuration parameters."
+            )
+            return ValidationResult(
+                success=False,
+                message="Invalid SolarWinds Certificate mapping provided.",
+            )
         if (
             "log_source_identifier" not in configuration
-            or type(configuration["log_source_identifier"]) != str
             or not configuration["log_source_identifier"].strip()
+        ):
+            self.logger.error(
+                "SolarWinds Plugin: Validation error occurred. Error: "
+                "Log Source Identifier is a required field in the configuration parameters."
+            )
+            return ValidationResult(
+                success=False,
+                message="Log Source Identifier is a required field.",
+            )
+        elif (
+            type(configuration["log_source_identifier"]) != str
             or " " in configuration["log_source_identifier"].strip()
         ):
             self.logger.error(
@@ -612,7 +656,6 @@ class SolarWindsPlugin(PluginBase):
                 success=False,
                 message="Invalid Log Source Identifier provided.",
             )
-
         # Validate Server connection.
         try:
             self.test_server_connectivity(configuration)
@@ -626,7 +669,6 @@ class SolarWindsPlugin(PluginBase):
                 message="Error occurred while establishing connection with SolarWinds server. "
                 "Make sure you have provided correct SolarWinds Server, Port and SolarWinds Certificate(if required).",
             )
-
         return ValidationResult(success=True, message="Validation successful.")
 
     def chunk_size(self):

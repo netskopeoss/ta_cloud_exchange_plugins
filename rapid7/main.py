@@ -514,63 +514,88 @@ class Rapid7Plugin(PluginBase):
     def validate(self, configuration: dict) -> ValidationResult:
         """Validate the configuration parameters dict."""
         rapid7_validator = Rapid7Validator(self.logger)
-
         if (
             "rapid7_server" not in configuration
-            or type(configuration["rapid7_server"]) != str
             or not configuration["rapid7_server"].strip()
         ):
             self.logger.error(
                 "Rapid7 Plugin: Validation error occurred. Error: "
-                "Invalid Rapid7 server IP/FQDN found in the configuration parameters."
+                "Rapid7 Server IP/FQDN is a required field in the configuration parameters."
             )
             return ValidationResult(
-                success=False, message="Invalid Rapid7 server provided."
+                success=False, message="Rapid7 Server is a required field."
             )
-
+        elif type(configuration["rapid7_server"]) != str:
+            self.logger.error(
+                "Rapid7 Plugin: Validation error occurred. Error: "
+                "Invalid Rapid7 Server IP/FQDN found in the configuration parameters."
+            )
+            return ValidationResult(
+                success=False, message="Invalid Rapid7 Server provided."
+            )
         if (
             "rapid7_format" not in configuration
-            or type(configuration["rapid7_format"]) != str
             or not configuration["rapid7_format"].strip()
+        ):
+            self.logger.error(
+                "Rapid7 Plugin: Validation error occurred. Error: "
+                "Rapid7 Format is a required field in the configuration parameters."
+            )
+            return ValidationResult(
+                success=False, message="Rapid7 Format is a required field."
+            )
+        elif (
+            type(configuration["rapid7_format"]) != str
             or configuration["rapid7_format"] not in SYSLOG_FORMATS
         ):
             self.logger.error(
                 "Rapid7 Plugin: Validation error occurred. Error: "
-                "Invalid Rapid7 format found in the configuration parameters."
+                "Invalid Rapid7 Format found in the configuration parameters."
             )
             return ValidationResult(
-                success=False, message="Invalid Rapid7 format provided."
+                success=False, message="Invalid Rapid7 Format provided."
             )
-
         if (
             "rapid7_protocol" not in configuration
-            or type(configuration["rapid7_protocol"]) != str
             or not configuration["rapid7_protocol"].strip()
+        ):
+            self.logger.error(
+                "Rapid7 Plugin: Validation error occurred. Error: "
+                "Rapid7 Protocol is a required field in the configuration parameters."
+            )
+            return ValidationResult(
+                success=False, message="Rapid7 Protocol is a required field."
+            )
+        elif (
+            type(configuration["rapid7_protocol"]) != str
             or configuration["rapid7_protocol"] not in SYSLOG_PROTOCOLS
         ):
             self.logger.error(
                 "Rapid7 Plugin: Validation error occurred. Error: "
-                "Invalid Rapid7 protocol found in the configuration parameters."
+                "Invalid Rapid7 Protocol found in the configuration parameters."
             )
             return ValidationResult(
-                success=False, message="Invalid Rapid7 protocol provided."
+                success=False, message="Invalid Rapid7 Protocol provided."
             )
-
         if (
             "rapid7_port" not in configuration
             or not configuration["rapid7_port"]
-            or not rapid7_validator.validate_rapid7_port(
-                configuration["rapid7_port"]
-            )
         ):
             self.logger.error(
                 "Rapid7 Plugin: Validation error occurred. Error: "
-                "Invalid Rapid7 port found in the configuration parameters."
+                "Rapid7 Port is a required field in the configuration parameters."
             )
             return ValidationResult(
-                success=False, message="Invalid Rapid7 port provided."
+                success=False, message="Rapid7 Port is a required field."
             )
-
+        elif not rapid7_validator.validate_rapid7_port(configuration["rapid7_port"]):
+            self.logger.error(
+                "Rapid7 Plugin: Validation error occurred. Error: "
+                "Invalid Rapid7 Port found in the configuration parameters."
+            )
+            return ValidationResult(
+                success=False, message="Invalid Rapid7 Port provided."
+            )
         mappings = self.mappings.get("jsonData", None)
         mappings = json.loads(mappings)
         if type(mappings) != dict or not rapid7_validator.validate_rapid7_map(
@@ -584,36 +609,54 @@ class Rapid7Plugin(PluginBase):
                 success=False,
                 message="Invalid Rapid7 attribute mapping provided.",
             )
-
         if configuration["rapid7_protocol"].upper() == "TLS" and (
             "rapid7_certificate" not in configuration
-            or type(configuration["rapid7_certificate"]) != str
             or not configuration["rapid7_certificate"].strip()
         ):
             self.logger.error(
                 "Rapid7 Plugin: Validation error occurred. Error: "
-                "Invalid Rapid7 certificate mapping found in the configuration parameters."
+                "Rapid7 Certificate mapping is a required field when TLS is provided in the configuration parameters."
             )
             return ValidationResult(
                 success=False,
-                message="Invalid Rapid7 certificate mapping provided.",
+                message="Rapid7 Certificate mapping is a required field when TLS is provided.",
             )
-
+        elif (
+            configuration["rapid7_protocol"].upper() == "TLS"
+            and type(configuration["rapid7_certificate"]) != str
+        ):
+            self.logger.error(
+                "Rapid7 Plugin: Validation error occurred. Error: "
+                "Invalid Rapid7 Certificate mapping found in the configuration parameters."
+            )
+            return ValidationResult(
+                success=False,
+                message="Invalid Rapid7 Certificate mapping provided.",
+            )
         if (
             "log_source_identifier" not in configuration
-            or type(configuration["log_source_identifier"]) != str
             or not configuration["log_source_identifier"].strip()
+        ):
+            self.logger.error(
+                "Rapid7 Plugin: Validation error occurred. Error: "
+                "Invalid Log Source Identifier is a required field in the configuration parameters."
+            )
+            return ValidationResult(
+                success=False,
+                message="Log Source Identifier is a required field.",
+            )
+        elif (
+            type(configuration["log_source_identifier"]) != str
             or " " in configuration["log_source_identifier"].strip()
         ):
             self.logger.error(
                 "Rapid7 Plugin: Validation error occurred. Error: "
-                "Invalid Log Source Identifier found in the configuration parameters."
+                "Log Source Identifier found in the configuration parameters."
             )
             return ValidationResult(
                 success=False,
                 message="Invalid Log Source Identifier provided.",
             )
-
         # Validate Server connection.
         try:
             self.test_server_connectivity(configuration)
@@ -624,10 +667,9 @@ class Rapid7Plugin(PluginBase):
             )
             return ValidationResult(
                 success=False,
-                message="Error occurred while establishing connection with Rapid7 server. "
+                message="Error occurred while establishing connection with Rapid7 Server. "
                 "Make sure you have provided correct Rapid7 Server, Port and Rapid7 Certificate(if required).",
             )
-
         return ValidationResult(success=True, message="Validation successful.")
 
     def chunk_size(self):

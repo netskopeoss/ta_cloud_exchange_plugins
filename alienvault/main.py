@@ -516,65 +516,93 @@ class AlienVaultPlugin(PluginBase):
 
         if (
             "alienvault_server" not in configuration
-            or type(configuration["alienvault_server"]) != str
             or not configuration["alienvault_server"].strip()
         ):
+            self.logger.error(
+                "AlienVault Plugin: Validation error occurred. Error: "
+                "AlienVault Server IP/FQDN is a required field in the configuration parameters."
+            )
+            return ValidationResult(
+                success=False, message="AlienVault Server is a required field."
+            )
+        elif type(configuration["alienvault_server"]) != str:
             self.logger.error(
                 "AlienVault Plugin: Validation error occurred. Error: "
                 "Invalid AlienVault server IP/FQDN found in the configuration parameters."
             )
             return ValidationResult(
-                success=False, message="Invalid AlienVault server provided."
+                success=False, message="Invalid AlienVault Server provided."
             )
 
         if (
             "alienvault_format" not in configuration
-            or type(configuration["alienvault_format"]) != str
             or not configuration["alienvault_format"].strip()
+        ):
+            self.logger.error(
+                "AlienVault Plugin: Validation error occurred. Error: "
+                "AlienVault Format is a required field in the configuration parameters."
+            )
+            return ValidationResult(
+                success=False, message="AlienVault Format is a required field."
+            )
+        elif (
+            type(configuration["alienvault_format"]) != str
             or configuration["alienvault_format"] not in ALIENVAULT_FORMATS
         ):
             self.logger.error(
                 "AlienVault Plugin: Validation error occurred. Error: "
-                "Invalid AlienVault format found in the configuration parameters."
+                "Invalid AlienVault Format found in the configuration parameters."
             )
             return ValidationResult(
-                success=False, message="Invalid AlienVault format provided."
+                success=False, message="Invalid AlienVault Format provided."
             )
 
         if (
             "alienvault_protocol" not in configuration
-            or type(configuration["alienvault_protocol"]) != str
             or not configuration["alienvault_protocol"].strip()
+        ):
+            self.logger.error(
+                "AlienVault Plugin: Validation error occurred. Error: "
+                "AlienVault Protocol is a required field in the configuration parameters."
+            )
+            return ValidationResult(
+                success=False, message="AlienVault Protocol is a required field."
+            )
+        elif (
+            type(configuration["alienvault_protocol"]) != str
             or configuration["alienvault_protocol"] not in ALIENVAULT_PROTOCOLS
         ):
             self.logger.error(
                 "AlienVault Plugin: Validation error occurred. Error: "
-                "Invalid AlienVault protocol found in the configuration parameters."
+                "Invalid AlienVault Protocol found in the configuration parameters."
             )
             return ValidationResult(
-                success=False, message="Invalid AlienVault protocol provided."
+                success=False, message="Invalid AlienVault Protocol provided."
             )
 
         if (
             "alienvault_port" not in configuration
             or not configuration["alienvault_port"]
-            or not alienvault_validator.validate_alienvault_port(
-                configuration["alienvault_port"]
-            )
         ):
             self.logger.error(
                 "AlienVault Plugin: Validation error occurred. Error: "
-                "Invalid AlienVault port found in the configuration parameters."
+                "AlienVault Port is a required field in the configuration parameters."
             )
             return ValidationResult(
-                success=False, message="Invalid AlienVault port provided."
+                success=False, message="AlienVault Port is a required field."
+            )
+        elif not alienvault_validator.validate_alienvault_port(configuration["alienvault_port"]):
+            self.logger.error(
+                "AlienVault Plugin: Validation error occurred. Error: "
+                "Invalid AlienVault Port found in the configuration parameters."
+            )
+            return ValidationResult(
+                success=False, message="Invalid AlienVault Port provided."
             )
 
         mappings = self.mappings.get("jsonData", None)
         mappings = json.loads(mappings)
-        if type(
-            mappings
-        ) != dict or not alienvault_validator.validate_alienvault_map(
+        if type(mappings) != dict or not alienvault_validator.validate_alienvault_map(
             mappings
         ):
             self.logger.error(
@@ -588,16 +616,51 @@ class AlienVaultPlugin(PluginBase):
 
         if configuration["alienvault_protocol"].upper() == "TLS" and (
             "alienvault_certificate" not in configuration
-            or type(configuration["alienvault_certificate"]) != str
             or not configuration["alienvault_certificate"].strip()
         ):
             self.logger.error(
                 "AlienVault Plugin: Validation error occurred. Error: "
-                "Invalid AlienVault certificate mapping found in the configuration parameters."
+                "AlienVault Certificate mapping is a required field when TLS is provided in the configuration parameters."
             )
             return ValidationResult(
                 success=False,
-                message="Invalid AlienVault certificate mapping provided.",
+                message="AlienVault Certificate mapping is a required field when TLS is provided.",
+            )
+        elif (
+            configuration["alienvault_protocol"].upper() == "TLS"
+            and type(configuration["alienvault_certificate"]) != str
+        ):
+            self.logger.error(
+                "AlienVault Plugin: Validation error occurred. Error: "
+                "Invalid AlienVault Certificate mapping found in the configuration parameters."
+            )
+            return ValidationResult(
+                success=False,
+                message="Invalid AlienVault Certificate mapping provided.",
+            )
+        if (
+            "log_source_identifier" not in configuration
+            or not configuration["log_source_identifier"].strip()
+        ):
+            self.logger.error(
+                "AlienVault Plugin: Validation error occurred. Error: "
+                "Log Source Identifier is a required field in the configuration parameters."
+            )
+            return ValidationResult(
+                success=False,
+                message="Log Source Identifier is a required field.",
+            )
+        elif (
+            type(configuration["log_source_identifier"]) != str
+            or " " in configuration["log_source_identifier"].strip()
+        ):
+            self.logger.error(
+                "AlienVault Plugin: Validation error occurred. Error: "
+                "Invalid Log Source Identifier found in the configuration parameters."
+            )
+            return ValidationResult(
+                success=False,
+                message="Invalid Log Source Identifier provided.",
             )
 
         # Validate Server connection.

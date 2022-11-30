@@ -1,0 +1,161 @@
+{
+    "name": "Amazon Security Lake",
+    "id": "amazon_security_lake",
+    "version": "1.0.0",
+    "mapping": "Amazon Security Lake Default Mappings",
+    "netskope": false,
+    "types": [
+        "alerts",
+        "events",
+        "webtx"
+    ],
+    "description": "This plugin is used to deliver alerts, events and web transactions data to Amazon Security Lake platform. To access the plugin, you would need the credentials of Amazon Security Lake instance.",
+    "configuration": [
+        {
+            "label": "AWS Access Key ID (Public Key)",
+            "key": "aws_public_key",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "AWS access key id for Amazon Security Lake authentication."
+        },
+        {
+            "label": "AWS Secret Access Key (Private Key)",
+            "key": "aws_private_key",
+            "type": "password",
+            "default": "",
+            "mandatory": true,
+            "description": "AWS secret access key for Amazon Security Lake authentication."
+        },
+        {
+            "label": "Region Name",
+            "key": "region_name",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "US East (N. Virginia) [us-east-1]",
+                    "value": "None"
+                },
+                {
+                    "key": "US East (Ohio) [us-east-2]",
+                    "value": "us-east-2"
+                },
+                {
+                    "key": "US West (N. California) [us-west-1]",
+                    "value": "us-west-1"
+                },
+                {
+                    "key": "US West (Oregon) [us-west-2]",
+                    "value": "us-west-2"
+                },
+                {
+                    "key": "Africa (Cape Town) [af-south-1]",
+                    "value": "af-south-1"
+                },
+                {
+                    "key": "Asia Pacific (Hong Kong) [ap-east-1]",
+                    "value": "ap-east-1"
+                },
+                {
+                    "key": "Asia Pacific (Mumbai) [ap-south-1]",
+                    "value": "ap-south-1"
+                },
+                {
+                    "key": "Asia Pacific (Tokyo) [ap-northeast-1]",
+                    "value": "ap-northeast-1"
+                },
+                {
+                    "key": "Asia Pacific (Seoul) [ap-northeast-2]",
+                    "value": "ap-northeast-2"
+                },
+                {
+                    "key": "Asia Pacific (Osaka) [ap-northeast-3]",
+                    "value": "ap-northeast-3"
+                },
+                {
+                    "key": "Asia Pacific (Singapore) [ap-southeast-1]",
+                    "value": "ap-southeast-1"
+                },
+                {
+                    "key": "Asia Pacific (Sydney) [ap-southeast-2]",
+                    "value": "ap-southeast-2"
+                },
+                {
+                    "key": "Canada (Central) [ca-central-1]",
+                    "value": "ca-central-1"
+                },
+                {
+                    "key": "China (Beijing) [cn-north-1]",
+                    "value": "cn-north-1"
+                },
+                {
+                    "key": "China (Ningxia) [cn-northwest-1]",
+                    "value": "cn-northwest-1"
+                },
+                {
+                    "key": "Europe (Frankfurt) [eu-central-1]",
+                    "value": "eu-central-1"
+                },
+                {
+                    "key": "Europe (Ireland) [eu-west-1]",
+                    "value": "eu-west-1"
+                },
+                {
+                    "key": "Europe (London) [eu-west-2]",
+                    "value": "eu-west-2"
+                },
+                {
+                    "key": "Europe (Paris) [eu-west-3]",
+                    "value": "eu-west-3"
+                },
+                {
+                    "key": "Europe (Milan) [eu-south-1]",
+                    "value": "eu-south-1"
+                },
+                {
+                    "key": "Europe (Stockholm) [eu-north-1]",
+                    "value": "eu-north-1"
+                },
+                {
+                    "key": "Middle East (Bahrain) [me-south-1]",
+                    "value": "me-south-1"
+                },
+                {
+                    "key": "South America (São Paulo) [sa-east-1]",
+                    "value": "sa-east-1"
+                },
+                {
+                    "key": "Asia Pacific (Hyderabad) [ap-south-2]",
+                    "value": "ap-south-2"
+                },
+                {
+                    "key": "Asia Pacific (Jakarta) [ap-southeast-3]",
+                    "value": "ap-southeast-3"
+                },
+                {
+                    "key": "Europe (Spain) [eu-south-2]",
+                    "value": "eu-south-2"
+                },
+                {
+                    "key": "Europe (Zurich) [eu-central-2]",
+                    "value": "eu-central-2"
+                },
+                {
+                    "key": "Middle East (UAE) [me-central-1]",
+                    "value": "me-central-1"
+                }
+            ],
+            "default": "None",
+            "mandatory": true,
+            "description": "Region name to get Amazon Security Lake Bucket from."
+        },
+        {
+            "label": "Bucket Name",
+            "key": "bucket_name",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "Bucket Name in which the data object will be stored."
+        }
+    ]
+}

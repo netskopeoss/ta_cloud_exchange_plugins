@@ -649,6 +649,7 @@ class TrendMicroPlugin(PluginBase):
             "https://api.xdr.trendmicro.co.jp",
             "https://api.sg.xdr.trendmicro.com",
             "https://api.xdr.trendmicro.com",
+            "https://api.uae.xdr.trendmicro.com",
         ]:
             self.logger.error(
                 "Plugin: Trend Micro Vision One Validation error occurred "

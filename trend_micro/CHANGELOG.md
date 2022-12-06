@@ -2,6 +2,7 @@
 
 ## Added
 - Added user-agent string to API.
+- Added UAE region
 
 ## Changed
 - Changed name to Trend Micro Vision One.

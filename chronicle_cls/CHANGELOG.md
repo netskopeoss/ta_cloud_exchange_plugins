@@ -1,3 +1,7 @@
+# 2.0.1
+## Changed
+- Changed plugin name to Google Chronicle.
+
 # 2.0.0
 ## Added
 - Added support to sent raw data to the SIEM Platform.

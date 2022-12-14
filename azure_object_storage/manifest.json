@@ -1,12 +1,12 @@
 {
-    "name": "Azure Cloud Storage",
+    "name": "Microsoft Azure Cloud Storage",
     "id": "azure_object_storage",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "mapping": "Azure Default Mappings",
     "types": [
         "webtx"
     ],
-    "description": "This plugin is used to deliver web transactions data to Azure platform.",
+    "description": "This plugin is used to deliver web transactions data to Microsoft Azure platform.",
     "configuration": [
         {
             "label": "Azure Connection String",

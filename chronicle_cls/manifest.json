@@ -1,9 +1,9 @@
 {
-  "name": "Chronicle",
+  "name": "Google Chronicle",
   "id": "chronicle",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "mapping": "Chronicle Default Mappings",
-  "description": "This plugin is used to deliver alerts and events data to Chronicle platform, The required API keys are linked to customers and are provided by your Chronicle representative.",
+  "description": "This plugin is used to deliver alerts and events data to Google Chronicle platform, The required API keys are linked to customers and are provided by your Google Chronicle representative.",
   "types": [
     "events",
     "alerts"
@@ -57,7 +57,7 @@
       "type": "text",
       "default": "",
       "mandatory": true,
-      "description": "Unique identifier (UUID) corresponding to a particular Chronicle instance. Provided by your Chronicle representative.."
+      "description": "Unique identifier (UUID) corresponding to a particular Chronicle instance. Provided by your Chronicle representative."
     }
   ]
 }

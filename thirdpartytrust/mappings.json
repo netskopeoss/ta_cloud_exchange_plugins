@@ -1,0 +1,4 @@
+{
+    "name": "BitSight Default Mappings",
+    "jsonData": "{\n  \"taxonomy\": {\n    \"alerts\": {},\n    \"events\": {},\n    \"webtx\": {}\n  }\n}"
+}

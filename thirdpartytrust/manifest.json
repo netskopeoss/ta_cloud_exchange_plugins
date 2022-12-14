@@ -1,0 +1,23 @@
+{
+    "name": "BitSight",
+    "id": "thirdpartytrust",
+    "version": "1.1.0",
+    "mapping": "BitSight Default Mappings",
+    "netskope": false,
+    "patch_supported": true,
+    "types": [
+        "alerts",
+        "events"
+    ],
+    "description": "This plugin ingests data to the BitSight platform to enable TPRM automation and perform enhanced controls. To configure the plugin, log in to BitSight platform and obtain an API key.",
+    "configuration": [
+        {
+            "label": "API Key",
+            "key": "bitsight_integration_token",
+            "type": "password",
+            "default": "",
+            "mandatory": true,
+            "description": "BitSight API Key"
+        }
+    ]
+}

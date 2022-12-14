@@ -1,0 +1,25 @@
+{
+    "name": "BitSight",
+    "id": "third_party_trust",
+    "version": "1.1.0",
+    "description": "BitSight plugin provides a mechanism to send the application data of Netskope tenant to the monitored vendors for risk analysis.",
+    "patch_supported": true,
+    "configuration": [
+        {
+            "label": "Base URL",
+            "key": "url",
+            "type": "text",
+            "mandatory": true,
+            "default": "",
+            "description": "BitSight base URL (e.g. https://api.thirdpartytrust.com)."
+        },
+        {
+            "label": "Authorization Key",
+            "key": "api_key",
+            "type": "password",
+            "mandatory": true,
+            "default": "",
+            "description": "Authorization Key."
+        }
+    ]
+}

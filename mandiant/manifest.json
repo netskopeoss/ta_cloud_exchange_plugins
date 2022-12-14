@@ -1,8 +1,8 @@
 {
-    "name": "Mandiant",
+    "name": "Google Mandiant",
     "id": "mandiant",
-    "version": "1.0.2",
-    "description": "The Mandiant plugin fetches IOCs of the type URL, MD5, FQDN, IPV4 and IPV6 from from Mandiant platform. This plugin does not support sharing of Indicators to Mandiant. To access the plugin, you would need Mandiant key ID and key secret.",
+    "version": "1.0.3",
+    "description": "The Google Mandiant plugin fetches IOCs of the type URL, MD5, FQDN, IPV4 and IPV6 from from Google Mandiant platform. This plugin does not support sharing of Indicators to Google Mandiant. To access the plugin, you would need Google Mandiant key ID and key secret.",
     "patch_supported": false,
     "push_supported": false,
     "configuration": [

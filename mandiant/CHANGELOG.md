@@ -1,3 +1,7 @@
+# 1.0.3
+## Changed
+- Changed plugin name to Google Mandiant.
+
 # 1.0.2
 ## Changed
 - Updated query parameters for APIs.

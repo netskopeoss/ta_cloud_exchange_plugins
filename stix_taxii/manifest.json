@@ -1,7 +1,7 @@
 {
   "name": "STIX/TAXII Plugin",
   "id": "stix_taxii",
-  "version": "2.0.0",
+  "version": "2.0.2",
   "description": "The STIX/TAXII plugin polls TAXII feeds and extracts observables from them. This plugin does not support sharing of indicators to TAXII feeds.",
   "patch_supported": false,
   "push_supported": false,
@@ -28,12 +28,12 @@
       "default": "1"
     },
     {
-      "label": "Discovery URL",
+      "label": "Discovery URL / API Root URL",
       "key": "discovery_url",
       "type": "text",
       "default": "",
       "mandatory": true,
-      "description": "Discovery/Feed url of TAXII server."
+      "description": "Discovery/Feed URL of TAXII server for version 1 and API Root URL for version 2."
     },
     {
       "label": "Username",

@@ -104,7 +104,7 @@ Resources:
         FunctionName: !Sub 'AWSSecurityLakeProcessParquet-${AWS::StackName}-${AWS::Region}'
         Description: >-
           This lambda function will process the file from source bucket and push Parquet file to the destination bucket.
-        Handler: 'lambda_function.lambda_handler'
+        Handler: 'lambda-function.lambda_handler'
         Role: !GetAtt AWSSecurityLakeProcessParquetRole.Arn
         Code:
           S3Bucket: !Join ['-', [!FindInMap ["SourceCode", "General", "S3Bucket"], !Ref 'AWS::Region']]
@@ -150,6 +150,13 @@ Resources:
       Action: "lambda:InvokeFunction"
       Principal: events.amazonaws.com
       SourceArn: !Sub 'arn:aws:events:${AWS::Region}:${AWS::AccountId}:rule/AWSSecurityLakeProcessParquet-${AWS::StackName}-${AWS::Region}'
+
+  NetskopeSecurityLakeCounterParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: invoke_counter
+      Type: String
+      Value: 0
 
 Outputs:
   AWSSecurityLakeProcessParquetRole:

@@ -1,3 +1,12 @@
+# 1.1.5
+## Changed
+- Changed module name from CRE to URE.
+
+# 1.1.4
+## Changed
+- Changed logic to fetch score of host(s) less than or equal to the Maximum Score.
+- Optimized performance of execute action.
+
 # 1.1.3
 ## Added
 - Added support for Netskope client restart.

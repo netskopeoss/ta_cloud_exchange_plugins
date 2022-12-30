@@ -1,0 +1,61 @@
+{
+    "name": "Microsoft Azure Monitor",
+    "id": "azure_monitor",
+    "version": "1.0.0",
+    "mapping": "Azure Monitor Default Mappings",
+    "types": [
+        "alerts",
+        "events"
+    ],
+    "description": "This plugin is used to ingest data to Microsoft Azure Monitor Log Analytics Workspace 'basic' table. To access the plugin, you would need credentials of Microsoft Azure Platform.",
+    "configuration": [
+        {
+          "label": "Tenant ID",
+          "key": "tenantid",
+          "type": "text",
+          "mandatory": true,
+          "default": "",
+          "description": "Directory/Tenant ID."
+        },
+        {
+          "label": "App ID",
+          "key": "appid",
+          "type": "text",
+          "mandatory": true,
+          "default": "",
+          "description": "Client/App ID of your AzureAD Application"
+        },
+        {
+          "label": "App Secret",
+          "key": "appsecret",
+          "type": "password",
+          "mandatory": true,
+          "default": "",
+          "description": "Client/App Secret of your AzureAD Application"
+        },
+        {
+            "label": "DCE URI",
+            "key": "dce_uri",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "URI of Data Collector Endpoint."
+        },
+        {
+            "label": "DCR Immutable ID",
+            "key": "dcr_immutable_id",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "Immutable ID of Data Collection Rule."
+        },
+        {
+            "label": "Custom Log Table Name",
+            "key": "custom_log_table_name",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "Custom Log Table name for ingesting data. Make sure that the Table exists in your Log Analytics Workspace."
+        }
+    ]
+}

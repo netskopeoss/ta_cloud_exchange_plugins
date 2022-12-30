@@ -44,6 +44,7 @@ from operator import attrgetter
 
 from typing import Dict, List
 import requests.exceptions
+from netskope.integrations.cte.utils import TagUtils
 from netskope.integrations.cte.plugin_base import (
     PluginBase,
     ValidationResult,
@@ -53,16 +54,20 @@ from netskope.integrations.cte.models import (
     Indicator,
     IndicatorType,
     SeverityType,
+    TagIn,
 )
 from netskope.integrations.cte.models.business_rule import (
     Action,
     ActionWithoutParams
 )
 from netskope.common.utils import add_user_agent
-from .utils.constant import actions, allow_deletion
+from .utils.constant import actions, allow_deletion, generate_alert, default_base_url
 
-BASE_URL = "https://api.securitycenter.microsoft.com/api/indicators"
+class MicrosoftDefenderForEndpointPlugin(Exception):
+    """Custom Exception raised for Microsoft Defender for endpoint plugin.
+    """
 
+    pass
 
 def check_url_domain_ip(type):
     """Categorize URL as Domain, IP or URL."""
@@ -109,7 +114,18 @@ class MicrosoftDefenderEndpointPluginV2(PluginBase):
                     ],
                     "default": "Audit",
                     "mandatory": True,
-                    "description": "The action to apply if the indicator is matched from within the targetProduct security tool.",
+                    "description": "The action to be applied to the Indicators.",
+                },
+                {
+                    "label": "Generate alert",
+                    "key": "generate_alert",
+                    "type": "choice",
+                    "choices": [
+                        {"key": ad, "value": ad} for ad in allow_deletion
+                    ],
+                    "default": "No",
+                    "mandatory": True,
+                    "description": "Generate alerts for the indicators.",
                 },
                 {
                     "label": "Allow Existing Indicators to be deleted?",
@@ -141,23 +157,52 @@ class MicrosoftDefenderEndpointPluginV2(PluginBase):
                 success=False,
                 message="Invalid action provided."
             )
+        if action.parameters.get("allow_deletion") not in allow_deletion:
+            return ValidationResult(
+                success=False,
+                message="Invalid value for Allow deletion provided."
+            )
+        if action.parameters.get("generate_alert") not in generate_alert:
+            return ValidationResult(
+                success=False,
+                message="Invalid value for Generate Alert provided."
+            )
         return ValidationResult(
             success=True,
             message="Validation successful."
         )
 
-    def get_authorization_json(self, tenantid, appid, appsecret):
+    def get_authorization_json(self, tenantid, appid, appsecret, base_url):
         """Get authorization token from Azure AD"""
-        authority = "https://login.microsoftonline.com/{0}".format(tenantid)
-        scope = ["https://api.securitycenter.microsoft.com/.default"]
+        if base_url == "https://api-gov.securitycenter.microsoft.us":
+            authority = "https://login.microsoftonline.us/{0}".format(tenantid)
+        else:
+            authority = "https://login.microsoftonline.com/{0}".format(tenantid)
+        scope = [f"{base_url}/.default"]
 
         app = msal.ConfidentialClientApplication(
-            appid, authority=authority, client_credential=appsecret
+            appid, authority=authority, client_credential=appsecret, proxies=self.proxy
         )
 
         auth_json = app.acquire_token_for_client(scopes=scope)
 
         return auth_json
+
+    def _create_tags(self, tag_utils: TagUtils, tag_name):
+        """Create tag list and add tags to netskope using tag_utils.
+
+        Args:
+            tag_utils (tag_utils): Tag utility class object.
+            ioc_response (JSON): Indicator response object.
+
+        Returns:
+            List[str]: List of tag names.
+        """
+        if not tag_utils.exists(tag_name.strip()):
+            tag_utils.create_tag(
+                TagIn(name=tag_name.strip(), color="#ED3347")
+            )
+        return tag_name
 
     def create_indicator(self, indicator, indicator_type):
         """Create Indicator according to type."""
@@ -177,17 +222,23 @@ class MicrosoftDefenderEndpointPluginV2(PluginBase):
         last_seen = parser.parse(
             indicator.get("lastUpdateTime", datetime.utcnow())
         )
-        comments = indicator["title"] + " | " + indicator["description"]
-
+        title = indicator.get("title") if indicator.get("title", "") else "No title available"
+        description = indicator.get("description") if indicator.get("description", "") else "No description available"
+        comments = title + " | " + description
         return Indicator(
-            value=indicator["indicatorValue"],
+            value=indicator.get("indicatorValue"),
             type=type_conversion.get(indicator_type),
             firstSeen=first_seen,
             lastSeen=last_seen,
             comments=comments,
             severity=severity_conversion.get(
-                indicator["severity"], SeverityType.UNKNOWN
+                indicator.get("severity"), SeverityType.UNKNOWN
             ),
+            tags= [
+                self._create_tags(
+                    TagUtils(), f"Defender_{indicator['action']}"
+                )
+            ]
         )
 
     def pull(self):
@@ -196,9 +247,18 @@ class MicrosoftDefenderEndpointPluginV2(PluginBase):
             self.configuration["tenantid"].strip(),
             self.configuration["appid"].strip(),
             self.configuration["appsecret"].strip(),
+            self.configuration.get("base_url", default_base_url).strip(),
         )
         indicators = []
         auth_token = auth_json.get("access_token")
+        if not auth_token:
+            error_msg = auth_json.get("error_description", "Description not available")
+            self.logger.error(
+                "Plugin: Microsoft Defender for Endpoint, "
+                "Unable to pull indicators from Defender. "
+                f"Error: {error_msg}"
+            )
+            raise MicrosoftDefenderForEndpointPlugin(error_msg)
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/json",
@@ -210,11 +270,22 @@ class MicrosoftDefenderEndpointPluginV2(PluginBase):
             last_pull_dt = datetime.utcnow() - timedelta(
                 days=self.configuration["initial_range"]
             )
-        url = BASE_URL
+        url = f"{self.configuration.get('base_url', default_base_url).strip()}/api/indicators"
+        action_list  = []
+        for action in self.configuration.get('actions_to_be_pulled', actions):
+            action_list.append(f"action+eq+'{action}'")
+        action_string = " or ".join(action_list)
+        date_time_filter = (
+            f"creationTimeDateTimeUtc+ge+{last_pull_dt.strftime('%Y-%m-%dT%H:%M:%SZ')}"
+        )
         params = {
-            "$filter": "creationTimeDateTimeUtc+ge+" +
-            f"{last_pull_dt.strftime('%Y-%m-%dT%H:%M:%SZ')}"
+            "$filter": date_time_filter
         }
+        if len(action_string) != 0:
+            params = {
+                "$filter" : f"{date_time_filter} and ({action_string})"
+            }
+        generate_alert_field = self.configuration.get("generate_alert", "Both")
         while True:
             response = self.call_pull_api(url, headers, params)
             resp_json = response.json()
@@ -223,26 +294,34 @@ class MicrosoftDefenderEndpointPluginV2(PluginBase):
                 self.logger.error(
                     f"Plugin: Microsoft Defender for Endpoint, "
                     f"Unable to Pull indicators from Defender, "
-                    f"Recieved status code: {response.status_code}, "
+                    f"Received status code: {response.status_code}, "
                     f"Message: {error_message}"
                 )
-                return []
+                raise MicrosoftDefenderForEndpointPlugin(error_message)
+
             for indicator in resp_json.get("value", []):
-                if "Netskope-CTE" not in indicator.get("description", ""):
-                    if indicator["indicatorType"] in [
-                        "Url", "IpAddress", "DomainName"
-                    ]:
-                        indicators.append(
-                            self.create_indicator(indicator, "url")
-                        )
-                    if indicator["indicatorType"] == "FileMd5":
-                        indicators.append(
-                            self.create_indicator(indicator, "md5")
-                        )
-                    if indicator["indicatorType"] == "FileSha256":
-                        indicators.append(
-                            self.create_indicator(indicator, "sha256")
-                        )
+                indicator_description = indicator.get("description")
+
+                # Proceed only if the indicator is not created by Netskope CTE module's push method
+                if indicator_description is None or "Netskope-CTE" not in indicator_description:
+
+                    # Check the generateAlert field from the response and compare it with what the user has selected
+                    # Always create indicator if Both is selected as input
+                    if generate_alert_field == "Both" or indicator.get("generateAlert", False) == generate_alert_field:
+                        if indicator.get("indicatorType") in [
+                            "Url", "IpAddress", "DomainName"
+                        ]:
+                            indicators.append(
+                                self.create_indicator(indicator, "url")
+                            )
+                        elif indicator.get("indicatorType") == "FileMd5":
+                            indicators.append(
+                                self.create_indicator(indicator, "md5")
+                            )
+                        elif indicator.get("indicatorType") == "FileSha256":
+                            indicators.append(
+                                self.create_indicator(indicator, "sha256")
+                            )
             if resp_json.get("@odata.nextLink", []):
                 url = resp_json["@odata.nextLink"]
                 params = {}
@@ -267,8 +346,24 @@ class MicrosoftDefenderEndpointPluginV2(PluginBase):
                 self.configuration["tenantid"].strip(),
                 self.configuration["appid"].strip(),
                 self.configuration["appsecret"].strip(),
+                self.configuration.get("base_url", default_base_url).strip(),
             )
             auth_token = auth_json.get("access_token")
+            if not auth_token:
+                error_msg = auth_json.get("error_description", "Description not available")
+                self.logger.error(
+                    "Plugin: Microsoft Defender for Endpoint, "
+                    "Unable to push indicators from Defender. "
+                    f"Error: {error_msg}"
+                )
+                return PushResult(
+                    success=False,
+                    message=(
+                        "Plugin: Microsoft Defender for Endpoint, "
+                        "Failed to push indicators to Defender "
+                        f"Error: {error_msg}."
+                    ),
+                )
             headers = {
                 "Authorization": f"Bearer {auth_token}",
                 "Content-Type": "application/json",
@@ -331,37 +426,56 @@ class MicrosoftDefenderEndpointPluginV2(PluginBase):
 
     def call_push_api(self, indicator, headers, retry_count = 1, retry_val = 15):
         post_resp = requests.post(
-            BASE_URL,
+            f"{self.configuration.get('base_url', default_base_url).strip()}/api/indicators",
             headers=add_user_agent(headers),
             json=indicator,
             verify=self.ssl_validation,
             proxies=self.proxy,
         )
         if post_resp.status_code in [500, 504] and retry_count <= 3:
-                self.logger.error(
-                    f"Plugin Microsoft Defender for Endpoint, "
-                    f"Recieved error code {post_resp.status_code}, "
-                    f"Retrying in {retry_val} seconds."
-                )
-                sleep(retry_val)
+            self.logger.error(
+                f"Plugin Microsoft Defender for Endpoint, "
+                f"Received error code {post_resp.status_code}, "
+                f"Retrying in {retry_val} seconds."
+            )
+            sleep(retry_val)
+            retry_val = retry_val * 2
+            return self.call_push_api(indicator, headers, retry_count+1, retry_val)
+        elif post_resp.status_code == 429:
+            retry_val_429 = post_resp.headers.get("Retry-After", "60")
+            if retry_count <= 3 and int(retry_val) <= 300:
+                self.logger.error(f"Plugin Microsoft Defender for Endpoint: Retrying after {retry_val_429} seconds.")
+                sleep(int(retry_val_429))
                 retry_val = retry_val * 2
-                return self.call_push_api(indicator, headers, retry_count+1, retry_val)
+                return self.call_push_api(indicator, headers, retry_count + 1, retry_val)
         return post_resp
 
     def call_del_api(self, indicator, headers, retry_count = 1, retry_val = 15):
         url = (
-                f"{BASE_URL}/{indicator.get('id')}"
-            )
-        del_resp = requests.delete(url, headers=headers)
+            f"{self.configuration.get('base_url', default_base_url).strip()}"
+            f"/api/indicators/{indicator.get('id')}"
+        )
+        del_resp = requests.delete(
+            url,
+            headers=headers,
+            proxies=self.proxy,
+        )
         if del_resp.status_code in [500, 504] and retry_count <= 3:
-                self.logger.error(
-                    f"Plugin Microsoft Defender for Endpoint, "
-                    f"Recieved error code {del_resp.status_code}, "
-                    f"Retrying in {retry_val} seconds."
-                )
-                sleep(retry_val)
+            self.logger.error(
+                f"Plugin Microsoft Defender for Endpoint, "
+                f"Received error code {del_resp.status_code}, "
+                f"Retrying in {retry_val} seconds."
+            )
+            sleep(retry_val)
+            retry_val = retry_val * 2
+            return self.call_del_api(indicator, headers, retry_count+1, retry_val)
+        elif del_resp.status_code == 429:
+            retry_val_429 = del_resp.headers.get("Retry-After", "60")
+            if retry_count <= 3 and int(retry_val) <= 300:
+                self.logger.error(f"Plugin Microsoft Defender for Endpoint: Retrying after {retry_val_429} seconds.")
+                sleep(int(retry_val_429))
                 retry_val = retry_val * 2
-                return self.call_del_api(indicator, headers, retry_count+1, retry_val)
+                return self.call_del_api(indicator, headers, retry_count + 1, retry_val)
         return del_resp
 
     def call_pull_api(self, url, headers, params = {}, retry_count = 1, retry_val = 15):
@@ -373,12 +487,19 @@ class MicrosoftDefenderEndpointPluginV2(PluginBase):
             proxies=self.proxy,
         )
         if get_resp.status_code in [500, 504] and retry_count <= 3:
-                self.logger.error(
-                    f"Plugin Microsoft Defender for Endpoint, "
-                    f"Recieved error code {get_resp.status_code}, "
-                    f"Retrying in {retry_val} seconds."
-                )
-                sleep(retry_val)
+            self.logger.error(
+                f"Plugin Microsoft Defender for Endpoint, "
+                f"Received error code {get_resp.status_code}, "
+                f"Retrying in {retry_val} seconds."
+            )
+            sleep(retry_val)
+            retry_val = retry_val * 2
+            return self.call_pull_api(url, headers, params, retry_count+1, retry_val)
+        elif get_resp.status_code == 429:
+            retry_val_429 = get_resp.headers.get("Retry-After", "60")
+            if retry_count <= 3 and int(retry_val) <= 300:
+                self.logger.error(f"Plugin Microsoft Defender for Endpoint: Retrying after {retry_val_429} seconds.")
+                sleep(int(retry_val_429))
                 retry_val = retry_val * 2
                 return self.call_pull_api(url, headers, params, retry_count+1, retry_val)
         return get_resp
@@ -387,7 +508,7 @@ class MicrosoftDefenderEndpointPluginV2(PluginBase):
     def push_indicators_to_defender(self, headers, json_payload, action_dict):
         """Push the indicator to the Microsoft Defender for Endpoint."""
         try:
-            url = BASE_URL
+            url = f"{self.configuration.get('base_url', default_base_url).strip()}/api/indicators"
             ioc_in_defender = []
             while True:
                 get_resp = self.call_pull_api(url, headers)
@@ -401,7 +522,7 @@ class MicrosoftDefenderEndpointPluginV2(PluginBase):
                         message=(
                             "Plugin: Microsoft Defender for Endpoint, "
                             "Unable to push indicators to Defender, "
-                            f"Recieved status code: {get_resp.status_code}, "
+                            f"Received status code: {get_resp.status_code}, "
                             f"Message: {error_message}"
                         )
                     )
@@ -426,7 +547,7 @@ class MicrosoftDefenderEndpointPluginV2(PluginBase):
                 push_resp = self.call_push_api(ioc, headers)
                 if push_resp.status_code == 200:
                     continue
-                if(
+                if (
                     push_resp.status_code == 400 and
                     "Max capacity exceeded" in
                     push_resp.json().get("error",{}).get("message", "")
@@ -441,11 +562,11 @@ class MicrosoftDefenderEndpointPluginV2(PluginBase):
                             error_message = del_resp_json.get("error", {}).get(
                                 "message", ""
                             )
-                            self.logger.info(
+                            self.logger.warn(
                                 "Plugin: Microsoft Defender for Endpoint, "
                                 "Unable to push indicator "
                                 f"{ioc['indicatorValue']}, "
-                                "Recieved status code: "
+                                "Received status code: "
                                 f"{del_resp.status_code}, "
                                 f"Message: {error_message}"
                             )
@@ -456,16 +577,16 @@ class MicrosoftDefenderEndpointPluginV2(PluginBase):
                             error_message = push_resp_json.get(
                                 "error", {}
                             ).get("message", "")
-                            self.logger.info(
+                            self.logger.warn(
                                 "Plugin: Microsoft Defender for Endpoint, "
                                 "Unable to push indicator "
                                 f"{ioc['indicatorValue']}, "
-                                "Recieved status code: "
+                                "Received status code: "
                                 f"{push_resp.status_code}, "
                                 f"Message: {error_message}"
                             )
                     else:
-                        self.logger.info(
+                        self.logger.error(
                             "Plugin: Microsoft Defender for Endpoint, "
                             "Unable to push more "
                             "indicators to Defender as Maximum "
@@ -485,11 +606,11 @@ class MicrosoftDefenderEndpointPluginV2(PluginBase):
                     error_message = push_resp_json.get("error", {}).get(
                         "message", ""
                     )
-                    self.logger.info(
+                    self.logger.warn(
                         "Plugin: Microsoft Defender for Endpoint, "
                         "Unable to push indicator "
                         f"{ioc['indicatorValue']}, "
-                        f"Recieved status code: {push_resp.status_code}, "
+                        f"Received status code: {push_resp.status_code}, "
                         f"Message: {error_message}"
                     )
                 else:
@@ -502,7 +623,7 @@ class MicrosoftDefenderEndpointPluginV2(PluginBase):
                         message=(
                             "Plugin: Microsoft Defender for Endpoint, "
                             "Unable to push Indicator to Defender , "
-                            f"Recieved status code: {push_resp.status_code}, "
+                            f"Received status code: {push_resp.status_code}, "
                             f"Message: {error_message}"
                         )
                     )
@@ -517,14 +638,14 @@ class MicrosoftDefenderEndpointPluginV2(PluginBase):
         except Exception as e:
             self.logger.error(
                 "Plugin: Microsoft Defender for Endpoint, "
-                "Exception Occured while executing push method."
+                "Exception Occurred while executing push method."
                 f"Error: {e}"
             )
             return PushResult(
                 success=False,
                 message=(
                     "Plugin: Microsoft Defender for Endpoint, "
-                    f"Error occured while sharing indicators to Defender, "
+                    f"Error occurred while sharing indicators to Defender, "
                     f"Error: {e}"
                 )
             )
@@ -540,6 +661,10 @@ class MicrosoftDefenderEndpointPluginV2(PluginBase):
             List[dict]: List of python dict object of JSON response model
             as per Defender API
         """
+        generate_alert_conversion = {
+            "Yes": True,
+            "No": False
+        }
         type_conversion = {
             IndicatorType.URL: "Url",
             IndicatorType.MD5: "FileMd5",
@@ -555,12 +680,19 @@ class MicrosoftDefenderEndpointPluginV2(PluginBase):
             "unknown": "Audit",
             "allow": "Allowed",
             "block": "Block",
-            "alert": "Alert"
+            "alert": "Audit",
+            "Alert": "Audit",
+            "AlertAndBlock": "Block"
         }
         payload_list = []
         source = self.configuration.get("source", "")
         action = action_dict.get("action", "Audit")
+        generate_alert_action = generate_alert_conversion.get(
+            (action_dict.get("generate_alert", "No"))
+        )
         if action in action_conversion.keys():
+            if action == "AlertAndBlock":
+                generate_alert_action = True
             action = action_conversion.get(action)
         sorted_indicators = sorted(
             indicators, key=attrgetter("firstSeen")
@@ -572,16 +704,14 @@ class MicrosoftDefenderEndpointPluginV2(PluginBase):
                 "title": f"Indicator {indicator.value} of type {type_conversion.get(indicator.type)}",
                 "description": f" Netskope-CTE | {source} | {indicator.comments}",
             }
-            if indicator.expiresAt is not None:
-                json_body["expirationTime"] = indicator.expiresAt.strftime(
-                    "%Y-%m-%dT%H:%M:%SZ"
-                )
             if severity_conversion.get(indicator.severity, None):
                 json_body["severity"] = severity_conversion.get(
                     indicator.severity
                 )
             if action == "Audit":
                 json_body["generateAlert"] = True
+            else:
+                json_body["generateAlert"] = generate_alert_action
             if type_conversion.get(indicator.type) == "Url":
                 json_body["indicatorType"] = check_url_domain_ip(
                     indicator.value
@@ -602,6 +732,7 @@ class MicrosoftDefenderEndpointPluginV2(PluginBase):
         tenantid: str,
         appid: str,
         appsecret: str,
+        base_url: str,
     ):
         """Validate Azure AD Application Credentials"""
         try:
@@ -610,8 +741,20 @@ class MicrosoftDefenderEndpointPluginV2(PluginBase):
                 tenantid.strip(),
                 appid.strip(),
                 appsecret.strip(),
+                base_url.strip(),
             )
             auth_token = auth_json.get("access_token")
+            if not auth_token:
+                error_msg = auth_json.get("error_description", "Description not available")
+                self.logger.error(
+                    f"Plugin: Microsoft Defender for Endpoint, "
+                    f"Error: {error_msg}"
+                )
+                return ValidationResult(
+                    success=False,
+                    message="Plugin: Microsoft Defender for Endpoint, "
+                    "Could not verify credentials."
+                )
             alg = jwt.get_unverified_header(auth_token)["alg"]
             decoded_auth_token = jwt.decode(
                 auth_json["access_token"],
@@ -622,11 +765,43 @@ class MicrosoftDefenderEndpointPluginV2(PluginBase):
             if "Ti.ReadWrite" in roles or "Ti.ReadWrite.All" in roles:
                 isValid = True
             if isValid:
-                return ValidationResult(
-                    success=True,
-                    message="Pugin: Microsoft Defender for Endpoint, "
-                    "Validation successful."
+                headers = {
+                    "Authorization": f"Bearer {auth_token}",
+                    "Content-Type": "application/json",
+                }
+                params = {
+                    "$filter": "creationTimeDateTimeUtc+ge+" +
+                    f"{datetime.now().strftime('%Y-%m-%dT%H:%M:%SZ')}"
+                }
+                # check for pull
+                response = self.call_pull_api(
+                    f"{base_url}/api/indicators",
+                    headers,
+                    params
                 )
+                if response.status_code == 200:
+                    return ValidationResult(
+                        success=True,
+                        message="Pugin: Microsoft Defender for Endpoint, "
+                        "Validation successful."
+                    )
+                else:
+                    error_message = response.json().get("error", {}).get(
+                        "message", ""
+                    )
+                    self.logger.error(
+                        "Plugin: Microsoft Defender for Endpoint, "
+                        "Validation error occurred. "
+                        f"Received status code: {response.status_code}, "
+                        f"{error_message}"
+                    )
+                    return ValidationResult(
+                        success=False,
+                        message="Plugin: Microsoft Defender for Endpoint, "
+                        "Validation error occurred. "
+                        f"Received status code: {response.status_code}, "
+                        f"{error_message}"
+                    )
             else:
                 self.logger.error(
                     "Plugin: Microsoft Defender for Endpoint, "
@@ -640,7 +815,7 @@ class MicrosoftDefenderEndpointPluginV2(PluginBase):
         except Exception as ex:
             self.logger.error(
                 f"Plugin: Microsoft Defender for Endpoint, "
-                f"{repr(ex)}"
+                f"{ex}"
             )
             return ValidationResult(
                 success=False,
@@ -650,13 +825,42 @@ class MicrosoftDefenderEndpointPluginV2(PluginBase):
 
     def validate(self, configuration):
         """Validate the configuration"""
-        if(
+        if "base_url" not in configuration or not configuration["base_url"].strip():
+            self.logger.error(
+                "Plugin: Microsoft Defender for Endpoint "
+                "Base URL parameter not found in the configuration."
+            )
+            return ValidationResult(
+                success=False,
+                message="Base URL is a Required Field.",
+            )
+
+        elif configuration["base_url"].strip() not in [
+            "https://api.securitycenter.microsoft.com",
+            "https://api-us.securitycenter.microsoft.com",
+            "https://api-eu.securitycenter.microsoft.com",
+            "https://api-uk.securitycenter.microsoft.com",
+            "https://api-gcc.securitycenter.microsoft.us",
+            "https://api-gov.securitycenter.microsoft.us",
+        ]:
+            self.logger.error(
+                "Plugin: Microsoft Defender for Endpoint "
+                "Error: Invalid value for 'Base URL' provided, "
+                "Select value from the given options only."
+            )
+            return ValidationResult(
+                success=False,
+                message="Invalid value for 'Base URL' provided. "
+                "Select value from the given options only.",
+            )
+
+        if (
             "tenantid" not in configuration or not
             configuration["tenantid"].strip()
         ):
             self.logger.error(
                 "Plugin: Microsoft Defender for Endpoint, "
-                "No Tenant ID found in the configuration parameters."
+                "Tenant ID parameter not found in the configuration."
             )
             return ValidationResult(
                 success=False,
@@ -667,7 +871,7 @@ class MicrosoftDefenderEndpointPluginV2(PluginBase):
         if "appid" not in configuration or not configuration["appid"].strip():
             self.logger.error(
                 "Plugin, Microsoft Defender for Endpoint, "
-                "No App ID found in the configuration parameters."
+                "App ID parameter not found in the configuration."
             )
             return ValidationResult(
                 success=False,
@@ -675,19 +879,20 @@ class MicrosoftDefenderEndpointPluginV2(PluginBase):
                 "Invalid App ID provided."
             )
 
-        if(
+        if (
             "appsecret" not in configuration or not
             configuration["appsecret"].strip()
         ):
             self.logger.error(
                 "Plugin: Microsoft Defender for Endpoint, "
-                "App Secret not found in the configuration parameters."
+                "App Secret parameter not found in the configuration."
             )
             return ValidationResult(
                 succes=False,
                 message="Plugin: Microsoft Defender for Endpoint, "
                 "Invalid App Secret Provided."
             )
+
         if (
             "source" not in configuration
             or type(configuration["source"]) != str
@@ -703,6 +908,53 @@ class MicrosoftDefenderEndpointPluginV2(PluginBase):
                 message="Error:  "
                 "Length of IOC Source cannot be more than 200 characters.",
             )
+
+        if "actions_to_be_pulled" not in configuration:
+            self.logger.error(
+                "Plugin: Microsoft Defender for Endpoint, "
+                "Actions parameter not found in the configuration."
+            )
+            return ValidationResult(
+                success=False, message="Action is not provided."
+            )
+
+        elif not (set(configuration["actions_to_be_pulled"]).issubset(set(actions))):
+            self.logger.error(
+                "Plugin: Microsoft Defender for Endpoint, "
+                "Actions should be seleted from the provided options only."
+            )
+            return ValidationResult(
+                success=False, message="Invalid Action provided."
+            )
+
+        if "generate_alert" not in configuration:
+            err_msg = (
+                "Generate Alert is a required field."
+            )
+            self.logger.error(
+                "Plugin: Microsoft Defender for Endpoint, "
+                "Validation error occurred "
+                f"{err_msg}"
+            )
+            return ValidationResult(
+                success=False,
+                message=err_msg,
+           )
+        elif configuration["generate_alert"] not in [True, False, "Both"]:
+            err_msg = (
+                "Invalid value for 'Generate Alert' provided. "
+                "Allowed values are 'Both', 'True', and 'False'."
+            )
+            self.logger.error(
+                "Plugin: Microsoft Defender for Endpoint, "
+                "Validation error occurred "
+                f"{err_msg}"
+            )
+            return ValidationResult(
+                success=False,
+                message=err_msg,
+            )
+
         if (
             "initial_range" not in configuration
             or not configuration["initial_range"]
@@ -727,4 +979,5 @@ class MicrosoftDefenderEndpointPluginV2(PluginBase):
             configuration["tenantid"].strip(),
             configuration["appid"].strip(),
             configuration["appsecret"].strip(),
+            configuration["base_url"].strip()
         )

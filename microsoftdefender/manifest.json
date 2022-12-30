@@ -1,11 +1,45 @@
 {
   "name": "Microsoft Defender for Endpoint",
   "id": "microsoftdefenderv2",
-  "version": "1.2.0",
-  "description": "This plugin is used to pull and push IoC data from Microsoft Defender for Endpoint. For details, visit [here](https://docs.microsoft.com/en-us/graph/api/resources/tiindicator?view=graph-rest-beta).",
+  "version": "1.3.1",
+  "description": "This plugin is used to pull and push IoC data from Microsoft Defender for Endpoint. For details, visit [here](https://learn.microsoft.com/en-us/microsoft-365/security/defender-endpoint/ti-indicator?view=o365-worldwide).",
   "push_supported": true,
   "patch_supported": true,
   "configuration": [
+    {
+      "label": "Base URL",
+      "key": "base_url",
+      "type": "choice",
+      "choices": [
+          {
+              "key": "api.securitycenter.microsoft.com",
+              "value": "https://api.securitycenter.microsoft.com"
+          },
+          {
+            "key": "api-us.securitycenter.microsoft.com",
+            "value": "https://api-us.securitycenter.microsoft.com"
+          },
+          {
+            "key": "api-eu.securitycenter.microsoft.com",
+            "value": "https://api-eu.securitycenter.microsoft.com"
+          },
+          {
+            "key": "api-uk.securitycenter.microsoft.com",
+            "value": "https://api-uk.securitycenter.microsoft.com"
+          },
+          {
+              "key": "api-gcc.securitycenter.microsoft.us",
+              "value": "https://api-gcc.securitycenter.microsoft.us"
+          },
+          {
+            "key": "api-gov.securitycenter.microsoft.us",
+            "value": "https://api-gov.securitycenter.microsoft.us"
+          }
+      ],
+      "default": "https://api.securitycenter.microsoft.com",
+      "mandatory": true,
+      "description": "Base URL for Defender for Endpoint."
+    },
     {
       "label": "Tenant ID",
       "key": "tenantid",
@@ -20,7 +54,7 @@
       "type": "text",
       "mandatory": true,
       "default": "",
-      "description": "Client ID of your AzureAD Application"
+      "description": "Client/App ID of your AzureAD Application"
     },
     {
       "label": "App Secret",
@@ -28,7 +62,7 @@
       "type": "password",
       "mandatory": true,
       "default": "",
-      "description": "AzureAD App Secret"
+      "description": "Client/App Secret of your AzureAD Application"
     },
     {
       "label": "IOC Source (Applicable only while sharing IoCs)",
@@ -38,6 +72,64 @@
       "default": "Netskope - Cloud Threat Exchange",
       "description": "The source where this indicator originated. This can be used for tracking where this indicator was defined. Limit 200 characters."
     },
+    {
+      "label": "Actions",
+      "key": "actions_to_be_pulled",
+      "type": "multichoice",
+      "choices": [
+        {
+            "key": "Allowed",
+            "value": "Allowed"
+        },
+        {
+            "key": "Audit",
+            "value": "Audit"
+        },
+        {
+            "key": "Block",
+            "value": "Block"
+        },
+        {
+            "key": "Block And Remediate",
+            "value": "BlockAndRemediate"
+        },
+        {
+            "key": "Warn",
+            "value": "Warn"
+        }
+      ],
+      "mandatory": false,
+      "default": [
+          "Allowed",
+          "Audit",
+          "Block",
+          "BlockAndRemediate",
+          "Warn"
+      ],
+      "description": "Only indicators with matching Action(s) will be pulled. If no action is selected all indicators will be pulled."
+    },
+    {
+      "label": "Indicators with Generated Alert",
+      "key": "generate_alert",
+      "type": "choice",
+      "choices": [
+          {
+              "key": "True",
+              "value": true
+          },
+          {
+              "key": "False",
+              "value": false
+          },
+          {
+            "key": "Both",
+            "value": "Both"
+        }
+      ],
+      "default": "Both",
+      "mandatory": true,
+      "description": "Indicators will be pulled on the basis of whether the alerts are generated for the indicators or not."
+  } ,
     {
       "label": "Initial Range (in days)",
       "key": "initial_range",

@@ -1,0 +1,83 @@
+{
+    "name": "Secureworks",
+    "id": "secureworks",
+    "version": "1.0.0",
+    "mapping": "Secureworks Default Mappings",
+    "types": [
+        "alerts",
+        "events",
+        "webtx",
+        "logs"
+    ],
+    "description": "This plugin is used to ingest data to SIEM platform. To access the plugin, you would need the credentials of SIEM platform .",
+    "configuration": [
+        {
+            "label": "Secureworks Server",
+            "key": "secureworks_server",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "IP address/FQDN of Secureworks server in which data will be ingested."
+        },
+        {
+            "label": "Secureworks Format",
+            "key": "secureworks_format",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "CEF",
+                    "value": "CEF"
+                }
+            ],
+            "default": "CEF",
+            "mandatory": true,
+            "description": "Data format required to ingest data."
+        },
+        {
+            "label": "Secureworks Protocol",
+            "key": "secureworks_protocol",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "TLS",
+                    "value": "TLS"
+                },
+                {
+                    "key": "UDP",
+                    "value": "UDP"
+                },
+                {
+                    "key": "TCP",
+                    "value": "TCP"
+                }
+            ],
+            "default": "UDP",
+            "mandatory": true,
+            "description": "Protocol to be used while ingesting data."
+        },
+        {
+            "label": "Secureworks Port",
+            "key": "secureworks_port",
+            "type": "number",
+            "default": "",
+            "mandatory": true,
+            "description": "Secureworks port"
+        },
+        {
+            "label": "Secureworks Certificate",
+            "key": "secureworks_certificate",
+            "type": "textarea",
+            "default": "",
+            "mandatory": false,
+            "description": "Certificate is required only for TLS protocol."
+        },
+        {
+            "label": "Log Source Identifier",
+            "key": "log_source_identifier",
+            "type": "text",
+            "default": "netskopece",
+            "mandatory": true,
+            "description": "This will be added as prefix to all the logs. (The log source identifier should not contain the whitespace)."
+        }
+    ]
+}

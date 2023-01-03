@@ -1,11 +1,11 @@
 {
     "name": "CrowdStrike",
-    "description": "Fetch ZTA scores from your CrowdStrike tenant. \n\n CRE score calculation => CrowdStrike host assessment overall score * 10.",
+    "description": "Fetch ZTA scores from your CrowdStrike tenant. \n\n URE score calculation => CrowdStrike host assessment overall score * 10.",
     "id": "crowdstrike_cre",
     "type": [
         "host"
     ],
-    "version": "1.1.3",
+    "version": "1.1.5",
     "configuration": [
         {
             "label": "Base URL",
@@ -50,12 +50,12 @@
             "description": "API Client Secret."
         },
         {
-            "label": "Minimum Score",
-            "key": "minimum_score",
+            "label": "Maximum Score",
+            "key": "maximum_score",
             "type": "number",
             "default": 200,
             "mandatory": true,
-            "description": "Only the hosts with score greater than the minimum score will be tracked."
+            "description": "Only the host(s) with score less than or equal to the Maximum Score will be tracked."
         }
     ]
 }

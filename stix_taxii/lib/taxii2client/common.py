@@ -290,6 +290,9 @@ class _HTTPConnection(object):
         """
         self.session = requests.Session()
         self.session.verify = verify
+        # verify in Session object is ignored when REQUESTS_CA_BUNDLE is set
+        # Setting trust_env to False ignores CA bundles defined in REQUESTS_CA_BUNDLE
+        self.session.trust_env = verify
         # enforce that we always have a connection-default user agent.
         self.user_agent = user_agent or DEFAULT_USER_AGENT
 

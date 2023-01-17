@@ -1,7 +1,7 @@
 {
   "name": "STIX/TAXII Plugin",
   "id": "stix_taxii",
-  "version": "2.0.2",
+  "version": "2.0.3",
   "description": "The STIX/TAXII plugin polls TAXII feeds and extracts observables from them. This plugin does not support sharing of indicators to TAXII feeds.",
   "patch_supported": false,
   "push_supported": false,

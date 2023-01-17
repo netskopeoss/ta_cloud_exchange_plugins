@@ -34,6 +34,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
 import re
+import requests
 import tempfile
 from urllib.parse import urlparse
 from datetime import datetime, timedelta
@@ -580,6 +581,14 @@ class STIXTAXIIPlugin(PluginBase):
             return ValidationResult(
                 success=True, message="Validated successfully."
             )
+        except requests.exceptions.RequestException as ex:
+                self.logger.error(
+                    f"Plugin STIX/TAXII: {repr(ex)}"
+                )
+                return ValidationResult(
+                    success=False,
+                    message="Exception occurred while connecting to the the server. Check logs"
+                )
         except exceptions.UnsuccessfulStatusError as ex:
             if ex.status == 'UNAUTHORIZED':
                 self.logger.error(f"Plugin STIX/TAXII: {repr(ex)}")
@@ -602,6 +611,14 @@ class STIXTAXIIPlugin(PluginBase):
     def _validate_uname_pass(self, configuration):
         try:
             self._pull(configuration, datetime.now())
+        except requests.exceptions.RequestException as ex:
+                self.logger.error(
+                    f"Plugin STIX/TAXII: {repr(ex)}"
+                )
+                return ValidationResult(
+                    success=False,
+                    message="Exception occurred while connecting to the the server. Check logs"
+                )
         except exceptions.UnsuccessfulStatusError as ex:
             if ex.status == 'UNAUTHORIZED':
                 self.logger.error(f"Plugin STIX/TAXII: {repr(ex)}")

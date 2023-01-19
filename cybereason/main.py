@@ -174,7 +174,7 @@ class CybereasonPlugin(PluginBase):
         skipped, removed = False, False
         new_row = str(row, 'utf-8')
         ioc_elements = new_row.split(",")
-        if len(ioc_elements) == 5:
+        if len(ioc_elements) >= 5:
             if ioc_elements[1].lower() == "blacklist" and ioc_elements[4].lower() == "false":
                 # Add the blacklisted and which is not suppose to be removed IoC to Netskope
                 ioc_type = self.get_indicator_type(ioc_elements[0])
@@ -428,11 +428,11 @@ class CybereasonPlugin(PluginBase):
         if "base_url" not in data:
             self.logger.error(
                 "Plugin:Cybereason- Validation error occurred "
-                "Error: Type of Pulling configured should be non-empty string."
+                "Error: Type of Base URL should be non-empty string."
             )
             return ValidationResult(
                 success=False,
-                message="Invalid value for 'Enable Polling' provided. Allowed values are 'Yes', or 'No'.",
+                message="Invalid Base URL provided.",
             )
 
         if (
@@ -496,12 +496,55 @@ class CybereasonPlugin(PluginBase):
                 )
                 return ValidationResult(
                     success=False,
-                    message="Validation Error, Error in validating Credentials. Please put the correct credentials."
+                    message=(
+                        "Validation Error, Error in validating Credentials. "
+                        "Please use the correct credentials."
+                    )
                 )
-            return ValidationResult(
-                success=True,
-                message="Validation successful for Cybereason Plugin"
+            indicator_endpoint = (
+                f"{base_url}/rest/classification/reputations/list"
             )
+            ioc_resp = session.request(
+                "POST",
+                indicator_endpoint,
+                headers={"Content-Type": "application/json"},
+                json={"page": 0, "size": 1, "filter": {"includeExpired": False}},
+                verify=self.ssl_validation,
+                proxies=self.proxy
+            )
+            try:
+                if ioc_resp.json().get("outcome", "") == "success":
+                    return ValidationResult(
+                        success=True,
+                        message="Validation successful for Cybereason Plugin"
+                    )
+                else:
+                    self.logger.error(
+                        "Plugin:Cybereason- Validation Error, "
+                        "Error in validating Credentials. "
+                        "Please verify the Username and Password."
+                    )
+                    return ValidationResult(
+                        success=False,
+                        message=(
+                            "Validation Error, Error in validating Credentials. "
+                            "Please verify the Username and Password."
+                        )
+                    )
+            except Exception as err:
+                self.logger.error(
+                    "Plugin:Cybereason- Validation Error, "
+                    "Error in validating Credentials. "
+                    "Please verify the Username and Password."
+                    f"Error: {err}"
+                )
+                return ValidationResult(
+                    success=False,
+                    message=(
+                        "Validation Error, Error in validating Credentials. "
+                        "Please verify the Username and Password."
+                    )
+                )
         except requests.exceptions.ProxyError:
             self.logger.error(
                 "Plugin:Cybereason- Validation Error, "

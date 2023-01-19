@@ -1,0 +1,55 @@
+{
+    "name": "Palo Alto Networks Panorama",
+    "id": "palo_alto_networks_panorama",
+    "version": "1.0.0",
+    "description": "The Palo Alto Networks Panorama plugin is used to fetch SHA256 filehashes from Wildfire logs and URLs from URL-Filtering logs.",
+    "patch_supported": false,
+    "push_supported": false,
+    "configuration": [
+        {
+            "label": "Base URL",
+            "key": "base_url",
+            "type": "text",
+            "mandatory": true,
+            "description": "The Base URL is the Panorama device's IP address or Domain name. e.g. https://<your-panorama-domain>"
+        },
+        {
+            "label": "API Key",
+            "key": "api_key",
+            "type": "password",
+            "default": "",
+            "mandatory": true,
+            "description": "The API keys on the firewall and Panorama enable you to authenticate API calls to the XML API and REST API."
+        },
+        {
+            "label": "Type of Threat data",
+            "key": "threat_data_type",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Both",
+                    "value": "Both"
+                },
+                {
+                    "key": "Malware",
+                    "value": "Malware"
+                },
+                {
+                    "key": "URL",
+                    "value": "URL"
+                }
+            ],
+            "default": "Both",
+            "mandatory": true,
+            "description": "Types of indicators to pull form Palo Alto Panorama."
+        },
+        {
+            "label": "Initial Range (in days)",
+            "key": "days",
+            "type": "number",
+            "mandatory": false,
+            "default": 7,
+            "description": "Number of days to pull the data for the initial run."
+        }
+    ]
+}

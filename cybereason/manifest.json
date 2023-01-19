@@ -1,8 +1,8 @@
 {
     "name": "Cybereason",
     "id": "cybereason_plugin",
-    "version": "1.0.1",
-    "description": "This plugin is used to fetch File hashes and URL from Cybereason's Custom IOC. This plugin can share the indicator Hash or URL to Cybereason's Custom IOC. To access the plugin, you would need the API credentials. Refer the Cybereason documentation https://nest.cybereason.com/documentation/api-documentation/all-versions/set-reputation#setreputations for more details.",
+    "version": "1.0.2",
+    "description": "This plugin is used to fetch File hashes and URL from Cybereason's Custom IOC. This plugin can share the indicator Hash or URL to Cybereason's Custom IOC. To access the plugin, you would need the API credentials. Refer the Cybereason documentation [here](https://nest.cybereason.com/documentation/api-documentation/all-versions/set-reputation#setreputations) for more details.",
     "push_supported": true,
     "patch_supported": true,
     "configuration": [

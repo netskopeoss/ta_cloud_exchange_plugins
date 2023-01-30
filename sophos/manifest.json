@@ -1,0 +1,26 @@
+{
+    "name": "Sophos",
+    "id": "sophos",
+    "version": "1.0.0",
+    "description": "This plugin is used to fetch SHA256 type of threat indicators from Threat Graphs under Threat Analysis Center from Sophos Central platform. This plugin does not support sharing of indicators to Sophos Central platform.",
+    "patch_supported": false,
+    "push_supported": false,
+    "configuration": [
+        {
+            "label": "Client ID",
+            "key": "client_id",
+            "type": "text",
+            "default": "",
+            "description": "Client ID can be found in API Credential Management under Global Settings from Sophos Central platform.",
+            "mandatory": true
+        },
+        {
+            "label": "Client Secret",
+            "key": "client_secret",
+            "type": "password",
+            "default": "",
+            "description": "Client Secret can be found in API Credential Management under Global Settings from Sophos Central platform.",
+            "mandatory": true
+        }
+    ]
+}

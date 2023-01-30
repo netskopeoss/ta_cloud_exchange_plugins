@@ -1,1 +1,1 @@
-"""AWS S3 Plugin."""
+"""AWS S3 WebTx Plugin."""

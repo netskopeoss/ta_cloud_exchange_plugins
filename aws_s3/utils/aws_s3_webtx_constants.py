@@ -30,7 +30,7 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
 
-"""AWS S3 Contstants."""
+"""AWS S3 WebTx Contstants."""
 
 
 REGIONS = [
@@ -57,4 +57,9 @@ REGIONS = [
     "eu-north-1",
     "me-south-1",
     "sa-east-1",
+    "ap-south-2",
+    "ap-southeast-3",
+    "eu-south-2",
+    "eu-central-2",
+    "me-central-1"
 ]

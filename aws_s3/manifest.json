@@ -1,8 +1,8 @@
 {
-    "name": "AWS S3",
+    "name": "AWS S3 WebTx",
     "id": "aws_s3",
-    "version": "1.0.0",
-    "mapping": "AWS S3 Default Mappings",
+    "version": "1.1.0",
+    "mapping": "AWS S3 WebTx Default Mappings",
     "netskope": false,
     "types": [
         "webtx"
@@ -121,6 +121,26 @@
                 {
                     "key": "South America (São Paulo) [sa-east-1]",
                     "value": "sa-east-1"
+                },
+                {
+                    "key": "Asia Pacific (Hyderabad) [ap-south-2]",
+                    "value": "ap-south-2"
+                },
+                {
+                    "key": "Asia Pacific (Jakarta) [ap-southeast-3]",
+                    "value": "ap-southeast-3"
+                },
+                {
+                    "key": "Europe (Spain) [eu-south-2]",
+                    "value": "eu-south-2"
+                },
+                {
+                    "key": "Europe (Zurich) [eu-central-2]",
+                    "value": "eu-central-2"
+                },
+                {
+                    "key": "Middle East (UAE) [me-central-1]",
+                    "value": "me-central-1"
                 }
             ],
             "default": "None",
@@ -149,7 +169,7 @@
             "type": "number",
             "default": 10,
             "mandatory": true,
-            "description": "Maximum size of data object to be stored in the bucket. (Value should be between 0 to 100.)"
+            "description": "Maximum size of WebTx data object to be stored in the bucket. (Value should be between 0 to 100.)"
         },
         {
             "label": "Maximum Duration (in Seconds)",
@@ -157,7 +177,7 @@
             "type": "number",
             "default": 30,
             "mandatory": true,
-            "description": "Maximum duration after which the data object should be stored in the bucket."
+            "description": "Maximum duration after which the WebTx data object should be stored in the bucket."
         }
     ]
 }

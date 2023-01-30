@@ -1,9 +1,9 @@
 {
   "name": "Elastic",
   "id": "elastic",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "mapping": "Elastic Default Mappings",
-  "description": "This plugin is used to deliver alerts/events data to Elastic platform.",
+  "description": "This plugin is used to deliver alerts/events data to Elastic platform. Refer the [documentation](https://docs.elastic.co/integrations/netskope) for Elastic Agent deployment.",
   "netskope": false,
   "types": [
     "events",
@@ -16,7 +16,7 @@
       "type": "text",
       "default": "",
       "mandatory": true,
-      "description": "Server Address for TCP Connection."
+      "description": "Server Address for TCP Connection. If elastic agent and Netskope CE are installed on same machine then use IP address of your machine as Server Address."
     },
     {
       "label": "Server Port",

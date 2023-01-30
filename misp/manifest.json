@@ -1,7 +1,7 @@
 {
     "name": "MISP",
     "id": "misp",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "description": "This plugin is used to fetch event attributes from MISP (Malware Information Sharing Platform) and extract indicators from them. It can also share the indicator Hash or URL to MISP Custom Event. To get required details for creating a new configuration, navigate to https://<misp-url>/events/automation.",
     "patch_supported": true,
     "push_supported": true,
@@ -23,7 +23,119 @@
             "description": "MISP API automation key."
         },
         {
-            "label" : "Event Names",
+            "label": "MISP Attribute Type",
+            "key": "attr_type",
+            "type": "multichoice",
+            "choices": [
+                {
+                    "key": "MD5",
+                    "value": "md5"
+                },
+                {
+                    "key": "SHA256",
+                    "value": "sha256"
+                },
+                {
+                    "key": "IP",
+                    "value": "ip-src"
+                },
+                {
+                    "key": "URL",
+                    "value": "url"
+                },
+                {
+                    "key": "DOMAIN",
+                    "value": "domain"
+                }
+            ],
+            "mandatory": false,
+            "default": [],
+            "description": "Indicators from only specified Attribute types will be fetched. Keep empty to fetch indicators of all Types. Multiple Types are accepted."
+        },
+        {
+            "label": "MISP Attribute Category",
+            "key": "attr_category",
+            "type": "multichoice",
+            "choices": [
+                {
+                    "key": "Internal reference",
+                    "value": "Internal reference"
+                },
+                {
+                    "key": "Targeting data",
+                    "value": "Targeting data"
+                },
+                {
+                    "key": "Antivirus detection",
+                    "value": "Antivirus detection"
+                },
+                {
+                    "key": "Payload delivery",
+                    "value": "Payload delivery"
+                },
+                {
+                    "key": "Artifacts dropped",
+                    "value": "Artifacts dropped"
+                },
+                {
+                    "key": "Payload installation",
+                    "value": "Payload installation"
+                },
+                {
+                    "key": "Persistence mechanism",
+                    "value": "Persistence mechanism"
+                },
+                {
+                    "key": "Network activity",
+                    "value": "Network activity"
+                },
+                {
+                    "key": "Payload type",
+                    "value": "Payload type"
+                },
+                {
+                    "key": "Attribution",
+                    "value": "Attribution"
+                },
+                {
+                    "key": "External analysis",
+                    "value": "External analysis"
+                },
+                {
+                    "key": "Financial fraud",
+                    "value": "Financial fraud"
+                },
+                {
+                    "key": "Support Tool",
+                    "value": "Support Tool"
+                },
+                {
+                    "key": "Social network",
+                    "value": "Social network"
+                },
+                {
+                    "key": "Person",
+                    "value": "Person"
+                },
+                {
+                    "key": "Other",
+                    "value": "Other"
+                }
+            ],
+            "mandatory": false,
+            "default": [],
+            "description": "Indicators from only specified Attribute Categories will be fetched. Keep empty to fetch indicators of all Categories. Multiple Categories are accepted."
+        },
+        {
+            "label": "MISP Attribute Tags",
+            "key": "tags",
+            "type": "text",
+            "mandatory": false,
+            "default": "",
+            "description": "Indicators from only specified comma separated Tags will be fetched. Keep empty to fetch indicators of all Tags. Dynamic values are accepted."
+        },
+        {
+            "label": "Event Names",
             "key": "include_event_name",
             "type": "text",
             "mandatory": false,

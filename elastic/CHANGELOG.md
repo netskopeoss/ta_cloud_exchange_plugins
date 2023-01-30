@@ -1,3 +1,9 @@
+# 2.0.1
+## Added
+- Added Validation for Server Address.
+## Changed
+- Updated plugin description.
+
 # 2.0.0
 ## Added
 - Added support to sent raw data to the SIEM Platform.

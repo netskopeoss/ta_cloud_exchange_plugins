@@ -111,6 +111,18 @@ class ElasticPlugin(PluginBase):
             return ValidationResult(
                 success=False, message="Invalid Server port provided."
             )
+        server_address = configuration["server_address"].strip()
+        if server_address in ["127.0.0.1", "0.0.0.0"]:
+            self.logger.error(
+                "Elastic Plugin: Validation error occurred. Error: "
+                "Invalid Server Address found in the configuration parameters."
+            )
+            return ValidationResult(
+                success=False,
+                message="Invalid Server Address provided. If the elastic"
+                " agent is deployed on the same machine as CE,"
+                " use IP address of machine as the Server Address.",
+            )
 
         mappings = self.mappings.get("jsonData", None)
         mappings = json.loads(mappings)
@@ -352,7 +364,7 @@ class ElasticPlugin(PluginBase):
         :param logger: Logger object for logging purpose
         :return: Mapped data based on fields given in mapping file
         """
-        
+
         if mappings == []:
             return data
 
@@ -360,7 +372,7 @@ class ElasticPlugin(PluginBase):
         for key in mappings:
             if key in data:
                 mapped_dict[key] = data[key]
-        
+
         return mapped_dict
 
     def transform(self, raw_data, data_type, subtype) -> List:
@@ -418,13 +430,14 @@ class ElasticPlugin(PluginBase):
 
             for data in raw_data:
                 transformed_data.append(
-                    self.map_json_data(subtype_mapping, data, data_type, subtype)
+                    self.map_json_data(
+                        subtype_mapping, data, data_type, subtype
+                    )
                 )
 
             return transformed_data
-                
 
-        else:        
+        else:
             try:
                 ecs_version, elastic_mappings = get_elastic_mappings(
                     self.mappings, data_type

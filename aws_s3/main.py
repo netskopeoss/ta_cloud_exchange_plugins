@@ -30,7 +30,7 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
 
-"""AWS S3 Plugin."""
+"""AWS S3 Webtx Plugin."""
 
 
 import os
@@ -42,14 +42,17 @@ from netskope.integrations.cls.plugin_base import (
     ValidationResult,
     PushResult,
 )
-from .utils.aws_s3_validator import (
-    AWSS3Validator,
+from .utils.aws_s3_webtx_validator import (
+    AWSS3WebTxValidator,
 )
-from .utils.aws_s3_client import AWSS3Client
+from .utils.aws_s3_webtx_client import (
+    AWSS3WebTxClient,
+    BucketNameAlreadyTaken
+)
 
 
-class AWSS3Plugin(PluginBase):
-    """The AWS S3 plugin implementation class."""
+class AWSS3WebTxPlugin(PluginBase):
+    """The AWS S3 WebTx plugin implementation class."""
 
     def transform(self, raw_data, data_type, subtype) -> List:
         """Transform the raw netskope JSON data into target platform supported data formats.
@@ -70,7 +73,7 @@ class AWSS3Plugin(PluginBase):
     def push(self, transformed_data, data_type, subtype) -> PushResult:
         """Push the transformed_data to the 3rd party platform."""
         try:
-            aws_client = AWSS3Client(
+            aws_client = AWSS3WebTxClient(
                 self.configuration, self.logger, self.proxy
             )
 
@@ -87,12 +90,12 @@ class AWSS3Plugin(PluginBase):
                 temp_obj_file.close()
                 os.unlink(temp_obj_file.name)
         except Exception as e:
-            self.logger.error(f"Error while pushing to AWS S3: {e}")
+            self.logger.error(f"AWS S3 WebTx Plugin: Error while pushing to AWS S3: {e}")
             raise
 
     def validate(self, configuration: dict) -> ValidationResult:
         """Validate the configuration parameters dict."""
-        aws_validator = AWSS3Validator(self.logger, self.proxy)
+        aws_validator = AWSS3WebTxValidator(self.logger, self.proxy)
 
         if (
             "aws_public_key" not in configuration
@@ -100,7 +103,7 @@ class AWSS3Plugin(PluginBase):
             or not configuration["aws_public_key"].strip()
         ):
             self.logger.error(
-                "AWS S3 Plugin: Validation error occurred. Error: "
+                "AWS S3 WebTx Plugin: Validation error occurred. Error: "
                 "Invalid AWS Access Key ID (Public Key) found in the configuration parameters."
             )
             return ValidationResult(
@@ -114,7 +117,7 @@ class AWSS3Plugin(PluginBase):
             or not configuration["aws_private_key"].strip()
         ):
             self.logger.error(
-                "AWS S3 Plugin: Validation error occurred. Error: "
+                "AWS S3 WebTx Plugin: Validation error occurred. Error: "
                 "Invalid AWS Secret Access Key (Private Key) found in the configuration parameters."
             )
             return ValidationResult(
@@ -130,7 +133,7 @@ class AWSS3Plugin(PluginBase):
             )
         ):
             self.logger.error(
-                "AWS S3 Plugin: Validation error occurred. Error: "
+                "AWS S3 WebTx Plugin: Validation error occurred. Error: "
                 "Invalid Region Name found in the configuration parameters."
             )
             return ValidationResult(
@@ -144,7 +147,7 @@ class AWSS3Plugin(PluginBase):
             or not configuration["bucket_name"].strip()
         ):
             self.logger.error(
-                "AWS S3 Plugin: Validation error occurred. Error: "
+                "AWS S3 WebTx Plugin: Validation error occurred. Error: "
                 "Invalid Bucket Name found in the configuration parameters."
             )
             return ValidationResult(
@@ -157,7 +160,7 @@ class AWSS3Plugin(PluginBase):
             or not configuration["obj_prefix"].strip()
         ):
             self.logger.error(
-                "AWS S3 Plugin: Validation error occurred. Error: "
+                "AWS S3 WebTx Plugin: Validation error occurred. Error: "
                 "Invalid Object Prefix found in the configuration parameters."
             )
             return ValidationResult(
@@ -171,7 +174,7 @@ class AWSS3Plugin(PluginBase):
             )
         ):
             self.logger.error(
-                "AWS S3 Plugin: Validation error occurred. Error: "
+                "AWS S3 WebTx Plugin: Validation error occurred. Error: "
                 "Invalid Max File Size found in the configuration parameters."
             )
             return ValidationResult(
@@ -185,7 +188,7 @@ class AWSS3Plugin(PluginBase):
             )
         ):
             self.logger.error(
-                "AWS S3 Plugin: Validation error occurred. Error: "
+                "AWS S3 WebTx Plugin: Validation error occurred. Error: "
                 "Invalid Max File Size found in the configuration parameters."
             )
             return ValidationResult(
@@ -199,7 +202,7 @@ class AWSS3Plugin(PluginBase):
             )
         except Exception:
             self.logger.error(
-                "AWS S3 Plugin: Validation error occurred. Error: "
+                "AWS S3 WebTx Plugin: Validation error occurred. Error: "
                 "Invalid AWS Access Key ID (Public Key) and AWS Secret Access Key "
                 "(Private Key) found in the configuration parameters."
             )
@@ -210,11 +213,20 @@ class AWSS3Plugin(PluginBase):
             )
 
         try:
-            aws_client = AWSS3Client(configuration, self.logger, self.proxy)
+            aws_client = AWSS3WebTxClient(configuration, self.logger, self.proxy)
             aws_client.get_bucket()
+        except BucketNameAlreadyTaken:
+            self.logger.error(
+                f"AWS S3 WebTx Plugin: Validation error occurred. Error: "
+                "Provided bucket name already exists at a different region. Please try with different name or use the correct region."
+            )
+            return ValidationResult(
+                success=False,
+                message="Validation Error. Provided bucket name already exists at a different region. Please try with different name or use the correct region.",
+            )
         except Exception as err:
             self.logger.error(
-                f"AWS S3 Plugin: Validation error occurred. Error: {err}"
+                f"AWS S3 WebTx Plugin: Validation error occurred. Error: {err}"
             )
             return ValidationResult(
                 success=False,

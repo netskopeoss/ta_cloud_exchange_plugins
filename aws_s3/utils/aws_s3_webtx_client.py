@@ -30,7 +30,7 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
 
-"""AWS S3 Client Class."""
+"""AWS S3 WebTx Client Class."""
 
 
 import boto3
@@ -38,9 +38,11 @@ import time
 import uuid
 from botocore.config import Config
 
+class BucketNameAlreadyTaken(Exception):
+    pass
 
-class AWSS3Client:
-    """AWS S3 Client Class."""
+class AWSS3WebTxClient:
+    """AWS S3 WebTx Client Class."""
 
     def __init__(self, configuration, logger, proxy):
         """Init method."""
@@ -102,14 +104,19 @@ class AWSS3Client:
         except Exception:
             raise
 
-    def is_bucket_exists(self, bucket_name):
+    def is_bucket_exists(self, bucket_name, region_name):
         """To check if a bucket exists or not."""
         try:
             s3_client = self.get_aws_client()
-            buckets = s3_client.list_buckets()
-            for bucket in buckets["Buckets"]:
-                if bucket_name == bucket["Name"]:
-                    return True
+            buckets = s3_client.list_buckets()["Buckets"]
+            for bucket in buckets:
+                if (bucket_name == bucket["Name"]):
+                    bucket_location = s3_client.get_bucket_location(
+                        Bucket=bucket["Name"]
+                    )["LocationConstraint"]
+                    if str(region_name) == str(bucket_location):
+                        return True
+                    raise BucketNameAlreadyTaken
             return False
         except Exception:
             raise
@@ -117,7 +124,7 @@ class AWSS3Client:
     def get_bucket(self):
         """To get bucket if exists or create bucket."""
         try:
-            if not self.is_bucket_exists(self.configuration["bucket_name"]):
+            if not self.is_bucket_exists(self.configuration["bucket_name"], self.configuration["region_name"]):
                 s3_client = self.get_aws_client()
                 if self.configuration["region_name"] == "None":
                     bucket = s3_client.create_bucket(
@@ -148,8 +155,8 @@ class AWSS3Client:
                 file_name, self.configuration["bucket_name"], object_name
             )
             self.logger.info(
-                f"Successfully Uploaded to AWS S3 as object file.{object_name}"
+                f"AWS S3 WebTx Plugin: Successfully Uploaded to AWS S3 as object file.{object_name}"
             )
         except Exception as e:
-            self.logger.error(f"Error occurred while Pushing data object: {e}")
+            self.logger.error(f"AWS S3 WebTx Plugin: Error occurred while Pushing data object: {e}")
             raise

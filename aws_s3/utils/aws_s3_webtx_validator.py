@@ -30,16 +30,16 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
 
-"""AWS S3 validator."""
+"""AWS S3 WebTx validator."""
 
 
 import boto3
 from botocore.config import Config
-from .aws_s3_constants import REGIONS
+from .aws_s3_webtx_constants import REGIONS
 
 
-class AWSS3Validator(object):
-    """AWS S3 validator class."""
+class AWSS3WebTxValidator(object):
+    """AWS S3 WebTx validator class."""
 
     def __init__(self, logger, proxy):
         """Initialize."""
@@ -125,10 +125,9 @@ class AWSS3Validator(object):
                 aws_secret_access_key=aws_private_key,
                 config=Config(proxies=self.proxy),
             )
-            # Print out bucket names
             for _ in s3_resource.buckets.all():
                 break
             return True
         except Exception as e:
-            print(e)
+            self.logger.error(f"AWS S3 WebTx Plugin: Error while validating creadentials: {e}") 
             raise

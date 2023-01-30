@@ -35,22 +35,20 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 from typing import Dict, List
 from datetime import datetime, timedelta
-
-import requests
-
-from netskope.integrations.cte.models import Indicator, IndicatorType, TagIn
+from netskope.integrations.cte.models import Indicator, TagIn
 from netskope.integrations.cte.plugin_base import (
     PluginBase,
     ValidationResult,
     PushResult,
 )
+
+from .utils.misp_constants import ATTRIBUTE_CATEGORIES, ATTRIBUTE_TYPES, TYPES
 from netskope.integrations.cte.utils import TagUtils
 from netskope.integrations.cte.models.business_rule import (
     ActionWithoutParams,
     Action,
 )
-from netskope.common.utils import add_user_agent
-
+import requests
 
 class MISPPlugin(PluginBase):
     """The MISP plugin implementation."""
@@ -59,6 +57,7 @@ class MISPPlugin(PluginBase):
         """Pull indicators from MISP."""
         start_time = self.last_run_at  # datetime.datetime object.
         end_time = datetime.now()
+
         if not start_time:
             self.logger.info(
                 f"MISP Plugin: This is initial data fetch since "
@@ -68,6 +67,7 @@ class MISPPlugin(PluginBase):
                 days=int(self.configuration["days"])
             )
         # create set of excluded events for
+
         event_ids = []
         if len(self.configuration["include_event_name"]) != 0:
             for inc_event in (
@@ -79,32 +79,31 @@ class MISPPlugin(PluginBase):
         # Convert to epoch
         start_time = int(start_time.timestamp())
         end_time = int(end_time.timestamp())
-        types = [ele.value for ele in IndicatorType]
+
+        misp_tags = []
+
+        if self.configuration.get("tags", "").strip():
+            misp_tags = self.configuration["tags"].split(",")
+
+        body = {
+            "returnFormat": "json",
+            "limit": 5000,
+            "page": 1,
+            "timestamp": [str(start_time), str(end_time)],
+            # Filter attributes based on type, category and tags
+            "category": self.configuration["attr_category"],
+            "type": self.configuration["attr_type"],
+            "tags": misp_tags,
+        }
+
         if len(event_ids) != 0:
-            body = {
-                "returnFormat": "json",
-                "limit": 5000,
-                "page": 1,
-                "timestamp": [str(start_time), str(end_time)],
-                # Filter attributes based on type
-                "type": {"OR": types},
-                "eventid": event_ids,
-            }
-        else:
-            body = {
-                "returnFormat": "json",
-                "limit": 5000,
-                "page": 1,
-                "timestamp": [str(start_time), str(end_time)],
-                # Filter attributes based on type
-                "type": {"OR": types},
-            }
+            body["eventid"] = event_ids
 
         indicators, tag_utils, skipped_tags = [], TagUtils(), []
         while True:
             response = requests.post(
                 f"{self.configuration['base_url'].strip('/')}/attributes/restSearch",
-                headers=add_user_agent(
+                headers=self._add_user_agent(
                     self._get_header(self.configuration["api_key"])
                 ),
                 json=body,
@@ -118,7 +117,7 @@ class MISPPlugin(PluginBase):
 
                 for attr in json_res.get("response", {}).get("Attribute", []):
                     if (
-                        attr.get("type") in types
+                        attr.get("type") in ATTRIBUTE_TYPES
                         # Filter already pushed attributes/indicators
                         and (
                             attr.get("Event", {}).get("info")
@@ -127,17 +126,25 @@ class MISPPlugin(PluginBase):
                     ):
                         # Deep link of event corresponding to the attribute
                         event_id, deep_link = attr.get("event_id"), ""
+                        tag_list = attr.get("Tag", [])
+                        tag_list.append(
+                            {
+                                "name": attr.get("category", ""),
+                                "type": "misp_category",
+                            }
+                        )
                         if event_id:
                             deep_link = f"{self.configuration['base_url'].strip('/')}/events/view/{event_id}"
-
                         tags, skipped = self._create_tags(
-                            tag_utils, attr.get("Tag", []), self.configuration
+                            tag_utils,
+                            tag_list,
+                            self.configuration,
                         )
                         skipped_tags.extend(skipped)
                         indicators.append(
                             Indicator(
                                 value=attr.get("value"),
-                                type=IndicatorType(attr.get("type")),
+                                type=TYPES.get(attr.get("type")),
                                 firstSeen=attr.get("first_seen", None),
                                 lastSeen=attr.get("last_seen", None),
                                 comments=attr.get("comment"),
@@ -145,6 +152,7 @@ class MISPPlugin(PluginBase):
                                 extendedInformation=deep_link,
                             )
                         )
+
                 if (
                     len(json_res.get("response", {}).get("Attribute", []))
                     < body["limit"]
@@ -161,22 +169,27 @@ class MISPPlugin(PluginBase):
     ) -> (List[str], List[str]):
         """Create new tag(s) in database if required."""
         if configuration["enable_tagging"] != "yes":
-            return []
+            return [], []
 
         tag_names, skipped_tags = [], []
         for tag in tags:
+            tag_name = (
+                f"MISPCATEGORY-{tag.get('name', '').strip()}"
+                if tag.get("type") == "misp_category"
+                else tag.get("name", "").strip()
+            )
             try:
-                if not utils.exists(tag.get("name").strip()):
+                if not utils.exists(tag_name):
                     utils.create_tag(
                         TagIn(
-                            name=tag.get("name").strip(),
+                            name=tag_name,
                             color=tag.get("colour", "#ED3347"),
                         )
                     )
             except ValueError:
-                skipped_tags.append(tag.get("name").strip())
+                skipped_tags.append(tag_name)
             else:
-                tag_names.append(tag.get("name").strip())
+                tag_names.append(tag_name)
         return tag_names, skipped_tags
 
     def _event_exists(self, event_name: str, configuration) -> (bool, str):
@@ -184,7 +197,7 @@ class MISPPlugin(PluginBase):
         try:
             response = requests.post(
                 f"{configuration['base_url'].strip('/')}/events/restSearch",
-                headers=add_user_agent(
+                headers=self._add_user_agent(
                     self._get_header(configuration["api_key"])
                 ),
                 json={
@@ -213,7 +226,7 @@ class MISPPlugin(PluginBase):
         """Create a new event on MISP instance with given name/info and attributes."""
         response = requests.post(
             f"{self.configuration['base_url'].strip('/')}/events/add",
-            headers=add_user_agent(
+            headers=self._add_user_agent(
                 self._get_header(self.configuration["api_key"])
             ),
             json=payload,
@@ -232,7 +245,7 @@ class MISPPlugin(PluginBase):
         """Update given event's info and attribute(s)."""
         response = requests.post(
             f"{self.configuration['base_url'].strip('/')}/events/edit/{event_id}",
-            headers=add_user_agent(
+            headers=self._add_user_agent(
                 self._get_header(self.configuration["api_key"])
             ),
             json=payload,
@@ -310,6 +323,37 @@ class MISPPlugin(PluginBase):
             )
             return ValidationResult(
                 success=False, message="Invalid API key provided."
+            )
+
+        if "attr_type" not in configuration or not all(
+            x in ATTRIBUTE_TYPES for x in configuration["attr_type"]
+        ):
+            self.logger.error(
+                "Plugin MISP: Validation error occurred. Error: "
+                "Invalid attr_type found in the configuration parameters."
+            )
+            return ValidationResult(
+                success=False, message="Invalid attr_type value"
+            )
+
+        if "attr_category" not in configuration or not all(
+            x in ATTRIBUTE_CATEGORIES for x in configuration["attr_category"]
+        ):
+            self.logger.error(
+                "Plugin MISP: Validation error occurred. Error: "
+                "Invalid attr_category found in the configuration parameters."
+            )
+            return ValidationResult(
+                success=False, message="Invalid attr_category value"
+            )
+
+        if "tags" not in configuration or type(configuration["tags"]) != str:
+            self.logger.error(
+                "Plugin MISP: Validation error occurred. Error: "
+                "tags not valid in the configuration parameters."
+            )
+            return ValidationResult(
+                success=False, message="Invalid tags value"
             )
 
         if "include_event_name" not in configuration:
@@ -400,12 +444,20 @@ class MISPPlugin(PluginBase):
             "Content-Type": "application/json",
         }
 
+    def _add_user_agent(self, header=None):
+        if header is None:
+            return {"User-Agent": "netskope-cte-1.1.0"}
+        else:
+            if "User-Agent" not in header:
+                header["User-Agent"] = "netskope-cte-1.1.0"
+        return header
+
     def _validate_auth(self, configuration: dict) -> ValidationResult:
         """Validate API key by making REST API call."""
         try:
             response = requests.get(
                 f"{configuration['base_url'].strip('/')}/servers/getVersion.json",
-                headers=add_user_agent(
+                headers=self._add_user_agent(
                     self._get_header(configuration["api_key"])
                 ),
                 verify=self.ssl_validation,
@@ -416,6 +468,7 @@ class MISPPlugin(PluginBase):
                 return ValidationResult(
                     success=True, message="Validation successful."
                 )
+
         except Exception as ex:
             self.logger.error(
                 "MISP: Could not validate authentication credentials."

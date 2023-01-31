@@ -1,0 +1,66 @@
+{
+    "name": "Microsoft Office 365 Endpoint",
+    "id": "Office365Endpoint",
+    "version": "1.0.0",
+    "description": "This plugin is used to fetch URLs from Microsoft Office 365 Endpoint. This plugin does not support sharing of indicators to Microsoft Office 365 Endpoint.",
+    "patch_supported": false,
+    "push_supported": false,
+    "configuration": [
+        {
+            "label": "Instance",
+            "key": "region",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Worldwide",
+                    "value": "Worldwide"
+                },
+                {
+                    "key": "USGovDoD",
+                    "value": "USGovDoD"
+                },
+                {
+                    "key": "USGovGCCHigh",
+                    "value": "USGovGCCHigh"
+                },
+                {
+                    "key": "China",
+                    "value": "China"
+                },
+                {
+                    "key": "Germany",
+                    "value": "Germany"
+                }
+            ],
+            "mandatory": true,
+            "default": "Worldwide",
+            "description": "The short name of the Office 365 service instance, default value is Worldwide."
+        },
+        {
+            "label": "Service Area Display Name",
+            "key": "typeservices",
+            "type": "multichoice",
+            "choices": [
+                {
+                    "key": "Exchange Online",
+                    "value": "Exchange Online"
+                },
+                {
+                    "key": "Microsoft 365 Common and Office Online",
+                    "value": "Microsoft 365 Common and Office Online"
+                },
+                {
+                    "key": "Skype for Business Online and Microsoft Teams",
+                    "value": "Skype for Business Online and Microsoft Teams"
+                },
+                {
+                    "key": "SharePoint Online and OneDrive for Business",
+                    "value": "SharePoint Online and OneDrive for Business"
+                }
+            ],
+            "mandatory": false,
+            "default": [],
+            "description": "URLs from the selected Service Area Display Name will be fetched, Multiple Service Area Display Name can be selected. Keep empty to fetch All URLs"
+        }
+    ]
+}

@@ -30,7 +30,7 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
 
-"""SentinelOne Plugin implementation to push and pull the data from SentinelOne
+"""SentinelOne CTE Plugin implementation to push and pull the data from SentinelOne
 Platform."""
 
 import requests
@@ -47,17 +47,80 @@ from netskope.integrations.cte.models.business_rule import (
     ActionWithoutParams,
 )
 from typing import List, Dict
+from pydantic import ValidationError
+from requests.models import Response
 
 MAX_PAGE_SIZE = 50
 LIMIT = 2500
+PLUGIN_NAME = "SentinelOne CTE Plugin"
+
+
+class SentinelOneException(Exception):
+    """SentinelOne exception class."""
+
+    pass
 
 
 class SentinelOnePlugin(PluginBase):
-    """The SentinelOne plugin implementation."""
+    """The SentinelOne cte plugin implementation."""
+
+    def handle_error(self, resp: Response):
+        """Handle the different HTTP response code.
+
+        Args:
+            resp (requests.models.Response): Response object returned from API
+            call.
+        Returns:
+            dict: Returns the dictionary of response JSON when the response
+            code is 200.
+        Raises:
+            HTTPError: When the response code is not 200.
+        """
+        err_msg = f"Response code {resp.status_code} received."
+        if resp.status_code == 200 or resp.status_code == 201:
+            try:
+                return resp.json()
+            except ValueError:
+                self.logger.error(
+                    f"{PLUGIN_NAME}: Response is not JSON format. "
+                )
+                raise SentinelOneException(
+                    f"{PLUGIN_NAME}: Exception occurred while parsing JSON response."
+                )
+        elif resp.status_code == 401:
+            self.logger.error(f"{PLUGIN_NAME}: {err_msg}")
+            raise SentinelOneException(
+                f"{PLUGIN_NAME}: Received exit code 401, Authentication Error"
+            )
+        elif resp.status_code == 403:
+            self.logger.error(f"{PLUGIN_NAME}: {err_msg}")
+            raise SentinelOneException(
+                f"{PLUGIN_NAME}: Received exit code 403, Forbidden User"
+            )
+        elif resp.status_code == 404:
+            self.logger.error(f"{PLUGIN_NAME}: {err_msg}")
+            raise SentinelOneException(
+                f"{PLUGIN_NAME}: Received exit code 404, Not Found"
+            )
+        elif resp.status_code >= 400 and resp.status_code < 500:
+            self.logger.error(f"{PLUGIN_NAME}: {err_msg}")
+            raise SentinelOneException(
+                f"{PLUGIN_NAME}: Received exit code {resp.status_code}, HTTP client Error"
+            )
+        elif resp.status_code >= 500 and resp.status_code < 600:
+            self.logger.error(f"{PLUGIN_NAME}: {err_msg}")
+            raise SentinelOneException(
+                f"{PLUGIN_NAME}: Received exit code {resp.status_code}, HTTP server Error"
+            )
+        else:
+            self.logger.error(f"{PLUGIN_NAME}: {err_msg}")
+            raise SentinelOneException(
+                f"{PLUGIN_NAME}: Received exit code {resp.status_code}, HTTP Error"
+            )
 
     def _get_site_id(self, name, url=None, token=None):
         response = requests.get(
-            f"{(url if url else self.configuration.get('url')).strip('/')}/web/api/v2.0/sites",
+            f"{(url if url else self.configuration.get('url','').strip()).strip('/')}/web/api/v2.0/sites",
             params={"name": name},
             headers=add_user_agent(
                 {
@@ -67,17 +130,17 @@ class SentinelOnePlugin(PluginBase):
             proxies=self.proxy,
             verify=self.ssl_validation,
         )
-        if response.status_code != 200:
+        resp_json = self.handle_error(response)
+        if not resp_json:
             self.logger.error(
-                "SentinelOne Plugin: Error occurred while fetching siteId."
+                f"{PLUGIN_NAME}: Error occurred while fetching siteId."
             )
-            return None
         try:
-            return response.json()["data"]["sites"][0]["id"]
-        except Exception:
-            self.logger.error(
-                f"SentinelOne Plugin: Site {name} does not exist."
+            return (
+                resp_json.get("data", {}).get("sites", [])[0].get("id", None)
             )
+        except Exception:
+            self.logger.error(f"{PLUGIN_NAME}: Site {name} does not exist.")
             return None
 
     def _str_to_datetime(self, string: str) -> datetime:
@@ -99,7 +162,7 @@ class SentinelOnePlugin(PluginBase):
     def pull(self):
         """Pull indicators from SentinelOne."""
         end_time = datetime.now()
-        url = f"{self.configuration['url'].strip('/')}/web/api/v2.0/threats"
+        url = f"{self.configuration['url'].strip().strip('/')}/web/api/v2.0/threats"
         if not self.last_run_at:
             start_time = datetime.now() - timedelta(
                 days=int(self.configuration["days"])
@@ -112,12 +175,15 @@ class SentinelOnePlugin(PluginBase):
             "createdAt__lte": f"{end_time.isoformat()}Z",
             "limit": MAX_PAGE_SIZE,
         }
+        cursor = None
         if self.configuration["site"]:
             site_id = self._get_site_id(self.configuration["site"])
             if site_id is None:
                 return
             params["siteIds"] = site_id
         while True:
+            if cursor:
+                params["cursor"] = cursor
             response = requests.get(
                 url,
                 params=params,
@@ -129,61 +195,38 @@ class SentinelOnePlugin(PluginBase):
                 proxies=self.proxy,
                 verify=self.ssl_validation,
             )
-            data = response.json()
-            for alert in data["data"]:
+
+            data = self.handle_error(response)
+            for alert in data.get("data", []):
                 if not alert.get("fileSha256", None):
                     continue
-                indicators.append(
-                    Indicator(
-                        value=alert["fileSha256"],
-                        type=IndicatorType.SHA256,
-                        comments=(
-                            f"{alert['classification']}: "
-                            f"{self.configuration['url'].strip('/')}/analyze/threats/{alert['id']}/overview"
-                        ),
-                        firstSeen=self._str_to_datetime(
-                            alert.get("createdAt")
-                        ),
-                        lastSeen=self._str_to_datetime(alert.get("updatedAt")),
+                try:
+                    indicators.append(
+                        Indicator(
+                            value=alert.get("fileSha256"),
+                            type=IndicatorType.SHA256,
+                            comments=(
+                                f"{alert.get('classification','')}: "
+                                f"{self.configuration['url'].strip().strip('/')}/analyze/threats/{alert.get('id')}/overview"
+                            ),
+                            firstSeen=self._str_to_datetime(
+                                alert.get("createdAt")
+                            ),
+                            lastSeen=self._str_to_datetime(
+                                alert.get("updatedAt")
+                            ),
+                        )
                     )
-                )
-            params["cursor"] = data["pagination"]["nextCursor"]
-            if params["cursor"] is None:
+                except ValidationError as err:
+                    self.logger.error(
+                        message=f"{PLUGIN_NAME}: Error occurred while pulling IOCs. Hence skipping {alert.get('fileSha256',None)}",
+                        details=f"Error Details: {err}",
+                    )
+
+            cursor = data.get("pagination", {}).get("nextCursor")
+            if cursor is None:
                 break
         return indicators
-
-    def _api_call(self, request):
-        """API Calling Function.
-
-        Args:
-            request (function): API resquest function.
-
-        Returns:
-            Response: Return response getting from API endpoint.
-
-        """
-        try:
-            return request()
-        except requests.exceptions.ProxyError as err:
-            self.logger.error(
-                "Plugin: SentinelOne, Invalid proxy configuration."
-            )
-            raise err
-        except requests.exceptions.ConnectionError as err:
-            self.logger.error(
-                f"Plugin: SentinelOne, " f"Connection Error occured: {err}."
-            )
-            raise err
-        except requests.exceptions.RequestException as err:
-            self.logger.error(
-                f"Plugin: SentinelOne, " f"Request Exception occured: {err}."
-            )
-            raise err
-        except Exception as err:
-            self.logger.error(
-                f"Plugin: SentinelOne, " f"Exception occured: {err}."
-            )
-            raise err
 
     def divide_in_chunks(self, indicators, chunk_size):
         """Return Fixed size chunks from list."""
@@ -205,7 +248,7 @@ class SentinelOnePlugin(PluginBase):
         indicators_data = []
         headers = {"Authorization": f"ApiToken {self.configuration['token']}"}
         error_occur = False
-        ioc_url = f"{self.configuration['url']}/web/api/v2.1/threat-intelligence/iocs"
+        ioc_url = f"{self.configuration['url'].strip().strip('/')}/web/api/v2.1/threat-intelligence/iocs"
         if action_dict["value"] == "create_iocs":
             # Threat IoCs
             for indicator in indicators:
@@ -233,20 +276,14 @@ class SentinelOnePlugin(PluginBase):
                     "data": chunked_list,
                     "filter": {},
                 }
-                response = self._api_call(
-                    lambda: requests.post(
-                        ioc_url,
-                        headers=headers,
-                        json=indicator_json_data,
-                    )
+                response = requests.post(
+                    ioc_url,
+                    headers=headers,
+                    json=indicator_json_data,
+                    proxies=self.proxy,
+                    verify=self.ssl_validation,
                 )
-                if response.status_code == 200 or response.status_code == 201:
-                    continue
-                else:
-                    self.logger.error(
-                        f"SentinelOne, Status code: {response.status_code} "
-                        f"Error: {response.json()['errors'][0]['detail']}"
-                    )
+                if not self.handle_error(response):
                     error_occur = True
                     break
 
@@ -277,69 +314,84 @@ class SentinelOnePlugin(PluginBase):
         if site:
             site_id = self._get_site_id(site, url, token)
             if site_id is None:
+                err_msg = f"Could not find the Site {site}"
+                self.logger.error(f"{PLUGIN_NAME}: {err_msg}")
                 return ValidationResult(
-                    success=False, message=f"Could not find the site '{site}'"
+                    success=False,
+                    message=err_msg,
                 )
             params["siteIds"] = site_id
         response = requests.get(
-            f"{url.strip('/')}/web/api/v2.0/threats",
+            f"{url.strip().strip('/')}/web/api/v2.0/threats",
             params=params,
             headers=add_user_agent({"Authorization": f"ApiToken {token}"}),
             proxies=self.proxy,
             verify=self.ssl_validation,
         )
-        if response.status_code == 401:
+
+        if response.status_code == 200:
+            response.json()
             return ValidationResult(
-                success=False, message="Invalid API Token provided."
+                success=True,
+                message="Validation successful.",
             )
+        elif response.status_code == 401:
+            err_msg = "Invalid API Token provided."
+            self.logger.error(
+                f"{PLUGIN_NAME}: Validation error occurred, Error: {err_msg}"
+            )
+            return ValidationResult(success=False, message=err_msg)
         elif response.status_code == 403:
+            err_msg = (
+                f"API Token does not have rights to access the site '{site}'."
+            )
+            self.logger.error(
+                f"{PLUGIN_NAME}: Validation error occurred, Error: {err_msg}"
+            )
+            return ValidationResult(success=False, message=err_msg)
+        else:
+            err_msg = (
+                f"Validation error occurred with response {response.json()}"
+            )
+            self.logger.error(
+                message=f"{PLUGIN_NAME}: Validation error occurred.",
+                details=f"Error Details: {err_msg}",
+            )
             return ValidationResult(
                 success=False,
-                message=f"Provided API Token does not have rights to access the site '{site}'.",
+                message="Authentication Failed. Check logs for more details.",
             )
-        elif response.status_code != 200:
-            return ValidationResult(
-                success=False,
-                message=(
-                    f"Could not validate API credentials. "
-                    f"HTTP status code {response.status_code} occurred."
-                ),
-            )
-        return ValidationResult(success=True, message="Validation successful.")
 
     def validate(self, configuration):
         """Validate the configuration."""
         if (
             "url" not in configuration
             or type(configuration["url"]) != str
-            or not configuration["url"]
+            or not configuration["url"].strip()
         ):
+            err_msg = "Management URL is Required Field."
             self.logger.error(
-                "SentinelOne Plugin: No url key found in the configuration parameters."
+                f"{PLUGIN_NAME}: Validation error occurred, Error: {err_msg}"
             )
-            return ValidationResult(
-                success=False, message="Invalid URL provided."
-            )
+            return ValidationResult(success=False, message=err_msg)
 
         if (
             "token" not in configuration
             or type(configuration["token"]) != str
-            or not configuration["token"]
+            or not configuration["token"].strip()
         ):
+            err_msg = "API Token is Required Field."
             self.logger.error(
-                "SentinelOne Plugin: No token name key found in the configuration parameters."
+                f"{PLUGIN_NAME}: Validation error occurred, Error: {err_msg}"
             )
-            return ValidationResult(
-                success=False, message="Invalid token provided."
-            )
+            return ValidationResult(success=False, message=err_msg)
 
         if "site" not in configuration or type(configuration["site"]) != str:
+            err_msg = "Invalid Site Name Provided."
             self.logger.error(
-                "SentinelOne Plugin: No site name key found in the configuration parameters."
+                f"{PLUGIN_NAME}: Validation error occurred, Error: {err_msg}"
             )
-            return ValidationResult(
-                success=False, message="Invalid site name provided."
-            )
+            return ValidationResult(success=False, message=err_msg)
 
         try:
             if (
@@ -347,36 +399,37 @@ class SentinelOnePlugin(PluginBase):
                 or not configuration["days"]
                 or int(configuration["days"]) <= 0
             ):
+                err_msg = "Invalid Initial Range Provided."
                 self.logger.error(
-                    "SentinelOne Plugin: Validation error occured Error: Invalid days provided."
+                    f"{PLUGIN_NAME}: Validation error occurred, Error: {err_msg}"
                 )
                 return ValidationResult(
                     success=False,
-                    message="Invalid Number of days provided.",
+                    message=err_msg,
                 )
         except ValueError:
+            err_msg = "Invalid Initial Range Provided."
+            self.logger.error(
+                f"{PLUGIN_NAME}: Validation error occurred, Error: {err_msg}"
+            )
             return ValidationResult(
                 success=False,
-                message="Invalid Number of days provided.",
+                message=err_msg,
             )
         try:
             return self._validate_credentials(
-                configuration["url"],
-                configuration["token"],
+                configuration["url"].strip(),
+                configuration["token"].strip(),
                 configuration["site"],
             )
-        except requests.ConnectionError:
+        except Exception as err:
+            self.logger.error(
+                message=f"{PLUGIN_NAME}: Validation error occurred.",
+                details=f"Error Details: {err}",
+            )
             return ValidationResult(
                 success=False,
-                message=f"Could not connect to the URL {configuration['url']}",
-            )
-        except Exception as ex:
-            self.logger.error(
-                "SentinelOne Plugin: Could not validate configuration."
-            )
-            self.logger.error(repr(ex))
-            return ValidationResult(
-                success=False, message="Could not validate the configuration."
+                message="Authentication Failed. Check logs for more details.",
             )
 
     def get_actions(self):

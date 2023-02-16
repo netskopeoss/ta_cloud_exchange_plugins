@@ -1,4 +1,4 @@
 {
     "name": "BitSight Default Mappings",
-    "jsonData": "{\n  \"taxonomy\": {\n    \"alerts\": {},\n    \"events\": {},\n    \"webtx\": {}\n  }\n}"
+    "jsonData": "{\n  \"bitsight_map_version\": \"1.0.1\",\n  \"taxonomy\": {\n    \"json\": {\n      \"events\": {\n        \"application\": [],\n        \"page\": []\n      }\n    }\n  }\n}"
 }

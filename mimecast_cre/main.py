@@ -24,7 +24,7 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
 
-"""Mimecast CRE Plugin."""
+"""Mimecast URE Plugin."""
 
 from typing import List, Dict, Optional
 
@@ -48,6 +48,8 @@ from netskope.integrations.cre.models import (
     ActionWithoutParams,
     Action,
 )
+
+PLUGIN_NAME = "Mimecast URE Plugin"
 
 
 class MimecastPlugin(PluginBase):
@@ -139,7 +141,7 @@ class MimecastPlugin(PluginBase):
         while True:
             groups = requests.post(
                 url=request_url,
-                headers=headers,
+                headers=add_user_agent(headers),
                 data=str(body),
                 proxies=self.proxy,
             )
@@ -170,7 +172,7 @@ class MimecastPlugin(PluginBase):
         request_url, headers = self._get_auth_headers(configuration, endpoint)
         response = requests.post(
             url=request_url,
-            headers=headers,
+            headers=add_user_agent(headers),
             data=str(body),
             proxies=self.proxy,
         )
@@ -197,7 +199,7 @@ class MimecastPlugin(PluginBase):
         body = {"data": [{"emailAddress": user_id, "id": group_id}]}
         request_url, headers = self._get_auth_headers(configuration, endpoint)
         response = requests.post(
-            url=request_url, headers=headers, data=str(body)
+            url=request_url, headers=add_user_agent(headers), data=str(body)
         )
         if response.status_code == 200:
             failures = response.json().get("fail", [])
@@ -228,7 +230,7 @@ class MimecastPlugin(PluginBase):
         body = {"data": [{"emailAddress": user_id, "id": group_id}]}
         request_url, headers = self._get_auth_headers(configuration, endpoint)
         response = requests.post(
-            url=request_url, headers=headers, data=str(body)
+            url=request_url, headers=add_user_agent(headers), data=str(body)
         )
         if response.status_code == 200:
             failures = response.json().get("fail", [])
@@ -269,7 +271,7 @@ class MimecastPlugin(PluginBase):
         while True:
             response = requests.post(
                 url=request_url,
-                headers=headers,
+                headers=add_user_agent(headers),
                 data=str(body),
                 proxies=self.proxy,
             )
@@ -278,12 +280,10 @@ class MimecastPlugin(PluginBase):
             if failures:
                 error = ", ".join(self._parse_errors(failures))
                 self.logger.error(
-                    "Plugin: Mimecast CRE, Unable to fetch users, "
-                    f"Error: {error}"
+                    f"{PLUGIN_NAME}: Unable to fetch users, Error: {error}"
                 )
                 raise HTTPError(
-                    "Plugin: Mimecast CRE, Unable to fetch users, "
-                    f"Error: {error}"
+                    f"{PLUGIN_NAME}: Unable to fetch users, Error: {error}"
                 )
             records = response.get("data", [])
             rec += records
@@ -319,7 +319,7 @@ class MimecastPlugin(PluginBase):
         """
         rec = []
         records = self._get_all_users(False)
-        self.logger.info("Mimecast CRE: Processing users.")
+        self.logger.info(f"{PLUGIN_NAME}: Processing users.")
         for record in records:
             rec.append(
                 Record(
@@ -374,7 +374,7 @@ class MimecastPlugin(PluginBase):
                         Record(uid=key, type=RecordType.USER, score=score)
                     )
             self.logger.info(
-                f"Mimecast CRE: processing scores and normalizing for min value {minvalue} and "
+                f"{PLUGIN_NAME}: processing scores and normalizing for min value {minvalue} and "
                 f"max value {maxvalue}."
             )
         return scored_users
@@ -440,7 +440,7 @@ class MimecastPlugin(PluginBase):
         match = self._find_user_by_email(users, user)
         if match is None:
             self.logger.warn(
-                f"Mimecast CRE: User with email {user} not found on Mimecast."
+                f"{PLUGIN_NAME}: User with email {user} not found on Mimecast."
             )
             return
         if action.value == "generate":
@@ -466,7 +466,7 @@ class MimecastPlugin(PluginBase):
                 action.parameters.get("group"),
             )
             self.logger.info(
-                f"Mimecast CRE: Removed {user} from group with ID {action.parameters.get('group')}."
+                f"{PLUGIN_NAME}: Removed {user} from group with ID {action.parameters.get('group')}."
             )
 
     def validate_action(self, action: Action) -> ValidationResult:
@@ -546,7 +546,7 @@ class MimecastPlugin(PluginBase):
                     None,
                 )
         except requests.ConnectionError as ex:
-            self.logger.error(repr(ex))
+            self.logger.error(f"{PLUGIN_NAME}: {repr(ex)}")
             return (
                 ValidationResult(
                     success=False,
@@ -555,7 +555,7 @@ class MimecastPlugin(PluginBase):
                 None,
             )
         except Exception as ex:
-            self.logger.error(repr(ex))
+            self.logger.error(f"{PLUGIN_NAME}: {repr(ex)}")
             return (
                 ValidationResult(
                     success=False,
@@ -566,13 +566,14 @@ class MimecastPlugin(PluginBase):
 
     def validate(self, configuration: Dict):
         """Validate Mimecast configuration."""
+
         if (
             "url" not in configuration
             or not configuration["url"].strip()
             or type(configuration["url"]) != str
         ):
             self.logger.error(
-                "Mimecast Plugin: Mimecast base URL must be a valid non-empty string."
+                f"{PLUGIN_NAME}: Mimecast base URL must be a valid non-empty string."
             )
             return ValidationResult(
                 success=False,
@@ -585,7 +586,7 @@ class MimecastPlugin(PluginBase):
             or type(configuration["app_id"]) != str
         ):
             self.logger.error(
-                "Mimecast Plugin: Application ID must be a valid non-empty string."
+                f"{PLUGIN_NAME}: Application ID must be a valid non-empty string."
             )
             return ValidationResult(
                 success=False,
@@ -598,7 +599,7 @@ class MimecastPlugin(PluginBase):
             or type(configuration["app_key"]) != str
         ):
             self.logger.error(
-                "Mimecast Plugin: Application Key must be a valid non-empty string."
+                f"{PLUGIN_NAME}: Application Key must be a valid non-empty string."
             )
             return ValidationResult(
                 success=False,
@@ -611,7 +612,7 @@ class MimecastPlugin(PluginBase):
             or type(configuration["access_key"]) != str
         ):
             self.logger.error(
-                "Mimecast Plugin: Access Key must be a valid non-empty string."
+                f"{PLUGIN_NAME}: Access Key must be a valid non-empty string."
             )
             return ValidationResult(
                 success=False,
@@ -630,7 +631,7 @@ class MimecastPlugin(PluginBase):
             )
         ):
             self.logger.error(
-                "Mimecast Plugin: Access Secret must be a valid non-empty string."
+                f"{PLUGIN_NAME}: Access Secret must be a valid non-empty string."
             )
             return ValidationResult(
                 success=False,
@@ -643,7 +644,7 @@ class MimecastPlugin(PluginBase):
 
         if "Awareness Training [1078]" not in packages:
             self.logger.error(
-                "Mimecast Plugin: 'Awareness Training' package is not enabled in "
+                f"{PLUGIN_NAME}: 'Awareness Training' package is not enabled in "
                 "configured account and hence fetching score is not possible."
             )
             return ValidationResult(
@@ -674,56 +675,54 @@ class MimecastPlugin(PluginBase):
                     return resp.json()
                 except ValueError:
                     self.notifier.error(
-                        "Plugin: Mimecast CRE,"
+                        f"{PLUGIN_NAME}: "
                         "Exception occurred while parsing JSON response."
                     )
                     self.logger.error(
-                        "Plugin: Mimecast CRE, "
+                        f"{PLUGIN_NAME}: "
                         "Exception occurred while parsing JSON response."
                     )
             elif resp.status_code == 401:
                 self.notifier.error(
-                    "Plugin: Mimecast CRE, "
+                    f"{PLUGIN_NAME}: "
                     "Received exit code 401, Authentication Error"
                 )
                 self.logger.error(
-                    "Plugin: Mimecast CRE, "
+                    f"{PLUGIN_NAME}: "
                     "Received exit code 401, Authentication Error"
                 )
             elif resp.status_code == 403:
                 self.notifier.error(
-                    "Plugin: Mimecast CRE, "
-                    "Received exit code 403, Forbidden User"
+                    f"{PLUGIN_NAME}: Received exit code 403, Forbidden User"
                 )
                 self.logger.error(
-                    "Plugin: Mimecast CRE, "
-                    "Received exit code 403, Forbidden User"
+                    f"{PLUGIN_NAME}: Received exit code 403, Forbidden User"
                 )
             elif resp.status_code >= 400 and resp.status_code < 500:
                 self.notifier.error(
-                    f"Plugin: Mimecast CRE, "
+                    f"{PLUGIN_NAME}: "
                     f"Received exit code {resp.status_code}, HTTP client Error"
                 )
                 self.logger.error(
-                    f"Plugin: Mimecast CRE, "
+                    f"{PLUGIN_NAME}: "
                     f"Received exit code {resp.status_code}, HTTP client Error"
                 )
             elif resp.status_code >= 500 and resp.status_code < 600:
                 self.notifier.error(
-                    f"Plugin: Mimecast CRE, "
+                    f"{PLUGIN_NAME}: "
                     f"Received exit code {resp.status_code}, HTTP server Error"
                 )
                 self.logger.error(
-                    f"Plugin: Mimecast CRE, "
+                    f"{PLUGIN_NAME}: "
                     f"Received exit code {resp.status_code}, HTTP server Error"
                 )
             else:
                 self.notifier.error(
-                    f"Plugin: Mimecast CRE, "
+                    f"{PLUGIN_NAME}: "
                     f"Received exit code {resp.status_code}, HTTP Error"
                 )
                 self.logger.error(
-                    f"Plugin: Mimecast CRE, "
+                    f"{PLUGIN_NAME}: "
                     f"Received exit code {resp.status_code}, HTTP Error"
                 )
             resp.raise_for_status()

@@ -1,11 +1,11 @@
 {
     "name": "Microsoft Azure AD",
-    "description": "Fetches users and user scores and performs actions for members in group/groups. \n\n CRE score calculation => RiskLevel None: N/A, RiskLevel hidden: N/A, RiskLevel unknownFutureValue: N/A, RiskLevel low: 875, RiskLevel medium: 625, RiskLevel high: 375.",
+    "description": "Fetches users and user scores and performs actions for members in group/groups. \n\n URE score calculation => RiskLevel None: N/A, RiskLevel hidden: N/A, RiskLevel unknownFutureValue: N/A, RiskLevel low: 875, RiskLevel medium: 625, RiskLevel high: 375.",
     "id": "microsoft_azure_AD",
     "type": [
         "user"
     ],
-    "version": "1.1.0",
+    "version": "1.1.2",
     "configuration": [
         {
             "label": "Client (Application) ID",

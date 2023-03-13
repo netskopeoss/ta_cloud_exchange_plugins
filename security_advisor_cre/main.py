@@ -30,7 +30,7 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
 
-"""Security Advisor CRE plugin."""
+"""Security Advisor URE plugin."""
 
 
 from typing import List, Dict
@@ -44,6 +44,8 @@ from netskope.integrations.cre.models import (
     ActionWithoutParams,
     Action,
 )
+
+PLUGIN_NAME = "Security Advisor URE Plugin"
 
 
 class SecurityAdvisorPlugin(PluginBase):
@@ -66,7 +68,7 @@ class SecurityAdvisorPlugin(PluginBase):
                 proxies=self.proxy,
             )
             users_resp_json = self.handle_error(users)
-            self.logger.info("Security Advisor CRE: Processing users.")
+            self.logger.info(f"{PLUGIN_NAME}: Processing users.")
             users = users_resp_json["results"]
             for user in users:
                 res.append(
@@ -97,7 +99,7 @@ class SecurityAdvisorPlugin(PluginBase):
             )
             users.raise_for_status()
             users_resp_json = self.handle_error(users)
-            self.logger.info("Security Advisor CRE: processing scores.")
+            self.logger.info(f"{PLUGIN_NAME}: processing scores.")
             users = users_resp_json["results"]
             for user in users:
                 for re in res:
@@ -117,7 +119,7 @@ class SecurityAdvisorPlugin(PluginBase):
                     Record(uid=key, type=RecordType.USER, score=score)
                 )
             self.logger.info(
-                f"Security Advisor CRE: processing scores and normalizing for min value {minvalue} and "
+                f"{PLUGIN_NAME}: processing scores and normalizing for min value {minvalue} and "
                 f"max value {maxvalue}."
             )
         return scored_users
@@ -130,13 +132,14 @@ class SecurityAdvisorPlugin(PluginBase):
 
     def validate(self, configuration: Dict):
         """Validate Netskope configuration."""
+
         page = 1
         if (
             "base_url" not in configuration
             or not configuration["base_url"].strip()
         ):
             self.logger.error(
-                "Security Advisor CRE: Invalid Security Advisor configuration, URL required."
+                f"{PLUGIN_NAME}: Invalid Security Advisor configuration, URL required."
             )
             return ValidationResult(
                 success=False, message="BASE URL not provided."
@@ -144,7 +147,7 @@ class SecurityAdvisorPlugin(PluginBase):
 
         if "API_token" not in configuration or not configuration["API_token"]:
             self.logger.error(
-                "Security Advisor CRE: API Token not provided, token required."
+                f"{PLUGIN_NAME}: API Token not provided, token required."
             )
             return ValidationResult(
                 success=False, message="API token not provided."
@@ -173,7 +176,7 @@ class SecurityAdvisorPlugin(PluginBase):
                     message="Error occurred while validating Security Advisor details.",
                 )
             self.logger.error(
-                f"Security Advisor CRE: Could not validate details. "
+                f"{PLUGIN_NAME}: Could not validate details. "
                 f"Status code: {groups.status_code}, Response: {groups.text}"
             )
             return ValidationResult(
@@ -217,56 +220,54 @@ class SecurityAdvisorPlugin(PluginBase):
                 return resp.json()
             except ValueError:
                 self.notifier.error(
-                    "Plugin: Security Advisor CRE,"
+                    f"{PLUGIN_NAME}: "
                     "Exception occurred while parsing JSON response."
                 )
                 self.logger.error(
-                    "Plugin: Security Advisor CRE, "
+                    f"{PLUGIN_NAME}: "
                     "Exception occurred while parsing JSON response."
                 )
         elif resp.status_code == 401:
             self.notifier.error(
-                "Plugin: Security Advisor CRE, "
+                f"{PLUGIN_NAME}: "
                 "Received exit code 401, Authentication Error"
             )
             self.logger.error(
-                "Plugin: Security Advisor CRE, "
+                f"{PLUGIN_NAME}: "
                 "Received exit code 401, Authentication Error"
             )
         elif resp.status_code == 403:
             self.notifier.error(
-                "Plugin: Security Advisor CRE, "
-                "Received exit code 403, Forbidden User"
+                f"{PLUGIN_NAME}: Received exit code 403, Forbidden User"
             )
             self.logger.error(
-                "Plugin: Security Advisor CRE, "
-                "Received exit code 403, Forbidden User"
+                f"{PLUGIN_NAME}: Received exit code 403, Forbidden User"
             )
         elif resp.status_code >= 400 and resp.status_code < 500:
             self.notifier.error(
-                f"Plugin: Security Advisor CRE, "
+                f"{PLUGIN_NAME}: "
                 f"Received exit code {resp.status_code}, HTTP client Error"
             )
             self.logger.error(
-                f"Plugin: Security Advisor CRE, "
+                f"{PLUGIN_NAME}: "
                 f"Received exit code {resp.status_code}, HTTP client Error"
             )
         elif resp.status_code >= 500 and resp.status_code < 600:
             self.notifier.error(
-                f"Plugin: Security Advisor CRE, "
+                f"{PLUGIN_NAME}: "
                 f"Received exit code {resp.status_code}, HTTP server Error"
             )
             self.logger.error(
-                f"Plugin: Security Advisor CRE, "
+                f"{PLUGIN_NAME}: "
                 f"Received exit code {resp.status_code}, HTTP server Error"
             )
         else:
             self.notifier.error(
-                f"Plugin: Security Advisor CRE, "
+                f"{PLUGIN_NAME}: "
                 f"Received exit code {resp.status_code}, HTTP Error"
             )
             self.logger.error(
-                f"Plugin: Security Advisor CRE, "
+                f"{PLUGIN_NAME}: "
                 f"Received exit code {resp.status_code}, HTTP Error"
             )
         resp.raise_for_status()

@@ -1,0 +1,58 @@
+{
+    "name": "LDAP",
+    "description": "LDAP plugin performs actions like Add to group and Remove from group on users.",
+    "id": "ldap",
+    "type": [],
+    "netskope": false,
+    "version": "1.0.0",
+    "configuration": [
+        {
+            "label": "Server Address",
+            "key": "server",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "LDAP Server Address IP or DNS."
+        },
+        {
+            "label": "Port",
+            "key": "port",
+            "type": "number",
+            "default": "",
+            "mandatory": true,
+            "description": "LDAP Server Port."
+        },
+        {
+            "label": "Username",
+            "key": "username",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "LDAP Username."
+        },
+        {
+            "label": "Password",
+            "key": "password",
+            "type": "password",
+            "default": "",
+            "mandatory": true,
+            "description": "LDAP Password."
+        },
+        {
+            "label": "Search Base",
+            "key": "search_base",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "Base path for searching users and perform actions on them."
+        },
+        {
+            "label": "LDAP Certificate",
+            "key": "ldap_certificate",
+            "type": "textarea",
+            "default": "",
+            "mandatory": false,
+            "description": "Certificate is only required for TLS protocol."
+        }
+    ]
+}

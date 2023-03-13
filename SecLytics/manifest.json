@@ -1,0 +1,78 @@
+{
+  "name": "SecLytics",
+  "id": "seclytics",
+  "version": "1.0.0",
+  "description": "This plugin will collect URL, IP, and CIDR indicators from the SecLytics BulkAPI.",
+  "patch_supported": false,
+  "push_supported": false,
+  "configuration": [
+    {
+      "label": "Custom Endpoint",
+      "key": "custom_endpoint",
+      "type": "text",
+      "default": "",
+      "mandatory": false,
+      "description": "The path to your custom endpoint e.g. predictions-dump-d.json.gz."
+    },
+    {
+      "label": "Type of Threat data",
+      "key": "threat_data_type",
+      "type": "multichoice",
+      "choices": [
+        {
+          "key": "URL",
+          "value": "url"
+        },
+        {
+          "key": "IP Address",
+          "value": "ip"
+        },
+        {
+          "key": "CIDR Blocks",
+          "value": "cidr"
+        }
+      ],
+      "default": ["url", "ip", "cidr"],
+      "mandatory": true,
+      "description": "Types of threat data to pull from the custom/default endpoint. Only indicators with matching types will be saved."
+    },
+    {
+      "label": "Access Token",
+      "key": "access_token",
+      "type": "password",
+      "mandatory": true,
+      "default": "",
+      "description": "The SecLytics access token with permission to access the BulkAPI"
+    },
+    {
+      "label": "Initial Range (in days)",
+      "key": "lookback",
+      "type": "number",
+      "mandatory": true,
+      "default": 7,
+      "description": "Number of days to pull the data for the initial run."
+    },
+    {
+      "label": "Severity",
+      "key": "severity",
+      "type": "multichoice",
+      "choices": [
+        {
+          "key": "High",
+          "value": "high"
+        },
+        {
+          "key": "Medium",
+          "value": "medium"
+        },
+        {
+          "key": "Low",
+          "value": "low"
+        }
+      ],
+      "mandatory": false,
+      "default": ["high", "medium"],
+      "description": "IP indicators of the selected severity level(s) will be pulled. Only applicable when you select IP in Type of Threat data."
+    }
+  ]
+}

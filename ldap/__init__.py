@@ -1,0 +1,1 @@
+"""LDAP URE Plugin."""

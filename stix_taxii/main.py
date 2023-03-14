@@ -176,7 +176,11 @@ class STIXTAXIIPlugin(PluginBase):
                 if not properties:
                     is_skipped = True
                     continue
-                if type(properties) is File and properties.hashes and properties.hashes.md5:
+                if (
+                    type(properties) is File
+                    and properties.hashes
+                    and properties.hashes.md5
+                ):
                     indicators.append(
                         Indicator(
                             value=str(properties.hashes.md5),
@@ -189,7 +193,11 @@ class STIXTAXIIPlugin(PluginBase):
                             ),
                         )
                     )
-                elif type(properties) is File and properties.hashes and properties.hashes.sha256:
+                elif (
+                    type(properties) is File
+                    and properties.hashes
+                    and properties.hashes.sha256
+                ):
                     indicators.append(
                         Indicator(
                             value=str(properties.hashes.sha256),
@@ -202,7 +210,9 @@ class STIXTAXIIPlugin(PluginBase):
                             ),
                         )
                     )
-                elif type(properties) in [URI, DomainName] and properties.value:
+                elif (
+                    type(properties) in [URI, DomainName] and properties.value
+                ):
                     indicators.append(
                         Indicator(
                             value=str(properties.value),
@@ -231,7 +241,11 @@ class STIXTAXIIPlugin(PluginBase):
             if not properties:
                 is_skipped = True
                 continue
-            if type(properties) is File and properties.hashes and properties.hashes.md5:
+            if (
+                type(properties) is File
+                and properties.hashes
+                and properties.hashes.md5
+            ):
                 indicators.append(
                     Indicator(
                         value=str(properties.hashes.md5),
@@ -240,7 +254,11 @@ class STIXTAXIIPlugin(PluginBase):
                         comments=str(observable.description or ""),
                     )
                 )
-            elif type(properties) is File and properties.hashes and properties.hashes.sha256:
+            elif (
+                type(properties) is File
+                and properties.hashes
+                and properties.hashes.sha256
+            ):
                 indicators.append(
                     Indicator(
                         value=str(properties.hashes.sha256),
@@ -294,12 +312,10 @@ class STIXTAXIIPlugin(PluginBase):
             client.set_auth(
                 username=configuration["username"].strip(),
                 password=configuration["password"],
-                verify_ssl=self.ssl_validation
+                verify_ssl=self.ssl_validation,
             )
         else:
-            client.set_auth(
-                verify_ssl=self.ssl_validation
-            )
+            client.set_auth(verify_ssl=self.ssl_validation)
         return client
 
     def _get_collections(self, client):
@@ -345,7 +361,9 @@ class STIXTAXIIPlugin(PluginBase):
                     temp.write(block.content)
                     temp.seek(0)
                     stix_package = STIXPackage.from_xml(temp)
-                    extracted, is_skipped = self._extract_indicators(stix_package)
+                    extracted, is_skipped = self._extract_indicators(
+                        stix_package
+                    )
                     indicators += extracted
                     if is_skipped is True:
                         self.logger.info(
@@ -393,7 +411,7 @@ class STIXTAXIIPlugin(PluginBase):
                     observables.append(
                         Indicator(value=match[1], type=kind["type"], **data)
                     )
-        return observables, not(is_skipped)
+        return observables, not (is_skipped)
 
     def _extract_indicators_2x(self, objects):
         indicators = []
@@ -509,15 +527,21 @@ class STIXTAXIIPlugin(PluginBase):
                 # if there is no data in a collection
                 pass
         return indicators
-    
+
     def _pull(self, configuration, last_run_at):
+        delay_config = configuration.get("delay", 0) or 0
+        delay_time = int(delay_config)
         if not last_run_at:
             start_time = pytz.utc.localize(
-                datetime.now()
-                - timedelta(days=int(configuration["days"]))
+                datetime.now() - timedelta(days=int(configuration["days"]))
             )
         else:
             start_time = pytz.utc.localize(last_run_at)
+
+        start_time = start_time - timedelta(minutes=delay_time)
+        self.logger.info(
+            f"Plugin STIX/TAXII: Start time for the pull cycle - {start_time} (UTC)"
+        )
         if configuration["version"] == "1":
             indicators = self.pull_1x(configuration, start_time)
         elif configuration["version"] == "2.0":
@@ -582,15 +606,13 @@ class STIXTAXIIPlugin(PluginBase):
                 success=True, message="Validated successfully."
             )
         except requests.exceptions.RequestException as ex:
-                self.logger.error(
-                    f"Plugin STIX/TAXII: {repr(ex)}"
-                )
-                return ValidationResult(
-                    success=False,
-                    message="Exception occurred while connecting to the the server. Check logs"
-                )
+            self.logger.error(f"Plugin STIX/TAXII: {repr(ex)}")
+            return ValidationResult(
+                success=False,
+                message="Exception occurred while connecting to the the server. Check logs",
+            )
         except exceptions.UnsuccessfulStatusError as ex:
-            if ex.status == 'UNAUTHORIZED':
+            if ex.status == "UNAUTHORIZED":
                 self.logger.error(f"Plugin STIX/TAXII: {repr(ex)}")
                 return ValidationResult(
                     success=False,
@@ -607,20 +629,18 @@ class STIXTAXIIPlugin(PluginBase):
                 success=False,
                 message="Could not fetch the collection list from the server. Check all of the parameters.",
             )
-    
+
     def _validate_uname_pass(self, configuration):
         try:
             self._pull(configuration, datetime.now())
         except requests.exceptions.RequestException as ex:
-                self.logger.error(
-                    f"Plugin STIX/TAXII: {repr(ex)}"
-                )
-                return ValidationResult(
-                    success=False,
-                    message="Exception occurred while connecting to the the server. Check logs"
-                )
+            self.logger.error(f"Plugin STIX/TAXII: {repr(ex)}")
+            return ValidationResult(
+                success=False,
+                message="Exception occurred while connecting to the the server. Check logs",
+            )
         except exceptions.UnsuccessfulStatusError as ex:
-            if ex.status == 'UNAUTHORIZED':
+            if ex.status == "UNAUTHORIZED":
                 self.logger.error(f"Plugin STIX/TAXII: {repr(ex)}")
                 return ValidationResult(
                     success=False,
@@ -722,15 +742,35 @@ class STIXTAXIIPlugin(PluginBase):
                 success=False,
                 message="Invalid Number of days provided.",
             )
-        
+
+        try:
+            delay_config = configuration.get("delay", 0) or 0
+            if not (0 <= int(delay_config) <= 1440):
+                self.logger.error(
+                    "Plugin STIX/TAXII: Validation error occured Error: Invalid Look Back provided. Valid value is anything between 0 to 1440"
+                )
+                return ValidationResult(
+                    success=False,
+                    message="Invalid Look Back value provided.",
+                )
+        except Exception as exp:
+            self.logger.error(
+                message="Plugin STIX/TAXII: Validation error occured Error: Invalid Look Back provided. Valid value is anything between 0 to 1440",
+                details=str(exp),
+            )
+            return ValidationResult(
+                success=False,
+                message="Invalid Look Back value provided.",
+            )
+
         validate_collections = self._validate_collections(configuration)
         validate_uname_pass = self._validate_uname_pass(configuration)
-        
+
         if validate_collections.success == False:
             return validate_collections
         elif validate_uname_pass.success == False:
             return validate_uname_pass
-        
+
         return ValidationResult(
             success=True, message="Validated successfully."
         )

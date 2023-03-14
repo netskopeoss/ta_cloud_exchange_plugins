@@ -1,3 +1,11 @@
+# 2.0.2
+
+## Fixed
+- Fixed transformation to convert the data into the valid UDM format.
+
+## Removed
+- Removed justification_type and justification_reason from mappings.
+
 # 2.0.1
 ## Changed
 - Changed plugin name to Google Chronicle.

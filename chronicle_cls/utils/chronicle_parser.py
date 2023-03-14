@@ -74,6 +74,17 @@ class UDMParser(object):
         self.data_type = data_type
         self.subtype = subtype
 
+    def convert_str_to_list(self, values):
+        """Converter method."""
+        out = []
+        values = values or []
+        if isinstance(values, str) and values != "":
+            values = values.split(",")
+        for val in values:
+            if "@" in val.strip():
+                out.append(val.strip())
+        return out
+
     def parse_data(self):
         try:
             severity = self.data.get("severity", "")
@@ -149,16 +160,16 @@ class UDMParser(object):
             url = self.data.get("url", "")
             hostname = self.data.get("hostname", "")
             srcip = self.data.get("srcip", "")
-            dstip = self.data.get("dstip", "")
+            # dstip = self.data.get("dstip", "")
             if self.pairs["metadata.event_type"] != "EMAIL_UNCATEGORIZED":
                 if url == "" or (hostname == "" and srcip == ""):
                     self.pairs["metadata.event_type"] = "GENERIC_EVENT"
                     self.pairs["metadata.description"] = json.dumps(self.data)
 
-            if srcip != "":
-                self.pairs["principal.ip"] = srcip
-            if dstip != "":
-                self.pairs["target.ip"] = dstip
+            # if srcip != "":
+            #     self.pairs["principal.ip"] = srcip
+            # if dstip != "":
+            #     self.pairs["target.ip"] = dstip
 
             e_type = self.data.get("type", "")
             if e_type == "connection":
@@ -206,7 +217,8 @@ class UDMParser(object):
 
         try:
             from_user = self.data.get("from_user", "")
-            if from_user != "" and "@" in from_user:
+            from_user = self.convert_str_to_list(from_user)
+            if len(from_user):
                 self.pairs["principal.user.email_addresses"] = from_user
         except Exception as e:
             self.logger.warn(
@@ -269,17 +281,11 @@ class UDMParser(object):
         # Parse shared_with array field
         try:
             shared_with = self.data.get("shared_with", None)
-            if shared_with is not None:
-                if isinstance(shared_with, str):
-                    shared_with = [shared_with]
-                shared_with_users = []
-                for x in shared_with:
-                    if "@" in x:
-                        shared_with_users.append(x)
-                if shared_with_users != []:
-                    self.pairs[
-                        "intermediary.user.email_addresses"
-                    ] = shared_with_users
+            shared_with = self.convert_str_to_list(shared_with)
+            if len(shared_with):
+                self.pairs[
+                    "intermediary.user.email_addresses"
+                ] = shared_with
         except Exception as e:
             self.logger.warn(
                 f"[{self.data_type}][{self.subtype}]: An error occurred while generating "
@@ -307,7 +313,8 @@ class UDMParser(object):
 
         try:
             user = self.data.get("user", "")
-            if user != "" and "@" in user:
+            user = self.convert_str_to_list(user)
+            if len(user):
                 self.pairs["principal.user.email_addresses"] = user
         except Exception as e:
             self.logger.warn(

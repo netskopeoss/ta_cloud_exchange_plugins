@@ -1,9 +1,11 @@
 {
   "name": "Mimecast",
   "id": "mimecast",
-  "version": "1.0.0",
-  "description": "Fetch user risk score from Mimecast portal and perform actions on users.",
-  "type": ["user"],
+  "version": "1.0.2",
+  "description": "Fetch user risk score from Mimecast portal and perform actions on users. \n\n URE score calculation => Grade A: 800, Grade B: 600, Grade C: 400, Grade D: 200, Grade F: 1.",
+  "type": [
+    "user"
+  ],
   "netskope": false,
   "configuration": [
     {

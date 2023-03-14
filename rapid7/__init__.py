@@ -1,1 +1,1 @@
-"""Rapid7 plugin."""
+"""Rapid7 CLS plugin."""

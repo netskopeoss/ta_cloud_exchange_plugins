@@ -1,3 +1,9 @@
+# 2.1.0
+## Added
+ - Added Incident type event in the mappings.
+## Updated
+ - Updated log messages for better understanding.
+
 # 2.0.1
 ## Added
 - Added Incident ID mapping field in all alerts and events.

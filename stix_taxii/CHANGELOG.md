@@ -1,3 +1,6 @@
+# 2.1.0
+## Added
+- Added new configuration parameter named Look Back. This can be used to backdate the start time for pulling the data.
 # 2.0.3
 ## Added
 - Added changes to make the plugin compatible with the core version 4.1.0.

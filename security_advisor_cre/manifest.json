@@ -1,12 +1,12 @@
 {
     "name": "Security Advisor",
-    "description": "Fetch Behaviour score of users from your Security Advisor instance.",
+    "description": "Fetch Behaviour score of users from your Security Advisor instance. \n\n URE score calculation => (((user behaviour score - min of user's behaviour score) / (max of user's behaviour score - min of user's behaviour score)) * 999) + 1.",
     "id": "security_advisor_cre",
     "type": [
         "user"
     ],
     "netskope": false,
-    "version": "1.0.0",
+    "version": "1.0.2",
     "configuration": [
         {
             "label": "Base URL",

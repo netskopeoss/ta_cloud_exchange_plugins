@@ -29,7 +29,7 @@ CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
-"""BeyondCorp CRE plugin."""
+"""BeyondCorp URE plugin."""
 import json
 from typing import Dict, List
 
@@ -49,6 +49,8 @@ from netskope.integrations.cre.plugin_base import PluginBase, ValidationResult
 SCOPES = ["https://www.googleapis.com/auth/cloud-identity.devices"]
 BASE_URL = "https://cloudidentity.googleapis.com/v1"
 PARTNER_ID = "616b839f-3f79-4d49-a3e6-f8ec620c84f2"
+
+PLUGIN_NAME = "BeyondCorp URE Plugin"
 
 
 class BeyondCorpPlugin(PluginBase):
@@ -168,7 +170,7 @@ class BeyondCorpPlugin(PluginBase):
                     score_range_to_share = score.range
             if not found:
                 self.logger.error(
-                    f"BeyondCorp: Could not share plugin score as CRE configuration "
+                    f"{PLUGIN_NAME}: Could not share plugin score as URE configuration "
                     f"{action.parameters.get('configuration')} might not exist or "
                     f"has not provided score for {record.uid}."
                 )
@@ -206,12 +208,12 @@ class BeyondCorpPlugin(PluginBase):
             customer_id = customer_id[1:]
         if not users:
             self.logger.warn(
-                f"BeyondCorp: User with email {record.uid} does not exist on BeyondCorp."
+                f"{PLUGIN_NAME}: User with email {record.uid} does not exist on BeyondCorp."
             )
             return
         for user in users:
             self.logger.info(
-                f"BeyondCorp: Updating client state for user {record.uid}."
+                f"{PLUGIN_NAME}: Updating client state for user {record.uid}."
             )
             response = requests.patch(
                 f"{BASE_URL}/{user}/clientStates/{PARTNER_ID}",
@@ -354,7 +356,7 @@ class BeyondCorpPlugin(PluginBase):
             )
             response.raise_for_status()
         except Exception as ex:
-            self.logger.error(f"BeyondCorp: {repr(ex)}")
+            self.logger.error(f"{PLUGIN_NAME}: {repr(ex)}")
             return ValidationResult(
                 success=False,
                 message="Error occurred while validating credentials.",

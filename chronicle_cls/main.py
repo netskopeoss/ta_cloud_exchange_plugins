@@ -657,21 +657,20 @@ class ChroniclePlugin(PluginBase):
                 udm_version,
                 self.logger,
             )
+            # First retrieve the mapping of subtype being transformed
+            try:
+                subtype_mapping = self.get_subtype_mapping(
+                    chronicle_mappings[data_type], subtype
+                )
+            except Exception as err:
+                self.logger.error(
+                    f"Error occurred while retrieving mappings for subtype"
+                    f" '{subtype}'. Transformation of current record will be"
+                    f" skipped. Exception: {err}"
+                )
+                raise
 
             for data in raw_data:
-                # First retrieve the mapping of subtype being transformed
-                try:
-                    subtype_mapping = self.get_subtype_mapping(
-                        chronicle_mappings[data_type], subtype
-                    )
-                except Exception:
-                    self.logger.error(
-                        f"Error occurred while retrieving mappings for subtype"
-                        f" '{subtype}'. Transformation of current record will be"
-                        f" skipped."
-                    )
-                    continue
-
                 # Generating the UDM header
                 try:
                     header = self.get_headers(

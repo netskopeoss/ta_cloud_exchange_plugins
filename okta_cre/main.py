@@ -30,7 +30,7 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
 
-"""Okta CRE plugin."""
+"""Okta URE plugin."""
 
 
 from typing import List, Dict, Optional
@@ -50,6 +50,8 @@ from netskope.integrations.cre.models import (
     ActionWithoutParams,
     Action,
 )
+
+PLUGIN_NAME = "Okta URE Plugin"
 
 
 class OktaPlugin(PluginBase):
@@ -272,7 +274,7 @@ class OktaPlugin(PluginBase):
         body = {
             "profile": {
                 "name": name,
-                "description": "Created From Netskop CRE",
+                "description": "Created From Netskop URE",
             }
         }
         headers = {
@@ -301,7 +303,7 @@ class OktaPlugin(PluginBase):
         match = self._find_user_by_email(users, user)
         if match is None:
             self.logger.warn(
-                f"Okta CRE: User with email {user} not found on Okta."
+                f"{PLUGIN_NAME}: User with email {user} not found on Okta."
             )
             return
         if action.value == "add":
@@ -321,7 +323,7 @@ class OktaPlugin(PluginBase):
                 self.configuration, match["id"], action.parameters.get("group")
             )
             self.logger.info(
-                f"Okta CRE: Removed {user} from group with ID {action.parameters.get('group')}."
+                f"{PLUGIN_NAME}: Removed {user} from group with ID {action.parameters.get('group')}."
             )
 
     def get_action_fields(self, action: Action) -> List:
@@ -423,10 +425,11 @@ class OktaPlugin(PluginBase):
                 )
         except Exception as err:
             self.logger.error(
-                f"Okta CRE: Error occured while authentication. {err}"
+                f"{PLUGIN_NAME}: Error occured while authentication. {err}"
             )
         return ValidationResult(
-            success=False, message="Invalid Okta domain or API Token. check logs."
+            success=False,
+            message="Invalid Okta domain or API Token. check logs.",
         )
 
     def validate_okta_domain(self, url: str):
@@ -439,13 +442,14 @@ class OktaPlugin(PluginBase):
 
     def validate(self, configuration: Dict):
         """Validate Okta configuration."""
+
         if (
             "url" not in configuration
             or not configuration["url"].strip()
             or not self._validate_url(configuration["url"])
             or not self.validate_okta_domain(configuration["url"].strip())
         ):
-            self.logger.error("Okta CRE: Invalid Okta domain provided.")
+            self.logger.error(f"{PLUGIN_NAME}: Invalid Okta domain provided.")
             return ValidationResult(
                 success=False, message="Invalid Okta domain provided."
             )
@@ -454,7 +458,7 @@ class OktaPlugin(PluginBase):
             "api_token" not in configuration
             or not configuration["api_token"].strip()
         ):
-            self.logger.error("Okta CRE: API Token should not be empty.")
+            self.logger.error(f"{PLUGIN_NAME}: API Token should not be empty.")
             return ValidationResult(
                 success=False,
                 message="API Token should not be empty.",

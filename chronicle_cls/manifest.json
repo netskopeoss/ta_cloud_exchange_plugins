@@ -2,7 +2,7 @@
   "name": "Google Chronicle",
   "id": "chronicle",
   "version": "2.0.2",
-  "mapping": "Chronicle Default Mappings Beta",
+  "mapping": "Chronicle Default Mappings",
   "description": "This plugin is used to deliver alerts and events data to Google Chronicle platform, The required API keys are linked to customers and are provided by your Google Chronicle representative.",
   "types": [
     "events",

@@ -1,14 +1,14 @@
 {
-    "name": "Azure Sentinel",
+    "name": "Microsoft Azure Sentinel",
     "id": "azure_sentinel",
-    "version": "2.0.0",
+    "version": "2.0.1",
     "mapping": "Azure Sentinel Default Mappings",
     "types": [
         "alerts",
         "events",
         "webtx"
     ],
-    "description": "This plugin is used to ingest data to Azure Sentinel platform. To access the plugin, you would need the Log Analytics Workspace on Azure Sentinel platform.",
+    "description": "This plugin is used to ingest data to Microsoft Azure Sentinel platform. To access the plugin, you would need the Log Analytics Workspace on Microsoft Azure Sentinel platform.",
     "configuration": [
         {
             "label": "Workspace ID",

@@ -1,0 +1,33 @@
+{
+    "name": "ServiceNow Application Risk Exchange",
+    "id": "servicenow",
+    "version": "1.0.0",
+    "description": "ServiceNow plugin provides a mechanism to send the application data of Netskope tenant to the Companies table (core_company) for risk analysis.",
+    "patch_supported": true,
+    "configuration": [
+        {
+            "label": "ServiceNow Instance URL",
+            "key": "url",
+            "type": "text",
+            "mandatory": true,
+            "default": "",
+            "description": "ServiceNow Instance URL (e.g. https://<INSTANCE_NAME>.service-now.com)."
+        },
+        {
+            "label": "Username",
+            "key": "username",
+            "type": "text",
+            "mandatory": true,
+            "default": "",
+            "description": "The ServiceNow user having access to read the Companies (core_company) table."
+        },
+        {
+            "label": "Password",
+            "key": "password",
+            "type": "password",
+            "mandatory": true,
+            "default": "",
+            "description": "Instance Password."
+        }
+    ]
+}

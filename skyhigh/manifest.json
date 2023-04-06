@@ -1,0 +1,26 @@
+{
+    "name": "Skyhigh CASB Published URL",
+    "id": "skyhigh",
+    "version": "1.0.0",
+    "description": "This plugin is used to fetch URLs, FQDN, and IP Addresses from the Skyhigh CASB Published URL. This plugin does not support pushing indicators to Skyhigh.",
+    "patch_supported": true,
+    "push_supported": false,
+    "configuration": [
+        {
+            "label": "Skyhigh CASB Published URL",
+            "key": "url",
+            "type": "text",
+            "mandatory": true,
+            "default": "",
+            "description": "Skyhigh CASB Published URL."
+        },
+        {
+            "label": "Category",
+            "key": "category",
+            "type": "text",
+            "default": "",
+            "mandatory": false,
+            "description": "Add one or more categories (comma-separated) to pull the data from. Keep blank to pull all data."
+        }
+    ]
+}

@@ -49,6 +49,7 @@ from netskope.integrations.grc.plugin_base import (
 
 MAX_RETRY_COUNT = 4
 PLUGIN_NAME = "BitSight ARE Plugin"
+BASE_URL = "https://api.thirdpartytrust.com"
 
 
 class BitSightARE(PluginBase):
@@ -90,7 +91,7 @@ class BitSightARE(PluginBase):
         """To pull data from BitSight."""
         try:
             config = self.configuration
-            url = f"{config['url'].strip('/')}/api/v2/connections.inactives"
+            url = f"{BASE_URL}/api/v2/connections.inactives"
             results = self.api_call_helper(url, method="get")
             return results
 
@@ -231,7 +232,7 @@ class BitSightARE(PluginBase):
             payload = json.dumps({"notes": notes})
             try:
                 _ = self.api_call_helper(
-                    f"{config['url'].strip('/')}/api/tier/{vendor_id}/note",
+                    f"{BASE_URL}/api/tier/{vendor_id}/note",
                     method="post",
                     data=payload,
                 )
@@ -271,18 +272,6 @@ class BitSightARE(PluginBase):
         Returns:
             cte.plugin_base.ValidateResult: ValidateResult object with success flag and message.
         """
-        self.logger.info(
-            f"{PLUGIN_NAME}: Executing validate method for BitSight plugin."
-        )
-        if "url" not in data or not data["url"] or type(data["url"]) != str:
-            self.logger.error(
-                f"{PLUGIN_NAME}: Validation error occured Error:"
-                " Invalid BitSight instance URL provided."
-            )
-            return ValidationResult(
-                success=False,
-                message="Invalid BitSight Instance URL provided.",
-            )
 
         if (
             "api_key" not in data
@@ -290,7 +279,7 @@ class BitSightARE(PluginBase):
             or type(data["api_key"]) != str
         ):
             self.logger.error(
-                f"{PLUGIN_NAME}: Validation error occured Error:"
+                f"{PLUGIN_NAME}: Validation error occurred Error:"
                 " Invalid api_key provided."
             )
             return ValidationResult(
@@ -301,11 +290,12 @@ class BitSightARE(PluginBase):
         try:
             headers = {"Authorization": f"Token {data['api_key']}"}
             response = requests.get(
-                f"{data['url'].strip('/')}/api/v2/connections.inactives",
+                f"{BASE_URL}/api/v2/connections.inactives",
                 verify=self.ssl_validation,
                 proxies=self.proxy,
                 headers=add_user_agent(headers),
             )
+            response.json()
             if response.status_code in [401, 403]:
                 self.logger.error(
                     f"{PLUGIN_NAME}: HTTP request returned with status "
@@ -336,7 +326,7 @@ class BitSightARE(PluginBase):
 
         return ValidationResult(
             success=True,
-            message="Validation successfull for BitSight plugin",
+            message=f"Validation successful for {PLUGIN_NAME}",
         )
 
     def handle_response(self, resp):

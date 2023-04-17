@@ -28,10 +28,9 @@ SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
 CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+Microsoft Azure Sentinel Validator.
 """
-
-"""Sentinel Validator."""
-
 
 from jsonschema import validate
 from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
@@ -40,15 +39,17 @@ from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
 class AzureSentinelValidator(object):
     """AzureSentinelValidator class."""
 
-    def __init__(self, logger):
+    def __init__(self, logger, log_prefix):
         """Initialize."""
         super().__init__()
         self.logger = logger
+        self.log_prefix = log_prefix
 
     def validate_mappings(self, mappings):
         """Read the given mapping string and validates its schema.
 
-        :param mappings: The mapping string for which the schema is to be validated
+        :param mappings: The mapping string for which the schema is to be
+        validated
         :return: True in case of valid schema, False otherwise
         """
         # schema for mappings
@@ -66,11 +67,11 @@ class AzureSentinelValidator(object):
                                         ".*": {
                                             "type": "array",
                                         }
-                                    }
+                                    },
                                 }
                             }
-                        }               
-                    }
+                        }
+                    },
                 }
             },
         }
@@ -81,8 +82,7 @@ class AzureSentinelValidator(object):
             return True
         except JsonSchemaValidationError as err:
             self.logger.error(
-                "Error occurred while validating Mapping String: {}".format(
-                    err
-                )
+                "{}: Error occurred while validating Mapping "
+                "String: {}".format(self.log_prefix, err)
             )
         return False

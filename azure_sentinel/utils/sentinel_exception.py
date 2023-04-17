@@ -51,7 +51,8 @@ class MappingValidationError(Error):
 
 
 class MaxRetriesExceededError(Error):
-    """Exception raised when maximum number of retries exceeded while pulling data from Netskope."""
+    """Exception raised when maximum number of retries exceeded while pulling
+    data from Netskope."""
 
     def __init__(self, message):
         """Initialize."""

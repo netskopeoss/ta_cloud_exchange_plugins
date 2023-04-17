@@ -1,1 +1,1 @@
-"""Azure Sentinel plugin."""
+"""CLS Microsoft Azure Sentinel plugin."""

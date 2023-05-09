@@ -1,0 +1,43 @@
+{
+    "name": "CrowdStrike Falcon Identity Protection",
+    "description": "Fetches users and their respective scores from the CrowdStrike Falcon Identity Protection platform.\n\n URE score calculation => |(1 - (CrowdStrike Falcon Identity Protection Risk Score))|*1000",
+    "id": "crowdstrike_identity_protect",
+    "type": [
+        "user"
+    ],
+    "version": "1.0.0",
+    "configuration": [
+        {
+            "label": "Base URL",
+            "key": "base_url",
+            "type": "text",
+            "default": "https://api.crowdstrike.com",
+            "mandatory": true,
+            "description": "Base URL of CrowdStrike instance. e.g. https://api.crowdstrike.com"
+        },
+        {
+            "label": "Client ID",
+            "key": "client_id",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "Client ID generated from the CrowdStrike platform."
+        },
+        {
+            "label": "Client Secret",
+            "key": "client_secret",
+            "type": "password",
+            "default": "",
+            "mandatory": true,
+            "description": "Client Secret generated from the CrowdStrike platform."
+        },
+        {
+            "label": "Initial Range (in days)",
+            "key": "days",
+            "type": "number",
+            "mandatory": false,
+            "default": 7,
+            "description": "Number of days to pull the data for the initial run."
+        }
+    ]
+}

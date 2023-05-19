@@ -1,0 +1,86 @@
+{
+  "name": "Feedly",
+  "id": "feedly",
+  "version": "1.0.0",
+  "description": "The Feedly plugin fetches IoCs of the type SHA256 Hash, MD5 Hash, URLs, Domains and IP Addresses from Feedly Stream. This plugin does not support sharing of Indicators to Feedly.\n\n Note: Feedly plugin fetches indicators in the MISP format from Feedly Stream.",
+  "patch_supported": false,
+  "push_supported": false,
+  "configuration": [
+    {
+      "label": "Feedly Stream ID",
+      "key": "stream_id",
+      "type": "text",
+      "mandatory": true,
+      "description": "The ID of the Feedly Stream you want to pull IoCs from."
+    },
+    {
+      "label": "Feedly Enterprise Access Token",
+      "key": "enterprise_token",
+      "type": "password",
+      "mandatory": true,
+      "description": "Your Feedly Enterprise Access Token. You can retrieve this by reaching out to your Customer Success Manager."
+    },
+    {
+      "label": "Type of IoCs",
+      "key": "ioc_types",
+      "type": "multichoice",
+      "choices": [
+        {
+          "key": "SHA256 Hash",
+          "value": "sha256"
+        },
+        {
+          "key": "MD5 Hash",
+          "value": "md5"
+        },
+        {
+          "key": "Domains",
+          "value": "domain"
+        },
+        {
+          "key": "URLs",
+          "value": "url"
+        },
+        {
+          "key": "IP Addresses",
+          "value": "ip-src"
+        }
+      ],
+      "default": [
+        "sha256",
+        "md5",
+        "domain",
+        "url",
+        "ip-src"
+      ],
+      "mandatory": false,
+      "description": "Type of IoCs to pull from Feedly Stream."
+    },
+    {
+      "label": "Enable Tagging",
+      "key": "enable_tagging",
+      "type": "choice",
+      "choices": [
+        {
+          "key": "Yes",
+          "value": "yes"
+        },
+        {
+          "key": "No",
+          "value": "no"
+        }
+      ],
+      "default": "yes",
+      "mandatory": true,
+      "description": "Enable/Disable tagging functionality."
+    },
+    {
+      "label": "Initial Range (in days)",
+      "key": "days",
+      "type": "number",
+      "mandatory": true,
+      "default": 7,
+      "description": "Number of days to pull the data for the initial run."
+    }
+  ]
+}

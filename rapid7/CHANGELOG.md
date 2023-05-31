@@ -1,3 +1,17 @@
+# 3.0.0
+## Added
+- Added Support for the incident event type. To pull and ingest this event type update your CE version to 4.1.0
+- Added Support for the CTEP alert type. To pull and ingest this alert type update your CE version to 4.2.0.
+- Added support for WebTx format3.
+## Changed
+- Changed error logs to warning if single field is skipped.
+- Empty alert, event, and WebTx data will not be sent to the SIEM platform.
+## Fixed 
+- Fixed JSON format of raw data.
+## Removed
+- Removed priority from the syslog message for the logs that are not transformed in CEF.
+
+
 # 2.1.0
 ## Added
  - Added Incident type event in the mappings.
@@ -10,7 +24,7 @@
 
 # 2.0.0
 ## Added
-- Added support to sent raw data to the SIEM Platform.
+- Added support to send raw data to the SIEM Platform.
 
 # 1.2.2
 ## Fixed

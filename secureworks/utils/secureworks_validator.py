@@ -42,10 +42,11 @@ from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
 class SecureworksValidator(object):
     """Secureworks validator class."""
 
-    def __init__(self, logger):
+    def __init__(self, logger, log_prefix):
         """Initialize."""
         super().__init__()
         self.logger = logger
+        self.log_prefix = log_prefix
 
     def validate_secureworks_port(self, secureworks_port):
         """Validate secureworks port.
@@ -105,7 +106,7 @@ class SecureworksValidator(object):
                         ".*": {
                             "type": "array",
                         }
-                    }
+                    },
                 },
             },
         }
@@ -143,8 +144,7 @@ class SecureworksValidator(object):
             validate(instance=mappings, schema=schema)
         except JsonSchemaValidationError as err:
             self.logger.error(
-                "Secureworks Plugin: Validation error occurred. Error: "
-                "validating JSON schema: {}".format(err)
+                f"{self.log_prefix}: Validation error occurred. Error: validating JSON schema: {err}"
             )
             return False
 
@@ -158,9 +158,8 @@ class SecureworksValidator(object):
                         self.validate_taxonomy(subtype_taxonomy)
                     except JsonSchemaValidationError as err:
                         self.logger.error(
-                            "Secureworks Plugin: Validation error occurred. Error: "
-                            'while validating JSON schema for type "{}" and subtype "{}": '
-                            "{}".format(data_type, subtype, err)
+                            f"{self.log_prefix}: Validation error occurred. Error: "
+                            f'while validating JSON schema for type "{data_type}" and subtype "{subtype}": {err}'
                         )
                         return False
         return True
@@ -179,12 +178,10 @@ class SecureworksValidator(object):
         try:
             if self.validate_mapping_schema(mappings):
                 return True
-                
+
         except Exception as err:
             self.logger.error(
-                "Secureworks Plugin: Validation error occurred. Error: {}".format(
-                    str(err)
-                )
+                f"{self.log_prefix}: Validation error occurred. Error: {err}"
             )
 
         return False

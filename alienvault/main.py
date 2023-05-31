@@ -38,6 +38,8 @@ import logging.handlers
 import threading
 import socket
 import json
+import os
+import traceback
 from typing import List
 from jsonpath import jsonpath
 
@@ -63,11 +65,55 @@ from .utils.alienvault_exceptions import (
 from .utils.alienvault_cef_generator import (
     CEFGenerator,
 )
-from .utils.alienvault_ssl import SSLAlienVaultHandler
+from .utils.alienvault_ssl import SSLSyslogHandler
+
+PLATFORM_NAME = "AlienVault"
+MODULE_NAME = "CLS"
+PLUGIN_VERSION = "3.0.0"
 
 
 class AlienVaultPlugin(PluginBase):
     """The AlienVault plugin implementation class."""
+
+    def __init__(
+        self,
+        name,
+        *args,
+        **kwargs,
+    ):
+        """Initialize SyslogPlugin class."""
+        super().__init__(
+            name,
+            *args,
+            **kwargs,
+        )
+        self.plugin_name, self.plugin_version = self._get_plugin_info()
+        self.log_prefix = f"{MODULE_NAME} {self.plugin_name} [{name}]"
+
+    def _get_plugin_info(self) -> tuple:
+        """Get plugin name and version from manifest.
+        Returns:
+            tuple: Tuple of plugin's name and version fetched from manifest.
+        """
+        try:
+            file_path = os.path.join(
+                str(os.path.dirname(os.path.abspath(__file__))),
+                "manifest.json",
+            )
+            with open(file_path, "r") as manifest:
+                manifest_json = json.load(manifest)
+                plugin_name = manifest_json.get("name", PLATFORM_NAME)
+                plugin_version = manifest_json.get("version", PLUGIN_VERSION)
+                return (plugin_name, plugin_version)
+        except Exception as exp:
+            self.logger.info(
+                message=(
+                    f"{MODULE_NAME} {PLATFORM_NAME}: Error occurred while"
+                    " getting plugin details. Error: {}".format(exp)
+                ),
+                details=traceback.format_exc(),
+            )
+        return (PLATFORM_NAME, PLUGIN_VERSION)
 
     def get_mapping_value_from_json_path(self, data, json_path):
         """To Fetch the value from given JSON object using given JSON path.
@@ -92,17 +138,19 @@ class AlienVaultPlugin(PluginBase):
             fetched value.
         """
         return (
-            data[field]
+            (data[field], True)
             if data[field] or isinstance(data[field], int)
-            else "null"
+            else ("null", False)
         )
 
     def get_subtype_mapping(self, mappings, subtype):
-        """To Retrieve subtype mappings (mappings for subtypes of alerts/events) case insensitively.
+        """To Retrieve subtype mappings (mappings for subtypes
+        of alerts/events) case insensitively.
 
         Args:
             mappings: Mapping JSON from which subtypes are to be retrieved
-            subtype: Subtype (e.g. DLP for alerts) for which the mapping is to be fetched
+            subtype: Subtype (e.g. DLP for alerts) for which
+            the mapping is to be fetched
 
         Returns:
             Fetched mapping JSON object
@@ -114,7 +162,8 @@ class AlienVaultPlugin(PluginBase):
             return mappings[subtype.upper()]
 
     def get_headers(self, header_mappings, data, data_type, subtype):
-        """To Create a dictionary of CEF headers from given header mappings for given Netskope alert/event record.
+        """To Create a dictionary of CEF headers from given header
+        mappings for given Netskope alert/event record.
 
         Args:
             subtype: Subtype for which the headers are being transformed
@@ -133,12 +182,19 @@ class AlienVaultPlugin(PluginBase):
             mapping_variables = {"$tenant_name": tenant.name}
 
         missing_fields = []
+        mapped_field_flag = False
+
         # Iterate over mapped headers
         for cef_header, header_mapping in header_mappings.items():
             try:
-                headers[cef_header] = self.get_field_value_from_data(
+                (
+                    headers[cef_header],
+                    mapped_field,
+                ) = self.get_field_value_from_data(
                     header_mapping, data, data_type, subtype, False
                 )
+                if mapped_field:
+                    mapped_field_flag = mapped_field
 
                 # Handle variable mappings
                 if (
@@ -151,7 +207,7 @@ class AlienVaultPlugin(PluginBase):
             except FieldNotFoundError as err:
                 missing_fields.append(str(err))
 
-        return headers
+        return headers, mapped_field_flag
 
     def get_extensions(self, extension_mappings, data, data_type, subtype):
         """Fetch extensions from given mappings.
@@ -167,33 +223,41 @@ class AlienVaultPlugin(PluginBase):
         """
         extension = {}
         missing_fields = []
+        mapped_field_flag = False
 
         # Iterate over mapped extensions
         for cef_extension, extension_mapping in extension_mappings.items():
             try:
-                extension[cef_extension] = self.get_field_value_from_data(
+                (
+                    extension[cef_extension],
+                    mapped_field,
+                ) = self.get_field_value_from_data(
                     extension_mapping,
                     data,
                     data_type,
                     subtype,
                     is_json_path="is_json_path" in extension_mapping,
                 )
+                if mapped_field:
+                    mapped_field_flag = mapped_field
             except FieldNotFoundError as err:
                 missing_fields.append(str(err))
 
-        return extension
+        return extension, mapped_field_flag
 
     def get_field_value_from_data(
         self, extension_mapping, data, data_type, subtype, is_json_path=False
     ):
-        """To Fetch the value of extension based on "mapping" and "default" fields.
+        """To Fetch the value of extension based on
+        "mapping" and "default" fields.
 
         Args:
             extension_mapping: Dict containing "mapping" and "default" fields
             data: Data instance retrieved from Netskope
             subtype: Subtype for which the extension are being transformed
             data_type: Data type for which the headers are being transformed
-            is_json_path: Whether the mapped value is JSON path or direct field name
+            is_json_path: Whether the mapped value is
+            JSON path or direct field name
 
         Returns:
             Fetched values of extension
@@ -213,40 +277,60 @@ class AlienVaultPlugin(PluginBase):
            NP    |     NP     |        NP      |           - (Not possible)
         -----------------------------------------------------------------------
         """
+        # mapped_field will be returned as true only if the value returned is\
+        # using the mapping_field and not default_value
+        mapped_field = False
         if (
             "mapping_field" in extension_mapping
             and extension_mapping["mapping_field"]
         ):
             if is_json_path:
-                # If mapping field specified by JSON path is present in data, map that field, else skip by raising
+                # If mapping field specified by JSON path is present in data,
+                # map that field, else skip by raising
                 # exception:
                 value = self.get_mapping_value_from_json_path(
                     data, extension_mapping["mapping_field"]
                 )
                 if value:
-                    return ",".join([str(val) for val in value])
+                    mapped_field = True
+                    return ",".join([str(val) for val in value]), mapped_field
                 else:
                     raise FieldNotFoundError(
                         extension_mapping["mapping_field"]
                     )
             else:
-                # If mapping is present in data, map that field, else skip by raising exception
+                # If mapping is present in data, map that field,
+                # else skip by raising exception
                 if (
                     extension_mapping["mapping_field"] in data
                 ):  # case #1 and case #4
+                    if (
+                        extension_mapping.get("transformation") == "Time Stamp"
+                        and data[extension_mapping["mapping_field"]]
+                    ):
+                        try:
+                            mapped_field = True
+                            return (
+                                int(data[extension_mapping["mapping_field"]]),
+                                mapped_field,
+                            )
+                        except Exception:
+                            pass
                     return self.get_mapping_value_from_field(
                         data, extension_mapping["mapping_field"]
                     )
                 elif "default_value" in extension_mapping:
-                    # If mapped value is not found in response and default is mapped, map the default value (case #2)
-                    return extension_mapping["default_value"]
+                    # If mapped value is not found in response and
+                    # default is mapped, map the default value (case #2)
+                    return extension_mapping["default_value"], mapped_field
                 else:  # case #6
                     raise FieldNotFoundError(
                         extension_mapping["mapping_field"]
                     )
         else:
-            # If mapping is not present, 'default_value' must be there because of validation (case #3 and case #5)
-            return extension_mapping["default_value"]
+            # If mapping is not present, 'default_value' must be
+            # there because of validation (case #3 and case #5)
+            return extension_mapping["default_value"], mapped_field
 
     def map_json_data(self, mappings, data, data_type, subtype):
         """Filter the raw data and returns the filtered data.
@@ -256,40 +340,47 @@ class AlienVaultPlugin(PluginBase):
         :param logger: Logger object for logging purpose
         :return: Mapped data based on fields given in mapping file
         """
-        
-        if mappings == []:
+
+        if mappings == [] or not data:
             return data
 
         mapped_dict = {}
         for key in mappings:
             if key in data:
                 mapped_dict[key] = data[key]
-        
+
         return mapped_dict
 
     def transform(self, raw_data, data_type, subtype) -> List:
-        """To Transform the raw netskope JSON data into target platform supported data formats."""
+        """To Transform the raw netskope JSON data into target
+        platform supported data formats."""
         if not self.configuration.get("transformData", True):
             if data_type not in ["alerts", "events"]:
                 return raw_data
 
             try:
-                delimiter, cef_version, alienvault_mappings = get_alienvault_mappings(
-                    self.mappings, "json"
-                )
+                (
+                    delimiter,
+                    cef_version,
+                    alienvault_mappings,
+                ) = get_alienvault_mappings(self.mappings, "json")
             except KeyError as err:
                 self.logger.error(
-                    "Error in aleinvault mapping file. Error: {}".format(str(err))
+                    "{}: Error in aleinvault mapping file. Error: {}".format(
+                        self.log_prefix, err
+                    )
                 )
                 raise
             except MappingValidationError as err:
-                self.logger.error(str(err))
+                self.logger.error(
+                    "{}: An error occurred while validating mappings. "
+                    "Error: {}".format(self.log_prefix, err)
+                )
                 raise
             except Exception as err:
                 self.logger.error(
-                    "An error occurred while mapping data using given json mappings. Error: {}".format(
-                        str(err)
-                    )
+                    "{}: An error occurred while mapping data using given "
+                    "json mappings. Error: {}".format(self.log_prefix, err)
                 )
                 raise
 
@@ -299,9 +390,10 @@ class AlienVaultPlugin(PluginBase):
                 )
             except Exception:
                 self.logger.error(
-                    'Error occurred while retrieving mappings for datatype: "{}" (subtype "{}"). '
+                    "{}: Error occurred while retrieving mappings for "
+                    'datatype: "{}" (subtype "{}"). '
                     "Transformation will be skipped.".format(
-                        data_type, subtype
+                        self.log_prefix, data_type, subtype
                     )
                 )
                 raise
@@ -309,12 +401,13 @@ class AlienVaultPlugin(PluginBase):
             transformed_data = []
 
             for data in raw_data:
-                transformed_data.append(
-                    self.map_json_data(subtype_mapping, data, data_type, subtype)
+                mapped_dict = self.map_json_data(
+                    subtype_mapping, data, data_type, subtype
                 )
+                if mapped_dict:
+                    transformed_data.append(mapped_dict)
 
             return transformed_data
-                
 
         else:
             try:
@@ -325,16 +418,21 @@ class AlienVaultPlugin(PluginBase):
                 ) = get_alienvault_mappings(self.mappings, data_type)
             except KeyError as err:
                 self.logger.error(
-                    "Error in AlienVault mapping file. Error: {}".format(str(err))
+                    "{}: Error in AlienVault mapping file. "
+                    "Error: {}".format(self.log_prefix, err)
                 )
                 raise
             except MappingValidationError as err:
-                self.logger.error(str(err))
+                self.logger.error(
+                    "{}: An error occurred while validating mappings. "
+                    "Error: {}".format(self.log_prefix, err)
+                )
                 raise
             except Exception as err:
                 self.logger.error(
-                    "An error occurred while mapping data using given json mappings. Error: {}".format(
-                        str(err)
+                    "{}: An error occurred while mapping data "
+                    "using given json mappings. Error: {}".format(
+                        self.log_prefix, err
                     )
                 )
                 raise
@@ -344,81 +442,90 @@ class AlienVaultPlugin(PluginBase):
                 delimiter,
                 cef_version,
                 self.logger,
+                self.log_prefix,
             )
+            # First retrieve the mapping of subtype being transformed
+            try:
+                subtype_mapping = self.get_subtype_mapping(
+                    alienvault_mappings[data_type], subtype
+                )
+            except Exception:
+                self.logger.error(
+                    f"{self.log_prefix}: Error occurred while retrieving "
+                    f"mappings for subtype {subtype}. "
+                    "Transformation of current batch will be skipped."
+                )
+                return []
 
             transformed_data = []
             for data in raw_data:
-
-                # First retrieve the mapping of subtype being transformed
-                try:
-                    subtype_mapping = self.get_subtype_mapping(
-                        alienvault_mappings[data_type], subtype
-                    )
-                except Exception:
-                    self.logger.error(
-                        'Error occurred while retrieving mappings for subtype "{}". '
-                        "Transformation of current record will be skipped.".format(
-                            subtype
-                        )
-                    )
+                if not data:
                     continue
 
                 # Generating the CEF header
                 try:
-                    header = self.get_headers(
+                    header, mapped_flag_header = self.get_headers(
                         subtype_mapping["header"], data, data_type, subtype
                     )
                 except Exception as err:
                     self.logger.error(
-                        "[{}][{}]: Error occurred while creating CEF header: {}. Transformation of "
-                        "current record will be skipped.".format(
-                            data_type, subtype, str(err)
+                        "{}([{}][{}]): Error occurred while creating CEF "
+                        "header: {}. Transformation of current record "
+                        "will be skipped.".format(
+                            self.log_prefix, data_type, subtype, err
                         )
                     )
                     continue
 
                 try:
-                    extension = self.get_extensions(
+                    extension, mapped_flag_extension = self.get_extensions(
                         subtype_mapping["extension"], data, data_type, subtype
                     )
                 except Exception as err:
                     self.logger.error(
-                        "[{}][{}]: Error occurred while creating CEF extension: {}. Transformation of "
+                        "{}([{}][{}]): Error occurred while creating CEF "
+                        "extension: {}. Transformation of "
                         "the current record will be skipped".format(
-                            data_type, subtype, str(err)
+                            self.log_prefix, data_type, subtype, err
                         )
                     )
                     continue
 
                 try:
-                    transformed_data.append(
-                        cef_generator.get_cef_event(
-                            data,
-                            header,
-                            extension,
-                            data_type,
-                            subtype,
-                            self.configuration.get(
-                                "log_source_identifier", "netskopece"
-                            ),
-                        )
+                    if not (mapped_flag_header or mapped_flag_extension):
+                        continue
+                    cef_generated_event = cef_generator.get_cef_event(
+                        data,
+                        header,
+                        extension,
+                        data_type,
+                        subtype,
+                        self.configuration.get(
+                            "log_source_identifier", "netskopece"
+                        ),
                     )
+                    if cef_generated_event:
+                        transformed_data.append(cef_generated_event)
                 except EmptyExtensionError:
                     self.logger.error(
-                        "[{}][{}]: Got empty extension during transformation."
-                        "Transformation of current record will be skipped".format(
-                            data_type, subtype
+                        "{}([{}][{}]): Got empty extension during "
+                        "transformation. Transformation of current record "
+                        "will be skipped".format(
+                            self.log_prefix, data_type, subtype
                         )
                     )
                 except Exception as err:
                     self.logger.error(
-                        "[{}][{}]: An error occurred during transformation."
-                        " Error: {}".format(data_type, subtype, str(err))
+                        "{}([{}][{}]): An error occurred during "
+                        "transformation. Error: {}".format(
+                            self.log_prefix, data_type, subtype, err
+                        )
                     )
             return transformed_data
 
     def init_handler(self, configuration):
-        """Initialize unique AlienVault handler per thread based on configured protocol."""
+        """Initialize unique AlienVault handler per thread
+        based on configured protocol."""
         alienvault_logger = logging.getLogger(
             "SYSLOG_LOGGER_{}".format(threading.get_ident())
         )
@@ -427,7 +534,9 @@ class AlienVaultPlugin(PluginBase):
         alienvault_logger.propagate = False
 
         if configuration["alienvault_protocol"] == "TLS":
-            tls_handler = SSLAlienVaultHandler(
+            tls_handler = SSLSyslogHandler(
+                configuration.get("transformData", True),
+                configuration["alienvault_protocol"],
                 address=(
                     configuration["alienvault_server"],
                     configuration["alienvault_port"],
@@ -441,7 +550,9 @@ class AlienVaultPlugin(PluginBase):
                 socktype = socket.SOCK_STREAM
 
             # Create a AlienVault handler with given configuration parameters
-            handler = logging.handlers.SysLogHandler(
+            handler = SSLSyslogHandler(
+                configuration.get("transformData", True),
+                configuration["alienvault_protocol"],
                 address=(
                     configuration["alienvault_server"],
                     configuration["alienvault_port"],
@@ -450,10 +561,13 @@ class AlienVaultPlugin(PluginBase):
             )
 
             if configuration["alienvault_protocol"] == "TCP":
-                # This will add a line break to the message before it is 'emitted' which ensures that the messages are
-                # split up over multiple lines, see https://bugs.python.org/issue28404
+                # This will add a line break to the message before
+                # it is 'emitted' which ensures that the messages are
+                # split up over multiple lines,
+                # see https://bugs.python.org/issue28404
                 handler.setFormatter(logging.Formatter("%(message)s\n"))
-                # In order for the above to work, then we need to ensure that the null terminator is not included
+                # In order for the above to work, then we need to ensure that
+                # the null terminator is not included
                 handler.append_nul = False
 
             alienvault_logger.addHandler(handler)
@@ -466,21 +580,24 @@ class AlienVaultPlugin(PluginBase):
             alienvault_logger = self.init_handler(self.configuration)
         except Exception as err:
             self.logger.error(
-                "Error occurred during initializing connection. Error: {}".format(
-                    str(err)
-                )
+                "{}: Error occurred during initializing connection. "
+                "Error: {}".format(self.log_prefix, err)
             )
             raise
 
         # Log the transformed data to given AlienVault server
         for data in transformed_data:
             try:
-                alienvault_logger.info(data)
-                alienvault_logger.handlers[0].flush()
+                if data:
+                    alienvault_logger.info(
+                        json.dumps(data) if isinstance(data, dict) else data
+                    )
+                    alienvault_logger.handlers[0].flush()
+
             except Exception as err:
                 self.logger.error(
-                    "Error occurred during data ingestion."
-                    " Error: {}. Record will be skipped".format(str(err))
+                    f"{self.log_prefix}: Error occurred during data ingestion."
+                    f" Error: {err}. Record will be skipped"
                 )
 
         # Clean up
@@ -490,17 +607,21 @@ class AlienVaultPlugin(PluginBase):
             del alienvault_logger
         except Exception as err:
             self.logger.error(
-                "Error occurred during Clean up. Error: {}".format(str(err))
+                "{}: Error occurred during Clean up. Error: {}".format(
+                    self.log_prefix, err
+                )
             )
 
     def test_server_connectivity(self, configuration):
-        """Tests whether the configured AlienVault server is reachable or not."""
+        """Tests whether the configured AlienVault
+        server is reachable or not."""
         try:
             alienvault_logger = self.init_handler(configuration)
         except Exception as err:
             self.logger.error(
-                "Error occurred while establishing connection with AlienVault server. Make sure "
-                "you have provided correct AlienVault server and port."
+                "{}: Error occurred while establishing connection with "
+                "AlienVault server. Make sure you have provided "
+                "correct AlienVault server and port.".format(self.log_prefix)
             )
             raise err
         else:
@@ -512,23 +633,27 @@ class AlienVaultPlugin(PluginBase):
 
     def validate(self, configuration: dict) -> ValidationResult:
         """Validate the configuration parameters dict."""
-        alienvault_validator = AlienVaultValidator(self.logger)
+        alienvault_validator = AlienVaultValidator(
+            self.logger, self.log_prefix
+        )
 
         if (
             "alienvault_server" not in configuration
             or not configuration["alienvault_server"].strip()
         ):
             self.logger.error(
-                "AlienVault Plugin: Validation error occurred. Error: "
-                "AlienVault Server IP/FQDN is a required field in the configuration parameters."
+                "{}: Validation error occurred. Error: "
+                "AlienVault Server IP/FQDN is a required field in "
+                "the configuration parameters.".format(self.log_prefix)
             )
             return ValidationResult(
                 success=False, message="AlienVault Server is a required field."
             )
         elif type(configuration["alienvault_server"]) != str:
             self.logger.error(
-                "AlienVault Plugin: Validation error occurred. Error: "
-                "Invalid AlienVault server IP/FQDN found in the configuration parameters."
+                "{}: Validation error occurred. Error: "
+                "Invalid AlienVault server IP/FQDN found in "
+                "the configuration parameters.".format(self.log_prefix)
             )
             return ValidationResult(
                 success=False, message="Invalid AlienVault Server provided."
@@ -539,8 +664,9 @@ class AlienVaultPlugin(PluginBase):
             or not configuration["alienvault_format"].strip()
         ):
             self.logger.error(
-                "AlienVault Plugin: Validation error occurred. Error: "
-                "AlienVault Format is a required field in the configuration parameters."
+                "{}: Validation error occurred. Error: "
+                "AlienVault Format is a required field in "
+                "the configuration parameters.".format(self.log_prefix)
             )
             return ValidationResult(
                 success=False, message="AlienVault Format is a required field."
@@ -550,8 +676,9 @@ class AlienVaultPlugin(PluginBase):
             or configuration["alienvault_format"] not in ALIENVAULT_FORMATS
         ):
             self.logger.error(
-                "AlienVault Plugin: Validation error occurred. Error: "
-                "Invalid AlienVault Format found in the configuration parameters."
+                "{}: Validation error occurred. Error: "
+                "Invalid AlienVault Format found in "
+                "the configuration parameters.".format(self.log_prefix)
             )
             return ValidationResult(
                 success=False, message="Invalid AlienVault Format provided."
@@ -562,19 +689,22 @@ class AlienVaultPlugin(PluginBase):
             or not configuration["alienvault_protocol"].strip()
         ):
             self.logger.error(
-                "AlienVault Plugin: Validation error occurred. Error: "
-                "AlienVault Protocol is a required field in the configuration parameters."
+                "{}: Validation error occurred. Error: "
+                "AlienVault Protocol is a required field in "
+                "the configuration parameters.".format(self.log_prefix)
             )
             return ValidationResult(
-                success=False, message="AlienVault Protocol is a required field."
+                success=False,
+                message="AlienVault Protocol is a required field.",
             )
         elif (
             type(configuration["alienvault_protocol"]) != str
             or configuration["alienvault_protocol"] not in ALIENVAULT_PROTOCOLS
         ):
             self.logger.error(
-                "AlienVault Plugin: Validation error occurred. Error: "
-                "Invalid AlienVault Protocol found in the configuration parameters."
+                "{}: Validation error occurred. Error: "
+                "Invalid AlienVault Protocol found in "
+                "the configuration parameters.".format(self.log_prefix)
             )
             return ValidationResult(
                 success=False, message="Invalid AlienVault Protocol provided."
@@ -585,16 +715,20 @@ class AlienVaultPlugin(PluginBase):
             or not configuration["alienvault_port"]
         ):
             self.logger.error(
-                "AlienVault Plugin: Validation error occurred. Error: "
-                "AlienVault Port is a required field in the configuration parameters."
+                "{}: Validation error occurred. Error: "
+                "AlienVault Port is a required field in "
+                "the configuration parameters.".format(self.log_prefix)
             )
             return ValidationResult(
                 success=False, message="AlienVault Port is a required field."
             )
-        elif not alienvault_validator.validate_alienvault_port(configuration["alienvault_port"]):
+        elif not alienvault_validator.validate_alienvault_port(
+            configuration["alienvault_port"]
+        ):
             self.logger.error(
-                "AlienVault Plugin: Validation error occurred. Error: "
-                "Invalid AlienVault Port found in the configuration parameters."
+                "{}: Validation error occurred. Error: "
+                "Invalid AlienVault Port found in "
+                "the configuration parameters.".format(self.log_prefix)
             )
             return ValidationResult(
                 success=False, message="Invalid AlienVault Port provided."
@@ -602,12 +736,15 @@ class AlienVaultPlugin(PluginBase):
 
         mappings = self.mappings.get("jsonData", None)
         mappings = json.loads(mappings)
-        if type(mappings) != dict or not alienvault_validator.validate_alienvault_map(
+        if type(
+            mappings
+        ) != dict or not alienvault_validator.validate_alienvault_map(
             mappings
         ):
             self.logger.error(
-                "AlienVault Plugin: Validation error occurred. Error: "
-                "Invalid AlienVault attribute mapping found in the configuration parameters."
+                "{}: Validation error occurred. Error: "
+                "Invalid AlienVault attribute mapping found in "
+                "the configuration parameters.".format(self.log_prefix)
             )
             return ValidationResult(
                 success=False,
@@ -619,20 +756,25 @@ class AlienVaultPlugin(PluginBase):
             or not configuration["alienvault_certificate"].strip()
         ):
             self.logger.error(
-                "AlienVault Plugin: Validation error occurred. Error: "
-                "AlienVault Certificate mapping is a required field when TLS is provided in the configuration parameters."
+                "{}: Validation error occurred. Error: "
+                "AlienVault Certificate mapping is a required field "
+                "when TLS is provided in the configuration parameters.".format(
+                    self.log_prefix
+                )
             )
             return ValidationResult(
                 success=False,
-                message="AlienVault Certificate mapping is a required field when TLS is provided.",
+                message="AlienVault Certificate mapping is a "
+                "required field when TLS is provided.",
             )
         elif (
             configuration["alienvault_protocol"].upper() == "TLS"
             and type(configuration["alienvault_certificate"]) != str
         ):
             self.logger.error(
-                "AlienVault Plugin: Validation error occurred. Error: "
-                "Invalid AlienVault Certificate mapping found in the configuration parameters."
+                "{}: Validation error occurred. Error: "
+                "Invalid AlienVault Certificate mapping found in "
+                "the configuration parameters.".format(self.log_prefix)
             )
             return ValidationResult(
                 success=False,
@@ -643,8 +785,9 @@ class AlienVaultPlugin(PluginBase):
             or not configuration["log_source_identifier"].strip()
         ):
             self.logger.error(
-                "AlienVault Plugin: Validation error occurred. Error: "
-                "Log Source Identifier is a required field in the configuration parameters."
+                "{}: Validation error occurred. Error: "
+                "Log Source Identifier is a required field in "
+                "the configuration parameters.".format(self.log_prefix)
             )
             return ValidationResult(
                 success=False,
@@ -655,8 +798,9 @@ class AlienVaultPlugin(PluginBase):
             or " " in configuration["log_source_identifier"].strip()
         ):
             self.logger.error(
-                "AlienVault Plugin: Validation error occurred. Error: "
-                "Invalid Log Source Identifier found in the configuration parameters."
+                "{}: Validation error occurred. Error: "
+                "Invalid Log Source Identifier found in "
+                "the configuration parameters.".format(self.log_prefix)
             )
             return ValidationResult(
                 success=False,
@@ -668,13 +812,15 @@ class AlienVaultPlugin(PluginBase):
             self.test_server_connectivity(configuration)
         except Exception:
             self.logger.error(
-                "AlienVault Plugin: Validation error occurred. Error: "
+                f"{self.log_prefix}: Validation error occurred. Error: "
                 "Connection to SIEM platform is not established."
             )
             return ValidationResult(
                 success=False,
-                message="Error occurred while establishing connection with AlienVault server. "
-                "Make sure you have provided correct AlienVault Server, Port and AlienVault Certificate(if required).",
+                message="Error occurred while establishing connection "
+                "with AlienVault server. "
+                "Make sure you have provided correct AlienVault Server, "
+                "Port and AlienVault Certificate(if required).",
             )
 
         return ValidationResult(success=True, message="Validation successful.")

@@ -1,12 +1,13 @@
 {
     "name": "AlienVault",
     "id": "alienvault",
-    "version": "2.0.1",
+    "version": "3.0.0",
     "mapping": "AlienVault Default Mappings",
     "types": [
         "alerts",
         "events",
-        "webtx"
+        "webtx",
+        "logs"
     ],
     "description": "This plugin is used to ingest data to AlienVault platform. To access the plugin, you would need the credentials of AlienVault platform .",
     "configuration": [

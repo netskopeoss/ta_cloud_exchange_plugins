@@ -42,10 +42,11 @@ from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
 class AlienVaultValidator(object):
     """AlienVault validator class."""
 
-    def __init__(self, logger):
+    def __init__(self, logger, log_prefix):
         """Initialize."""
         super().__init__()
         self.logger = logger
+        self.log_prefix = log_prefix
 
     def validate_alienvault_port(self, alienvault_port):
         """Validate AlienVault port.
@@ -54,7 +55,8 @@ class AlienVaultValidator(object):
             alienvault_port: the AlienVault port to be validated
 
         Returns:
-            Whether the provided value is valid or not. True in case of valid value, False otherwise
+            Whether the provided value is valid or not.
+            True in case of valid value, False otherwise
         """
         if alienvault_port or alienvault_port == 0:
             try:
@@ -105,7 +107,7 @@ class AlienVaultValidator(object):
                         ".*": {
                             "type": "array",
                         }
-                    }
+                    },
                 },
             },
         }
@@ -143,8 +145,8 @@ class AlienVaultValidator(object):
             validate(instance=mappings, schema=schema)
         except JsonSchemaValidationError as err:
             self.logger.error(
-                "AlienVault Plugin: Validation error occurred. Error: "
-                "validating JSON schema: {}".format(err)
+                f"{self.log_prefix}: Validation error occurred. Error: "
+                f"validating JSON schema: {err}"
             )
             return False
 
@@ -158,9 +160,11 @@ class AlienVaultValidator(object):
                         self.validate_taxonomy(subtype_taxonomy)
                     except JsonSchemaValidationError as err:
                         self.logger.error(
-                            "AlienVault Plugin: Validation error occurred. Error: "
-                            'while validating JSON schema for type "{}" and subtype "{}": '
-                            "{}".format(data_type, subtype, err)
+                            "{}: Validation error occurred. Error: while "
+                            'validating JSON schema for type "{}" '
+                            'and subtype "{}": {}'.format(
+                                self.log_prefix, data_type, subtype, err
+                            )
                         )
                         return False
         return True
@@ -172,7 +176,8 @@ class AlienVaultValidator(object):
             mappings: the JSON string to be validated
 
         Returns:
-            Whether the provided value is valid or not. True in case of valid value, False otherwise
+            Whether the provided value is valid or not.
+            True in case of valid value, False otherwise
         """
         if mappings is None:
             return False
@@ -181,9 +186,7 @@ class AlienVaultValidator(object):
                 return True
         except Exception as err:
             self.logger.error(
-                "AlienVault Plugin: Validation error occurred. Error: {}".format(
-                    str(err)
-                )
+                f"{self.log_prefix}: Validation error occurred. Error: {err}"
             )
 
         return False
@@ -195,7 +198,8 @@ class AlienVaultValidator(object):
             valid_extensions: the CSV string to be validated
 
         Returns:
-            Whether the provided value is valid or not. True in case of valid value, False otherwise
+            Whether the provided value is valid or not.
+            True in case of valid value, False otherwise
         """
         try:
             csviter = csv.DictReader(

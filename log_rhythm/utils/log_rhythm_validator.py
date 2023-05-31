@@ -42,9 +42,10 @@ from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
 class LogRhythmValidator(object):
     """LogRhythm validator class."""
 
-    def __init__(self, logger):
+    def __init__(self, logger, log_prefix):
         """Initialize."""
         super().__init__()
+        self.log_prefix = log_prefix
         self.logger = logger
 
     def validate_log_rhythm_port(self, log_rhythm_port):
@@ -105,7 +106,7 @@ class LogRhythmValidator(object):
                         ".*": {
                             "type": "array",
                         }
-                    }
+                    },
                 },
             },
         }
@@ -143,8 +144,8 @@ class LogRhythmValidator(object):
             validate(instance=mappings, schema=schema)
         except JsonSchemaValidationError as err:
             self.logger.error(
-                "LogRhythm Plugin: Validation error occurred. Error: "
-                "validating JSON schema: {}".format(err)
+                f"{self.log_prefix}: Validation error occurred. Error: "
+                f"validating JSON schema: {err}"
             )
             return False
 
@@ -158,9 +159,8 @@ class LogRhythmValidator(object):
                         self.validate_taxonomy(subtype_taxonomy)
                     except JsonSchemaValidationError as err:
                         self.logger.error(
-                            "LogRhythm Plugin: Validation error occurred. Error: "
-                            'while validating JSON schema for type "{}" and subtype "{}": '
-                            "{}".format(data_type, subtype, err)
+                            f"{self.log_prefix}: Validation error occurred. Error: "
+                            f'while validating JSON schema for type "{data_type}" and subtype "{subtype}": {err}'
                         )
                         return False
         return True
@@ -181,9 +181,7 @@ class LogRhythmValidator(object):
                 return True
         except Exception as err:
             self.logger.error(
-                "LogRhythm Plugin: Validation error occurred. Error: {}".format(
-                    str(err)
-                )
+                f"{self.log_prefix}: Validation error occurred. Error: {err}"
             )
 
         return False

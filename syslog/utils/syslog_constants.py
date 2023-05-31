@@ -43,6 +43,7 @@ SEVERITY_VERY_HIGH = "Very-High"
 SEVERITY_UNKNOWN = "Unknown"
 SEVERITY_INFO = "Info"
 
+PLUGIN_NAME = "CLS Syslog "
 
 SEVERITY_MAP = {
     "low": SEVERITY_LOW,

@@ -39,6 +39,7 @@ from .syslog_exceptions import (
     MappingValidationError,
 )
 from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
+from .syslog_constants import PLUGIN_NAME
 
 
 def validate_extension(instance):
@@ -52,7 +53,7 @@ def validate_extension(instance):
     validate(instance=instance, schema=schema)
 
 
-def validate_header_extension_subdict(instance):
+def validate_header_extension_subdict(instance, name):
     """Validate sub dict of header and extension having fields "mapping" and "default".
 
     Args:
@@ -65,7 +66,7 @@ def validate_header_extension_subdict(instance):
         and (not instance["mapping_field"] and not instance["default_value"])
     ):
         raise JsonSchemaValidationError(
-            'Both "mapping" and "default" can not be empty'
+            f'{PLUGIN_NAME}[{name}]: Both "mapping" and "default" can not be empty'
         )
 
     # If only one is there and it is empty, that's not valid
@@ -75,7 +76,7 @@ def validate_header_extension_subdict(instance):
         and (not instance["mapping_field"])
     ):
         raise JsonSchemaValidationError(
-            '"mapping" field can not be empty as no "default" is provided'
+            f'{PLUGIN_NAME}[{name}]: "mapping" field can not be empty as no "default" is provided'
         )
 
     # If only one is there and it is empty, that's not valid
@@ -85,11 +86,11 @@ def validate_header_extension_subdict(instance):
         and (not instance["default_value"])
     ):
         raise JsonSchemaValidationError(
-            '"default" field can not be empty as no "mapping" is provided'
+            f'{PLUGIN_NAME}[{name}]: "default" field can not be empty as no "mapping" is provided'
         )
 
 
-def validate_header(instance):
+def validate_header(instance, name):
     """Define JSON schema for validating mapped syslog header fields.
 
     Args:
@@ -141,10 +142,10 @@ def validate_header(instance):
 
     # After validating schema, validate the "mapping" and "default" fields for each header fields
     for field in instance:
-        validate_header_extension_subdict(instance[field])
+        validate_header_extension_subdict(instance[field], name)
 
 
-def validate_extension_field(instance):
+def validate_extension_field(instance, name):
     """Define JSON schema for validating each extension fields.
 
     Args:
@@ -177,10 +178,10 @@ def validate_extension_field(instance):
     }
 
     validate(instance=instance, schema=schema)
-    validate_header_extension_subdict(instance)
+    validate_header_extension_subdict(instance, name)
 
 
-def get_syslog_mappings(mappings, data_type):
+def get_syslog_mappings(mappings, data_type, name):
     """Read mapping json and return the dict of mappings to be applied to raw_data.
 
     Args:
@@ -199,11 +200,10 @@ def get_syslog_mappings(mappings, data_type):
     for subtype, subtype_map in data_type_specific_mapping.items():
         subtype_header = subtype_map["header"]
         try:
-            validate_header(subtype_header)
+            validate_header(subtype_header, name)
         except JsonSchemaValidationError as err:
             raise MappingValidationError(
-                'Error occurred while validating syslog header for type "{}". '
-                "Error: {}".format(subtype, err)
+                f'{PLUGIN_NAME}[{name}]: Error occurred while validating syslog header for type "{subtype}" Error: {err}'
             )
 
     # Validate the extension for each mapped subtype
@@ -213,18 +213,16 @@ def get_syslog_mappings(mappings, data_type):
             validate_extension(subtype_extension)
         except JsonSchemaValidationError as err:
             raise MappingValidationError(
-                'Error occurred while validating syslog extension for type "{}". '
-                "Error: {}".format(subtype, err)
+                f'{PLUGIN_NAME}[{name}]: Error occurred while validating syslog extension for type "{subtype}". Error: {err}'
             )
 
         # Validate each extension
         for cef_field, ext_dict in subtype_extension.items():
             try:
-                validate_extension_field(ext_dict)
+                validate_extension_field(ext_dict, name)
             except JsonSchemaValidationError as err:
                 raise MappingValidationError(
-                    'Error occurred while validating syslog extension field "{}" for '
-                    'type "{}". Error: {}'.format(cef_field, subtype, err)
+                    f'{PLUGIN_NAME}[{name}]: Error occurred while validating syslog extension field "{cef_field}" for type "{subtype}". Error: {err}'
                 )
 
     return mappings["delimiter"], mappings["cef_version"], mappings["taxonomy"]

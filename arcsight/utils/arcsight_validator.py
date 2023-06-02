@@ -42,10 +42,11 @@ from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
 class ArcSightValidator(object):
     """ArcSight validator class."""
 
-    def __init__(self, logger):
+    def __init__(self, logger, log_prefix):
         """Initialize."""
         super().__init__()
         self.logger = logger
+        self.log_prefix = log_prefix
 
     def validate_arcsight_port(self, arcsight_port):
         """Validate arcsight port.
@@ -54,7 +55,8 @@ class ArcSightValidator(object):
             arcsight_port: the arcsight port to be validated
 
         Returns:
-            Whether the provided value is valid or not. True in case of valid value, False otherwise
+            Whether the provided value is valid or not.
+            True in case of valid value, False otherwise
         """
         if arcsight_port or arcsight_port == 0:
             try:
@@ -105,7 +107,7 @@ class ArcSightValidator(object):
                         ".*": {
                             "type": "array",
                         }
-                    }
+                    },
                 },
             },
         }
@@ -143,8 +145,10 @@ class ArcSightValidator(object):
             validate(instance=mappings, schema=schema)
         except JsonSchemaValidationError as err:
             self.logger.error(
-                "ArcSight Plugin: Validation error occurred. Error: "
-                "validating JSON schema: {}".format(err)
+                "{}: Validation error occurred. "
+                "Error: validating JSON schema: {}".format(
+                    self.log_prefix, err
+                )
             )
             return False
 
@@ -158,9 +162,11 @@ class ArcSightValidator(object):
                         self.validate_taxonomy(subtype_taxonomy)
                     except JsonSchemaValidationError as err:
                         self.logger.error(
-                            "ArcSight Plugin: Validation error occurred. Error: "
-                            'while validating JSON schema for type "{}" and subtype "{}": '
-                            "{}".format(data_type, subtype, err)
+                            "{}: Validation error occurred. Error: "
+                            'while validating JSON schema for type "{}" and '
+                            'subtype "{}": {}'.format(
+                                self.log_prefix, data_type, subtype, err
+                            )
                         )
                         return False
         return True
@@ -172,7 +178,8 @@ class ArcSightValidator(object):
             mappings: the JSON string to be validated
 
         Returns:
-            Whether the provided value is valid or not. True in case of valid value, False otherwise
+            Whether the provided value is valid or not.
+            True in case of valid value, False otherwise
         """
         if mappings is None:
             return False
@@ -181,9 +188,7 @@ class ArcSightValidator(object):
                 return True
         except Exception as err:
             self.logger.error(
-                "ArcSight Plugin: Validation error occurred. Error: {}".format(
-                    str(err)
-                )
+                f"{self.log_prefix}: Validation error occurred. Error: {err}"
             )
 
         return False
@@ -195,7 +200,8 @@ class ArcSightValidator(object):
             valid_extensions: the CSV string to be validated
 
         Returns:
-            Whether the provided value is valid or not. True in case of valid value, False otherwise
+            Whether the provided value is valid or not.
+            True in case of valid value, False otherwise
         """
         try:
             csviter = csv.DictReader(

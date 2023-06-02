@@ -38,6 +38,8 @@ import logging.handlers
 import threading
 import socket
 import json
+import os
+import traceback
 from typing import List
 from jsonpath import jsonpath
 
@@ -65,11 +67,53 @@ from .utils.solarwinds_exceptions import (
 from .utils.solarwinds_cef_generator import (
     CEFGenerator,
 )
-from .utils.solarwinds_ssl import SSLSolarWindsHandler
+from .utils.solarwinds_ssl import SSLSyslogHandler
 
-
+PLATFORM_NAME = "SolarWinds"
+MODULE_NAME = "CLS"
+PLUGIN_VERSION = "3.0.0"
 class SolarWindsPlugin(PluginBase):
     """The SolarWinds plugin implementation class."""
+
+    def __init__(
+        self,
+        name,
+        *args,
+        **kwargs,
+    ):
+        """Initialize SyslogPlugin class."""
+        super().__init__(
+            name,
+            *args,
+            **kwargs,
+        )
+        self.plugin_name, self.plugin_version = self._get_plugin_info()
+        self.log_prefix = f"{MODULE_NAME} {self.plugin_name} [{name}]"
+
+    def _get_plugin_info(self) -> tuple:
+        """Get plugin name and version from manifest.
+        Returns:
+            tuple: Tuple of plugin's name and version fetched from manifest.
+        """
+        try:
+            file_path = os.path.join(
+                str(os.path.dirname(os.path.abspath(__file__))),
+                "manifest.json",
+            )
+            with open(file_path, "r") as manifest:
+                manifest_json = json.load(manifest)
+                plugin_name = manifest_json.get("name", PLATFORM_NAME)
+                plugin_version = manifest_json.get("version", PLUGIN_VERSION)
+                return (plugin_name, plugin_version)
+        except Exception as exp:
+            self.logger.info(
+                message=(
+                    f"{MODULE_NAME} {PLATFORM_NAME}: Error occurred while"
+                    " getting plugin details. Error: {}".format(exp)
+                ),
+                details=traceback.format_exc(),
+            )
+        return (PLATFORM_NAME, PLUGIN_VERSION)
 
     def get_mapping_value_from_json_path(self, data, json_path):
         """To Fetch the value from given JSON object using given JSON path.
@@ -94,9 +138,9 @@ class SolarWindsPlugin(PluginBase):
             fetched value.
         """
         return (
-            data[field]
+            (data[field], True)
             if data[field] or isinstance(data[field], int)
-            else "null"
+            else ("null", False)
         )
 
     def get_subtype_mapping(self, mappings, subtype):
@@ -129,19 +173,22 @@ class SolarWindsPlugin(PluginBase):
         """
         headers = {}
         mapping_variables = {}
-        if data_type != 'webtx':
+        if data_type != "webtx":
             helper = AlertsHelper()
             tenant = helper.get_tenant_cls(self.source)
             mapping_variables = {"$tenant_name": tenant.name}
 
         missing_fields = []
+        mapped_field_flag = False
         # Iterate over mapped headers
         for cef_header, header_mapping in header_mappings.items():
             try:
-                headers[cef_header] = self.get_field_value_from_data(
+                headers[cef_header], mapped_field = self.get_field_value_from_data(
                     header_mapping, data, data_type, subtype, False
                 )
 
+                if mapped_field:
+                    mapped_field_flag = mapped_field
                 # Handle variable mappings
                 if (
                     isinstance(headers[cef_header], str)
@@ -153,7 +200,7 @@ class SolarWindsPlugin(PluginBase):
             except FieldNotFoundError as err:
                 missing_fields.append(str(err))
 
-        return headers
+        return headers, mapped_field_flag
 
     def get_extensions(self, extension_mappings, data, data_type, subtype):
         """Fetch extensions from given mappings.
@@ -169,21 +216,24 @@ class SolarWindsPlugin(PluginBase):
         """
         extension = {}
         missing_fields = []
+        mapped_field_flag = False
 
         # Iterate over mapped extensions
         for cef_extension, extension_mapping in extension_mappings.items():
             try:
-                extension[cef_extension] = self.get_field_value_from_data(
+                extension[cef_extension], mapped_field = self.get_field_value_from_data(
                     extension_mapping,
                     data,
                     data_type,
                     subtype,
                     is_json_path="is_json_path" in extension_mapping,
                 )
+                if mapped_field:
+                    mapped_field_flag = mapped_field
             except FieldNotFoundError as err:
                 missing_fields.append(str(err))
 
-        return extension
+        return extension, mapped_field_flag
 
     def get_field_value_from_data(
         self, extension_mapping, data, data_type, subtype, is_json_path=False
@@ -215,6 +265,9 @@ class SolarWindsPlugin(PluginBase):
            NP    |     NP     |        NP      |           - (Not possible)
         -----------------------------------------------------------------------
         """
+        # mapped_field will be returned as true only if the value returned is\
+        # using the mapping_field and not default_value
+        mapped_field = False
         if (
             "mapping_field" in extension_mapping
             and extension_mapping["mapping_field"]
@@ -226,7 +279,8 @@ class SolarWindsPlugin(PluginBase):
                     data, extension_mapping["mapping_field"]
                 )
                 if value:
-                    return ",".join([str(val) for val in value])
+                    mapped_field = True
+                    return ",".join([str(val) for val in value]), mapped_field
                 else:
                     raise FieldNotFoundError(
                         extension_mapping["mapping_field"]
@@ -236,19 +290,30 @@ class SolarWindsPlugin(PluginBase):
                 if (
                     extension_mapping["mapping_field"] in data
                 ):  # case #1 and case #4
+                    if (
+                        extension_mapping.get("transformation") == "Time Stamp"
+                        and data[extension_mapping["mapping_field"]]
+                    ):
+                        try:
+                            mapped_field = True
+                            return int(
+                                data[extension_mapping["mapping_field"]]
+                            ), mapped_field
+                        except Exception:
+                            pass
                     return self.get_mapping_value_from_field(
                         data, extension_mapping["mapping_field"]
                     )
                 elif "default_value" in extension_mapping:
                     # If mapped value is not found in response and default is mapped, map the default value (case #2)
-                    return extension_mapping["default_value"]
+                    return extension_mapping["default_value"], mapped_field
                 else:  # case #6
                     raise FieldNotFoundError(
                         extension_mapping["mapping_field"]
                     )
         else:
             # If mapping is not present, 'default_value' must be there because of validation (case #3 and case #5)
-            return extension_mapping["default_value"]
+            return extension_mapping["default_value"], mapped_field
 
     def map_json_data(self, mappings, data, data_type, subtype):
         """Filter the raw data and returns the filtered data.
@@ -258,15 +323,15 @@ class SolarWindsPlugin(PluginBase):
         :param logger: Logger object for logging purpose
         :return: Mapped data based on fields given in mapping file
         """
-        
-        if mappings == []:
+
+        if mappings == [] or not data:
             return data
 
         mapped_dict = {}
         for key in mappings:
             if key in data:
                 mapped_dict[key] = data[key]
-        
+
         return mapped_dict
 
     def transform(self, raw_data, data_type, subtype) -> List:
@@ -276,22 +341,24 @@ class SolarWindsPlugin(PluginBase):
                 return raw_data
 
             try:
-                delimiter, cef_version, solarwinds_mappings = get_solarwinds_mappings(
-                    self.mappings, "json"
-                )
+                (
+                    delimiter,
+                    cef_version,
+                    solarwinds_mappings,
+                ) = get_solarwinds_mappings(self.mappings, "json")
             except KeyError as err:
                 self.logger.error(
-                    "Error in solarwinds mapping file. Error: {}".format(str(err))
+                    f"{self.log_prefix}: Error in {PLATFORM_NAME} mapping file. Error: {err}"
                 )
                 raise
             except MappingValidationError as err:
-                self.logger.error(str(err))
+                self.logger.error(
+                    f"{self.log_prefix}: An error occurred while validating mappings. Error: {err}"
+                )
                 raise
             except Exception as err:
                 self.logger.error(
-                    "An error occurred while mapping data using given json mappings. Error: {}".format(
-                        str(err)
-                    )
+                    f"{self.log_prefix}: An error occurred while mapping data using given json mappings. Error: {err}"
                 )
                 raise
 
@@ -301,41 +368,44 @@ class SolarWindsPlugin(PluginBase):
                 )
             except Exception:
                 self.logger.error(
-                    'Error occurred while retrieving mappings for datatype: "{}" (subtype "{}"). '
-                    "Transformation will be skipped.".format(
-                        data_type, subtype
-                    )
+                    f'{self.log_prefix}: Error occurred while retrieving mappings for datatype: "{data_type}" (subtype "{subtype}"). '
+                    "Transformation will be skipped."
                 )
                 raise
 
             transformed_data = []
 
             for data in raw_data:
-                transformed_data.append(
-                    self.map_json_data(subtype_mapping, data, data_type, subtype)
+                mapped_dict = self.map_json_data(
+                    subtype_mapping, data, data_type, subtype
                 )
+                if mapped_dict:
+                    transformed_data.append(
+                        mapped_dict
+                    )
 
             return transformed_data
-                
 
         else:
             try:
-                delimiter, cef_version, solarwinds_mappings = get_solarwinds_mappings(
-                    self.mappings, data_type
-                )
+                (
+                    delimiter,
+                    cef_version,
+                    solarwinds_mappings,
+                ) = get_solarwinds_mappings(self.mappings, data_type)
             except KeyError as err:
                 self.logger.error(
-                    "Error in SolarWinds mapping file. Error: {}".format(str(err))
+                    f"{self.log_prefix}: Error in {PLATFORM_NAME} mapping file. Error: {err}"
                 )
                 raise
             except MappingValidationError as err:
-                self.logger.error(str(err))
+                self.logger.error(
+                    f"{self.log_prefix}: An error occurred while validating mappings. Error: {err}"
+                )
                 raise
             except Exception as err:
                 self.logger.error(
-                    "An error occurred while mapping data using given json mappings. Error: {}".format(
-                        str(err)
-                    )
+                    f"{self.log_prefix}: An error occurred while mapping data using given json mappings. Error: {err}"
                 )
                 raise
 
@@ -344,76 +414,73 @@ class SolarWindsPlugin(PluginBase):
                 delimiter,
                 cef_version,
                 self.logger,
+                self.log_prefix,
             )
+            # First retrieve the mapping of subtype being transformed
+            try:
+                subtype_mapping = self.get_subtype_mapping(
+                    solarwinds_mappings[data_type], subtype
+                )
+            except Exception:
+                self.logger.error(
+                    f'{self.log_prefix}: Error occurred while retrieving mappings for subtype "{subtype}". '
+                    "Transformation of current batch will be skipped."
+                )
+                return []
 
             transformed_data = []
             for data in raw_data:
-
-                # First retrieve the mapping of subtype being transformed
-                try:
-                    subtype_mapping = self.get_subtype_mapping(
-                        solarwinds_mappings[data_type], subtype
-                    )
-                except Exception:
-                    self.logger.error(
-                        'Error occurred while retrieving mappings for subtype "{}". '
-                        "Transformation of current record will be skipped.".format(
-                            subtype
-                        )
-                    )
+                if not data:
                     continue
 
                 # Generating the CEF header
                 try:
-                    header = self.get_headers(
+                    header, mapped_flag_header = self.get_headers(
                         subtype_mapping["header"], data, data_type, subtype
                     )
                 except Exception as err:
                     self.logger.error(
-                        "[{}][{}]: Error occurred while creating CEF header: {}. Transformation of "
-                        "current record will be skipped.".format(
-                            data_type, subtype, str(err)
-                        )
+                        f"{self.log_prefix}: [{data_type}][{subtype}]- Error occurred while creating CEF header: {err}. Transformation of "
+                        "current record will be skipped."
                     )
                     continue
 
                 try:
-                    extension = self.get_extensions(
+                    extension, mapped_flag_extension = self.get_extensions(
                         subtype_mapping["extension"], data, data_type, subtype
                     )
                 except Exception as err:
                     self.logger.error(
-                        "[{}][{}]: Error occurred while creating CEF extension: {}. Transformation of "
-                        "the current record will be skipped".format(
-                            data_type, subtype, str(err)
-                        )
+                        f"{self.log_prefix}: [{data_type}][{subtype}]- Error occurred while creating CEF extension: {err}. Transformation of "
+                        "the current record will be skipped."
                     )
                     continue
 
                 try:
-                    transformed_data.append(
-                        cef_generator.get_cef_event(
-                            data,
-                            header,
-                            extension,
-                            data_type,
-                            subtype,
-                            self.configuration.get(
-                                "log_source_identifier", "netskopece"
-                            ),
-                        )
+                    if not (mapped_flag_header or mapped_flag_extension):
+                        continue
+                    cef_generated_event = cef_generator.get_cef_event(
+                        data,
+                        header,
+                        extension,
+                        data_type,
+                        subtype,
+                        self.configuration.get(
+                            "log_source_identifier", "netskopece"
+                        ),
                     )
+                    if cef_generated_event:
+                        transformed_data.append(
+                            cef_generated_event
+                        )
                 except EmptyExtensionError:
                     self.logger.error(
-                        "[{}][{}]: Got empty extension during transformation."
-                        "Transformation of current record will be skipped".format(
-                            data_type, subtype
-                        )
+                        f"{self.log_prefix}: [{data_type}][{subtype}]- Got empty extension during transformation."
+                        "Transformation of current record will be skipped."
                     )
                 except Exception as err:
                     self.logger.error(
-                        "[{}][{}]: An error occurred during transformation."
-                        " Error: {}".format(data_type, subtype, str(err))
+                        f"{self.log_prefix}: [{data_type}][{subtype}]- An error occurred during transformation. Error: {err}"
                     )
             return transformed_data
 
@@ -427,7 +494,9 @@ class SolarWindsPlugin(PluginBase):
         syslogger.propagate = False
 
         if configuration["solarwinds_protocol"] == "TLS":
-            tls_handler = SSLSolarWindsHandler(
+            tls_handler = SSLSyslogHandler(
+                configuration.get("transformData", True),
+                configuration["solarwinds_protocol"],
                 address=(
                     configuration["solarwinds_server"],
                     configuration["solarwinds_port"],
@@ -441,7 +510,9 @@ class SolarWindsPlugin(PluginBase):
                 socktype = socket.SOCK_STREAM
 
             # Create a syslog handler with given configuration parameters
-            handler = logging.handlers.SysLogHandler(
+            handler = SSLSyslogHandler(
+                configuration.get("transformData", True),
+                configuration["solarwinds_protocol"],
                 address=(
                     configuration["solarwinds_server"],
                     configuration["solarwinds_port"],
@@ -466,21 +537,21 @@ class SolarWindsPlugin(PluginBase):
             syslogger = self.init_handler(self.configuration)
         except Exception as err:
             self.logger.error(
-                "Error occurred during initializing connection. Error: {}".format(
-                    str(err)
-                )
+                f"{self.log_prefix}: Error occurred during initializing connection. Error: {err}"
             )
             raise
 
         # Log the transformed data to given SolarWinds server
         for data in transformed_data:
             try:
-                syslogger.info(data)
-                syslogger.handlers[0].flush()
+                if data:
+                    syslogger.info(
+                        json.dumps(data) if isinstance(data, dict) else data
+                    )
+                    syslogger.handlers[0].flush()
             except Exception as err:
                 self.logger.error(
-                    "Error occurred during data ingestion."
-                    " Error: {}. Record will be skipped".format(str(err))
+                    f"{self.log_prefix}: Error occurred during data ingestion. Error: {err}. Record will be skipped."
                 )
 
         # Clean up
@@ -490,7 +561,7 @@ class SolarWindsPlugin(PluginBase):
             del syslogger
         except Exception as err:
             self.logger.error(
-                "Error occurred during Clean up. Error: {}".format(str(err))
+                f"{self.log_prefix}: Error occurred during Clean up. Error: {err}"
             )
 
     def test_server_connectivity(self, configuration):
@@ -499,7 +570,7 @@ class SolarWindsPlugin(PluginBase):
             syslogger = self.init_handler(configuration)
         except Exception as err:
             self.logger.error(
-                "Error occurred while establishing connection with SolarWinds server. Make sure "
+                f"{self.log_prefix}: Error occurred while establishing connection with SolarWinds server. Make sure "
                 "you have provided correct SolarWinds server and port."
             )
             raise err
@@ -512,13 +583,15 @@ class SolarWindsPlugin(PluginBase):
 
     def validate(self, configuration: dict) -> ValidationResult:
         """Validate the configuration parameters dict."""
-        solarwinds_validator = SolarWindsValidator(self.logger)
+        solarwinds_validator = SolarWindsValidator(
+            self.logger, self.log_prefix
+        )
         if (
             "solarwinds_server" not in configuration
             or not configuration["solarwinds_server"].strip()
         ):
             self.logger.error(
-                "SolarWinds Plugin: Validation error occurred. Error: "
+                f"{self.log_prefix}: Validation error occurred. Error: "
                 "SolarWinds Server IP/FQDN is a required field in the configuration parameters."
             )
             return ValidationResult(
@@ -526,7 +599,7 @@ class SolarWindsPlugin(PluginBase):
             )
         elif type(configuration["solarwinds_server"]) != str:
             self.logger.error(
-                "SolarWinds Plugin: Validation error occurred. Error: "
+                f"{self.log_prefix}: Validation error occurred. Error: "
                 "Invalid SolarWinds Server IP/FQDN found in the configuration parameters."
             )
             return ValidationResult(
@@ -537,7 +610,7 @@ class SolarWindsPlugin(PluginBase):
             or not configuration["solarwinds_format"].strip()
         ):
             self.logger.error(
-                "SolarWinds Plugin: Validation error occurred. Error: "
+                f"{self.log_prefix}: Validation error occurred. Error: "
                 "SolarWinds Format is a required field in the configuration parameters."
             )
             return ValidationResult(
@@ -548,7 +621,7 @@ class SolarWindsPlugin(PluginBase):
             or configuration["solarwinds_format"] not in SOLARWINDS_FORMATS
         ):
             self.logger.error(
-                "SolarWinds Plugin: Validation error occurred. Error: "
+                f"{self.log_prefix}: Validation error occurred. Error: "
                 "Invalid SolarWinds Format found in the configuration parameters."
             )
             return ValidationResult(
@@ -559,18 +632,19 @@ class SolarWindsPlugin(PluginBase):
             or not configuration["solarwinds_protocol"].strip()
         ):
             self.logger.error(
-                "SolarWinds Plugin: Validation error occurred. Error: "
+                f"{self.log_prefix}: Validation error occurred. Error: "
                 "SolarWinds Protocol is a required field in the configuration parameters."
             )
             return ValidationResult(
-                success=False, message="SolarWinds Protocol is a required field."
+                success=False,
+                message="SolarWinds Protocol is a required field.",
             )
         elif (
             type(configuration["solarwinds_protocol"]) != str
             or configuration["solarwinds_protocol"] not in SOLARWINDS_PROTOCOLS
         ):
             self.logger.error(
-                "SolarWinds Plugin: Validation error occurred. Error: "
+                f"{self.log_prefix}: Validation error occurred. Error: "
                 "Invalid SolarWinds Protocol found in the configuration parameters."
             )
             return ValidationResult(
@@ -581,15 +655,17 @@ class SolarWindsPlugin(PluginBase):
             or not configuration["solarwinds_port"]
         ):
             self.logger.error(
-                "SolarWinds Plugin: Validation error occurred. Error: "
+                f"{self.log_prefix}: Validation error occurred. Error: "
                 "SolarWinds Port is a required field in the configuration parameters."
             )
             return ValidationResult(
                 success=False, message="SolarWinds Port is a required field."
             )
-        elif not solarwinds_validator.validate_solarwinds_port(configuration["solarwinds_port"]):
+        elif not solarwinds_validator.validate_solarwinds_port(
+            configuration["solarwinds_port"]
+        ):
             self.logger.error(
-                "SolarWinds Plugin: Validation error occurred. Error: "
+                f"{self.log_prefix}: Validation error occurred. Error: "
                 "Invalid SolarWinds Port found in the configuration parameters."
             )
             return ValidationResult(
@@ -597,11 +673,13 @@ class SolarWindsPlugin(PluginBase):
             )
         mappings = self.mappings.get("jsonData", None)
         mappings = json.loads(mappings)
-        if type(mappings) != dict or not solarwinds_validator.validate_solarwinds_map(
+        if type(
+            mappings
+        ) != dict or not solarwinds_validator.validate_solarwinds_map(
             mappings
         ):
             self.logger.error(
-                "SolarWinds Plugin: Validation error occurred. Error: "
+                f"{self.log_prefix}: Validation error occurred. Error: "
                 "Invalid SolarWinds attribute mapping found in the configuration parameters."
             )
             return ValidationResult(
@@ -613,7 +691,7 @@ class SolarWindsPlugin(PluginBase):
             or not configuration["solarwinds_certificate"].strip()
         ):
             self.logger.error(
-                "SolarWinds Plugin: Validation error occurred. Error: "
+                f"{self.log_prefix}: Validation error occurred. Error: "
                 "SolarWinds Certificate mapping is a required field when TLS is provided in the configuration parameters."
             )
             return ValidationResult(
@@ -625,7 +703,7 @@ class SolarWindsPlugin(PluginBase):
             and type(configuration["solarwinds_certificate"]) != str
         ):
             self.logger.error(
-                "SolarWinds Plugin: Validation error occurred. Error: "
+                f"{self.log_prefix}: Validation error occurred. Error: "
                 "Invalid SolarWinds Certificate mapping found in the configuration parameters."
             )
             return ValidationResult(
@@ -637,7 +715,7 @@ class SolarWindsPlugin(PluginBase):
             or not configuration["log_source_identifier"].strip()
         ):
             self.logger.error(
-                "SolarWinds Plugin: Validation error occurred. Error: "
+                f"{self.log_prefix}: Validation error occurred. Error: "
                 "Log Source Identifier is a required field in the configuration parameters."
             )
             return ValidationResult(
@@ -649,7 +727,7 @@ class SolarWindsPlugin(PluginBase):
             or " " in configuration["log_source_identifier"].strip()
         ):
             self.logger.error(
-                "SolarWinds Plugin: Validation error occurred. Error: "
+                f"{self.log_prefix}: Validation error occurred. Error: "
                 "Invalid Log Source Identifier found in the configuration parameters."
             )
             return ValidationResult(
@@ -661,7 +739,7 @@ class SolarWindsPlugin(PluginBase):
             self.test_server_connectivity(configuration)
         except Exception:
             self.logger.error(
-                "SolarWinds Plugin: Validation error occurred. Error: "
+                f"{self.log_prefix}: Validation error occurred. Error: "
                 "Connection to SIEM platform is not established."
             )
             return ValidationResult(

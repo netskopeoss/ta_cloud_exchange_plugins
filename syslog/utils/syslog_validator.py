@@ -37,15 +37,17 @@ import io
 import csv
 from jsonschema import validate
 from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
+from .syslog_constants import PLUGIN_NAME
 
 
 class SyslogValidator(object):
     """Syslog validator class."""
 
-    def __init__(self, logger):
+    def __init__(self, logger, log_prefix):
         """Initialize."""
         super().__init__()
         self.logger = logger
+        self.log_prefix = log_prefix
 
     def validate_syslog_port(self, syslog_port):
         """Validate syslog port.
@@ -105,7 +107,7 @@ class SyslogValidator(object):
                         ".*": {
                             "type": "array",
                         }
-                    }
+                    },
                 },
             },
         }
@@ -143,8 +145,7 @@ class SyslogValidator(object):
             validate(instance=mappings, schema=schema)
         except JsonSchemaValidationError as err:
             self.logger.error(
-                "Syslog Plugin: Validation error occurred. Error: "
-                "validating JSON schema: {}".format(err)
+                f"{self.log_prefix}: Validation error occurred. Error: validating JSON schema: {err}"
             )
             return False
 
@@ -158,9 +159,8 @@ class SyslogValidator(object):
                         self.validate_taxonomy(subtype_taxonomy)
                     except JsonSchemaValidationError as err:
                         self.logger.error(
-                            "Syslog Plugin: Validation error occurred. Error: "
-                            'while validating JSON schema for type "{}" and subtype "{}": '
-                            "{}".format(data_type, subtype, err)
+                            f"{self.log_prefix}: Validation error occurred. Error: "
+                            f'while validating JSON schema for type "{data_type}" and subtype "{subtype}": {err}'
                         )
                         return False
         return True
@@ -179,12 +179,10 @@ class SyslogValidator(object):
         try:
             if self.validate_mapping_schema(mappings):
                 return True
-                
+
         except Exception as err:
             self.logger.error(
-                "Syslog Plugin: Validation error occurred. Error: {}".format(
-                    str(err)
-                )
+                f"{self.log_prefix}: Validation error occurred. Error: {err}"
             )
 
         return False

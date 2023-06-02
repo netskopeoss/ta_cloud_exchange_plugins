@@ -133,29 +133,37 @@ class SSLSysLogHandler(logging.handlers.SysLogHandler):
         "CRITICAL": "critical"
     }
 
-    def __init__(self, address, certs=None, facility=LOG_USER):
+    def __init__(self, transform_data, protocol, address, certs=None, facility=LOG_USER, socktype=None):
         """Init method."""
-        logging.Handler.__init__(self)
+        self.protocol = protocol
+        self.transform_data = transform_data
+        if protocol == "TLS":
+            logging.Handler.__init__(self)
 
-        self.address = address
-        self.facility = facility
+            self.address = address
+            self.facility = facility
 
-        self.unixsocket = 0
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.unixsocket = 0
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
-        if certs:
-            cert = NamedTemporaryFile(delete=False)
+            if certs:
+                cert = NamedTemporaryFile(delete=False)
 
-            cert.write(str.encode(certs))
-            cert.flush()
-            self.socket = ssl.wrap_socket(s,
-                                          ca_certs=cert.name,
-                                          cert_reqs=ssl.CERT_REQUIRED)
-            cert.close()
-            os.unlink(cert.name)
+                cert.write(str.encode(certs))
+                cert.flush()
+                self.socket = ssl.wrap_socket(
+                    s,
+                    ca_certs=cert.name,
+                    cert_reqs=ssl.CERT_REQUIRED
+                )
+                cert.close()
+                os.unlink(cert.name)
+            else:
+                self.socket = ssl.wrap_socket(s, cert_reqs=ssl.CERT_NONE)
+            self.socket.connect(address)
+
         else:
-            self.socket = ssl.wrap_socket(s, cert_reqs=ssl.CERT_NONE)
-        self.socket.connect(address)
+            super().__init__(address=address, socktype=socktype)
 
     def close(self):
         """Close method."""
@@ -164,17 +172,49 @@ class SSLSysLogHandler(logging.handlers.SysLogHandler):
 
     def emit(self, record):
         """Emit Method."""
-        msg = self.format(record) + '\n'
-        prio = '<%d>' % self.encodePriority(self.facility,
-                                            self.mapPriority(record.levelname))
-        if type(msg) == "unicode":
-            msg = msg.encode('utf-8')
-            if codecs:
-                msg = codecs.BOM_UTF8 + msg
-        msg = prio + msg
-        try:
-            self.socket.write(str.encode(msg))
-        except(KeyboardInterrupt, SystemExit):
-            raise
-        except Exception:
-            self.handleError(record)
+        if self.protocol == "TLS":
+            msg = self.format(record) + '\n'
+            prio = '<%d>' % self.encodePriority(self.facility,
+                                                self.mapPriority(record.levelname))
+            if type(msg) == "unicode":
+                msg = msg.encode('utf-8')
+                if codecs:
+                    msg = codecs.BOM_UTF8 + msg
+            if self.transform_data:
+                msg = prio + msg
+            try:
+                self.socket.write(str.encode(msg))
+            except(KeyboardInterrupt, SystemExit):
+                raise
+            except Exception:
+                self.handleError(record)
+        else:
+            try:
+                msg = self.format(record)
+                if self.ident:
+                    msg = self.ident + msg
+                if self.append_nul:
+                    msg += '\000'
+
+                # We need to convert record level to lowercase, maybe this will
+                # change in the future.
+                prio = '<%d>' % self.encodePriority(self.facility,
+                                                    self.mapPriority(record.levelname))
+                prio = prio.encode('utf-8')
+                # Message is a string. Convert to bytes as required by RFC 5424
+                msg = msg.encode('utf-8')
+                if self.transform_data:
+                    msg = prio + msg
+                if self.unixsocket:
+                    try:
+                        self.socket.send(msg)
+                    except OSError:
+                        self.socket.close()
+                        self._connect_unixsocket(self.address)
+                        self.socket.send(msg)
+                elif self.socktype == socket.SOCK_DGRAM:
+                    self.socket.sendto(msg, self.address)
+                else:
+                    self.socket.sendall(msg)
+            except Exception:
+                self.handleError(record)

@@ -98,7 +98,7 @@ def validate_header(instance):
     properties_schema = {
         "default_value": {"type": "string"},
         "mapping_field": {"type": "string"},
-        "transformation": {"type": "string"}
+        "transformation": {"type": "string"},
     }
 
     one_of_sub_schema = [
@@ -193,7 +193,11 @@ def get_secureworks_mappings(mappings, data_type):
     data_type_specific_mapping = mappings["taxonomy"][data_type]
 
     if data_type == "json":
-        return mappings["delimiter"], mappings["cef_version"], mappings["taxonomy"]
+        return (
+            mappings["delimiter"],
+            mappings["cef_version"],
+            mappings["taxonomy"],
+        )
 
     # Validate the headers of each mapped subtype
     for subtype, subtype_map in data_type_specific_mapping.items():
@@ -202,8 +206,7 @@ def get_secureworks_mappings(mappings, data_type):
             validate_header(subtype_header)
         except JsonSchemaValidationError as err:
             raise MappingValidationError(
-                'Error occurred while validating secureworks header for type "{}". '
-                "Error: {}".format(subtype, err)
+                f'Error occurred while validating secureworks header for type "{subtype}". Error: {err}'
             )
 
     # Validate the extension for each mapped subtype
@@ -213,8 +216,7 @@ def get_secureworks_mappings(mappings, data_type):
             validate_extension(subtype_extension)
         except JsonSchemaValidationError as err:
             raise MappingValidationError(
-                'Error occurred while validating secureworks extension for type "{}". '
-                "Error: {}".format(subtype, err)
+                f'Error occurred while validating secureworks extension for type "{subtype}". Error: {err}'
             )
 
         # Validate each extension
@@ -223,8 +225,7 @@ def get_secureworks_mappings(mappings, data_type):
                 validate_extension_field(ext_dict)
             except JsonSchemaValidationError as err:
                 raise MappingValidationError(
-                    'Error occurred while validating secureworks extension field "{}" for '
-                    'type "{}". Error: {}'.format(cef_field, subtype, err)
+                    f'Error occurred while validating secureworks extension field "{cef_field}" for type "{subtype}". Error: {err}'
                 )
 
     return mappings["delimiter"], mappings["cef_version"], mappings["taxonomy"]

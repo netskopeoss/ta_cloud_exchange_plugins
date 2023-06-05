@@ -1,3 +1,12 @@
+# 1.2.0
+## Added
+- Added "New Group Type" configuration parameter in action configuration.
+- Added handling of API rate limit in plugin.
+## Changed
+- Changed the format of groups name shown in action configuration.
+## Updated
+- Updated loggers and User-Agent.
+
 # 1.1.2
 ## Added
 - Added error handling for invalid users.

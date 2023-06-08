@@ -1,1 +1,1 @@
-"""Microsoft Azure AD CRE Plugin."""
+"""URE Microsoft Azure AD Plugin."""

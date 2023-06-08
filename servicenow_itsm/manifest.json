@@ -1,8 +1,8 @@
 {
   "name": "ServiceNow",
-  "description": "Create incidents on ServiceNow platform. This is NOT the same integration as ServiceNow's DLP Incident Response product, nor does it work with that solution.",
+  "description": "This plugin is used to create incidents on the ServiceNow platform. This plugin is **NOT** the same as ServiceNow's DLP Incident Response product, nor does this plugin works with that solution.",
   "id": "servicenow_itsm",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "pulling_supported": false,
   "receiving_supported": true,
   "configuration": [
@@ -59,6 +59,24 @@
           "default": "sn_si_incident",
           "mandatory": true,
           "description": "Name of the table where incidents will be created."
+        },
+        {
+          "label": "Use Default Mappings",
+          "key": "default_mappings",
+          "type": "choice",
+          "choices": [
+            {
+              "key": "Yes",
+              "value": "yes"
+            },
+            {
+              "key": "No",
+              "value": "no"
+            }
+          ],
+          "default": "no",
+          "mandatory": true,
+          "description": "Select 'No' if the user wants to configure the mapping fields while configuring the queue and 'Yes' if the user wants to use the default mapping. Note: To configure the mapping fields while configuring the queue, the user should have read access to the 'sys_dictionary' table."
         }
       ]
     }

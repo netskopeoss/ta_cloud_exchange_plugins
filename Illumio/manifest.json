@@ -1,0 +1,76 @@
+{
+    "name": "Illumio",
+    "id": "Illumio",
+    "version": "1.0.0",
+    "description": "Creates Threat Exchange IoCs from workloads on the Illumio PCE within a configured policy scope.",
+    "patch_supported": false,
+    "push_supported": false,
+    "configuration": [
+        {
+            "label": "PCE URL",
+            "key": "pce_url",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "PCE FQDN with optional method prefix - e.g. https://my.pce.com"
+        },
+        {
+            "label": "PCE Port Number",
+            "key": "pce_port",
+            "type": "number",
+            "default": 443,
+            "mandatory": true,
+            "description": "PCE port number - use 443 for SaaS instances"
+        },
+        {
+            "label": "PCE Organization ID",
+            "key": "org_id",
+            "type": "number",
+            "mandatory": true,
+            "default": 1,
+            "description": "Illumio PCE Organization ID"
+        },
+        {
+            "label": "API Authentication Username",
+            "key": "api_username",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "API key username generated on the Illumio PCE"
+        },
+        {
+            "label": "API Secret",
+            "key": "api_secret",
+            "type": "password",
+            "default": "",
+            "mandatory": true,
+            "description": "API secret generated on the Illumio PCE"
+        },
+        {
+            "label": "Label Scope",
+            "key": "label_scope",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "One or more label key/value pairs that make up the policy scope for threat workloads. Must be of the format key1:value1,key2:value2,... For example: env:Quarantine,loc:Quarantine"
+        },
+        {
+            "label": "Enable Tagging",
+            "key": "enable_tagging",
+            "type": "choice",
+            "default": "yes",
+            "choices": [
+                {
+                    "key": "Yes",
+                    "value": "yes"
+                },
+                {
+                    "key": "No",
+                    "value": "no"
+                }
+            ],
+            "mandatory": false,
+            "description": "Whether or not to create tags for Threat IoCs based on their labels"
+        }
+    ]
+}

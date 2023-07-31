@@ -1,3 +1,7 @@
+# 2.1.0
+## Added
+- Added support for webtx JSON format to send specific fields to SIEM platform
+
 # 2.0.0
 ## Added
 - Added Support for the incident event type. To pull and ingest this event type update your CE version to 4.1.0
@@ -5,7 +9,6 @@
 - Added support for WebTx format3.
 ## Changed
 - Changed error logs to warning if single field is skipped.
-- Empty alert, event, and WebTx data will not be sent to the SIEM platform.
 ## Fixed
 - Fixed JSON format of raw data.
 ## Removed

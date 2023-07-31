@@ -71,6 +71,8 @@ from .utils.secureworks_ssl import SSLSyslogHandler
 PLATFORM_NAME = "Secureworks"
 MODULE_NAME = "CLS"
 PLUGIN_VERSION = "2.0.0"
+
+
 class SecureworksPlugin(PluginBase):
     """The Secureworks plugin implementation class."""
 
@@ -182,10 +184,13 @@ class SecureworksPlugin(PluginBase):
         # Iterate over mapped headers
         for cef_header, header_mapping in header_mappings.items():
             try:
-                headers[cef_header], mapped_field = self.get_field_value_from_data(
+                (
+                    headers[cef_header],
+                    mapped_field,
+                ) = self.get_field_value_from_data(
                     header_mapping, data, data_type, subtype, False
                 )
-                
+
                 if mapped_field:
                     mapped_field_flag = mapped_field
 
@@ -221,7 +226,10 @@ class SecureworksPlugin(PluginBase):
         # Iterate over mapped extensions
         for cef_extension, extension_mapping in extension_mappings.items():
             try:
-                extension[cef_extension], mapped_field = self.get_field_value_from_data(
+                (
+                    extension[cef_extension],
+                    mapped_field,
+                ) = self.get_field_value_from_data(
                     extension_mapping,
                     data,
                     data_type,
@@ -296,9 +304,10 @@ class SecureworksPlugin(PluginBase):
                     ):
                         try:
                             mapped_field = True
-                            return int(
-                                data[extension_mapping["mapping_field"]]
-                            ), mapped_field
+                            return (
+                                int(data[extension_mapping["mapping_field"]]),
+                                mapped_field,
+                            )
                         except Exception:
                             pass
                     return self.get_mapping_value_from_field(
@@ -336,11 +345,8 @@ class SecureworksPlugin(PluginBase):
 
     def transform(self, raw_data, data_type, subtype) -> List:
         """To Transform the raw netskope JSON data into target platform supported data formats."""
-
+        count = 0
         if not self.configuration.get("transformData", True):
-            if data_type not in ["alerts", "events"]:
-                return raw_data
-
             try:
                 (
                     delimiter,
@@ -367,6 +373,8 @@ class SecureworksPlugin(PluginBase):
                 subtype_mapping = self.get_subtype_mapping(
                     secureworks_mappings["json"][data_type], subtype
                 )
+                if subtype_mapping == []:
+                    return raw_data
             except Exception:
                 self.logger.error(
                     f'{self.log_prefix}: Error occurred while retrieving mappings for datatype: "{data_type}" (subtype "{subtype}"). '
@@ -382,6 +390,17 @@ class SecureworksPlugin(PluginBase):
                 )
                 if mapped_dict:
                     transformed_data.append(mapped_dict)
+                else:
+                    count += 1
+
+            if count >= 0:
+                self.logger.debug(
+                    "{}: Plugin couldn't process {} records because they "
+                    "either had no data or contained invalid/missing "
+                    "fields according to the configured JSON mapping. "
+                    "Therefore, the transformation and ingestion for those "
+                    "records were skipped.".format(self.log_prefix, count)
+                )
 
             return transformed_data
         else:
@@ -414,7 +433,7 @@ class SecureworksPlugin(PluginBase):
                 self.logger,
                 self.log_prefix,
             )
-            
+
             # First retrieve the mapping of subtype being transformed
             try:
                 subtype_mapping = self.get_subtype_mapping(
@@ -430,6 +449,7 @@ class SecureworksPlugin(PluginBase):
             transformed_data = []
             for data in raw_data:
                 if not data:
+                    count += 1
                     continue
 
                 # Generating the CEF header
@@ -457,6 +477,7 @@ class SecureworksPlugin(PluginBase):
 
                 try:
                     if not (mapped_flag_header or mapped_flag_extension):
+                        count += 1
                         continue
                     cef_generated_event = cef_generator.get_cef_event(
                         data,
@@ -479,6 +500,15 @@ class SecureworksPlugin(PluginBase):
                     self.logger.error(
                         f"{self.log_prefix}: [{data_type}][{subtype}]- An error occurred during transformation. Error: {err}"
                     )
+
+            if count >= 0:
+                self.logger.debug(
+                    "{}: Plugin couldn't process {} records because they "
+                    "either had no data or contained invalid/missing "
+                    "fields according to the configured mapping. "
+                    "Therefore, the transformation and ingestion for those "
+                    "records were skipped.".format(self.log_prefix, count)
+                )
 
             return transformed_data
 
@@ -531,6 +561,7 @@ class SecureworksPlugin(PluginBase):
 
     def push(self, transformed_data, data_type, subtype) -> PushResult:
         """Push the transformed_data to the 3rd party platform."""
+        successful_log_push_counter, skipped_logs = 0, 0
         try:
             syslogger = self.init_handler(self.configuration)
         except Exception as err:
@@ -546,7 +577,10 @@ class SecureworksPlugin(PluginBase):
                     syslogger.info(
                         json.dumps(data) if isinstance(data, dict) else data
                     )
+                    successful_log_push_counter += 1
                     syslogger.handlers[0].flush()
+                else:
+                    skipped_logs += 1
             except Exception as err:
                 self.logger.error(
                     f"{self.log_prefix}: Error occurred during data ingestion. Error: {err}. Record will be skipped."
@@ -557,6 +591,28 @@ class SecureworksPlugin(PluginBase):
             syslogger.handlers[0].close()
             del syslogger.handlers[:]
             del syslogger
+            if skipped_logs > 0:
+                self.logger.debug(
+                    "{}: Received empty transformed data for {} log(s) hence "
+                    "ingestion of those log(s) will be skipped.".format(
+                        self.log_prefix,
+                        skipped_logs,
+                    )
+                )
+            log_msg = (
+                "[{}] [{}] Successfully ingested {} log(s)"
+                " to {} server.".format(
+                    data_type,
+                    subtype,
+                    successful_log_push_counter,
+                    self.plugin_name,
+                )
+            )
+            self.logger.info(f"{self.log_prefix}: {log_msg}")
+            return PushResult(
+                success=True,
+                message=log_msg,
+            )
         except Exception as err:
             self.logger.error(
                 f"{self.log_prefix}: Error occurred during Clean up. Error: {err}"

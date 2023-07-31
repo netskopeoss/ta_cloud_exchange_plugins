@@ -130,10 +130,18 @@ class SSLSysLogHandler(logging.handlers.SysLogHandler):
         "INFO": "info",
         "WARNING": "warning",
         "ERROR": "error",
-        "CRITICAL": "critical"
+        "CRITICAL": "critical",
     }
 
-    def __init__(self, transform_data, protocol, address, certs=None, facility=LOG_USER, socktype=None):
+    def __init__(
+        self,
+        transform_data,
+        protocol,
+        address,
+        certs=None,
+        facility=LOG_USER,
+        socktype=None,
+    ):
         """Init method."""
         self.protocol = protocol
         self.transform_data = transform_data
@@ -152,9 +160,7 @@ class SSLSysLogHandler(logging.handlers.SysLogHandler):
                 cert.write(str.encode(certs))
                 cert.flush()
                 self.socket = ssl.wrap_socket(
-                    s,
-                    ca_certs=cert.name,
-                    cert_reqs=ssl.CERT_REQUIRED
+                    s, ca_certs=cert.name, cert_reqs=ssl.CERT_REQUIRED
                 )
                 cert.close()
                 os.unlink(cert.name)
@@ -173,18 +179,19 @@ class SSLSysLogHandler(logging.handlers.SysLogHandler):
     def emit(self, record):
         """Emit Method."""
         if self.protocol == "TLS":
-            msg = self.format(record) + '\n'
-            prio = '<%d>' % self.encodePriority(self.facility,
-                                                self.mapPriority(record.levelname))
+            msg = self.format(record) + "\n"
+            prio = "<%d>" % self.encodePriority(
+                self.facility, self.mapPriority(record.levelname)
+            )
             if type(msg) == "unicode":
-                msg = msg.encode('utf-8')
+                msg = msg.encode("utf-8")
                 if codecs:
                     msg = codecs.BOM_UTF8 + msg
             if self.transform_data:
                 msg = prio + msg
             try:
                 self.socket.write(str.encode(msg))
-            except(KeyboardInterrupt, SystemExit):
+            except (KeyboardInterrupt, SystemExit):
                 raise
             except Exception:
                 self.handleError(record)
@@ -194,15 +201,16 @@ class SSLSysLogHandler(logging.handlers.SysLogHandler):
                 if self.ident:
                     msg = self.ident + msg
                 if self.append_nul:
-                    msg += '\000'
+                    msg += "\000"
 
                 # We need to convert record level to lowercase, maybe this will
                 # change in the future.
-                prio = '<%d>' % self.encodePriority(self.facility,
-                                                    self.mapPriority(record.levelname))
-                prio = prio.encode('utf-8')
+                prio = "<%d>" % self.encodePriority(
+                    self.facility, self.mapPriority(record.levelname)
+                )
+                prio = prio.encode("utf-8")
                 # Message is a string. Convert to bytes as required by RFC 5424
-                msg = msg.encode('utf-8')
+                msg = msg.encode("utf-8")
                 if self.transform_data:
                     msg = prio + msg
                 if self.unixsocket:

@@ -1,7 +1,7 @@
 {
     "name": "QRadar",
     "id": "qradar",
-    "version": "3.0.0",
+    "version": "3.1.0",
     "mapping": "QRadar Default Mappings",
     "types": [
         "alerts",

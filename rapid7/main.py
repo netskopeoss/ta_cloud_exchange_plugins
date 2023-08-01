@@ -185,7 +185,10 @@ class Rapid7Plugin(PluginBase):
         # Iterate over mapped headers
         for cef_header, header_mapping in header_mappings.items():
             try:
-                headers[cef_header], mapped_field = self.get_field_value_from_data(
+                (
+                    headers[cef_header],
+                    mapped_field,
+                ) = self.get_field_value_from_data(
                     header_mapping, data, data_type, subtype, False
                 )
 
@@ -224,14 +227,17 @@ class Rapid7Plugin(PluginBase):
         # Iterate over mapped extensions
         for cef_extension, extension_mapping in extension_mappings.items():
             try:
-                extension[cef_extension], mapped_field = self.get_field_value_from_data(
+                (
+                    extension[cef_extension],
+                    mapped_field,
+                ) = self.get_field_value_from_data(
                     extension_mapping,
                     data,
                     data_type,
                     subtype,
                     is_json_path="is_json_path" in extension_mapping,
                 )
-                
+
                 if mapped_field:
                     mapped_field_flag = mapped_field
             except FieldNotFoundError as err:
@@ -303,9 +309,10 @@ class Rapid7Plugin(PluginBase):
                     ):
                         try:
                             mapped_field = True
-                            return int(
-                                data[extension_mapping["mapping_field"]]
-                            ), mapped_field
+                            return (
+                                int(data[extension_mapping["mapping_field"]]),
+                                mapped_field,
+                            )
                         except Exception:
                             pass
                     return self.get_mapping_value_from_field(
@@ -355,9 +362,8 @@ class Rapid7Plugin(PluginBase):
         Returns:
             list: Transformed data.
         """
+        count = 0
         if not self.configuration.get("transformData", True):
-            if data_type not in ["alerts", "events"]:
-                return raw_data
             try:
                 delimiter, cef_version, rapid7_mappings = get_rapid7_mappings(
                     self.mappings, "json"
@@ -389,6 +395,8 @@ class Rapid7Plugin(PluginBase):
                 subtype_mapping = self.get_subtype_mapping(
                     rapid7_mappings["json"][data_type], subtype
                 )
+                if subtype_mapping == []:
+                    return raw_data
             except KeyError:
                 self.logger.warn(
                     f"{self.log_prefix}: Subtype {subtype} is not present "
@@ -414,6 +422,17 @@ class Rapid7Plugin(PluginBase):
                 )
                 if mapped_dict:
                     transformed_data.append(mapped_dict)
+                else:
+                    count += 1
+
+            if count >= 0:
+                self.logger.debug(
+                    "{}: Plugin couldn't process {} records because they "
+                    "either had no data or contained invalid/missing "
+                    "fields according to the configured JSON mapping. "
+                    "Therefore, the transformation and ingestion for those "
+                    "records were skipped.".format(self.log_prefix, count)
+                )
             return transformed_data
 
         else:
@@ -448,7 +467,7 @@ class Rapid7Plugin(PluginBase):
                 self.logger,
                 self.log_prefix,
             )
-            
+
             # First retrieve the mapping of subtype being transformed
             try:
                 subtype_mapping = self.get_subtype_mapping(
@@ -472,6 +491,7 @@ class Rapid7Plugin(PluginBase):
             transformed_data = []
             for data in raw_data:
                 if not data:
+                    count += 1
                     continue
 
                 # Generating the CEF header
@@ -505,6 +525,7 @@ class Rapid7Plugin(PluginBase):
 
                 try:
                     if not (mapped_flag_header or mapped_flag_extension):
+                        count += 1
                         continue
                     cef_generated_event = cef_generator.get_cef_event(
                         data,
@@ -533,6 +554,16 @@ class Rapid7Plugin(PluginBase):
                             self.log_prefix, data_type, subtype, err
                         )
                     )
+
+            if count >= 0:
+                self.logger.debug(
+                    "{}: Plugin couldn't process {} records because they "
+                    "either had no data or contained invalid/missing "
+                    "fields according to the configured mapping. "
+                    "Therefore, the transformation and ingestion for those "
+                    "records were skipped.".format(self.log_prefix, count)
+                )
+
             return transformed_data
 
     def init_handler(self, configuration):
@@ -588,6 +619,7 @@ class Rapid7Plugin(PluginBase):
 
     def push(self, transformed_data, data_type, subtype) -> PushResult:
         """Push the transformed_data to the 3rd party platform."""
+        successful_log_push_counter, skipped_logs = 0, 0
         try:
             syslogger = self.init_handler(self.configuration)
         except Exception as err:
@@ -604,7 +636,10 @@ class Rapid7Plugin(PluginBase):
                     syslogger.info(
                         json.dumps(data) if isinstance(data, dict) else data
                     )
+                    successful_log_push_counter += 1
                     syslogger.handlers[0].flush()
+                else:
+                    skipped_logs += 1
             except Exception as err:
                 self.logger.error(
                     "{}: Error occurred during data ingestion. "
@@ -618,6 +653,28 @@ class Rapid7Plugin(PluginBase):
             syslogger.handlers[0].close()
             del syslogger.handlers[:]
             del syslogger
+            if skipped_logs > 0:
+                self.logger.debug(
+                    "{}: Received empty transformed data for {} log(s) hence "
+                    "ingestion of those log(s) will be skipped.".format(
+                        self.log_prefix,
+                        skipped_logs,
+                    )
+                )
+            log_msg = (
+                "[{}] [{}] Successfully ingested {} log(s)"
+                " to {} server.".format(
+                    data_type,
+                    subtype,
+                    successful_log_push_counter,
+                    self.plugin_name,
+                )
+            )
+            self.logger.info(f"{self.log_prefix}: {log_msg}")
+            return PushResult(
+                success=True,
+                message=log_msg,
+            )
         except Exception as err:
             self.logger.error(
                 "{}: Error occurred during Clean up. Error: {}".format(

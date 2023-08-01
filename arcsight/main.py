@@ -357,10 +357,8 @@ class ArcSightPlugin(PluginBase):
     def transform(self, raw_data, data_type, subtype) -> List:
         """To Transform the raw netskope JSON data into target
         platform supported data formats."""
+        count = 0
         if not self.configuration.get("transformData", True):
-            if data_type not in ["alerts", "events"]:
-                return raw_data
-
             try:
                 (
                     delimiter,
@@ -392,6 +390,8 @@ class ArcSightPlugin(PluginBase):
                 subtype_mapping = self.get_subtype_mapping(
                     arcsight_mappings["json"][data_type], subtype
                 )
+                if subtype_mapping == []:
+                    return raw_data
             except Exception:
                 self.logger.error(
                     "{}: Error occurred while retrieving mappings for "
@@ -410,7 +410,17 @@ class ArcSightPlugin(PluginBase):
                 )
                 if mapped_dict:
                     transformed_data.append(mapped_dict)
+                else:
+                    count += 1
 
+            if count >= 0:
+                self.logger.debug(
+                    "{}: Plugin couldn't process {} records because they "
+                    "either had no data or contained invalid/missing "
+                    "fields according to the configured JSON mapping. "
+                    "Therefore, the transformation and ingestion for those "
+                    "records were skipped.".format(self.log_prefix, count)
+                )
             return transformed_data
 
         else:
@@ -465,6 +475,7 @@ class ArcSightPlugin(PluginBase):
             transformed_data = []
             for data in raw_data:
                 if not data:
+                    count += 1
                     continue
 
                 # Generating the CEF header
@@ -498,6 +509,7 @@ class ArcSightPlugin(PluginBase):
 
                 try:
                     if not (mapped_flag_header or mapped_flag_extension):
+                        count += 1
                         continue
                     cef_generated_event = cef_generator.get_cef_event(
                         data,
@@ -526,6 +538,15 @@ class ArcSightPlugin(PluginBase):
                             self.log_prefix, data_type, subtype, err
                         )
                     )
+            if count >= 0:
+                self.logger.debug(
+                    "{}: Plugin couldn't process {} records because they "
+                    "either had no data or contained invalid/missing "
+                    "fields according to the configured mapping. "
+                    "Therefore, the transformation and ingestion for those "
+                    "records were skipped.".format(self.log_prefix, count)
+                )
+
             return transformed_data
 
     def init_handler(self, configuration):
@@ -581,6 +602,8 @@ class ArcSightPlugin(PluginBase):
 
     def push(self, transformed_data, data_type, subtype) -> PushResult:
         """Push the transformed_data to the 3rd party platform."""
+        successful_log_push_counter, skipped_logs = 0, 0
+
         try:
             syslogger = self.init_handler(self.configuration)
         except Exception as err:
@@ -597,7 +620,10 @@ class ArcSightPlugin(PluginBase):
                     syslogger.info(
                         json.dumps(data) if isinstance(data, dict) else data
                     )
+                    successful_log_push_counter += 1
                     syslogger.handlers[0].flush()
+                else:
+                    skipped_logs += 1
             except Exception as err:
                 self.logger.error(
                     f"{self.log_prefix}: Error occurred during data ingestion."
@@ -609,6 +635,28 @@ class ArcSightPlugin(PluginBase):
             syslogger.handlers[0].close()
             del syslogger.handlers[:]
             del syslogger
+            if skipped_logs > 0:
+                self.logger.debug(
+                    "{}: Received empty transformed data for {} log(s) hence "
+                    "ingestion of those log(s) will be skipped.".format(
+                        self.log_prefix,
+                        skipped_logs,
+                    )
+                )
+            log_msg = (
+                "[{}] [{}] Successfully ingested {} log(s)"
+                " to {} server.".format(
+                    data_type,
+                    subtype,
+                    successful_log_push_counter,
+                    self.plugin_name,
+                )
+            )
+            self.logger.info(f"{self.log_prefix}: {log_msg}")
+            return PushResult(
+                success=True,
+                message=log_msg,
+            )
         except Exception as err:
             self.logger.error(
                 "{}: Error occurred during Clean up. Error: {}".format(

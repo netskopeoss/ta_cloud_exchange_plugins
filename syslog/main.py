@@ -42,37 +42,27 @@ import os
 import traceback
 from typing import List
 from jsonpath import jsonpath
-
 from netskope.common.utils import AlertsHelper
 from netskope.integrations.cls.plugin_base import (
     PluginBase,
     ValidationResult,
     PushResult,
 )
-from .utils.syslog_constants import (
-    SYSLOG_FORMATS,
-    SYSLOG_PROTOCOLS,
-    PLUGIN_NAME,
-)
-from .utils.syslog_validator import (
-    SyslogValidator,
-)
-from .utils.syslog_helper import (
-    get_syslog_mappings,
-)
+from .utils.syslog_constants import SYSLOG_FORMATS, SYSLOG_PROTOCOLS
+from .utils.syslog_validator import SyslogValidator
+from .utils.syslog_helper import get_syslog_mappings
 from .utils.syslog_exceptions import (
     MappingValidationError,
     EmptyExtensionError,
     FieldNotFoundError,
 )
-from .utils.syslog_cef_generator import (
-    CEFGenerator,
-)
+from .utils.syslog_cef_generator import CEFGenerator
 from .utils.syslog_ssl import SSLSysLogHandler
 
 PLATFORM_NAME = "Syslog"
 MODULE_NAME = "CLS"
 PLUGIN_VERSION = "3.0.0"
+
 
 class SyslogPlugin(PluginBase):
     """The Syslog plugin implementation class."""
@@ -108,7 +98,7 @@ class SyslogPlugin(PluginBase):
                 plugin_version = manifest_json.get("version", PLUGIN_VERSION)
                 return (plugin_name, plugin_version)
         except Exception as exp:
-            self.logger.info(
+            self.logger.error(
                 message=(
                     f"{self.log_prefix}: Error occurred while"
                     f" getting plugin details. Error: {exp}"
@@ -188,10 +178,13 @@ class SyslogPlugin(PluginBase):
         # Iterate over mapped headers
         for cef_header, header_mapping in header_mappings.items():
             try:
-                headers[cef_header], mapped_field = self.get_field_value_from_data(
+                (
+                    headers[cef_header],
+                    mapped_field,
+                ) = self.get_field_value_from_data(
                     header_mapping, data, data_type, subtype, False
                 )
-                
+
                 if mapped_field:
                     mapped_field_flag = mapped_field
 
@@ -227,14 +220,17 @@ class SyslogPlugin(PluginBase):
         # Iterate over mapped extensions
         for cef_extension, extension_mapping in extension_mappings.items():
             try:
-                extension[cef_extension], mapped_field = self.get_field_value_from_data(
+                (
+                    extension[cef_extension],
+                    mapped_field,
+                ) = self.get_field_value_from_data(
                     extension_mapping,
                     data,
                     data_type,
                     subtype,
                     is_json_path="is_json_path" in extension_mapping,
                 )
-                
+
                 if mapped_field:
                     mapped_field_flag = mapped_field
             except FieldNotFoundError as err:
@@ -307,9 +303,10 @@ class SyslogPlugin(PluginBase):
                     ):
                         try:
                             mapped_field = True
-                            return int(
-                                data[extension_mapping["mapping_field"]]
-                            ), mapped_field
+                            return (
+                                int(data[extension_mapping["mapping_field"]]),
+                                mapped_field,
+                            )
                         except Exception:
                             pass
                     return self.get_mapping_value_from_field(
@@ -350,11 +347,8 @@ class SyslogPlugin(PluginBase):
     def transform(self, raw_data, data_type, subtype) -> List:
         """To Transform the raw netskope JSON data into target platform \
             supported data formats."""
-
+        count = 0
         if not self.configuration.get("transformData", True):
-            if data_type not in ["alerts", "events"]:
-                return raw_data
-
             try:
                 delimiter, cef_version, syslog_mappings = get_syslog_mappings(
                     self.mappings, "json", self.name
@@ -381,22 +375,34 @@ class SyslogPlugin(PluginBase):
                 subtype_mapping = self.get_subtype_mapping(
                     syslog_mappings["json"][data_type], subtype
                 )
+                if subtype_mapping == []:
+                    return raw_data
             except Exception:
                 self.logger.error(
-                    f"{self.log_prefix}: Error occurred while retrieving mappings "
-                    f"for datatype: {data_type} (subtype: {subtype}) "
+                    f"{self.log_prefix}: Error occurred while retrieving "
+                    f"mappings for datatype: {data_type} (subtype: {subtype}) "
                     "Transformation will be skipped."
                 )
                 raise
 
             transformed_data = []
-
             for data in raw_data:
                 mapped_dict = self.map_json_data(
                     subtype_mapping, data, data_type, subtype
                 )
                 if mapped_dict:
                     transformed_data.append(mapped_dict)
+                else:
+                    count += 1
+
+            if count >= 0:
+                self.logger.debug(
+                    "{}: Plugin couldn't process {} records because they "
+                    "either had no data or contained invalid/missing "
+                    "fields according to the configured JSON mapping. "
+                    "Therefore, the transformation and ingestion for those "
+                    "records were skipped.".format(self.log_prefix, count)
+                )
 
             return transformed_data
         else:
@@ -423,9 +429,13 @@ class SyslogPlugin(PluginBase):
                 raise
 
             cef_generator = CEFGenerator(
-                self.mappings, delimiter, cef_version, self.logger, self.log_prefix
+                self.mappings,
+                delimiter,
+                cef_version,
+                self.logger,
+                self.log_prefix,
             )
-            
+
             # First retrieve the mapping of subtype being transformed
             try:
                 subtype_mapping = self.get_subtype_mapping(
@@ -442,6 +452,7 @@ class SyslogPlugin(PluginBase):
             transformed_data = []
             for data in raw_data:
                 if not data:
+                    count += 1
                     continue
 
                 # Generating the CEF header
@@ -470,7 +481,8 @@ class SyslogPlugin(PluginBase):
                     continue
 
                 try:
-                    if not(mapped_flag_header or mapped_flag_extension):
+                    if not (mapped_flag_header or mapped_flag_extension):
+                        count += 1
                         continue
                     cef_generated_event = cef_generator.get_cef_event(
                         data,
@@ -486,15 +498,23 @@ class SyslogPlugin(PluginBase):
                         transformed_data.append(cef_generated_event)
                 except EmptyExtensionError:
                     self.logger.error(
-                        f"{self.log_prefix}: [{data_type}][{subtype}]- Got empty "
-                        "extension during transformation. "
+                        f"{self.log_prefix}: [{data_type}][{subtype}]- Got "
+                        "empty extension during transformation. "
                         "Transformation of current record will be skipped."
                     )
                 except Exception as err:
                     self.logger.error(
-                        f"{self.log_prefix}: [{data_type}][{subtype}]- An error "
-                        f"occurred during transformation. Error: {err}"
+                        f"{self.log_prefix}: [{data_type}][{subtype}]- An "
+                        f"error occurred during transformation. Error: {err}"
                     )
+            if count >= 0:
+                self.logger.debug(
+                    "{}: Plugin couldn't process {} records because they "
+                    "either had no data or contained invalid/missing "
+                    "fields according to the configured mapping. "
+                    "Therefore, the transformation and ingestion for those "
+                    "records were skipped.".format(self.log_prefix, count)
+                )
 
             return transformed_data
 
@@ -551,6 +571,7 @@ class SyslogPlugin(PluginBase):
 
     def push(self, transformed_data, data_type, subtype) -> PushResult:
         """Push the transformed_data to the 3rd party platform."""
+        successful_log_push_counter, skipped_logs = 0, 0
         try:
             syslogger = self.init_handler(self.configuration)
         except Exception as err:
@@ -567,12 +588,15 @@ class SyslogPlugin(PluginBase):
                     syslogger.info(
                         json.dumps(data) if isinstance(data, dict) else data
                     )
+                    successful_log_push_counter += 1
                     syslogger.handlers[0].flush()
+                else:
+                    skipped_logs += 1
 
             except Exception as err:
                 self.logger.error(
-                    f"{self.log_prefix}: Error occurred during data ingestion. "
-                    f"Error: {err}. Record will be skipped."
+                    f"{self.log_prefix}: Error occurred during data ingestion."
+                    f" Error: {err}. Record will be skipped."
                 )
 
         # Clean up
@@ -580,6 +604,30 @@ class SyslogPlugin(PluginBase):
             syslogger.handlers[0].close()
             del syslogger.handlers[:]
             del syslogger
+
+            if skipped_logs > 0:
+                self.logger.debug(
+                    "{}: Received empty transformed data for {} log(s) hence "
+                    "ingestion of those log(s) will be skipped.".format(
+                        self.log_prefix,
+                        skipped_logs,
+                    )
+                )
+            log_msg = (
+                "[{}] [{}] Successfully ingested {} log(s)"
+                " to {} server.".format(
+                    data_type,
+                    subtype,
+                    successful_log_push_counter,
+                    self.plugin_name,
+                )
+            )
+            self.logger.info(f"{self.log_prefix}: {log_msg}")
+            return PushResult(
+                success=True,
+                message=log_msg,
+            )
+
         except Exception as err:
             self.logger.error(
                 f"{self.log_prefix}: Error occurred during Clean up. "
@@ -592,8 +640,8 @@ class SyslogPlugin(PluginBase):
             syslogger = self.init_handler(configuration)
         except Exception as err:
             self.logger.error(
-                f"{self.log_prefix}: Error occurred while establishing connection "
-                "with syslog server. Make sure "
+                f"{self.log_prefix}: Error occurred while establishing "
+                "connection with syslog server. Make sure "
                 "you have provided correct syslog server and port."
             )
             raise err
@@ -722,7 +770,8 @@ class SyslogPlugin(PluginBase):
             )
             return ValidationResult(
                 success=False,
-                message="Syslog Certificate mapping is a required field when TLS is provided.",
+                message="Syslog Certificate mapping is a required "
+                "field when TLS is provided.",
             )
         elif (
             configuration["syslog_protocol"].upper() == "TLS"

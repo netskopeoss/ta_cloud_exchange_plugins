@@ -1,7 +1,7 @@
 {
     "name": "MISP",
     "id": "misp",
-    "version": "1.1.0",
+    "version": "1.2.0",
     "description": "This plugin is used to fetch event attributes from MISP (Malware Information Sharing Platform) and extract indicators from them. It can also share the indicator Hash or URL to MISP Custom Event. To get required details for creating a new configuration, navigate to https://<misp-url>/events/automation.",
     "patch_supported": true,
     "push_supported": true,
@@ -151,6 +151,31 @@
             "description": "Indicators attached to this event will be ignored while pulling data from MISP."
         },
         {
+            "label": "Pulling Mechanism",
+            "key": "pulling_mechanism",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Incremental",
+                    "value": "incremental"
+                },
+                {
+                    "key": "Look Back",
+                    "value": "look_back"
+                }
+            ],
+            "default": "incremental",
+            "mandatory": true,
+            "description": "Pulling mechanism used to fetch the indicators from MISP."
+        },
+        {
+            "label": "Look Back (in hours)",
+            "key": "look_back",
+            "type": "number",
+            "mandatory": false,
+            "description": "Look Back hours for fetching the indicators from MISP. Note: This parameter will only be considered if \"Pulling Mechanism\" is set to \"Look Back\"."
+        },
+        {
             "label": "Enable Tagging",
             "key": "enable_tagging",
             "type": "choice",
@@ -174,7 +199,7 @@
             "type": "number",
             "mandatory": true,
             "default": 7,
-            "description": "Number of days to pull the data for the initial run."
+            "description": "Number of days to pull the data for the initial run. Note: This parameter will only be considered if \"Pulling Mechanism\" is set to \"Incremental\"."
         }
     ]
 }

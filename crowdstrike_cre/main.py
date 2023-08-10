@@ -28,13 +28,16 @@ SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
 CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+URE Crowdstrike plugin.
 """
 
-"""Crowdstrike URE plugin."""
 import datetime
 import json
+import os
 import time
-from typing import List
+import traceback
+from typing import Dict, Tuple, List
 
 import requests
 from netskope.common.utils import add_user_agent
@@ -45,22 +48,24 @@ from netskope.integrations.cre.models import (
     RecordType,
 )
 from netskope.integrations.cre.plugin_base import PluginBase, ValidationResult
-from requests.models import HTTPError
 
-from .lib.falconpy.api_complete import APIHarness
 
 PAGE_SIZE = 5000
 BATCH_SIZE = 1000
 MAC_PUT_DIR = "/Users"
-PLATFORM_TO_SCRIPT_MAPPING = {
-    "Windows": {
-        "script_name": "windows_agent_restart_script.ps1",
-        "description": "Windows Netskope restart agent script.",
-    },
-    "Mac": {"script_name": "mac_agent_restart_script"},
+PLUGIN_NAME = "CrowdStrike"
+PLUGIN_VERSION = "1.2.0"
+MODULE_NAME = "URE"
+MAX_API_CALLS = 3
+CROWDSTRIKE_DATE_FORMAT = r"%Y-%m-%dT%H:%M:%SZ"
+COMMAND_TIMEOUT = 60
+COMMAND_WAIT = 6
+SCORE_TO_FILE_MAPPING = {
+    "1_25": "crwd_zta_1_25.txt",
+    "26_50": "crwd_zta_26_50.txt",
+    "51_75": "crwd_zta_51_75.txt",
+    "76_100": "crwd_zta_76_100.txt",
 }
-
-PLUGIN_NAME = "Crowdstrike URE Plugin"
 
 
 class CrowdstrikeException(Exception):
@@ -72,245 +77,580 @@ class CrowdstrikeException(Exception):
 class CrowdstrikePlugin(PluginBase):
     """Crowdstrike plugin implementation."""
 
-    def handle_error(self, resp):
+    def __init__(
+        self,
+        name,
+        *args,
+        **kwargs,
+    ):
+        """CrowdStrike plugin initializer.
+
+        Args:
+            name (str): Plugin configuration name.
+        """
+        super().__init__(
+            name,
+            *args,
+            **kwargs,
+        )
+        self.plugin_name, self.plugin_version = self._get_plugin_info()
+        self.log_prefix = f"{MODULE_NAME} {self.plugin_name} [{name}]"
+
+    def _get_plugin_info(self) -> Tuple:
+        """Get plugin name and version from manifest.
+
+        Returns:
+            tuple: Tuple of plugin's name and version fetched from manifest.
+        """
+        try:
+            file_path = os.path.join(
+                str(os.path.dirname(os.path.abspath(__file__))),
+                "manifest.json",
+            )
+            with open(file_path, "r") as manifest:
+                manifest_json = json.load(manifest)
+                plugin_name = manifest_json.get("name", PLUGIN_NAME)
+                plugin_version = manifest_json.get("version", PLUGIN_VERSION)
+                return (plugin_name, plugin_version)
+        except Exception as exp:
+            self.logger.error(
+                message=(
+                    "{} {}: Error occurred while"
+                    " getting plugin details. Error: {}".format(
+                        MODULE_NAME, PLUGIN_NAME, exp
+                    )
+                ),
+                details=traceback.format_exc(),
+            )
+        return (PLUGIN_NAME, PLUGIN_VERSION)
+
+    def _get_credentials(self, configuration: Dict) -> Tuple:
+        """Get API Credentials.
+
+        Args:
+            configuration (Dict): Configuration dictionary.
+
+        Returns:
+            Tuple: Tuple containing Base URL, Client ID and Client Secret.
+        """
+        return (
+            configuration.get("base_url", "").strip(),
+            configuration.get("client_id", "").strip(),
+            configuration.get("client_secret"),
+        )
+
+    def _add_user_agent(self, headers: Dict = None) -> Dict:
+        """Add User-Agent in the headers of any request.
+
+        Returns:
+            Dict: Dictionary after adding User-Agent.
+        """
+        headers = add_user_agent(headers)
+        plugin_name = self.plugin_name.lower()
+        ce_added_agent = headers.get("User-Agent", "netskope-ce")
+        user_agent = "{}-ure-{}/{}".format(
+            ce_added_agent, plugin_name, self.plugin_version
+        )
+        headers.update({"User-Agent": user_agent})
+        return headers
+
+    def parse_response(self, response: requests.models.Response):
+        """Parse Response will return JSON from response object.
+
+        Args:
+            response (response): Response object.
+
+        Returns:
+            Any: Response Json.
+        """
+        try:
+            return response.json()
+        except json.JSONDecodeError as err:
+            err_msg = f"Invalid JSON response received from API. Error: {err}"
+            self.logger.error(f"{self.log_prefix}: {err_msg}")
+            raise CrowdstrikeException(err_msg)
+        except Exception as exp:
+            err_msg = (
+                "Unexpected error occurred while parsing"
+                " json response. Error: {}".format(exp)
+            )
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg}",
+                details=traceback.format_exc(),
+            )
+            raise CrowdstrikeException(err_msg)
+
+    def handle_error(
+        self, resp: requests.models.Response, logger_msg: str
+    ) -> Dict:
         """Handle the different HTTP response code.
 
         Args:
-            resp (requests.models.Response): Response object returned from API
-            call.
+            resp (requests.models.Response): Response object returned
+                from API call.
+            logger_msg: logger message.
         Returns:
-            dict: Returns the dictionary of response JSON when the response
-            code is 200.
+            dict: Returns the dictionary of response JSON when the
+                response code is 200.
         Raises:
-            HTTPError: When the response code is not 200.
+            CrowdstrikeException: When the response code is
+            not 200,201 and 204.
         """
-        if resp.status_code == 200 or resp.status_code == 201:
-            try:
-                return resp.json()
-            except ValueError:
-                raise CrowdstrikeException(
-                    f"{PLUGIN_NAME}: "
-                    "Exception occurred while parsing JSON response."
-                )
-
-        elif resp.status_code == 401:
-            raise CrowdstrikeException(
-                f"{PLUGIN_NAME}: "
-                "Received exit code 401, Authentication Error"
-            )
-
+        if resp.status_code in [200, 201]:
+            return self.parse_response(response=resp)
+        elif resp.status_code == 204:
+            return {}
         elif resp.status_code == 403:
-            raise CrowdstrikeException(
-                f"{PLUGIN_NAME}: Received exit code 403, Forbidden User"
+            err_msg = "Received exit code 403, Forbidden while {}.".format(
+                logger_msg
             )
-        elif resp.status_code == 404:
-
-            try:
-                resp = resp.json()
-            except Exception as exp:
-                self.logger.error(
-                    message=f"{PLUGIN_NAME}: response code 404 "
-                    "received. Error while parsing response in json.",
-                    details=exp.with_traceback(),
-                )
-                return
+            resp_json = self.parse_response(response=resp)
             self.logger.error(
-                message=f"{PLUGIN_NAME}: One or more assessment ids "
-                "are not found in crowdstrike.",
-                details=str(resp.get("errors", "")),
+                message=f"{self.log_prefix}: {err_msg}",
+                details=str(resp_json.get("errors")),
             )
-            return resp
+            raise CrowdstrikeException(err_msg)
+        elif resp.status_code == 404:
+            err_msg = (
+                "Received exit code 404, Resource not found while {}.".format(
+                    logger_msg
+                )
+            )
+            resp_json = self.parse_response(response=resp)
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg}",
+                details=str(
+                    resp_json.get(
+                        "errors", "No error details found from API Response."
+                    )
+                ),
+            )
+            raise CrowdstrikeException(err_msg)
         elif resp.status_code >= 400 and resp.status_code < 500:
-            raise CrowdstrikeException(
-                f"{PLUGIN_NAME}: "
-                f"Received exit code {resp.status_code}, HTTP client Error"
+            err_msg = (
+                "Received exit code {}, HTTP client error while {}.".format(
+                    resp.status_code, logger_msg
+                )
             )
-
+            resp_json = self.parse_response(response=resp)
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg}",
+                details=str(
+                    resp_json.get(
+                        "errors", "No error details found from API Response."
+                    )
+                ),
+            )
+            raise CrowdstrikeException(err_msg)
         elif resp.status_code >= 500 and resp.status_code < 600:
-            raise CrowdstrikeException(
-                f"{PLUGIN_NAME}: "
-                f"Received exit code {resp.status_code}, HTTP server Error"
+            err_msg = (
+                "Received exit code {}. HTTP Server Error while {}.".format(
+                    resp.status_code, logger_msg
+                )
             )
-
+            resp_json = self.parse_response(response=resp)
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg}",
+                details=str(
+                    resp_json.get(
+                        "errors", "No error details found from API Response."
+                    )
+                ),
+            )
+            raise CrowdstrikeException(err_msg)
         else:
-            raise CrowdstrikeException(
-                f"{PLUGIN_NAME}: "
-                f"Received exit code {resp.status_code}, HTTP Error"
+            err_msg = "Received exit code {}. HTTP Error while {}.".format(
+                resp.status_code, logger_msg
             )
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg}",
+                details=str(
+                    resp_json.get(
+                        "errors", "No error details found from API Response."
+                    )
+                ),
+            )
+            raise CrowdstrikeException(err_msg)
 
-    def get_agent_ids(self, headers, device_id=None):
+    def _api_helper(
+        self, request, logger_msg: str, is_handle_error_required=True
+    ):
+        """API Helper perform API request to ThirdParty platform
+        and captures all the possible errors for requests.
+
+        Args:
+            request (request): Requests object.
+            logger_msg (str): Logger string.
+            is_handle_error_required (bool, optional): Is handling status
+            code is required?. Defaults to True.
+
+        Returns:
+            dict: Response dictionary.
+        """
+        try:
+            for retry_counter in range(MAX_API_CALLS):
+                response = request()
+                if response.status_code == 429:
+                    resp_json = self.parse_response(response=response)
+                    api_err_msg = str(
+                        resp_json.get(
+                            "errors",
+                            "No error details found in API response.",
+                        )
+                    )
+                    if retry_counter == MAX_API_CALLS - 1:
+                        err_msg = (
+                            "Received exit code 429, API rate limit "
+                            "exceeded while {}. Max retries for rate limit "
+                            "handler exceeded hence returning status"
+                            " code 429.".format(logger_msg)
+                        )
+                        self.logger.error(
+                            message=f"{self.log_prefix}: {err_msg}",
+                            details=api_err_msg,
+                        )
+                        raise CrowdstrikeException(err_msg)
+                    retry_after = response.headers.get(
+                        "X-Ratelimit-Retryafter"
+                    )
+                    if retry_after is None:
+                        self.logger.info(
+                            "{}: No X-Ratelimit-Retryafter value received from"
+                            "API hence plugin will retry after 60 "
+                            "seconds.".format(self.log_prefix)
+                        )
+                        time.sleep(60)
+                        continue
+                    retry_after = int(retry_after)
+                    diff_retry_after = abs(retry_after - time.time())
+                    if diff_retry_after > 300:
+                        err_msg = (
+                            "'X-Ratelimit-Retryafter' value received from "
+                            "response headers while {} is greater than 5  "
+                            "minutes hence returning status code 429.".format(
+                                logger_msg
+                            )
+                        )
+                        self.logger.error(
+                            message=f"{self.log_prefix}: {err_msg}"
+                        )
+                        raise CrowdstrikeException(err_msg)
+                    self.logger.error(
+                        message=(
+                            "{}: Received exit code 429, API rate limit"
+                            " exceeded while {}. Retrying after {} "
+                            "seconds. {} retries remaining.".format(
+                                self.log_prefix,
+                                logger_msg,
+                                diff_retry_after,
+                                MAX_API_CALLS - 1 - retry_counter,
+                            )
+                        ),
+                        details=api_err_msg,
+                    )
+                    time.sleep(diff_retry_after)
+                else:
+                    return (
+                        self.handle_error(response, logger_msg)
+                        if is_handle_error_required
+                        else response
+                    )
+        except requests.exceptions.ProxyError as error:
+            err_msg = (
+                "Proxy error occurred. Verify the provided "
+                "proxy configuration."
+            )
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg} Error: {error}",
+                details=traceback.format_exc(),
+            )
+            raise CrowdstrikeException(err_msg)
+        except requests.exceptions.ConnectionError as error:
+            err_msg = (
+                "Unable to establish connection with {} "
+                "platform. Proxy server or {}"
+                " server is not reachable.".format(
+                    self.plugin_name, self.plugin_name
+                )
+            )
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg} Error: {error}",
+                details=traceback.format_exc(),
+            )
+            raise CrowdstrikeException(err_msg)
+        except requests.HTTPError as err:
+            err_msg = f"HTTP Error occurred while {logger_msg}."
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg} Error: {err}",
+                details=traceback.format_exc()
+            )
+            raise CrowdstrikeException(err_msg)
+        except CrowdstrikeException as exp:
+            self.logger.error(
+                message=f"{self.log_prefix}: {exp}",
+                details=traceback.format_exc(),
+            )
+            raise CrowdstrikeException(exp)
+        except Exception as exp:
+            err_msg = (
+                "Unexpected error occurred while requesting "
+                "to {} server. Error: {}".format(self.plugin_name, exp)
+            )
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg}",
+                details=traceback.format_exc(),
+            )
+            raise CrowdstrikeException(err_msg)
+
+    def get_agent_ids(self, headers: Dict, device_id: str = None) -> List[str]:
         """Get the all the Agent ID list from the Query Endpoint.
 
         Args:
-            headers (dict): Header dict object having OAUTH2 access token.
-            device_id(Optional): Device id.
+            headers (Dict): Header dict object having OAUTH2 access token.
+            device_id (str): Device id. Default None.
 
         Returns:
-            dict: JSON response dict received from query endpoint.
+            dict: List of agent ids received from CrowdStrike platform.
         """
-        base_url = self.configuration["base_url"].strip()
+        base_url = self.configuration.get("base_url", "").strip()
         query_endpoint = f"{base_url}/devices/queries/devices-scroll/v1"
+        self.logger.debug(
+            "{}: Pulling the host ids from {} "
+            "using endpoint {}.".format(
+                self.log_prefix, self.plugin_name, query_endpoint
+            )
+        )
+        api_filter = None
+        if self.last_run_at and (device_id is None):
+            # This filter is for fetching only the updated hosts.
+            formatted_date = self.last_run_at.strftime(CROWDSTRIKE_DATE_FORMAT)
+            api_filter = f"first_seen: > '{formatted_date}'"
+            self.logger.debug(
+                "{}: Plugin will be pulling host id(s) from {} using "
+                'checkpoint "{}".'.format(
+                    self.log_prefix, self.plugin_name, api_filter
+                )
+            )
+
+        elif device_id:
+            # This filter is to fetch the hosts on the bases of provided
+            # device id. This filter is utilized in execute_action
+            api_filter = f"device_id: '{device_id}'"
+            self.logger.debug(
+                '{}: Pulling the Host with ID "{}" from {}.'.format(
+                    self.log_prefix, device_id, self.plugin_name
+                )
+            )
+        elif self.last_run_at is None:
+            self.logger.info(
+                "{}: This is an initial pull of the plugin hence pulling all"
+                " the host id(s) present on the {} Host Management"
+                " page.".format(self.log_prefix, self.plugin_name)
+            )
+
         agent_ids = []
         offset = ""
         while True:
             headers = self.reload_auth_token(headers)
             params = {"limit": PAGE_SIZE, "offset": offset}
-            if self.last_run_at and (device_id is None):
-                formatted_date = self.last_run_at.strftime(
-                    "%Y-%m-%dT%H:%M:%SZ"
-                )
-                params.update({"filter": f"first_seen: > '{formatted_date}'"})
-            elif device_id:
-                params.update({"filter": f"device_id: '{device_id}'"})
+            if api_filter is not None:
+                # Adding filter only when api_filter is not None.
+                params.update({"filter": api_filter})
 
-            all_agent_resp = requests.get(
-                query_endpoint,
-                headers=add_user_agent(headers),
-                params=params,
-                proxies=self.proxy,
+            self.logger.debug(
+                "{}: Pulling the host id(s) from {} using filter"
+                " parameters {}".format(
+                    self.log_prefix, self.plugin_name, params
+                )
             )
-            agent_resp_json = self.handle_error(all_agent_resp)
-            errors = agent_resp_json.get("errors")
-            if errors:
-                err_msg = " ".join(
-                    [
-                        f"{PLUGIN_NAME}: Unable to Fetch agents",
-                        f"Error: {errors[0].get('message', '')}",
-                    ]
-                )
-
-                self.notifier.error(err_msg)
-                self.logger.error(err_msg)
-                raise requests.HTTPError(err_msg)
-            resources = agent_resp_json.get("resources", [])
+            all_agent_resp = self._api_helper(
+                request=lambda: requests.get(
+                    query_endpoint,
+                    headers=self._add_user_agent(headers),
+                    params=params,
+                    proxies=self.proxy,
+                    verify=self.ssl_validation,
+                ),
+                logger_msg="pulling the host id(s) from {} platform".format(
+                    self.plugin_name
+                ),
+                is_handle_error_required=True,
+            )
+            resources = all_agent_resp.get("resources", [])
             offset = (
-                agent_resp_json.get("meta", {})
+                all_agent_resp.get("meta", {})
                 .get("pagination", {})
                 .get("offset", "")
             )
             agent_ids.extend(resources)
-            if offset.strip() == "" or len(offset) == 0:
+            self.logger.info(
+                "{}: Successfully pulled {} host id(s) from {} in "
+                "current page. Total {} host id(s) fetched so far in the "
+                "current pull cycle.".format(
+                    self.log_prefix,
+                    len(resources),
+                    self.plugin_name,
+                    len(agent_ids),
+                )
+            )
+            if not offset.strip():
                 break
-        return agent_ids
-
-    def _get_falcon(self):
-        """Get Falcon object to perform operations."""
-        falcon = APIHarness(
-            client_id=self.configuration["client_id"].strip(),
-            client_secret=self.configuration["client_secret"].strip(),
+        self.logger.info(
+            "{}: Successfully pulled {} host id(s) from {} platform.".format(
+                self.log_prefix, len(agent_ids), self.plugin_name
+            )
         )
-        return falcon
+        return agent_ids
 
     def _put_files_on_rtr_cloud(self):
         """Put files on RTR cloud."""
-        falcon = self._get_falcon()
-        files = [
-            "crwd_zta_1_25.txt",
-            "crwd_zta_26_50.txt",
-            "crwd_zta_51_75.txt",
-            "crwd_zta_76_100.txt",
-        ]
-        scores = ["1_25", "26_50", "51_75", "76_100"]
-        for i in range(4):
-            PAYLOAD = {
-                "description": f"file representing a zta score of {scores[i]}",
-                "name": f"{files[i]}",
-                "comments_for_audit_log": f"uploaded file representing a zta \
-                    score of {scores[i]} for Netskope ZTA-RTR integration",
-            }
-            file_upload = [("file", "Netskope ZTA-RTR Integration")]
-            response = falcon.command(
-                "RTR_CreatePut_Files", data=PAYLOAD, files=file_upload
+        base_url, client_id, client_secret = self._get_credentials(
+            configuration=self.configuration
+        )
+        put_files_url = f"{base_url}/real-time-response/entities/put-files/v1"
+        auth_json = self.get_auth_json(
+            client_id=client_id,
+            client_secret=client_secret,
+            base_url=base_url,
+        )
+        auth_token = auth_json.get("access_token")
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        self.logger.debug(
+            "{}: Creating files for all the scores on the RTR Cloud using"
+            " endpoint {}. Files: {}".format(
+                self.log_prefix,
+                put_files_url,
+                list(SCORE_TO_FILE_MAPPING.values()),
             )
-            errors = response["body"].get("errors", [])
-            if errors:
-                for error in errors:
-                    if (
-                        error.get("message", "")
-                        != "file with given name already exists"
-                    ):
-                        raise Exception(
-                            f"{PLUGIN_NAME}: Error while uploading"
-                            f" file {files[i]}to cloud: {error['message']}"
-                        )
-            else:
-                self.logger.info(
-                    f"{PLUGIN_NAME}: {files[i]} uploaded successfully on RTR cloud."
+        )
+        for score, file in SCORE_TO_FILE_MAPPING.items():
+            headers = self.reload_auth_token(headers=headers)
+            PAYLOAD = {
+                "description": f"file representing a ZTA score of {score}",
+                "name": file,
+                "comments_for_audit_log": (
+                    "uploaded file representing a ZTA "
+                    "score of {} for Netskope ZTA-RTR integration".format(
+                        score
+                    )
+                ),
+            }
+
+            file_upload = [("file", "Netskope ZTA-RTR Integration")]
+            self.logger.debug(
+                "{}: Creating file for score {} and name {} on "
+                "RTR cloud. File object: {}, Payload: {}".format(
+                    self.log_prefix, score, file, file_upload, PAYLOAD
                 )
+            )
+            logger_msg = f"putting file {file} on RTR cloud"
+            response = self._api_helper(
+                request=lambda: requests.post(
+                    url=put_files_url,
+                    files=file_upload,
+                    data=PAYLOAD,
+                    headers=self._add_user_agent(headers),
+                    verify=self.ssl_validation,
+                    proxies=self.proxy,
+                ),
+                logger_msg=logger_msg,
+                is_handle_error_required=False,
+            )
+            if response.status_code in [200, 201]:
+                self.logger.info(
+                    "{}: {} file successfully uploaded on RTR cloud.".format(
+                        self.log_prefix, file
+                    )
+                )
+
+            elif response.status_code == 409:
+                resp_json = self.parse_response(response=response)
+                errors = resp_json.get("errors", [])
+                if errors:
+                    for error in errors:
+                        if (
+                            error.get("message", "")
+                            != "file with given name already exists"
+                        ):
+                            err_msg = (
+                                "Received exit code {}, while {}.".format(
+                                    response.status_code, logger_msg
+                                )
+                            )
+                            self.logger.error(
+                                message=f"{self.log_prefix}: {logger_msg}",
+                                details=str(errors),
+                            )
+                            raise CrowdstrikeException(err_msg)
+                    self.logger.debug(
+                        "{}: File with given name {} already exist on "
+                        "RTR Cloud. API Response: {}".format(
+                            self.log_prefix, file, errors
+                        )
+                    )
+            else:
+                self.handle_error(resp=response, logger_msg=logger_msg)
 
     def _get_session_id(self, device_id: str) -> str:
         """Get session id of the connection made to the device.
 
         Args:
-            device_id (str): Device of to which we want to connect.
+            device_id (str): Id of device that plugin will make session with.
 
         Returns:
             str: Session id of the connection.
         """
-        try:
-            base_url = self.configuration["base_url"].strip()
-            auth_json = self.get_auth_json(
-                self.configuration.get("client_id").strip(),
-                self.configuration.get("client_secret").strip(),
-                self.configuration.get("base_url").strip(),
+        base_url, client_id, client_secret = self._get_credentials(
+            configuration=self.configuration
+        )
+        query_endpoint = f"{base_url}/real-time-response/entities/sessions/v1"
+        auth_json = self.get_auth_json(
+            client_id=client_id,
+            client_secret=client_secret,
+            base_url=base_url,
+        )
+        auth_token = auth_json.get("access_token")
+        headers = {
+            "Authorization": f"Bearer {auth_token}",
+            "Content-Type": "application/json",
+        }
+        body = {
+            "device_id": device_id,
+            "origin": "Netskope",
+            "queue_offline": True,
+        }
+        self.logger.debug(
+            '{}: Creating session with host "{}" using endpoint {}. '
+            "API payload: {}".format(
+                self.log_prefix, device_id, query_endpoint, body
             )
-            auth_token = auth_json.get("access_token")
-            headers = {
-                "Authorization": f"Bearer {auth_token}",
-                "Content-Type": "application/json",
-            }
-            query_endpoint = (
-                f"{base_url}/real-time-response/entities/sessions/v1"
-            )
-            body = {
-                "device_id": device_id,
-                "origin": "Netskope",
-                "queue_offline": True,
-            }
-            resp = requests.post(
+        )
+        resp_json = self._api_helper(
+            lambda: requests.post(
                 query_endpoint,
-                headers=add_user_agent(headers),
+                headers=self._add_user_agent(headers),
                 data=json.dumps(body),
+                verify=self.ssl_validation,
                 proxies=self.proxy,
+            ),
+            logger_msg=f'creating session with host ID "{device_id}"',
+            is_handle_error_required=True,
+        )
+        session_id = ""
+        resources = resp_json.get("resources", [])
+        if resources:
+            session_id = resources[0].get("session_id", "")
+            self.logger.debug(
+                '{}: Successfully created session with host "{}".'.format(
+                    self.log_prefix, device_id
+                )
             )
-            resp.raise_for_status()
-            response = resp.json()
-            session_id = ""
-            resources = response.get("resources", [])
-            if resources:
-                session_id = resources[0].get("session_id", "")
             return session_id
-
-        except requests.exceptions.ProxyError:
-            err_msg = " ".join(
-                [
-                    f"{PLUGIN_NAME}: CrowdStrike Invalid",
-                    "proxy configuration.",
-                ]
-            )
-            self.notifier.error(err_msg)
-            self.logger.error(err_msg)
-            raise requests.HTTPError(err_msg)
-        except requests.exceptions.ConnectionError:
-            err_msg = " ".join(
-                [
-                    f"{PLUGIN_NAME}: CrowdStrike Unable to establish",
-                    "connection with CrowdStrike platform."
-                    "Proxy server or CrowdStrike API is not reachable.",
-                ]
-            )
-            self.notifier.error(err_msg)
-            self.logger.error(err_msg)
-            raise requests.HTTPError(err_msg)
-        except Exception as e:
-            self.logger.error(
-                f"{PLUGIN_NAME}: Exception occurred while "
-                f"creating session with device id {device_id}."
-            )
-            raise Exception(
-                e.response.json().get(
-                    "errors",
-                    f"Unable to create session with device id {device_id}.",
+        else:
+            self.logger.debug(
+                "{}: Unable to get the session id from the response json for"
+                ' the host "{}". Response json: {}'.format(
+                    self.log_prefix, device_id, resp_json
                 )
             )
 
@@ -322,22 +662,68 @@ class CrowdstrikePlugin(PluginBase):
         Args:
             session_id (str): Session Id to remove files against.
             device_id (str): Id of the remote host.
+            platform_name (str): platform name of host.
         """
-        files = [
-            "crwd_zta_1_25.txt",
-            "crwd_zta_26_50.txt",
-            "crwd_zta_51_75.txt",
-            "crwd_zta_76_100.txt",
-        ]
-
-        for i in range(4):
-            cmd = f"rm '{files[i]}'"
+        score_files = list(SCORE_TO_FILE_MAPPING.values())
+        self.logger.debug(
+            '{}: Removing files present on the host with ID "{}". Files '
+            "to be removed are {}".format(
+                self.log_prefix, device_id, score_files
+            )
+        )
+        base_url, client_id, client_secret = self._get_credentials(
+            configuration=self.configuration
+        )
+        auth_json = self.get_auth_json(
+            base_url=base_url,
+            client_id=client_id,
+            client_secret=client_secret,
+        )
+        auth_token = auth_json.get("access_token")
+        headers = {
+            "Authorization": f"Bearer {auth_token}",
+            "Content-Type": "application/json",
+        }
+        for file in score_files:
+            cmd = f"rm '{file}'"
             if platform_name == "Mac":
-                cmd = f"rm '{MAC_PUT_DIR}/{files[i]}'"
-            self._execute_command("rm", cmd, session_id, device_id)
+                cmd = f"rm '{MAC_PUT_DIR}/{file}'"
+            self.logger.debug(
+                '{}: Command "{}" will be executed on host'
+                ' with ID "{}".'.format(self.log_prefix, cmd, device_id)
+            )
+            headers = self.reload_auth_token(headers=headers)
+            cloud_request_id, is_queued = self._execute_command(
+                "rm", cmd, session_id, device_id, headers
+            )
+            headers = self.reload_auth_token(headers=headers)
+            status = self._check_command_status(
+                cloud_request_id=cloud_request_id,
+                device_id=device_id,
+                cmd=cmd,
+                headers=headers,
+            )
+            if status is False and is_queued is True:
+                self.logger.info(
+                    '{}: Execution of command "{}" on host with ID "{}" '
+                    "is in RTR queue.".format(self.log_prefix, cmd, device_id)
+                )
+            if status is False and is_queued is False:
+                self._block_until_completed(
+                    status=status,
+                    cloud_request_id=cloud_request_id,
+                    device_id=device_id,
+                    cmd=cmd,
+                    headers=headers,
+                )
 
     def _block_until_completed(
-        self, status: bool, cloud_request_id: str, device_id: str, cmd: str
+        self,
+        status: bool,
+        cloud_request_id: str,
+        device_id: str,
+        cmd: str,
+        headers: Dict,
     ):
         """Block execution until command successfully executed.
 
@@ -347,15 +733,32 @@ class CrowdstrikePlugin(PluginBase):
             device_id (str): Device ID.
             cmd (str): Command to be executed.
         """
+        start_time = time.time()
         while status is False:
+            # Run the look until status is True
+            headers = self.reload_auth_token(headers=headers)
             status = self._check_command_status(
                 cloud_request_id=cloud_request_id,
                 device_id=device_id,
                 cmd=cmd,
+                headers=headers,
             )
+            curr_time = time.time()
             if status:
+                # If status is true then return.
                 return
-            time.sleep(3)
+            elif curr_time - start_time > COMMAND_TIMEOUT:
+                # Raise timeout if status is False and time is 60 seconds.
+                err_msg = (
+                    "Timeout exceeded for executing "
+                    "command {} on host ID {}".format(cmd, device_id)
+                )
+                self.logger.error(f"{self.log_prefix}: {err_msg}")
+                raise CrowdstrikeException(err_msg)
+
+            # Adding delay of command wait after which API call
+            # for status will be done
+            time.sleep(COMMAND_WAIT)
 
     def _put_file_on_device(
         self, session_id: str, score: int, device_id: str, platform_name: str
@@ -371,22 +774,42 @@ class CrowdstrikePlugin(PluginBase):
         file = None
         score = int(score / 10)
         if score <= 25:
-            file = "crwd_zta_1_25.txt"
+            file = SCORE_TO_FILE_MAPPING["1_25"]
         elif score >= 26 and score <= 50:
-            file = "crwd_zta_26_50.txt"
+            file = SCORE_TO_FILE_MAPPING["26_50"]
         elif score >= 51 and score <= 75:
-            file = "crwd_zta_51_75.txt"
+            file = SCORE_TO_FILE_MAPPING["51_75"]
+        elif score > 75:
+            file = SCORE_TO_FILE_MAPPING["76_100"]
         else:
-            file = "crwd_zta_76_100.txt"
+            err_msg = (
+                "Invalid score value received for putting file on device."
+            )
+            self.logger.error(f"{self.log_prefix}: {err_msg}")
+            raise CrowdstrikeException()
+        base_url, client_id, client_secret = self._get_credentials(
+            configuration=self.configuration
+        )
+        auth_json = self.get_auth_json(
+            base_url=base_url,
+            client_id=client_id,
+            client_secret=client_secret,
+        )
+        auth_token = auth_json.get("access_token")
+        headers = {
+            "Authorization": f"Bearer {auth_token}",
+            "Content-Type": "application/json",
+        }
         if platform_name == "Mac":
             cmd = f"cd '{MAC_PUT_DIR}'"
             cloud_request_id, is_queued = self._execute_command(
-                "cd", cmd, session_id, device_id
+                "cd", cmd, session_id, device_id, headers
             )
             status = self._check_command_status(
                 cloud_request_id=cloud_request_id,
                 device_id=device_id,
                 cmd=cmd,
+                headers=headers,
             )
             if status is False and is_queued is False:
                 self._block_until_completed(
@@ -394,13 +817,14 @@ class CrowdstrikePlugin(PluginBase):
                     cloud_request_id=cloud_request_id,
                     device_id=device_id,
                     cmd=cmd,
+                    headers=headers,
                 )
 
         cloud_request_id, is_queued = self._execute_command(
-            "put", f"put '{file}'", session_id, device_id
+            "put", f"put '{file}'", session_id, device_id, headers
         )
         status = self._check_command_status(
-            cloud_request_id, device_id, f"put {file}"
+            cloud_request_id, device_id, f"put {file}", headers
         )
         if status is False and is_queued is False:
             self._block_until_completed(
@@ -408,6 +832,7 @@ class CrowdstrikePlugin(PluginBase):
                 cloud_request_id=cloud_request_id,
                 device_id=device_id,
                 cmd=f"put {file}",
+                headers=headers,
             )
 
     def _execute_command(
@@ -416,6 +841,7 @@ class CrowdstrikePlugin(PluginBase):
         command_string: str,
         session_id: str,
         device_id: str,
+        headers: Dict,
     ) -> str:
         """Execute the specified command on the remote host.
 
@@ -424,82 +850,44 @@ class CrowdstrikePlugin(PluginBase):
             command_string (str): Full command line of the command to execute.
             session_id (str): Session id to execute the command against.
             device_id (str): Id of the remote host.
+            headers (Dict): Headers dictionary containing auth token
+            and Content-Type
 
         Returns:
             str: Cloud request id to check status of the command.
         """
-        try:
-            base_url = self.configuration["base_url"].strip()
-            auth_json = self.get_auth_json(
-                self.configuration.get("client_id").strip(),
-                self.configuration.get("client_secret").strip(),
-                self.configuration.get("base_url").strip(),
-            )
-            auth_token = auth_json.get("access_token")
-            headers = {
-                "Authorization": f"Bearer {auth_token}",
-                "Content-Type": "application/json",
-            }
-
-            query_endpoint = (
-                f"{base_url}/real-time-response/entities/admin-command/v1"
-            )
-            body = {
-                "base_command": base_command,
-                "command_string": command_string,
-                "persist": True,
-                "session_id": session_id,
-            }
-            resp = requests.post(
+        base_url = self.configuration.get("base_url")
+        query_endpoint = (
+            f"{base_url}/real-time-response/entities/admin-command/v1"
+        )
+        body = {
+            "base_command": base_command,
+            "command_string": command_string,
+            "persist": True,
+            "session_id": session_id,
+        }
+        resp_json = self._api_helper(
+            lambda: requests.post(
                 query_endpoint,
-                headers=add_user_agent(headers),
+                headers=self._add_user_agent(headers),
                 data=json.dumps(body),
+                verify=self.ssl_validation,
                 proxies=self.proxy,
-            )
-            resp.raise_for_status()
-            response = resp.json()
-            cloud_request_id, is_queued = "", False
-            resources = response.get("resources", [])
-            if resources:
-                cloud_request_id = resources[0].get("cloud_request_id", "")
-                is_queued = resources[0].get("queued_command_offline")
-            return cloud_request_id, is_queued
-
-        except requests.exceptions.ProxyError:
-            err_msg = " ".join(
-                [
-                    f"{PLUGIN_NAME}: CrowdStrike Invalid",
-                    "proxy configuration.",
-                ]
-            )
-            self.notifier.error(err_msg)
-            self.logger.error(err_msg)
-            raise requests.HTTPError(err_msg)
-        except requests.exceptions.ConnectionError:
-            err_msg = " ".join(
-                [
-                    f"{PLUGIN_NAME}: Unable to establish connection ",
-                    "with CrowdStrike platform.Proxy server or CrowdStrike"
-                    "API is not reachable.",
-                ]
-            )
-            self.notifier.error(err_msg)
-            self.logger.error(err_msg)
-            raise requests.HTTPError(err_msg)
-        except Exception as e:
-            self.logger.error(
-                f"{PLUGIN_NAME}: CrowdStrike Exception occurred while "
-                f"executing an command {command_string} on device {device_id}."
-            )
-            raise HTTPError(
-                e.response.json().get(
-                    "errors",
-                    f"Unable to execute command on device {device_id}.",
-                )
-            )
+            ),
+            logger_msg='executing "{}" command on host ID {}'.format(
+                command_string, device_id
+            ),
+            is_handle_error_required=True,
+        )
+        cloud_request_id, is_queued = "", False
+        resources = resp_json.get("resources", [])
+        if resources:
+            cloud_request_id = resources[0].get("cloud_request_id", "")
+            is_queued = resources[0].get("queued_command_offline")
+        return cloud_request_id, is_queued
 
     def _check_command_status(
-        self, cloud_request_id: str, device_id: str, cmd: str
+        self, cloud_request_id: str, device_id: str, cmd: str, headers: Dict
     ):
         """Check the status of the executed command.
 
@@ -508,92 +896,74 @@ class CrowdstrikePlugin(PluginBase):
             command.
             device_id (str): Device id on which the command was executed.
             cmd (str): Command that was
+            headers (Dict): Headers dictionary containing auth token
+            and Content-Type
         """
-        try:
-            base_url = self.configuration["base_url"]
-            auth_json = self.get_auth_json(
-                self.configuration.get("client_id"),
-                self.configuration.get("client_secret"),
-                self.configuration.get("base_url"),
-            )
-            auth_token = auth_json.get("access_token")
-            headers = {
-                "Authorization": f"Bearer {auth_token}",
-                "Content-Type": "application/json",
-            }
-            query_endpoint = (
-                f"{base_url}/real-time-response/entities/admin-command/v1"
-            )
-            params = {"cloud_request_id": cloud_request_id, "sequence_id": 0}
-            resp = requests.get(
+        base_url = self.configuration.get("base_url", "").strip()
+        query_endpoint = (
+            f"{base_url}/real-time-response/entities/admin-command/v1"
+        )
+        params = {
+            "cloud_request_id": cloud_request_id,
+            "sequence_id": 0,
+        }
+
+        resp_json = self._api_helper(
+            lambda: requests.get(
                 query_endpoint,
-                headers=add_user_agent(headers),
+                headers=self._add_user_agent(headers),
                 params=params,
+                verify=self.ssl_validation,
                 proxies=self.proxy,
-            )
-            resp.raise_for_status()
-            response = resp.json()
-            resources = response.get("resources", [])
+            ),
+            logger_msg=(
+                'checking status of command "{}" on host'
+                ' ID "{}"'.format(cmd, device_id)
+            ),
+            is_handle_error_required=True,
+        )
+        resources = resp_json.get("resources", [])
+        if resources:
+            stderr = resources[0].get("stderr", "")
+            if resources[0].get("complete") is False and stderr != "":
+                err_msg = (
+                    'Unable to execute the "{}" command on '
+                    'host ID "{}".'.format(cmd, device_id)
+                )
+                self.logger.error(
+                    message=f"{self.log_prefix}: {err_msg}",
+                    details=str(resources),
+                )
+                raise CrowdstrikeException(err_msg)
 
-            if resources:
-                stderr = resources[0].get("stderr", "")
-                if resources[0].get("complete") is False and stderr != "":
-                    raise CrowdstrikeException(
-                        f"Unable to execute the {cmd} command on the "
-                        f"device {device_id}."
-                    )
-
-                elif resources[0].get("complete") is False and stderr == "":
-                    self.logger.info(
-                        f"{PLUGIN_NAME}: Execution of {cmd} is still "
-                        "in progress."
-                    )
-                    return False
-                elif resources[0].get("complete") is True:
-                    self.logger.info(
-                        f"{PLUGIN_NAME}: execution of {cmd} is completed."
-                    )
-                    return True
-
-                if stderr and "already exists" not in stderr:
-                    raise CrowdstrikeException(stderr)
+            elif resources[0].get("complete") is False and stderr == "":
                 self.logger.info(
-                    f"{PLUGIN_NAME}: {cmd} is successfully executed."
-                    f"for device {device_id}"
+                    '{}: Execution of "{}" on host ID "{}" is still '
+                    "in progress. API Response: {}".format(
+                        self.log_prefix, cmd, device_id, resources
+                    )
                 )
+                return False
+            elif resources[0].get("complete") is True:
+                self.logger.info(
+                    '{}: Successfully executed command "{}" on host ID'
+                    ' "{}".'.format(self.log_prefix, cmd, device_id)
+                )
+                return True
 
-        except requests.exceptions.ProxyError:
-            err_msg = f"{PLUGIN_NAME}: Invalid proxy configuration."
-            self.notifier.error(err_msg)
-            self.logger.error(err_msg)
-            raise requests.HTTPError(err_msg)
-        except requests.exceptions.ConnectionError:
-            err_msg = " ".join(
-                [
-                    f"{PLUGIN_NAME}: Unable to establish connection",
-                    "with CrowdStrike platform. Proxy server or ",
-                    "CrowdStrike API is not reachable.",
-                ]
-            )
-            self.notifier.error(err_msg)
-            self.logger.error(err_msg)
-            raise requests.HTTPError(err_msg)
-        except CrowdstrikeException as e:
-            self.logger.error(
-                f"{PLUGIN_NAME}: Exception occurred "
-                f"while uploading file to the device {device_id}."
-            )
-            raise Exception(str(e))
-        except Exception as e:
-            self.logger.error(
-                f"{PLUGIN_NAME}: Exception occurred "
-                f"while checking command status for device {device_id}."
-            )
-            raise HTTPError(
-                e.response.json().get(
-                    "errors",
-                    f"Unable to check command status for device {device_id}.",
+            if stderr and "already exists" not in stderr:
+                err_msg = (
+                    'Unable to execute the "{}" command on the '
+                    'host ID "{}". Error: {}'.format(cmd, device_id, stderr)
                 )
+                self.logger.error(
+                    message=f"{self.log_prefix}: {err_msg}",
+                    details=str(resources),
+                )
+                raise CrowdstrikeException(err_msg)
+            self.logger.info(
+                '{}: "{}" is successfully executed '
+                'on host ID "{}".'.format(self.log_prefix, cmd, device_id)
             )
 
     def _delete_session(self, session_id: str, device_id: str):
@@ -603,182 +973,205 @@ class CrowdstrikePlugin(PluginBase):
             session_id (str): Session id to delete the session.
             device_id (str): Device id of the connected host.
         """
-        try:
-            auth_json = self.get_auth_json(
-                self.configuration.get("client_id").strip(),
-                self.configuration.get("client_secret").strip(),
-                self.configuration.get("base_url").strip(),
-            )
-            auth_token = auth_json.get("access_token")
-            headers = {
-                "Authorization": f"Bearer {auth_token}",
-                "Content-Type": "application/json",
-            }
-            query_endpoint = f"{self.configuration['base_url'].strip()}/real-time-response/entities/sessions/v1"  # noqa
-            params = {"session_id": session_id}
-            resp = requests.delete(
+        base_url, client_id, client_secret = self._get_credentials(
+            configuration=self.configuration
+        )
+        query_endpoint = (
+            f"{base_url}/real-time-response/entities/sessions/v1"  # noqa
+        )
+        auth_json = self.get_auth_json(
+            base_url=base_url,
+            client_id=client_id,
+            client_secret=client_secret,
+        )
+        auth_token = auth_json.get("access_token")
+        headers = {
+            "Authorization": f"Bearer {auth_token}",
+            "Content-Type": "application/json",
+        }
+        params = {"session_id": session_id}
+        self.logger.debug(
+            '{}: Deleting the session with host having ID "{}". '
+            "API parameters: {}".format(self.log_prefix, device_id, params)
+        )
+        logger_msg = f"deleting session with host ID {device_id}"
+        resp = self._api_helper(
+            lambda: requests.delete(
                 query_endpoint,
-                headers=add_user_agent(headers),
+                headers=self._add_user_agent(headers),
                 params=params,
+                verify=self.ssl_validation,
                 proxies=self.proxy,
+            ),
+            logger_msg=logger_msg,
+            is_handle_error_required=False,
+        )
+        if resp.status_code == 204:
+            self.logger.debug(
+                "{}: Successfully deleted session with host "
+                'having id "{}".'.format(self.log_prefix, device_id)
             )
-            resp.raise_for_status()
+        self.handle_error(resp=resp, logger_msg=logger_msg)
 
-        except requests.exceptions.ProxyError:
-            err_msg = f"{PLUGIN_NAME}: Invalid proxy configuration."
-            self.notifier.error(err_msg)
-            self.logger.error(err_msg)
-            raise requests.HTTPError(err_msg)
-        except requests.exceptions.ConnectionError:
-            err_msg = " ".join(
-                [
-                    f"{PLUGIN_NAME}: Unable to establish connection",
-                    "with CrowdStrike platform. Proxy server or CrowdStrike",
-                    "API is not reachable.",
-                ]
-            )
-            self.notifier.error(err_msg)
-            self.logger.error(err_msg)
-            raise requests.HTTPError(err_msg)
-        except Exception as e:
-            self.logger.error(
-                f"{PLUGIN_NAME}: Exception occurred "
-                "while deleting session with session id "
-                f"{session_id} and device id {device_id}."
-            )
-            raise Exception(
-                e.response.json().get(
-                    "errors Unable to delete session with session id ",
-                    f"{session_id} and device id {device_id}.",
-                )
-            )
-
-    def fetch_records(self):
+    def fetch_records(self) -> List[Record]:
         """Get the all the Agent ID list from the Query Endpoint.
 
         Args:
             headers (dict): Header dict object having OAUTH2 access token.
+
         Returns:
-            dict: JSON response dict received from query endpoint.
+            List[Record]: List of hosts fetched from CrowdStrike.
         """
-        self.configuration["client_id"] = self.configuration[
-            "client_id"
-        ].strip()
-        self.configuration["client_secret"] = self.configuration[
-            "client_secret"
-        ].strip()
-        try:
-            auth_json = self.get_auth_json(
-                self.configuration.get("client_id"),
-                self.configuration.get("client_secret"),
-                self.configuration.get("base_url"),
+        self.logger.debug(
+            "{}: Fetching records from {} platform.".format(
+                self.log_prefix, self.plugin_name
             )
+        )
+        base_url, client_id, client_secret = self._get_credentials(
+            configuration=self.configuration
+        )
+        auth_json = self.get_auth_json(
+            client_id=client_id,
+            client_secret=client_secret,
+            base_url=base_url,
+        )
+        auth_token = auth_json.get("access_token")
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        agent_ids = self.get_agent_ids(headers)
+        uids_names = []
+        for ids in agent_ids:
+            uids_names.append(Record(uid=ids, type=RecordType.HOST))
+        self.logger.info(
+            "{}: Successfully fetched {} host(s) from {} platform.".format(
+                self.log_prefix, len(uids_names), self.plugin_name
+            )
+        )
+        return uids_names
+
+    def fetch_scores(self, agent_ids: List[Record]) -> List[Record]:
+        """Fetch scores of hosts from CrowdStrike platform.
+
+        Args:
+            agent_ids (List[Record]): List of records containing host's
+            agent ids.
+
+        Returns:
+            List[Record]: List of records with scores.
+        """
+        base_url, client_id, client_secret = self._get_credentials(
+            configuration=self.configuration
+        )
+        zero_trust_assessment_url = (
+            f"{base_url}/zero-trust-assessment/entities/assessments/v1"
+        )
+        self.logger.debug(
+            "{}: Fetching the score(s) for record(s) from {} "
+            'platform using "{}".'.format(
+                self.log_prefix, self.plugin_name, zero_trust_assessment_url
+            )
+        )
+        auth_json = self.get_auth_json(
+            client_id=client_id,
+            client_secret=client_secret,
+            base_url=base_url,
+        )
+        aids = [ids.uid for ids in agent_ids if ids.type == RecordType.HOST]
+        self.logger.debug(
+            "{}: {} plugin only supports the hosts hence it will only fetch "
+            "scores for {} host(s) and will not fetch scores for remaining {} "
+            "user(s).".format(
+                self.log_prefix,
+                self.plugin_name,
+                len(aids),
+                len(agent_ids) - len(aids),
+            )
+        )
+        scores = {}
+        for i in range(0, len(aids), BATCH_SIZE):
+            aid_batch = aids[i : i + BATCH_SIZE]  # noqa
             auth_token = auth_json.get("access_token")
             headers = {"Authorization": f"Bearer {auth_token}"}
-            agent_ids = self.get_agent_ids(headers)
-            uids_names = []
-            for ids in agent_ids:
-                uids_names.append(Record(uid=ids, type=RecordType.HOST))
-            return uids_names
-
-        except requests.exceptions.ProxyError:
-            err_msg = f"{PLUGIN_NAME}: Invalid proxy configuration."
-            self.notifier.error(err_msg)
-            self.logger.error(err_msg)
-            raise requests.HTTPError(err_msg)
-        except requests.exceptions.ConnectionError:
-            err_msg = " ".join(
-                [
-                    f"{PLUGIN_NAME}: Unable to establish connection",
-                    "with CrowdStrike platform. Proxy server or CrowdStrike"
-                    "API is not reachable.",
-                ]
-            )
-            self.notifier.error(err_msg)
-            self.logger.error(err_msg)
-            raise requests.HTTPError(err_msg)
-        except requests.exceptions.RequestException as e:
-            self.logger.error(
-                f"{PLUGIN_NAME}: Exception occurred while making "
-                "an API call to CrowdStrike platform."
-            )
-            raise e
-
-    def fetch_scores(self, agent_ids):
-        """Fetch user scores."""
-        self.configuration["client_id"] = self.configuration[
-            "client_id"
-        ].strip()
-        self.configuration["client_secret"] = self.configuration[
-            "client_secret"
-        ].strip()
-        try:
-            auth_json = self.get_auth_json(
-                self.configuration.get("client_id"),
-                self.configuration.get("client_secret"),
-                self.configuration.get("base_url"),
-            )
-            aids = []
-            for ids in agent_ids:
-                if ids.type == RecordType.HOST:
-                    aids.append(ids.uid)
-
-            scores = {}
-            for i in range(0, len(aids), BATCH_SIZE):
-                aid_batch = aids[i : i + BATCH_SIZE]
-                auth_token = auth_json.get("access_token")
-                headers = {"Authorization": f"Bearer {auth_token}"}
-                query_endpoint = f"{self.configuration['base_url']}/zero-trust-assessment/entities/assessments/v1"  # noqa
-                payload = {"ids": aid_batch}
-                headers = self.reload_auth_token(headers)
-                resp = requests.get(
-                    query_endpoint,
-                    headers=add_user_agent(headers),
+            payload = {"ids": aid_batch}
+            headers = self.reload_auth_token(headers)
+            logger_msg = f"pulling scores from {self.plugin_name} platform"
+            resp = self._api_helper(
+                request=lambda: requests.get(
+                    zero_trust_assessment_url,
+                    headers=self._add_user_agent(headers),
                     params=payload,
+                    verify=self.ssl_validation,
                     proxies=self.proxy,
-                )
-                all_scores_json = self.handle_error(resp=resp)
-                if all_scores_json:
-                    for sub in all_scores_json.get("resources", []):
-
-                        scores[sub["aid"]] = sub["assessment"]["overall"] * 10
-
-            scored_uids = []
-            count_host = 0
-            for aid, score in scores.items():
-                if score <= int(self.configuration["maximum_score"]):
-                    scored_uids.append(
-                        Record(uid=aid, type=RecordType.HOST, score=score)
+                ),
+                logger_msg=logger_msg,
+                is_handle_error_required=False,
+            )
+            resp_json = None
+            if resp.status_code == 404:
+                # If the assessment of the host is not found on
+                # the CrowdStrike then the API returns 404 for the
+                # response but it sends the valid response for
+                # the other assessment ids.
+                err_msg = (
+                    "Received exit code {}, "
+                    "Resource not found while {}.".format(
+                        resp.status_code, logger_msg
                     )
-                    count_host += 1
-            self.logger.info(
-                f"{PLUGIN_NAME}: Successfully fetched scores for "
-                f"{count_host} Host(s) and skipped fetching scores for "
-                f"{len(aids)-count_host} from CrowdStrike."
+                )
+                resp_json = self.parse_response(response=resp)
+                self.logger.error(
+                    message=(
+                        "{}: {} One or more assessment ids "
+                        "are not found on {} platform.".format(
+                            self.log_prefix, err_msg, self.plugin_name
+                        )
+                    ),
+                    details=str(
+                        resp_json.get(
+                            "errors",
+                            "No error details found from API Response.",
+                        )
+                    ),
+                )
+            else:
+                resp_json = self.handle_error(resp=resp, logger_msg=logger_msg)
+
+            if resp_json:
+                for sub in resp_json.get("resources", []):
+                    scores[sub.get("aid")] = (
+                        sub.get("assessment", {}).get("overall") * 10
+                    )
+                self.logger.info(
+                    "{}: Successfully pulled scores for {} host(s) "
+                    "from {} platform in the current batch. The total score(s)"
+                    " for {} host(s) have been fetched "
+                    "so far in the current pull cycle.".format(
+                        self.log_prefix,
+                        len(resp_json.get("resources", [])),
+                        self.plugin_name,
+                        len(scores),
+                    )
+                )
+
+        scored_uids = []
+        count_host = 0
+        maximum_score = int(self.configuration.get("maximum_score"))
+        for aid, score in scores.items():
+            if score <= maximum_score:
+                scored_uids.append(
+                    Record(uid=aid, type=RecordType.HOST, score=score)
+                )
+                count_host += 1
+        self.logger.info(
+            "{}: Successfully fetched scores for {} host(s) and"
+            " skipped fetching scores for {} host(s) on the basis of Maximum "
+            "Score i.e({}) provided in the plugin configuration.".format(
+                self.log_prefix,
+                count_host,
+                len(aids) - count_host,
+                maximum_score,
             )
-            return scored_uids
-        except requests.exceptions.ProxyError:
-            err_msg = f"{PLUGIN_NAME}: Invalid proxy configuration."
-            self.notifier.error(err_msg)
-            self.logger.error(err_msg)
-            raise requests.HTTPError(err_msg)
-        except requests.exceptions.ConnectionError:
-            err_msg = " ".join(
-                [
-                    f"{PLUGIN_NAME}: Unable to establish connection",
-                    "with CrowdStrike platform. Proxy server or CrowdStrike",
-                    "API is not reachable.",
-                ]
-            )
-            self.notifier.error(err_msg)
-            self.logger.error(err_msg)
-            raise requests.HTTPError(err_msg)
-        except requests.exceptions.RequestException as e:
-            self.logger.error(
-                f"{PLUGIN_NAME}: Exception occurred while "
-                "making an API call to CrowdStrike platform."
-            )
-            raise e
+        )
+        return scored_uids
 
     def get_actions(self):
         """Get available actions."""
@@ -800,172 +1193,54 @@ class CrowdstrikePlugin(PluginBase):
         """Get fields required for an action."""
         return []
 
-    def _get_script_name(self, platform_name: str, falcon, device_id: str):
-        """Get script name.
+    def _get_host_platform_name(self, host_id: str) -> str:
+        """Get the host platform name.
 
         Args:
-            platform_name (str): Operation
-            falcon: Falcon object
-            device_id (str): Device ID
+            host_id (str): Host ID.
+
+        Returns:
+            str: Platform Name. for e.g. Windows or mac.
         """
-        try:
-            script_name = PLATFORM_TO_SCRIPT_MAPPING.get(
-                platform_name, {}
-            ).get("script_name")
-            filter = f"platform:['{platform_name}']+name:'{script_name}'"
-
-            response = falcon.command(
-                "RTR_ListScripts",
-                filter=filter,
-            )
-            if response.get("body", {}).get("resources", []):
-                self._create_script(platform_name, device_id, falcon)
-
-            return script_name
-        except Exception as exp:
-            self.logger.error(
-                f"{PLUGIN_NAME}: "
-                f"Error occurred while getting script for {device_id}."
-                f"Cause {exp}"
-            )
-
-    def _create_script(self, platform_name: str, device_id: str, falcon):
-        """Create Script for different platform.
-
-        Args:
-            platform_name (str): Platform name
-            device_id (str): Device ID
-            falcon: Falcon object
-        """
-        if platform_name not in PLATFORM_TO_SCRIPT_MAPPING.keys():
-            self.logger.error(
-                f"{PLUGIN_NAME}: {platform_name} is not supported by {PLUGIN_NAME}."
-            )
-            return
-        cmd = None
-        if platform_name == "Windows":
-            cmd1 = r"cd 'C:\Program Files (x86)\Netskope\STAgent'"
-            cmd2 = r".\stAgentSvc.exe -stop"
-            cmd3 = r".\stAgentSvc.exe -start"
-            cmd = "\n".join([cmd1, cmd2, cmd3])
-
-        elif platform_name == "Mac":
-            cmd1 = "sudo launchctl unload /Library/LaunchDaemons/com.netskope.client.auxsvc.plist"  # noqa
-            cmd2 = "sudo launchctl load /Library/LaunchDaemons/com.netskope.client.auxsvc.plist"  # noqa
-            cmd = "\n".join([cmd1, cmd2])
-
-        script_name = PLATFORM_TO_SCRIPT_MAPPING.get(platform_name, {}).get(
-            "script_name"
-        )
-
-        PAYLOAD = {
-            "description": PLATFORM_TO_SCRIPT_MAPPING.get(
-                platform_name, {}
-            ).get("description"),
-            "name": script_name,
-            "permission_type": "public",
-            "content": cmd,
-            "platform": [platform_name.lower()],
-        }
-
-        file_upload = [
-            (
-                "file",
-                (
-                    script_name,
-                    "application/script",
-                ),
-            )
-        ]
-        try:
-            response = falcon.command(
-                "RTR_CreateScripts", data=PAYLOAD, files=file_upload
-            )
-            if (
-                response.get("status_code")
-                and response.get("status_code") != 200
-            ):
-                self.logger.error(
-                    f"{PLUGIN_NAME}: Error occurred while "
-                    f"creating script for device id {device_id}."
-                    f"Cause: {response.get('body',{}).get('errors')}"
-                )
-                return
-        except Exception as exp:
-            self.logger.error(
-                f"{PLUGIN_NAME}: Error occurred while creating"
-                f" script for {device_id}:  Cause {exp}"
-            )
-
-    def _get_host_platform_name(self, host_id):
         url = f"{self.configuration['base_url']}/devices/entities/devices/v2"
-        auth_json = self.get_auth_json(
-            self.configuration.get("client_id").strip(),
-            self.configuration.get("client_secret").strip(),
-            self.configuration.get("base_url").strip(),
+        base_url, client_id, client_secret = self._get_credentials(
+            configuration=self.configuration
         )
+        auth_json = self.get_auth_json(
+            base_url=base_url, client_id=client_id, client_secret=client_secret
+        )
+
         auth_token = auth_json.get("access_token")
         headers = {"Authorization": f"Bearer {auth_token}"}
         headers = self.reload_auth_token(headers)
         params = {"ids": [host_id]}
-        response = requests.get(
-            url,
-            headers=add_user_agent(headers),
-            proxies=self.proxy,
-            params=params,
+        self.logger.debug(
+            '{}: Getting platform name for host ID "{}" using '
+            "endpoint {}. Parameters: {}".format(
+                self.log_prefix, host_id, url, params
+            )
         )
-        resp_json = self.handle_error(response)
-
-        platform_name = resp_json.get("resources", [])[0].get(
+        resp_json = self._api_helper(
+            lambda: requests.get(
+                url,
+                headers=self._add_user_agent(headers),
+                params=params,
+                verify=self.ssl_validation,
+                proxies=self.proxy,
+            ),
+            logger_msg=f"getting platform details of host ID {host_id}",
+            is_handle_error_required=True,
+        )
+        platform_name = resp_json.get("resources", [{}])[0].get(
             "platform_name", ""
         )
+        self.logger.debug(
+            '{}: Successfully fetched platform name for host ID "{}".'
+            " Platform name: {}".format(
+                self.log_prefix, host_id, platform_name
+            )
+        )
         return platform_name
-
-    def _restart_agent(
-        self, session_id: str, host_id: str, platform_name: str
-    ):
-        """Restart Netskope Agent.
-
-        Args:
-            session_id (str): Session ID
-            host_id (str): Host ID
-            platform_name (str): Platform Name
-        """
-        falcon = self._get_falcon()
-        script_name = self._get_script_name(platform_name, falcon, host_id)
-        if script_name:
-            script = f"runscript -CloudFile='{script_name}' -CommandLine="
-            body = {
-                "session_id": session_id,
-                "command_string": script,
-                "optional_hosts": [host_id],
-                "persist_all": True,
-            }
-            try:
-                response = falcon.command("RTR_ExecuteAdminCommand", body=body)
-                if response.get("status_code") and response.get(
-                    "status_code"
-                ) in [
-                    201,
-                    200,
-                ]:
-                    self.logger.info(
-                        f"{PLUGIN_NAME}: Successfully restarted "
-                        f"Netskope agent for host {host_id}"
-                    )
-                else:
-                    self.logger.error(
-                        f"{PLUGIN_NAME}: Error occurred while "
-                        f"executing script for device id {host_id}. "
-                        f"Cause: {response.get('body',{}).get('errors')}"
-                    )
-
-                    return
-            except Exception as exp:
-                self.logger.error(
-                    f"{PLUGIN_NAME}: Error occurred in while "
-                    f"restarting host id {host_id}. Cause {exp}"
-                )
 
     def _get_device_match(self, device_id: str) -> bool:
         """Get device match.
@@ -976,87 +1251,172 @@ class CrowdstrikePlugin(PluginBase):
         Returns:
             bool: True if device is found else False.
         """
+        base_url, client_id, client_secret = self._get_credentials(
+            configuration=self.configuration
+        )
         auth_json = self.get_auth_json(
-            self.configuration.get("client_id").strip(),
-            self.configuration.get("client_secret").strip(),
-            self.configuration.get("base_url").strip(),
+            base_url=base_url, client_id=client_id, client_secret=client_secret
         )
         auth_token = auth_json.get("access_token")
         headers = {"Authorization": f"Bearer {auth_token}"}
         agent_ids = self.get_agent_ids(headers, device_id)
-        if device_id in agent_ids:
-            return True
-        else:
-            return False
+        return True if device_id in agent_ids else False
 
     def execute_action(self, record: Record, action: Action):
-        """Execute action on the record."""
-        if (
-            action.value == "generate"
-            or record.type != RecordType.HOST
-            or record.scores
-        ):
-            pass
+        """Execute action on the record.
+
+        Args:
+            record (Record): Record object containing record id and score
+            action (Action): Actions object containing action label and value.
+        """
+        action_label = action.label
+        self.logger.debug(
+            "{}: Executing action {} on record {}.".format(
+                self.log_prefix, action_label, record.uid
+            )
+        )
+        if action.value == "generate":
+            self.logger.debug(
+                '{}: Successfully executed "{}" action on record "{}". '
+                "Note: No processing will be done from plugin for "
+                'the "{}" action.'.format(
+                    self.log_prefix, action_label, record.uid, action_label
+                )
+            )
+            return
+        elif record.type != RecordType.HOST:
+            self.logger.debug(
+                "{}: CrowdStrike plugin only supports Hosts hence skipping"
+                " execution of action {} on user {}.".format(
+                    self.log_prefix,
+                    action_label,
+                    record.uid,
+                )
+            )
+            return
+        elif not record.scores:
+            self.logger.debug(
+                "{}: Score for host {} not found on cloud exchange"
+                " hence {} action will not perform on it.".format(
+                    self.log_prefix, record.uid, action_label
+                )
+            )
+            return
         device = record.uid
+
+        # Verify whether host is present on CrowdStrike platform or not.
+        self.logger.debug(
+            f"{self.log_prefix}: Verifying the existence of"
+            " host on CrowdStrike platform."
+        )
         match = self._get_device_match(record.uid)
         if not match:
             self.logger.warn(
-                f"{PLUGIN_NAME}: Host with id {device} not "
-                "found on CrowdStrike."
+                "{}: Host with ID {} was not "
+                "found on {} platform. Hence {} action will not be executed on"
+                " this it.".format(
+                    self.log_prefix, device, action_label, self.plugin_name
+                )
             )
             return
+        self.logger.debug(
+            '{}: Since the host with ID "{}" is present on the {} platform,'
+            " the {} action will be executed on it.".format(
+                self.log_prefix, device, self.plugin_name, action_label
+            )
+        )
         if action.value == "rtr":
             score_to_be_put = None
             for score in record.scores:
                 if score.source == self.name:
                     score_to_be_put = score.current
+                    self.logger.debug(
+                        "{}: Current score for the host is {}. Hence "
+                        "action will be performed on the basis of current"
+                        " host's score.".format(
+                            self.log_prefix, score_to_be_put
+                        )
+                    )
+            # If score is None then skip the execution of action on host.
             if score_to_be_put is None:
-                self.logger.error(
-                    f"{PLUGIN_NAME}: Could not find user"
-                    f" score for {record.uid}."
+                err_msg = (
+                    "Could not find score for host ID {}. Hence "
+                    "action will not be performed on this host.".format(
+                        record.uid
+                    )
                 )
-                return
+                self.logger.warn(f"{self.log_prefix}: {err_msg}")
+                raise CrowdstrikeException(err_msg)
+
+            # Step 1: Put the file on RTR cloud.
             self._put_files_on_rtr_cloud()
+
+            # Step 2: Create session with host.
             session_id = self._get_session_id(device)
+
+            # Step 3: Get platform name with host id.
             platform_name = self._get_host_platform_name(host_id=record.uid)
+
+            # Step 4: Remove the present file from RTR cloud.
             self._remove_files_from_device(session_id, device, platform_name)
+
+            # Step 5: Put file on device.
             self._put_file_on_device(
                 session_id=session_id,
                 score=score_to_be_put,
                 device_id=device,
                 platform_name=platform_name,
             )
-            self._restart_agent(
-                session_id=session_id,
-                host_id=record.uid,
-                platform_name=platform_name,
-            )
-            self._delete_session(session_id, device)
 
-    def reload_auth_token(self, headers):
-        """Reload the OAUTH2 token after Expiry."""
-        if self.storage is None:
-            auth_json = self.get_auth_json(
-                self.configuration.get("client_id"),
-                self.configuration.get("client_secret"),
-                self.configuration.get("base_url"),
-            )
-            auth_token = auth_json.get("access_token")
-            headers = {"Authorization": f"Bearer {auth_token}"}
-        elif self.storage["token_expiry"] < datetime.datetime.now():
+            # Step 6: Delete the session with host.
+            self._delete_session(session_id, device)
             self.logger.info(
-                f"{PLUGIN_NAME}: OAUTH2 token expired generating new token"
+                "{}: Successfully executed {} action on "
+                'host with ID "{}".'.format(
+                    self.log_prefix, action_label, device
+                )
             )
+
+    def reload_auth_token(self, headers: Dict) -> Dict:
+        """Reload the OAUTH2 token after Expiry.
+
+        Args:
+            headers (Dict): Headers
+
+        Returns:
+            Dict: Dictionary containing auth token.
+        """
+        base_url, client_id, client_secret = self._get_credentials(
+            configuration=self.configuration
+        )
+        if self.storage is None:
+            # If storage is None then generate the auth token.
             auth_json = self.get_auth_json(
-                self.configuration.get("client_id"),
-                self.configuration.get("client_secret"),
-                self.configuration.get("base_url"),
+                client_id=client_id,
+                client_secret=client_secret,
+                base_url=base_url,
             )
             auth_token = auth_json.get("access_token")
-            headers = {"Authorization": f"Bearer {auth_token}"}
+            headers.update({"Authorization": f"Bearer {auth_token}"})
+
+        elif self.storage.get("token_expiry") < (
+            datetime.datetime.now() + datetime.timedelta(seconds=5)
+        ):
+            # If token is expired then generate the new token.
+            self.logger.info(
+                f"{self.log_prefix}: OAUTH2 token expired generating"
+                " new token."
+            )
+            auth_json = self.get_auth_json(
+                client_id=client_id,
+                client_secret=client_secret,
+                base_url=base_url,
+            )
+            auth_token = auth_json.get("access_token")
+            headers.update({"Authorization": f"Bearer {auth_token}"})
         return headers
 
-    def validate(self, data):
+    def validate(self, configuration):
         """Validate the Plugin configuration parameters.
 
         Args:
@@ -1066,68 +1426,103 @@ class CrowdstrikePlugin(PluginBase):
             cte.plugin_base.ValidateResult: ValidateResult object with success
             flag and message.
         """
-
-        if "base_url" not in data or data["base_url"].strip() not in [
+        self.logger.debug(
+            f"{self.log_prefix}: Validation configuration parameters."
+        )
+        base_url = configuration.get("base_url", "").strip()
+        if "base_url" not in configuration or base_url not in [
             "https://api.crowdstrike.com",
             "https://api.us-2.crowdstrike.com",
             "https://api.laggar.gcw.crowdstrike.com",
             "https://api.eu-1.crowdstrike.com",
         ]:
+            err_msg = "Invalid Base URL provided in configuration parameters."
             self.logger.error(
-                f"{PLUGIN_NAME}: Validation error occurred "
-                "Error: Type of Pulling configured should be non-empty string."
+                "{}: Validation error occurred. "
+                "Error: {} Select the Base URL"
+                " from available options.".format(self.log_prefix, err_msg)
             )
             return ValidationResult(
                 success=False,
-                message="Invalid value base_url.",
+                message=err_msg,
             )
 
-        if (
-            "client_id" not in data
-            or not data["client_id"].strip()
-            or type(data["client_id"]) != str
-        ):
+        client_id = configuration.get("client_id", "").strip()
+        if "client_id" not in configuration or not client_id:
+            err_msg = "Client ID is a required configuration parameters."
             self.logger.error(
-                f"{PLUGIN_NAME}: Validation error occurred"
-                "Error: Type of Client ID should be non-empty string."
+                f"{self.log_prefix}: Validation error occurred. {err_msg}"
             )
             return ValidationResult(
                 success=False,
-                message="Invalid Client ID provided.",
+                message=err_msg,
             )
-
-        if (
-            "maximum_score" not in data
-            or not data["maximum_score"]
-            or 1 > int(data["maximum_score"])
-            or 1000 < int(data["maximum_score"])
-        ):
+        elif not isinstance(configuration.get("client_id"), str):
+            err_msg = "Invalid Client ID provided in configuration parameters."
             self.logger.error(
-                f"{PLUGIN_NAME}: Validation error occurred"
-                "Error: Type of Maximum Score should be non-empty integer."
+                f"{self.log_prefix}: Validation error occurred. {err_msg}"
             )
             return ValidationResult(
                 success=False,
-                message="Invalid Maximum Score provided. Range is from 1 to 1000.",
+                message=err_msg,
             )
 
-        if (
-            "client_secret" not in data
-            or not data["client_secret"]
-            or type(data["client_secret"]) != str
-        ):
+        client_secret = configuration.get("client_secret")
+        if "client_secret" not in configuration or not client_secret:
+            err_msg = "Client Secret is a required configuration parameter."
             self.logger.error(
-                f"{PLUGIN_NAME}: Validation error occurred"
-                "Error: Type of Client Secret should be non-empty string."
+                f"{self.log_prefix}: Validation error occurred. {err_msg}"
             )
             return ValidationResult(
                 success=False,
-                message="Invalid Client Secret provided.",
+                message=err_msg,
+            )
+        elif not isinstance(client_secret, str):
+            err_msg = (
+                "Invalid Client Secret provided in configuration parameters."
+            )
+            self.logger.error(
+                "{}: Validation error occurred. {}"
+                " Client Secret should be a string value.".format(
+                    self.log_prefix, err_msg
+                )
+            )
+            return ValidationResult(
+                success=False,
+                message=err_msg,
             )
 
-        return self.validate_auth_params(
-            data["client_id"], data["client_secret"], data["base_url"]
+        maximum_score = configuration.get("maximum_score")
+        if "maximum_score" not in configuration or maximum_score is None:
+            err_msg = "Maximum Score is a required configuration parameter."
+            self.logger.error(
+                f"{self.log_prefix}: Validation error occurred. {err_msg}"
+            )
+            return ValidationResult(
+                success=False,
+                message=err_msg,
+            )
+        elif maximum_score < 1 or maximum_score > 1000:
+            err_msg = (
+                "Invalid Maximum Score provided in configuration parameters."
+                " Maximum Score must be in range from 1 to 1000."
+            )
+            self.logger.error(
+                f"{self.log_prefix}: Validation error occurred. {err_msg}"
+            )
+            return ValidationResult(
+                success=False,
+                message=err_msg,
+            )
+
+        # Validate the auth parameters.
+        self.logger.debug(
+            "{}: Successfully validated basic configuration parameter.".format(
+                self.log_prefix
+            )
         )
+
+        return self.validate_auth_params(client_id, client_secret, base_url)
 
     def validate_auth_params(self, client_id, client_secret, base_url):
         """Validate the authentication params with CrowdStrike platform.
@@ -1142,41 +1537,27 @@ class CrowdstrikePlugin(PluginBase):
             results after making
             an API call.
         """
+        self.logger.debug(f"{self.log_prefix}: Validating auth credentials.")
         try:
-            self.check_url_valid(client_id, client_secret, base_url)
-            return ValidationResult(
-                success=True,
-                message="Validation successfull for CrowdStrike Plugin",
+            validation_result = self.check_url_valid(
+                client_id, client_secret, base_url
             )
-        except requests.exceptions.ProxyError:
+            if validation_result.success:
+                self.logger.debug(f"{self.log_prefix}: Validation successful.")
+            return validation_result
+        except CrowdstrikeException as exp:
+            err_msg = f"Validation error occurred. Error: {exp}"
             self.logger.error(
-                f"{PLUGIN_NAME}: Validation Error, "
-                "Invalid proxy configuration."
+                message=f"{self.log_prefix}: {err_msg}",
+                details=traceback.format_exc(),
             )
-            return ValidationResult(
-                success=False,
-                message="Validation Error, Invalid proxy configuration.",
+            return ValidationResult(success=False, message=str(exp))
+        except Exception as exp:
+            err_msg = f"Unexpected validation error occurred. Error: {exp}"
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg}",
+                details=traceback.format_exc(),
             )
-        except requests.exceptions.ConnectionError:
-            err_msg = " ".join(
-                [
-                    "Validation Error, Unable to establish ",
-                    "connection with CrowdStrike Platform API",
-                ]
-            )
-            self.logger.error(f"{PLUGIN_NAME}: {err_msg}")
-            return ValidationResult(
-                success=False,
-                message=err_msg,
-            )
-        except requests.HTTPError as err:
-            err_msg = " ".join(
-                [
-                    "Validation Error, Error in ",
-                    f"validating Credentials {repr(err)}",
-                ]
-            )
-            self.logger.error(f"{PLUGIN_NAME}: {err_msg}")
             return ValidationResult(success=False, message=err_msg)
 
     def check_url_valid(self, client_id, client_secret, base_url):
@@ -1195,26 +1576,40 @@ class CrowdstrikePlugin(PluginBase):
         auth_token = auth_json.get("access_token")
         headers = {"Authorization": f"Bearer {auth_token}"}
         query_endpoint = f"{base_url}/devices/queries/devices/v1?limit=1"
-        all_agent_resp = requests.get(
-            query_endpoint, headers=add_user_agent(headers), proxies=self.proxy
+        response = self._api_helper(
+            lambda: requests.get(
+                query_endpoint,
+                headers=self._add_user_agent(headers),
+                verify=self.ssl_validation,
+                proxies=self.proxy,
+            ),
+            logger_msg="checking connectivity with {} platform".format(
+                self.plugin_name
+            ),
+            is_handle_error_required=False,
         )
-        if all_agent_resp.status_code == 401:
-            raise requests.HTTPError("Invalid base url.")
-
-        agent_resp_json = self.handle_error(all_agent_resp)
-        errors = agent_resp_json.get("errors")
-        if errors:
-
-            err_msg = " ".join(
-                [
-                    f"{PLUGIN_NAME}: Unable to Fetch agents,",
-                    f"Error: {errors[0].get('message', '')}",
-                ]
+        if response.status_code == 200:
+            return ValidationResult(
+                success=True, message="Validation successful."
             )
-            self.notifier.error(err_msg)
-            self.logger.error(err_msg)
-            raise requests.HTTPError(err_msg)
-        return agent_resp_json
+        elif response.status_code == 403:
+            err_msg = (
+                "Received exit code {}, Forbidden. Verify the "
+                "API scopes provided to Client ID and Client Secret.".format(
+                    response.status_code
+                )
+            )
+            resp_json = self.parse_response(response)
+            api_errors = resp_json.get(
+                "errors", "No error details received from API response."
+            )
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg}",
+                details=str(api_errors),
+            )
+            return ValidationResult(success=False, message=err_msg)
+
+        return self.handle_error(response, "validating the auth credentials")
 
     def get_auth_json(self, client_id, client_secret, base_url):
         """Get the OAUTH2 Json object with access token from CrowdStrike
@@ -1228,38 +1623,87 @@ class CrowdstrikePlugin(PluginBase):
         Returns:
             json: JSON response data in case of Success.
         """
-        client_id = client_id.strip()
-        client_secret = client_secret.strip()
         auth_endpoint = f"{base_url}/oauth2/token"
-
+        self.logger.debug(
+            '{}: Fetching auth token from {} using endpoint "{}".'.format(
+                self.log_prefix, self.plugin_name, auth_endpoint
+            )
+        )
         auth_params = {
             "grant_type": "client_credentials",
             "client_id": client_id,
             "client_secret": client_secret,
         }
-        resp = requests.post(
-            auth_endpoint,
-            data=auth_params,
-            verify=self.ssl_validation,
-            proxies=self.proxy,
-            headers=add_user_agent(),
+        response = self._api_helper(
+            lambda: requests.post(
+                auth_endpoint,
+                data=auth_params,
+                verify=self.ssl_validation,
+                proxies=self.proxy,
+                headers=self._add_user_agent(),
+            ),
+            logger_msg=f"getting auth token from {self.plugin_name}",
+            is_handle_error_required=False,
         )
-        auth_json = self.handle_error(resp)
-        auth_errors = auth_json.get("errors")
-        if auth_errors:
-            err_msg = " ".join(
-                [
-                    f"{PLUGIN_NAME}: Unable to generate Auth token. ",
-                    f"Error: {auth_errors[0].get('message', '')}",
-                ]
+        if response.status_code == 201:
+            resp_json = self.parse_response(response)
+            if self.storage is not None:
+                self.storage[
+                    "token_expiry"
+                ] = datetime.datetime.now() + datetime.timedelta(
+                    seconds=int(resp_json.get("expires_in", 1799))
+                )
+            self.logger.debug(
+                "{}: Successfully fetched auth token.".format(self.log_prefix)
             )
-            self.notifier.error(err_msg)
-            self.logger.error(err_msg)
-            raise requests.HTTPError(err_msg)
-        if self.storage is not None:
-            self.storage[
-                "token_expiry"
-            ] = datetime.datetime.now() + datetime.timedelta(
-                seconds=int(auth_json.get("expires_in", 1799))
+            return resp_json
+        elif response.status_code == 400:
+            resp_json = self.parse_response(response)
+            api_errors = resp_json.get(
+                "errors", "No error details received from API response."
             )
-        return auth_json
+            err_msg = (
+                "Received exit code {}, Invalid request. Verify the"
+                " Base URL, Client ID and Client Secret provided in"
+                " configuration parameters.".format(response.status_code)
+            )
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg}",
+                details=str(api_errors),
+            )
+            raise CrowdstrikeException(err_msg)
+        elif response.status_code == 401:
+            resp_json = self.parse_response(response)
+            api_errors = resp_json.get(
+                "errors", "No error details received from API response."
+            )
+            err_msg = (
+                "Received exit code {}, Unauthorized. Verify the"
+                " Client ID and Client Secret provided in"
+                " configuration parameters.".format(response.status_code)
+            )
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg}",
+                details=str(api_errors),
+            )
+            raise CrowdstrikeException(err_msg)
+        elif response.status_code == 403:
+            resp_json = self.parse_response(response)
+            api_errors = resp_json.get(
+                "errors", "No error details received from API response."
+            )
+            err_msg = (
+                "Received exit code {}, Forbidden. Verify the API"
+                " scopes provided to the Client ID and Client Secret.".format(
+                    response.status_code
+                )
+            )
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg}",
+                details=str(api_errors),
+            )
+            raise CrowdstrikeException(err_msg)
+
+        return self.handle_error(
+            response, f"getting auth token from {self.plugin_name}"
+        )

@@ -1,3 +1,8 @@
+# 1.1.0
+## Added
+- Added support for more Jira fields while creating tickets.
+- Added retry mechanism while creating/updating tickets.
+
 # 1.0.3
 ## Added
 - Added support for labels while creating issues.

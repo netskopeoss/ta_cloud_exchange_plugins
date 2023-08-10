@@ -36,16 +36,25 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 import boto3
 from botocore.config import Config
 from .amazon_security_lake_constants import REGIONS
+from .amazon_security_lake_client import AmazonSecurityLakeClient
+from .amazon_security_lake_generate_temporary_credentials import AmazonSecurityLakeGenerateTemporaryCredentials
 
 
 class AmazonSecurityLakeValidator(object):
     """Amazon Security Lake validator class."""
 
-    def __init__(self, logger, proxy):
+    def __init__(self, configuration, logger, proxy, storage, log_prefix):
         """Initialize."""
         super().__init__()
+        self.configuration = configuration
         self.logger = logger
         self.proxy = proxy
+        self.storage = storage
+        self.log_prefix = log_prefix
+        self.aws_public_key = None
+        self.aws_private_key = None
+        self.aws_session_token = None
+
 
     def validate_region_name(self, region_name):
         """Validate region name.
@@ -68,7 +77,7 @@ class AmazonSecurityLakeValidator(object):
         else:
             return False
 
-    def validate_credentials(self, aws_public_key, aws_private_key):
+    def validate_credentials(self, aws_client):
         """Validate credentials.
 
         Args:
@@ -79,15 +88,18 @@ class AmazonSecurityLakeValidator(object):
             Whether the provided value is valid or not. True in case of valid value, False otherwise
         """
         try:
+
             amazon_security_lake_resource = boto3.resource(
-                "s3",
-                aws_access_key_id=aws_public_key,
-                aws_secret_access_key=aws_private_key,
-                config=Config(proxies=self.proxy),
-            )
+                    "s3",
+                    aws_access_key_id=aws_client.aws_public_key,
+                    aws_secret_access_key=aws_client.aws_private_key,
+                    aws_session_token=aws_client.aws_session_token,
+                    region_name=self.configuration.get("region_name"),
+                    config=Config(proxies=self.proxy),
+                )
+
             for _ in amazon_security_lake_resource.buckets.all():
                 break
             return True
         except Exception as e:
-            print(e)
-            raise
+            raise e

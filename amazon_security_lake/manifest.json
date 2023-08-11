@@ -1,7 +1,7 @@
 {
     "name": "Amazon Security Lake",
     "id": "amazon_security_lake",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "mapping": "Amazon Security Lake Default Mappings",
     "netskope": false,
     "types": [
@@ -12,29 +12,79 @@
     "description": "This plugin is used to deliver alerts, events and web transactions data to Amazon Security Lake platform. To access the plugin, you would need the credentials of Amazon Security Lake instance.",
     "configuration": [
         {
-            "label": "AWS Access Key ID (Public Key)",
-            "key": "aws_public_key",
-            "type": "text",
-            "default": "",
+            "label": "Authentication Method",
+            "key": "authentication_method",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Deployed on AWS",
+                    "value": "deployed_on_aws"
+                },
+                {
+                    "key": "AWS IAM Roles Anywhere",
+                    "value": "aws_iam_roles_anywhere"
+                }
+            ],
+            "default": "deployed_on_aws",
             "mandatory": true,
-            "description": "AWS access key id for Amazon Security Lake authentication."
+            "description": "Select the method to be used for AWS client authentication."
         },
         {
-            "label": "AWS Secret Access Key (Private Key)",
-            "key": "aws_private_key",
+            "label": "Private Key File",
+            "key": "private_key_file",
+            "type": "textarea",
+            "default": "",
+            "mandatory": false,
+            "description": "Private Key File for decrypting the AWS Private CA Certificate. Required for 'AWS IAM Roles Anywhere' authentication type."
+        },
+        {
+            "label": "Certificate Body",
+            "key": "public_certificate_file",
+            "type": "textarea",
+            "default": "",
+            "mandatory": false,
+            "description": "Certificate Body for AWS Public/Private CA Certificate. Required for 'AWS IAM Roles Anywhere' authentication type."
+        },
+        {
+            "label": "Password Phrase",
+            "key": "pass_phrase",
             "type": "password",
             "default": "",
-            "mandatory": true,
-            "description": "AWS secret access key for Amazon Security Lake authentication."
+            "mandatory": false,
+            "description": "Password Phrase for decrypting the CA Certificate. Required for 'AWS IAM Roles Anywhere' authentication type."
         },
         {
-            "label": "Region Name",
+            "label": "Profile ARN",
+            "key": "profile_arn",
+            "type": "text",
+            "default": "",
+            "mandatory": false,
+            "description": "AWS Profile ARN for AWS client authentication. Required for 'AWS IAM Roles Anywhere' authentication type."
+        },
+        {
+            "label": "Role ARN",
+            "key": "role_arn",
+            "type": "text",
+            "default": "",
+            "mandatory": false,
+            "description": "AWS Role ARN for AWS client authentication. Required for 'AWS IAM Roles Anywhere' authentication type."
+        },
+        {
+            "label": "Trust Anchor ARN",
+            "key": "trust_anchor_arn",
+            "type": "text",
+            "default": "",
+            "mandatory": false,
+            "description": "AWS Trust Anchor ARN for AWS client authentication. Required for 'AWS IAM Roles Anywhere' authentication type."
+        },
+        {
+            "label": "AWS S3 Source Bucket Region",
             "key": "region_name",
             "type": "choice",
             "choices": [
                 {
                     "key": "US East (N. Virginia) [us-east-1]",
-                    "value": "None"
+                    "value": "us-east-1"
                 },
                 {
                     "key": "US East (Ohio) [us-east-2]",
@@ -145,17 +195,17 @@
                     "value": "me-central-1"
                 }
             ],
-            "default": "None",
+            "default": "us-east-1",
             "mandatory": true,
-            "description": "Region name to get Amazon Security Lake Bucket from."
+            "description": "Region Name from where to get the AWS S3 Source Bucket. Make sure that the region name matches the region in the Profile ARN and Trust Anchor ARN."
         },
         {
-            "label": "Bucket Name",
+            "label": "AWS S3 Source Bucket",
             "key": "bucket_name",
             "type": "text",
             "default": "",
             "mandatory": true,
-            "description": "Bucket Name in which the data object will be stored."
+            "description": "AWS S3 Source Bucket Name in which the data object will be stored. Note: If a bucket with the specified name does not exist in the selected region then a new bucket will be created."
         }
     ]
 }

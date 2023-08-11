@@ -1,167 +1,167 @@
 ---
-AWSTemplateFormatVersion: 2010-09-09
-Description: "AWS SecurityLake Lambda"
-Metadata:
-  AWS::CloudFormation::Interface:
-    ParameterGroups:
-      - Label:
-          default: "Basic details"
-        Parameters:
-          - PrefixName
-      - Label:
-          default: "S3 Bucket Configuration"
-        Parameters:
-          - SourceBucket
-          - DestinationBucket
-    ParameterLabels:
+    AWSTemplateFormatVersion: 2010-09-09
+    Description: "AWS SecurityLake Lambda"
+    Metadata:
+      AWS::CloudFormation::Interface:
+        ParameterGroups:
+          - Label:
+              default: "Basic details"
+            Parameters:
+              - PrefixName
+              - CustomSource
+          - Label:
+              default: "S3 Bucket Configuration"
+            Parameters:
+              - SourceBucket
+              - DestinationBucket
+        ParameterLabels:
+          SourceBucket:
+            default: Source Bucket Name
+          DestinationBucket:
+            default: Destination Bucket Name
+          PrefixName:
+            default: Prefix for Parquet file
+          CustomSource:
+            default: Security Lake Custom Source
+    Parameters:
       SourceBucket:
-        default: Source Bucket Name
+        Description: 'Please enter the source bucket name'
+        Type: 'String'
       DestinationBucket:
-        default: Destination Bucket Name
+        Description: 'Please enter the destination bucket name'
+        Type: 'String'
       PrefixName:
-        default: Prefix for Parquet file
-Parameters:
-  SourceBucket:
-    Description: 'Please enter the source bucket name'
-    Type: 'String'
-  DestinationBucket:
-    Description: 'Please enter the destination bucket name'
-    Type: 'String'
-  PrefixName:
-    Description: 'Please enter the prefix name for Parquet log File'
-    Type: 'String'
-Mappings:
-      SourceCode:
-          General:
-              S3Bucket: 'netskope-marketplace'
-              S3Prefix: "AWSSecurityLake"
-Resources:
-  AWSSecurityLakeProcessParquetRole:
-      Type: 'AWS::IAM::Role'
-      Properties:
-        RoleName: !Sub 'AWSSecurityLakeProcessParquetRole-${AWS::StackName}-${AWS::Region}'
-        Tags:
-          - Key: Type
-            Value: !Sub 'AWSSecurityLakeProcessParquetRole-${AWS::StackName}-${AWS::Region}'
-        AssumeRolePolicyDocument:
-          Statement:
-            - Effect: Allow
-              Principal:
-                Service:
-                  - lambda.amazonaws.com
-              Action:
-                - sts:AssumeRole
-        Path: '/'
-        Policies:
-            - PolicyName: !Sub 'AWSSecurityLakeProcessParquetPolicy-${AWS::StackName}-${AWS::Region}'
-              PolicyDocument:
-                Statement:
-                  - Effect: Allow
-                    Action:
-                      - "logs:CreateLogGroup"
-                    Resource:
-                      - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*'
-                  - Effect: Allow
-                    Action:
-                      - "logs:CreateLogStream"
-                      - "logs:PutLogEvents"
-                    Resource:
-                      - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/AWSSecurityLakeProcessParquet-${AWS::StackName}-${AWS::Region}:*'
-                  - Effect: Allow
-                    Action:
-                      - 's3:Get*'
-                      - 's3:Put*'
-                      - 's3:List*'
-                      - 's3:Describe*'
-                      - 's3:Delete*'
-                    Resource:
-                      - !Join [':', ['arn:aws:s3::', !Ref SourceBucket]]
-                      - !Join [':', ['arn:aws:s3::', !Join ['/', [!Ref SourceBucket, '*']] ]]
-                      - !Join [':', ['arn:aws:s3::', !Ref DestinationBucket]]
-                      - !Join [':', ['arn:aws:s3::', !Join ['/', [!Ref DestinationBucket, '*']] ]]
-                  - Effect: Allow
-                    Action:
-                      - 'ssm:Get*'
-                      - 'ssm:Put*'
-                    Resource:
-                      - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/invoke_counter'
-                  
-  NetskopeSecurityLakeLambdaLayer:
-    Type: AWS::Lambda::LayerVersion
-    Properties:
-      CompatibleRuntimes:
-        - python3.9
-      Content:
-        S3Bucket: !Join ['-', [!FindInMap ["SourceCode", "General", "S3Bucket"], !Ref 'AWS::Region']]
-        S3Key: !Join ['/', [!FindInMap ["SourceCode", "General", "S3Prefix"], "ParquetConversionSecurityLakeLambdaLayer", 'ParquetConversionSecurityLakeLambdaLayer.zip']]
-      Description: "Lambda Layer for AWS SecurityLake Lambda function"
-      LayerName: !Sub 'AWSSecurityLakeProcessParquetLayer-${AWS::StackName}-${AWS::Region}'
+        Description: 'Please enter the prefix name for Parquet log File'
+        Type: 'String'
+      CustomSource:
+        Description: 'Please enter the custom source name created in Security Lake'
+        Type: 'String'
+    Mappings:
+          SourceCode:
+              General:
+                  S3Bucket: 'netskope-marketplace'
+                  S3Prefix: "AWSSecurityLake"
+    Resources:
+      AWSSecurityLakeProcessParquetRole:
+          Type: 'AWS::IAM::Role'
+          Properties:
+            RoleName: !Sub 'AWSSecurityLakeProcessParquetRole-${AWS::StackName}-${AWS::Region}'
+            Tags:
+              - Key: Type
+                Value: !Sub 'AWSSecurityLakeProcessParquetRole-${AWS::StackName}-${AWS::Region}'
+            AssumeRolePolicyDocument:
+              Statement:
+                - Effect: Allow
+                  Principal:
+                    Service:
+                      - lambda.amazonaws.com
+                  Action:
+                    - sts:AssumeRole
+            Path: '/'
+            Policies:
+                - PolicyName: !Sub 'AWSSecurityLakeProcessParquetPolicy-${AWS::StackName}-${AWS::Region}'
+                  PolicyDocument:
+                    Statement:
+                      - Effect: Allow
+                        Action:
+                          - "logs:CreateLogGroup"
+                        Resource:
+                          - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*'
+                      - Effect: Allow
+                        Action:
+                          - "logs:CreateLogStream"
+                          - "logs:PutLogEvents"
+                        Resource:
+                          - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/AWSSecurityLakeProcessParquet-${AWS::StackName}-${AWS::Region}:*'
+                      - Effect: Allow
+                        Action:
+                          - 's3:Get*'
+                          - 's3:Put*'
+                          - 's3:List*'
+                          - 's3:Describe*'
+                          - 's3:Delete*'
+                        Resource:
+                          - !Join [':', ['arn:aws:s3::', !Ref SourceBucket]]
+                          - !Join [':', ['arn:aws:s3::', !Join ['/', [!Ref SourceBucket, '*']] ]]
+                          - !Join [':', ['arn:aws:s3::', !Ref DestinationBucket]]
+                          - !Join [':', ['arn:aws:s3::', !Join ['/', [!Ref DestinationBucket, '*']] ]]
+                      - Effect: Allow
+                        Action:
+                          - 'ssm:Get*'
+                          - 'ssm:Put*'
+                        Resource:
+                          - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/invoke_counter'
 
-  AWSSecurityLakeProcessParquet:
-      Type: 'AWS::Lambda::Function'
-      DependsOn: 'AWSSecurityLakeProcessParquetRole'
-      Properties:
-        FunctionName: !Sub 'AWSSecurityLakeProcessParquet-${AWS::StackName}-${AWS::Region}'
-        Description: >-
-          This lambda function will process the file from source bucket and push Parquet file to the destination bucket.
-        Handler: 'lambda-function.lambda_handler'
-        Role: !GetAtt AWSSecurityLakeProcessParquetRole.Arn
-        Code:
-          S3Bucket: !Join ['-', [!FindInMap ["SourceCode", "General", "S3Bucket"], !Ref 'AWS::Region']]
-          S3Key: !Join ['/', [!FindInMap ["SourceCode", "General", "S3Prefix"], "ParquetConversionSecurityLakeLambda", 'ParquetConversionSecurityLakeLambda.zip']]
-        Layers:
-          - !Ref NetskopeSecurityLakeLambdaLayer
-        Environment:
-          Variables:
-            SRC_BUCKET_NAME: !Ref SourceBucket
-            DST_BUCKET_NAME: !Ref DestinationBucket
-            AWS_ACCOUNT_ID: !Ref 'AWS::AccountId'
-            REGION: !Ref 'AWS::Region'
-            LOGLEVEL: 'INFO'
-            PREFIX: !Ref PrefixName
-        Runtime: python3.9
-        MemorySize: 1024
-        Timeout: 60
-        Tags:
-          - Key: Type
-            Value: AWSSecurityLakeProcessParquet
+      NetskopeSecurityLakeLambdaLayer:
+        Type: AWS::Lambda::LayerVersion
+        Properties:
+          CompatibleRuntimes:
+            - python3.9
+          Content:
+            S3Bucket: !Join ['-', [!FindInMap ["SourceCode", "General", "S3Bucket"], !Ref 'AWS::Region']]
+            S3Key: !Join ['/', [!FindInMap ["SourceCode", "General", "S3Prefix"], "ParquetConversionSecurityLakeLambdaLayer", 'ParquetConversionSecurityLakeLambdaLayer.zip']]
+          Description: "Lambda Layer for AWS SecurityLake Lambda function"
+          LayerName: !Sub 'AWSSecurityLakeProcessParquetLayer-${AWS::StackName}-${AWS::Region}'
 
-  EventRuleScheduledAWSSecurityLakeProcessParquet:
-    Type: AWS::Events::Rule
-    DependsOn: AWSSecurityLakeProcessParquet
-    Properties:
-      Name: !Sub 'AWSSecurityLakeProcessParquet-${AWS::StackName}-${AWS::Region}'
-      Description: "Scheduled event Rule for AWSSecurityLakeProcessParquet Lambda function"
-      ScheduleExpression: "rate(1 minute)"
-      State: "ENABLED"
-      Targets:
-        -
-          Arn:
-            Fn::GetAtt:
-              - "AWSSecurityLakeProcessParquet"
-              - "Arn"
-          Id: "AWSSecurityLakeProcessParquet"
+      AWSSecurityLakeProcessParquet:
+          Type: 'AWS::Lambda::Function'
+          DependsOn: 'AWSSecurityLakeProcessParquetRole'
+          Properties:
+            FunctionName: !Sub 'AWSSecurityLakeProcessParquet-${AWS::StackName}-${AWS::Region}'
+            Description: >-
+              This lambda function will process the file from source bucket and push Parquet file to the destination bucket.
+            Handler: 'lambda-function.lambda_handler'
+            Role: !GetAtt AWSSecurityLakeProcessParquetRole.Arn
+            Code:
+              S3Bucket: !Join ['-', [!FindInMap ["SourceCode", "General", "S3Bucket"], !Ref 'AWS::Region']]
+              S3Key: !Join ['/', [!FindInMap ["SourceCode", "General", "S3Prefix"], "ParquetConversionSecurityLakeLambda", 'ParquetConversionSecurityLakeLambda.zip']]
+            Layers:
+              - !Ref NetskopeSecurityLakeLambdaLayer
+            Environment:
+              Variables:
+                SRC_BUCKET_NAME: !Ref SourceBucket
+                DST_BUCKET_NAME: !Ref DestinationBucket
+                AWS_ACCOUNT_ID: !Ref 'AWS::AccountId'
+                REGION: !Ref 'AWS::Region'
+                LOGLEVEL: 'INFO'
+                PREFIX: !Ref PrefixName
+                CUSTOM_SOURCE: !Ref CustomSource
+            Runtime: python3.9
+            MemorySize: 2048
+            Timeout: 60
+            Tags:
+              - Key: Type
+                Value: AWSSecurityLakeProcessParquet
 
-  PermissionToInvokAWSSecurityLakeProcessParquet:
-    Type: AWS::Lambda::Permission
-    Properties:
-      FunctionName:
-        Ref: "AWSSecurityLakeProcessParquet"
-      Action: "lambda:InvokeFunction"
-      Principal: events.amazonaws.com
-      SourceArn: !Sub 'arn:aws:events:${AWS::Region}:${AWS::AccountId}:rule/AWSSecurityLakeProcessParquet-${AWS::StackName}-${AWS::Region}'
+      EventRuleScheduledAWSSecurityLakeProcessParquet:
+        Type: AWS::Events::Rule
+        DependsOn: AWSSecurityLakeProcessParquet
+        Properties:
+          Name: !Sub 'AWSSecurityLakeProcessParquet-${AWS::StackName}-${AWS::Region}'
+          Description: "Scheduled event Rule for AWSSecurityLakeProcessParquet Lambda function"
+          ScheduleExpression: "rate(1 minute)"
+          State: "ENABLED"
+          Targets:
+            -
+              Arn:
+                Fn::GetAtt:
+                  - "AWSSecurityLakeProcessParquet"
+                  - "Arn"
+              Id: "AWSSecurityLakeProcessParquet"
 
-  NetskopeSecurityLakeCounterParameter:
-    Type: AWS::SSM::Parameter
-    Properties:
-      Name: invoke_counter
-      Type: String
-      Value: 0
+      PermissionToInvokAWSSecurityLakeProcessParquet:
+        Type: AWS::Lambda::Permission
+        Properties:
+          FunctionName:
+            Ref: "AWSSecurityLakeProcessParquet"
+          Action: "lambda:InvokeFunction"
+          Principal: events.amazonaws.com
+          SourceArn: !Sub 'arn:aws:events:${AWS::Region}:${AWS::AccountId}:rule/AWSSecurityLakeProcessParquet-${AWS::StackName}-${AWS::Region}'
 
-Outputs:
-  AWSSecurityLakeProcessParquetRole:
-    Description: AWS SecurityLake Process Parquet Lambda Execution Role
-    Value: !GetAtt AWSSecurityLakeProcessParquetRole.Arn
-  AWSSecurityLakeProcessParquet:
-    Description: Lambda for AWS SecurityLakeP rocess Parquet
-    Value: !GetAtt AWSSecurityLakeProcessParquet.Arn
+    Outputs:
+      AWSSecurityLakeProcessParquetRole:
+        Description: AWS SecurityLake Process Parquet Lambda Execution Role
+        Value: !GetAtt AWSSecurityLakeProcessParquetRole.Arn
+      AWSSecurityLakeProcessParquet:
+        Description: Lambda for AWS SecurityLakeP rocess Parquet
+        Value: !GetAtt AWSSecurityLakeProcessParquet.Arn

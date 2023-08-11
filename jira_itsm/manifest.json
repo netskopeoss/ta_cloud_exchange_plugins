@@ -1,10 +1,10 @@
 {
   "name": "Jira ITSM",
-  "description": "Create issues/tickets on Jira platform.",
+  "description": "This Plugin is used to create issues/tickets on Jira cloud Platform.",
   "id": "jira_itsm",
   "pulling_supported": false,
   "receiving_supported": true,
-  "version": "1.0.3",
+  "version": "1.1.0",
   "configuration": [
     {
       "label": "Authentication",
@@ -20,12 +20,12 @@
           "description": "Jira Cloud Instance URL. e.g. https://<your-domain>.atlassian.net."
         },
         {
-          "label": "Email",
+          "label": "Email Address",
           "key": "email",
           "type": "text",
           "default": "",
           "mandatory": true,
-          "description": "The email Jira user having access to read jira projects and create/update issues."
+          "description": "The Email address of the Jira user having access to read Projects and Create/Update issues on Jira Cloud Instance."
         },
         {
           "label": "API Token",

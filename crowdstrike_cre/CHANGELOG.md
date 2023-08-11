@@ -1,3 +1,13 @@
+# 1.2.0
+## Removed
+- Removed functionality for restarting Netskope client from Put RTR Script action.
+## Added
+- Handled API rate limit.
+- Added debug logs throughout the plugin.
+## Changed
+- Improved error handling.
+- Updated User-Agent and loggers.
+
 # 1.1.5
 ## Changed
 - Changed module name from CRE to URE.

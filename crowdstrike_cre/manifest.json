@@ -5,7 +5,7 @@
     "type": [
         "host"
     ],
-    "version": "1.1.5",
+    "version": "1.2.0",
     "configuration": [
         {
             "label": "Base URL",
@@ -31,7 +31,7 @@
             ],
             "default": "https://api.crowdstrike.com",
             "mandatory": true,
-            "description": "API Base URL."
+            "description": "Base URL of CrowdStrike instance. e.g. https://api.crowdstrike.com"
         },
         {
             "label": "Client ID",
@@ -39,7 +39,7 @@
             "type": "text",
             "default": "",
             "mandatory": true,
-            "description": "API Client ID."
+            "description": "Client ID generated from the CrowdStrike platform."
         },
         {
             "label": "Client Secret",
@@ -47,7 +47,7 @@
             "type": "password",
             "default": "",
             "mandatory": true,
-            "description": "API Client Secret."
+            "description": "Client Secret generated from the CrowdStrike platform."
         },
         {
             "label": "Maximum Score",

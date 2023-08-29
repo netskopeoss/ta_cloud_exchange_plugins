@@ -1,0 +1,1 @@
+"""CrowdStrike LogScale Plugin Package."""

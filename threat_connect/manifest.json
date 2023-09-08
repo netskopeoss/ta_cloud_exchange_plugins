@@ -1,8 +1,8 @@
 {
     "name": "ThreatConnect",
     "id": "threat_connect",
-    "version": "1.0.0",
-    "description": "The ThreatConnect plugin fetches indicators of type \"Malware\" and \"URL\". The data is processed and indicators are reported to Netskope CTE. The Plugin also support of sharing indicators to ThreatConnect Platform. To configure the plugin, you will need Access Id and Secret Key from ThreatConnect.",
+    "version": "1.1.0",
+    "description": "The ThreatConnect plugin fetches indicators of type File(MD5 and SHA256), URL, Host and Address(IPv4 and IPv6). The URL, Host and Address are stored as URL type in CE and File is distinguished as MD5 and SHA256. The Plugin also supports sharing indicators to ThreatConnect Platform.",
     "patch_supported": true,
     "push_supported": true,
     "configuration": [
@@ -31,26 +31,35 @@
             "description": "ThreatConnect API Secret Key."
         },
         {
-            "label": "Type of Threat IoC",
+            "label": "Type of Threat Indicator",
             "key": "threat_type",
-            "type": "choice",
+            "type": "multichoice",
             "choices": [
                 {
-                    "key": "Both",
-                    "value": "Both"
-                },
-                {
-                    "key": "Malware",
+                    "key": "File (MD5 and SHA256)",
                     "value": "File"
                 },
                 {
                     "key": "URL",
                     "value": "URL"
+                },
+                {
+                    "key": "Host",
+                    "value": "Host"
+                },
+                {
+                    "key": "Address (IPV4 and IPV6)",
+                    "value": "Address"
                 }
             ],
-            "mandatory": true,
-            "default":"Both",
-            "description": "Type of threat IoC you want to pull from ThreatConnect."
+            "mandatory": false,
+            "default":[
+                "File",
+                "URL",
+                "Host",
+                "Address"
+            ],
+            "description": "Type of threat Indicator you want to pull from ThreatConnect."
         },
         {
             "label": "Enable Tagging",
@@ -86,7 +95,7 @@
             ],
             "default": "Yes",
             "mandatory": false,
-            "description": "Enable/Disable polling data from ThreatConnect."
+            "description": "Enable/Disable polling data from ThreatConnect. Disable if you only need to push indicators to ThreatConnect."
         },
         {
             "label": "Initial Range (in days)",

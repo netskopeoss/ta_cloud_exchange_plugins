@@ -144,7 +144,7 @@ class CrowdStrikePlugin(PluginBase):
                     f"{MODULE_NAME} {PLUGIN_NAME}: Error occurred while"
                     f" getting plugin details. Error: {exp}"
                 ),
-                details=traceback.format_exc(),
+                details=str(traceback.format_exc()),
             )
         return (PLUGIN_NAME, PLUGIN_VERSION)
 
@@ -576,7 +576,7 @@ class CrowdStrikePlugin(PluginBase):
                             self.log_prefix_with_name, tag_name, exp
                         )
                     ),
-                    details=traceback.format_exc(),
+                    details=str(traceback.format_exc()),
                 )
                 skipped_tags.add(tag_name)
 
@@ -758,6 +758,11 @@ class CrowdStrikePlugin(PluginBase):
             )
             if len(indicator_list) >= MAX_INDICATOR_THRESHOLD:
                 last_indicator_checkpoint = indicator_list[-1].lastSeen
+                last_indicator_checkpoint = (
+                    last_indicator_checkpoint
+                    if last_indicator_checkpoint
+                    else datetime.datetime.now()
+                )
                 storage["checkpoints"][
                     "endpoint_detection_checkpoint"
                 ] = last_indicator_checkpoint
@@ -800,11 +805,15 @@ class CrowdStrikePlugin(PluginBase):
             " IPv6 indicator(s) were fetched."
         )
         if not threshold_break:
-            storage["checkpoints"]["endpoint_detection_checkpoint"] = (
-                self.last_run_at
-                if self.last_run_at
-                else indicator_list[-1].lastSeen
-            )
+            checkpoint_value = datetime.datetime.now()
+            if self.last_run_at:
+                checkpoint_value = self.last_run_at
+            elif indicator_list:
+                if indicator_list[-1].lastSeen is not None:
+                    checkpoint_value = indicator_list[-1].lastSeen
+            storage["checkpoints"][
+                "endpoint_detection_checkpoint"
+            ] = checkpoint_value
         return indicator_list
 
     def _extract_ioc_management_iocs(
@@ -993,8 +1002,13 @@ class CrowdStrikePlugin(PluginBase):
             if (
                 sum(ioc_counts.values()) + fetched_ioc_count
                 >= MAX_INDICATOR_THRESHOLD
-            ):  # noqa
+            ):
                 last_indicator_checkpoint = indicators[-1].lastSeen
+                last_indicator_checkpoint = (
+                    last_indicator_checkpoint
+                    if last_indicator_checkpoint
+                    else datetime.datetime.now()
+                )
                 storage["checkpoints"][
                     "ioc_management_checkpoint"
                 ] = last_indicator_checkpoint
@@ -1028,11 +1042,15 @@ class CrowdStrikePlugin(PluginBase):
             f" and {ioc_counts['ipv6']} IPv6 indicator(s) were fetched."
         )
         if not threshold_break:
-            storage["checkpoints"]["ioc_management_checkpoint"] = (
-                self.last_run_at
-                if self.last_run_at
-                else indicators[-1].lastSeen
-            )
+            checkpoint_value = datetime.datetime.now()
+            if self.last_run_at:
+                checkpoint_value = self.last_run_at
+            elif indicators:
+                if indicators[-1].lastSeen is not None:
+                    checkpoint_value = indicators[-1].lastSeen
+            storage["checkpoints"][
+                "ioc_management_checkpoint"
+            ] = checkpoint_value
         return indicators
 
     def pull(self) -> List[Indicator]:
@@ -1096,7 +1114,10 @@ class CrowdStrikePlugin(PluginBase):
                     f" {len(endpoint_detection_iocs)} indicator(s) "
                     f"from {ENDPOINT_DETECTION}. Storage: {storage}"
                 )
-            if "ioc_management" in indicator_source_page:
+            if (
+                "ioc_management" in indicator_source_page
+                and len(endpoint_detection_iocs) < MAX_INDICATOR_THRESHOLD
+            ):
                 ioc_management_iocs.extend(
                     self._pull_iocs_from_ioc_management(
                         threat_data_type,
@@ -2211,16 +2232,19 @@ class CrowdStrikePlugin(PluginBase):
             err_msg = f"Validation error occurred. Error: {exp}"
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg}",
-                details=traceback.format_exc(),
+                details=str(traceback.format_exc()),
             )
             return ValidationResult(success=False, message=str(exp))
         except Exception as exp:
-            err_msg = f"Unexpected validation error occurred. Error: {exp}"
+            err_msg = "Unexpected validation error occurred."
             self.logger.error(
-                message=f"{self.log_prefix}: {err_msg}",
-                details=traceback.format_exc(),
+                message=f"{self.log_prefix}: {err_msg} Error: {exp}",
+                details=str(traceback.format_exc()),
             )
-            return ValidationResult(success=False, message=err_msg)
+            return ValidationResult(
+                success=False,
+                message=f"{err_msg}. Check logs for more details.",
+            )
 
     def _validate_permission(
         self, base_url: str, headers: dict, ioc_source_page: List

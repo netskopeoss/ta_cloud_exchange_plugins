@@ -1,3 +1,7 @@
+# 2.0.1
+## Fixed
+- Bug Fixes.
+
 # 2.0.0
 ## Added
 - Handled API rate limit.
@@ -9,6 +13,7 @@
 ## Changed
 - Improved error handling.
 - Updated "Type of Threat data to pull" configuration parameter to allow pulling specific types of indicators.
+
 # 1.0.3
 ## Fixed
 - Fixed an issue with unsupported detection types.

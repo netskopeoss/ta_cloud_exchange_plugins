@@ -1,109 +1,109 @@
 {
-    "name": "ThreatConnect",
-    "id": "threat_connect",
-    "version": "1.1.0",
-    "description": "The ThreatConnect plugin fetches indicators of type File(MD5 and SHA256), URL, Host and Address(IPv4 and IPv6). The URL, Host and Address are stored as URL type in CE and File is distinguished as MD5 and SHA256. The Plugin also supports sharing indicators to ThreatConnect Platform.",
-    "patch_supported": true,
-    "push_supported": true,
-    "configuration": [
+  "name": "ThreatConnect",
+  "id": "threat_connect",
+  "version": "1.1.1",
+  "description": "The ThreatConnect plugin fetches indicators of type File(MD5 and SHA256), URL, Host and Address(IPv4 and IPv6). The URL, Host and Address are stored as URL type in CE and File is distinguished as MD5 and SHA256. The Plugin also supports sharing indicators to ThreatConnect Platform.",
+  "patch_supported": true,
+  "push_supported": true,
+  "configuration": [
+    {
+      "label": "Base URL",
+      "key": "base_url",
+      "type": "text",
+      "default": "",
+      "mandatory": true,
+      "description": "ThreatConnect API Base URL."
+    },
+    {
+      "label": "Access ID",
+      "key": "access_id",
+      "type": "text",
+      "default": "",
+      "mandatory": true,
+      "description": "ThreatConnect API Access ID."
+    },
+    {
+      "label": "Secret Key",
+      "key": "secret_key",
+      "type": "password",
+      "default": "",
+      "mandatory": true,
+      "description": "ThreatConnect API Secret Key."
+    },
+    {
+      "label": "Type of Threat Indicator",
+      "key": "threat_type",
+      "type": "multichoice",
+      "choices": [
         {
-            "label": "Base URL",
-            "key": "base_url",
-            "type": "text",
-            "default": "",
-            "mandatory": true,
-            "description": "ThreatConnect API Base URL."
+          "key": "File (MD5 and SHA256)",
+          "value": "File"
         },
         {
-            "label": "Access ID",
-            "key": "access_id",
-            "type": "text",
-            "default": "",
-            "mandatory": true,
-            "description": "ThreatConnect API Access ID."
+          "key": "URL",
+          "value": "URL"
         },
         {
-            "label": "Secret Key",
-            "key": "secret_key",
-            "type": "password",
-            "default": "",
-            "mandatory": true,
-            "description": "ThreatConnect API Secret Key."
+          "key": "Host",
+          "value": "Host"
         },
         {
-            "label": "Type of Threat Indicator",
-            "key": "threat_type",
-            "type": "multichoice",
-            "choices": [
-                {
-                    "key": "File (MD5 and SHA256)",
-                    "value": "File"
-                },
-                {
-                    "key": "URL",
-                    "value": "URL"
-                },
-                {
-                    "key": "Host",
-                    "value": "Host"
-                },
-                {
-                    "key": "Address (IPV4 and IPV6)",
-                    "value": "Address"
-                }
-            ],
-            "mandatory": false,
-            "default":[
-                "File",
-                "URL",
-                "Host",
-                "Address"
-            ],
-            "description": "Type of threat Indicator you want to pull from ThreatConnect."
-        },
-        {
-            "label": "Enable Tagging",
-            "key": "enable_tagging",
-            "type": "choice",
-            "choices": [
-                {
-                    "key": "Yes",
-                    "value": "Yes"
-                },
-                {
-                    "key": "No",
-                    "value": "No"
-                }
-            ],
-            "default": "No",
-            "mandatory": false,
-            "description": "Enable/Disable tagging functionality."
-        },
-        {
-            "label": "Enable Polling",
-            "key": "is_pull_required",
-            "type": "choice",
-            "choices": [
-                {
-                    "key": "Yes",
-                    "value": "Yes"
-                },
-                {
-                    "key": "No",
-                    "value": "No"
-                }
-            ],
-            "default": "Yes",
-            "mandatory": false,
-            "description": "Enable/Disable polling data from ThreatConnect. Disable if you only need to push indicators to ThreatConnect."
-        },
-        {
-            "label": "Initial Range (in days)",
-            "key": "days",
-            "type": "number",
-            "mandatory": false,
-            "default": 7,
-            "description": "Number of days to pull the data for the initial run."
+          "key": "Address (IPV4 and IPV6)",
+          "value": "Address"
         }
-    ]
+      ],
+      "mandatory": false,
+      "default": [
+        "File",
+        "URL",
+        "Host",
+        "Address"
+      ],
+      "description": "Type of threat Indicator you want to pull from ThreatConnect."
+    },
+    {
+      "label": "Enable Tagging",
+      "key": "enable_tagging",
+      "type": "choice",
+      "choices": [
+        {
+          "key": "Yes",
+          "value": "Yes"
+        },
+        {
+          "key": "No",
+          "value": "No"
+        }
+      ],
+      "default": "No",
+      "mandatory": false,
+      "description": "Enable/Disable tagging functionality."
+    },
+    {
+      "label": "Enable Polling",
+      "key": "is_pull_required",
+      "type": "choice",
+      "choices": [
+        {
+          "key": "Yes",
+          "value": "Yes"
+        },
+        {
+          "key": "No",
+          "value": "No"
+        }
+      ],
+      "default": "Yes",
+      "mandatory": false,
+      "description": "Enable/Disable polling data from ThreatConnect. Disable if you only need to push indicators to ThreatConnect."
+    },
+    {
+      "label": "Initial Range (in days)",
+      "key": "days",
+      "type": "number",
+      "mandatory": false,
+      "default": 7,
+      "description": "Number of days to pull the data for the initial run."
+    }
+  ]
 }

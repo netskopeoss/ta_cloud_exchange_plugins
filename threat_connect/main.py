@@ -46,6 +46,7 @@ import json
 import copy
 import re
 import ipaddress
+from ipaddress import ip_address, IPv4Address
 from typing import Dict, List
 from netskope.integrations.cte.plugin_base import (
     PluginBase,
@@ -377,6 +378,7 @@ class ThreatConnectPlugin(PluginBase):
         skipped_tags_due_to_val_err = set()
         tag_utils = TagUtils()
         for ioc_json in ioc_response_json["data"]:
+            skipped_tag_val_err, skipped = [], []
             if (
                 "tags" in ioc_json
                 and "data" in ioc_json["tags"]
@@ -399,18 +401,23 @@ class ThreatConnectPlugin(PluginBase):
                     if tag_json.get("name"):
                         tag_list.append(tag_json["name"])
 
-                tags, skipeped_tag_val_err, skipped = self._create_tags(
+                tags, skipped_tag_val_err, skipped = self._create_tags(
                     tag_utils,
                     tag_list,
                     self.configuration,
                 )
-                skipped_tags_due_to_val_err.update(skipeped_tag_val_err)
-                skipped_tags.update(skipped)
 
             if ioc_json["type"] == "File":
                 file_count += 1
                 if "md5" in ioc_json:
                     try:
+                        type_tags, skipped_type_tag_val_err, skipped_type_tag = self._create_tags(
+                            tag_utils,
+                            ["ThreatConnect-File-MD5"],
+                            self.configuration,
+                        )
+                        skipped_tag_val_err = skipped_tag_val_err + skipped_type_tag_val_err
+                        skipped = skipped + skipped_type_tag
                         indicator_list.append(
                             Indicator(
                                 value=ioc_json["md5"].lower(),
@@ -421,7 +428,7 @@ class ThreatConnectPlugin(PluginBase):
                                 comments=ioc_json.get("description", ""),
                                 firstSeen=ioc_json.get("dateAdded"),
                                 lastSeen=ioc_json.get("lastModified"),
-                                tags=tags,
+                                tags=tags+type_tags if type_tags else tags,
                             )
                         )
                         md5 += 1
@@ -430,6 +437,13 @@ class ThreatConnectPlugin(PluginBase):
 
                 if "sha256" in ioc_json:
                     try:
+                        type_tags, skipped_type_tag_val_err, skipped_type_tag = self._create_tags(
+                            tag_utils,
+                            ["ThreatConnect-File-SHA256"],
+                            self.configuration,
+                        )
+                        skipped_tag_val_err = skipped_tag_val_err + skipped_type_tag_val_err
+                        skipped = skipped + skipped_type_tag
                         indicator_list.append(
                             Indicator(
                                 value=ioc_json["sha256"].lower(),
@@ -440,7 +454,7 @@ class ThreatConnectPlugin(PluginBase):
                                 comments=ioc_json.get("description", ""),
                                 firstSeen=ioc_json.get("dateAdded"),
                                 lastSeen=ioc_json.get("lastModified"),
-                                tags=tags,
+                                tags=tags+type_tags if type_tags else tags,
                             )
                         )
                         sha256 += 1
@@ -448,6 +462,14 @@ class ThreatConnectPlugin(PluginBase):
                         skipped_sha256 += 1
             elif ioc_json.get("type", "") == "Address":
                 try:
+                    tag_type = ["ThreatConnect-Address-IPV4"] if type(ip_address(ioc_json.get("ip", ""))) is IPv4Address else ["ThreatConnect-Address-IPV6"]
+                    type_tags, skipped_type_tag_val_err, skipped_type_tag = self._create_tags(
+                        tag_utils,
+                        tag_type,
+                        self.configuration,
+                    )
+                    skipped_tag_val_err = skipped_tag_val_err + skipped_type_tag_val_err
+                    skipped = skipped + skipped_type_tag
                     indicator_list.append(
                         Indicator(
                             value=ioc_json.get("ip"),
@@ -458,7 +480,7 @@ class ThreatConnectPlugin(PluginBase):
                             comments=ioc_json.get("description", ""),
                             firstSeen=ioc_json.get("dateAdded"),
                             lastSeen=ioc_json.get("lastModified"),
-                            tags=tags,
+                            tags=tags+type_tags if type_tags else tags,
                         )
                     )
                     address += 1
@@ -466,6 +488,13 @@ class ThreatConnectPlugin(PluginBase):
                     skipped_address += 1
             elif ioc_json.get("type", "") == "Host":
                 try:
+                    type_tags, skipped_type_tag_val_err, skipped_type_tag = self._create_tags(
+                        tag_utils,
+                        ["ThreatConnect-Host"],
+                        self.configuration,
+                    )
+                    skipped_tag_val_err = skipped_tag_val_err + skipped_type_tag_val_err
+                    skipped = skipped + skipped_type_tag
                     indicator_list.append(
                         Indicator(
                             value=ioc_json.get("hostName"),
@@ -476,7 +505,7 @@ class ThreatConnectPlugin(PluginBase):
                             comments=ioc_json.get("description", ""),
                             firstSeen=ioc_json.get("dateAdded"),
                             lastSeen=ioc_json.get("lastModified"),
-                            tags=tags,
+                            tags=tags+type_tags if type_tags else tags,
                         )
                     )
                     host += 1
@@ -485,6 +514,13 @@ class ThreatConnectPlugin(PluginBase):
             else:
                 for url in ioc_json["text"].split(","):
                     try:
+                        type_tags, skipped_type_tag_val_err, skipped_type_tag = self._create_tags(
+                            tag_utils,
+                            ["ThreatConnect-URL"],
+                            self.configuration,
+                        )
+                        skipped_tag_val_err = skipped_tag_val_err + skipped_type_tag_val_err
+                        skipped = skipped + skipped_type_tag
                         indicator_list.append(
                             Indicator(
                                 value=url,
@@ -495,12 +531,14 @@ class ThreatConnectPlugin(PluginBase):
                                 comments=ioc_json.get("description", ""),
                                 firstSeen=ioc_json.get("dateAdded"),
                                 lastSeen=ioc_json.get("lastModified"),
-                                tags=tags,
+                                tags=tags+type_tags if type_tags else tags,
                             )
                         )
                         url_ioc += 1
                     except Exception:
                         skipped_url += 1
+            skipped_tags_due_to_val_err.update(skipped_tag_val_err)
+            skipped_tags.update(skipped)
 
         if len(skipped_tags_due_to_val_err) > 0:
             self.logger.info(
@@ -674,8 +712,6 @@ class ThreatConnectPlugin(PluginBase):
         self, utils: TagUtils, tags: List[dict], configuration: dict
     ) -> (List[str], List[str]):
         """Create new tag(s) in database if required."""
-        if configuration.get("enable_tagging", "No") != "Yes":
-            return [], []
 
         tag_names, skipped_tags_val_err, skipped_tags = [], [], []
         for tag in tags:

@@ -331,7 +331,7 @@ class _HTTPConnection(object):
                 and content_type_tokens[0] == "application/taxii+json"
             )
 
-    def get(self, url, headers=None, params=None):
+    def get(self, url, headers=None, params=None, plugin=None, with_header=False):
         """Perform an HTTP GET, using the saved requests.Session and auth info.
         If "Accept" isn't one of the given headers, a default TAXII mime type is
         used.  Regardless, the response type is checked against the accept
@@ -356,7 +356,22 @@ class _HTTPConnection(object):
             merged_headers["Accept"] = media_type
         accept = merged_headers["Accept"]
 
+        if plugin and plugin.logger:
+            msg = ""
+            if "/objects" in url:
+                msg = "for fetching indicators"
+            elif "/collections" in url:
+                msg = "for fetching collections"
+            plugin.logger.debug(
+                f"{plugin.log_prefix}: Request details {msg} - URL: {url}, params: {params}, headers: {merged_headers}"
+            )
         resp = self.session.get(url, headers=merged_headers, params=params)
+        if plugin and plugin.logger:
+            plugin.logger.debug(
+                f"{plugin.log_prefix}: Response details for URL {url} - "
+                f"Status code: {resp.status_code} - "
+                f"Headers: {resp.headers}"
+            )
 
         try:
             resp.raise_for_status()
@@ -372,6 +387,7 @@ class _HTTPConnection(object):
             raise e
 
         content_type = resp.headers["Content-Type"]
+        last_added_date = resp.headers.get("X-TAXII-Date-Added-Last")
         if not self.valid_content_type(
             content_type=content_type, accept=accept
         ):
@@ -385,6 +401,8 @@ class _HTTPConnection(object):
         if "Range" in merged_headers and self.version == "2.0":
             return resp
         else:
+            if with_header:	
+                return _to_json(resp), last_added_date
             return _to_json(resp)
 
     def post(self, url, headers=None, params=None, **kwargs):

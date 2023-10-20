@@ -36,6 +36,9 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 import re
 import requests
 import tempfile
+import traceback
+import json
+import os
 from urllib.parse import urlparse
 from datetime import datetime, timedelta
 import pytz
@@ -51,6 +54,7 @@ from netskope.integrations.cte.plugin_base import PluginBase, ValidationResult
 from netskope.integrations.cte.models import Indicator, IndicatorType
 from netskope.integrations.cte.models.indicator import SeverityType
 from netskope.integrations.cte.models.business_rule import Action
+from netskope.common.utils import add_user_agent
 
 
 CONFIDENCE_TO_REPUTATION_MAPPINGS = {
@@ -87,10 +91,84 @@ OBSERVABLE_REGEXES = [
         "type": IndicatorType.URL,
     },
 ]
+DATE_CONVERSION_STRING = '%Y-%m-%dT%H:%M:%S.%fZ'
+# page size
+LIMIT = 1000
+# page
+BUNDLE_LIMIT = 100
+MODULE_NAME = "CTE"
+PLUGIN_VERSION = "3.0.0"
+PLATFORM_NAME = "STIX/TAXII Plugin"
+
+
+class STIXTAXIIException(Exception):
+    pass
 
 
 class STIXTAXIIPlugin(PluginBase):
     """The TAXIIPlugin implementation."""
+
+    def __init__(
+        self,
+        name,
+        *args,
+        **kwargs,
+    ):
+        """Init function.
+
+        Args:
+            name (str): Configuration Name.
+        """
+        super().__init__(
+            name,
+            *args,
+            **kwargs,
+        )
+        self.plugin_name, self.plugin_version = self._get_plugin_info()
+        self.log_prefix = f"{MODULE_NAME} {self.plugin_name}"
+        if name:
+            self.log_prefix = f"{self.log_prefix} [{name}]"
+            
+    def _get_plugin_info(self):
+        """Get plugin name and version from manifest.
+
+        Returns:
+            tuple: Tuple of plugin's name and version fetched from manifest.
+        """
+        try:
+            file_path = os.path.join(
+                str(os.path.dirname(os.path.abspath(__file__))),
+                "manifest.json",
+            )
+            with open(file_path, "r") as manifest:
+                manifest_json = json.load(manifest)
+                plugin_name = manifest_json.get("name", PLATFORM_NAME)
+                plugin_version = manifest_json.get("version", PLUGIN_VERSION)
+                return (plugin_name, plugin_version)
+        except Exception as exp:
+            self.logger.info(
+                message=(
+                    f"{MODULE_NAME} {PLATFORM_NAME}: Error occurred while"
+                    " getting plugin details."
+                ),
+                details=str(exp),
+            )
+        return (PLATFORM_NAME, PLUGIN_VERSION)
+    
+    def _add_user_agent(self, headers=None):
+        """Add User-Agent in the headers of any request.
+
+        Returns:
+            Dict: Dictionary after adding User-Agent.
+        """
+        headers = add_user_agent(headers)
+        plugin_name = self.plugin_name.lower().replace(" ", "-")
+        ce_added_agent = headers.get("User-Agent", "netskope-ce")
+        user_agent = "{}-{}-{}-v{}".format(
+            ce_added_agent, MODULE_NAME.lower(), plugin_name, self.plugin_version
+        )
+        headers.update({"User-Agent": user_agent})
+        return headers
 
     def _str_to_datetime(self, string: str) -> datetime:
         """Convert ISO formatted string to datetime object.
@@ -105,7 +183,7 @@ class STIXTAXIIPlugin(PluginBase):
             return datetime.strptime(
                 string.replace(".", ""), "%Y-%m-%dT%H:%M:%S%fZ"
             )
-        except Exception:
+        except:
             return datetime.now()
 
     def _filter_collections(self, all_collections, selected_collections):
@@ -121,7 +199,7 @@ class STIXTAXIIPlugin(PluginBase):
         else:
             if set(selected_collections) - set(all_collections):
                 self.logger.error(
-                    f"Plugin STIX/TAXII: Following collections could not be "
+                    f"{self.log_prefix}: Following collections could not be "
                     f"found - {', '.join(set(selected_collections) - set(all_collections))}."
                 )
             return set(selected_collections).intersection(set(all_collections))
@@ -163,71 +241,80 @@ class STIXTAXIIPlugin(PluginBase):
     def _extract_from_indicator(self, package_indicators):
         """Extract ioc from indicators."""
         indicators = []
-        is_skipped = False
+        is_skipped_final = False
         for indicator in package_indicators:
             for observable in indicator.observables:
                 data = self._extract_fields_from_indicator(
                     indicator, observable
                 )
                 if not observable.object_:
-                    is_skipped = True
+                    is_skipped_final = True
                     continue
                 properties = observable.object_.properties
                 if not properties:
-                    is_skipped = True
+                    is_skipped_final = True
                     continue
                 if (
                     type(properties) is File
                     and properties.hashes
                     and properties.hashes.md5
                 ):
-                    indicators.append(
-                        Indicator(
-                            value=str(properties.hashes.md5),
-                            type=IndicatorType.MD5,
-                            **data,
-                            comments=str(
-                                observable.description
-                                or indicator.description
-                                or ""
-                            ),
+                    try:
+                        indicators.append(
+                            Indicator(
+                                value=str(properties.hashes.md5),
+                                type=IndicatorType.MD5,
+                                **data,
+                                comments=str(
+                                    observable.description
+                                    or indicator.description
+                                    or ""
+                                ),
+                            )
                         )
-                    )
+                    except:
+                        is_skipped_final = True
                 elif (
                     type(properties) is File
                     and properties.hashes
                     and properties.hashes.sha256
                 ):
-                    indicators.append(
-                        Indicator(
-                            value=str(properties.hashes.sha256),
-                            type=IndicatorType.SHA256,
-                            **data,
-                            comments=str(
-                                observable.description
-                                or indicator.description
-                                or ""
-                            ),
+                    try:
+                        indicators.append(
+                            Indicator(
+                                value=str(properties.hashes.sha256),
+                                type=IndicatorType.SHA256,
+                                **data,
+                                comments=str(
+                                    observable.description
+                                    or indicator.description
+                                    or ""
+                                ),
+                            )
                         )
-                    )
+                    except:
+                        is_skipped_final = True
                 elif (
                     type(properties) in [URI, DomainName] and properties.value
                 ):
-                    indicators.append(
-                        Indicator(
-                            value=str(properties.value),
-                            type=IndicatorType.URL,
-                            **data,
-                            comments=str(
-                                observable.description
-                                or indicator.description
-                                or ""
-                            ),
+                    try:
+                        indicators.append(
+                            Indicator(
+                                value=str(properties.value),
+                                type=IndicatorType.URL,
+                                **data,
+                                comments=str(
+                                    observable.description
+                                    or indicator.description
+                                    or ""
+                                ),
+                            )
                         )
-                    )
+                    except:
+                        is_skipped_final = True
                 else:
-                    is_skipped = True
-        return indicators, is_skipped
+                    is_skipped_final = True
+        return indicators, is_skipped_final
 
     def _extract_from_observables(self, observables):
         """Extract iocs from observables."""
@@ -246,35 +333,44 @@ class STIXTAXIIPlugin(PluginBase):
                 and properties.hashes
                 and properties.hashes.md5
             ):
-                indicators.append(
-                    Indicator(
-                        value=str(properties.hashes.md5),
-                        type=IndicatorType.MD5,
-                        **self._ids.get(observable.id_, {}),
-                        comments=str(observable.description or ""),
+                try:
+                    indicators.append(
+                        Indicator(
+                            value=str(properties.hashes.md5),
+                            type=IndicatorType.MD5,
+                            **self._ids.get(observable.id_, {}),
+                            comments=str(observable.description or ""),
+                        )
                     )
-                )
+                except:
+                    is_skipped = True
             elif (
                 type(properties) is File
                 and properties.hashes
                 and properties.hashes.sha256
             ):
-                indicators.append(
-                    Indicator(
-                        value=str(properties.hashes.sha256),
-                        type=IndicatorType.SHA256,
-                        **self._ids.get(observable.id_, {}),
-                        comments=str(observable.description or ""),
+                try:
+                    indicators.append(
+                        Indicator(
+                            value=str(properties.hashes.sha256),
+                            type=IndicatorType.SHA256,
+                            **self._ids.get(observable.id_, {}),
+                            comments=str(observable.description or ""),
+                        )
                     )
-                )
+                except:
+                    is_skipped = True
             elif type(properties) in [URI, DomainName] and properties.value:
-                indicators.append(
-                    Indicator(
-                        value=str(properties.value),
-                        type=IndicatorType.URL,
-                        comments=str(observable.description or ""),
+                try:
+                    indicators.append(
+                        Indicator(
+                            value=str(properties.value),
+                            type=IndicatorType.URL,
+                            comments=str(observable.description or ""),
+                        )
                     )
-                )
+                except:
+                    is_skipped = True
             else:
                 is_skipped = True
         return indicators, is_skipped
@@ -307,11 +403,13 @@ class STIXTAXIIPlugin(PluginBase):
                 discovery_path=discovery_url,
             )
         client.set_proxies(self.proxy)
+        username = configuration.get("username", "").strip()
+        password = configuration.get("password", "")
 
-        if configuration["username"].strip() and configuration["password"]:
+        if username and password:
             client.set_auth(
-                username=configuration["username"].strip(),
-                password=configuration["password"],
+                username=username,
+                password=password,
                 verify_ssl=self.ssl_validation,
             )
         else:
@@ -326,35 +424,145 @@ class STIXTAXIIPlugin(PluginBase):
                 collection_uri = service.address
                 break
         if collection_uri is None:
-            self.logger.error(
-                "Plugin STIX/TAXII: Failed to find collection management."
-            )
-            return None
+            err_msg = "Failed to find collection management."
+            raise STIXTAXIIException(err_msg)
         # to get collection form server
         return [c.name for c in client.get_collections(uri=collection_uri)]
+
+    def convert_string_to_datetime(self, collections_dict):
+        if collections_dict and isinstance(collections_dict, dict):
+            for collection_name, str_datetime_value in collections_dict.items():
+                if isinstance(str_datetime_value, str):
+                    collections_dict[collection_name] = datetime.strptime(str_datetime_value, DATE_CONVERSION_STRING)
+        else:
+            err_msg = "Error occurred while fetching the collection details."
+            self.logger.error(
+                f"{self.log_prefix}: {err_msg}",
+                details=f"Collection details: {collections_dict}"
+            )
+            raise STIXTAXIIException(err_msg)
+
+        return collections_dict
+
+    def convert_datetime_to_string(self, collections_dict):
+        if collections_dict and isinstance(collections_dict, dict):
+            for collection_name, datetime_value in collections_dict.items():
+                if isinstance(datetime_value, datetime):
+                    collections_dict[collection_name] = datetime_value.strftime(DATE_CONVERSION_STRING)
+        else:
+            err_msg = "Error occurred while creating the collection details to store."
+            self.logger.error(
+                f"{self.log_prefix}: {err_msg}",
+                details=f"Collection details: {collections_dict}"
+            )
+            raise STIXTAXIIException(err_msg)
+
+        return collections_dict
 
     def pull_1x(self, configuration, start_time):
         """Pull implementation for version 1.x."""
         self._ids = {}
-        client = self._build_client(configuration)
-        collections = self._get_collections(client)
+        try:
+            client = self._build_client(configuration)
+            collections = self._get_collections(client)
+        except requests.exceptions.ProxyError as err:
+            err_msg = (
+                "Invalid proxy configuration."
+            )
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg} Error: {err}",
+                details=traceback.format_exc(),
+            )
+            raise STIXTAXIIException(err_msg)
+        except requests.exceptions.ConnectionError as err:
+            err_msg = (
+                "Connection Error occurred. Check the Discovery URL / API Root URL provided."
+            )
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg} Error: {err}",
+                details=traceback.format_exc(),
+            )
+            raise STIXTAXIIException(err_msg)
+        except requests.exceptions.RequestException as err:
+            err_msg = "Request Exception occurred."
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg} Error: {err}",
+                details=traceback.format_exc(),
+            )
+            raise STIXTAXIIException(err_msg)
+        except STIXTAXIIException as err:
+            err_msg = "Exception occurred while fetching the collections"
+            self.logger.error(
+                f"{self.log_prefix}: {err_msg}. Error: {err}",
+                details=traceback.format_exc()
+            )
+            raise STIXTAXIIException(err_msg)
+        except Exception as err:
+            err_msg = "Exception occurred while fetching the collections."
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg} Error: {err}",
+                details=traceback.format_exc(),
+            )
+            raise STIXTAXIIException(err_msg)
         filtered_collections = self._filter_collections(
             collections, configuration["collection_names"]
         )
         self.logger.info(
-            f"Plugin STIX/TAXII: Following collections will be fetched - {', '.join(filtered_collections)}."
+            f"{self.log_prefix}: Following collections will be fetched - {', '.join(filtered_collections)}."
         )
         indicators = []
 
+        delay_config = configuration.get("delay", 0) or 0
+        delay_time = int(delay_config)
+
+        start_time = pytz.utc.localize(start_time - timedelta(minutes=delay_time))
+
         for collection in filtered_collections:
             self.logger.info(
-                f"Plugin STIX/TAXII: Parsing collection - {collection}."
+                f"{self.log_prefix}: Parsing collection - '{collection}'. Start time: {start_time}"
             )
-            content_blocks = client.poll(
-                collection_name=collection,
-                begin_date=start_time,
-            )
+            try:
+                content_blocks = client.poll(
+                    collection_name=collection,
+                    begin_date=start_time,
+                )
+            except requests.exceptions.ProxyError as err:
+                err_msg = (
+                    "Invalid proxy configuration."
+                )
+                self.logger.error(
+                    message=f"{self.log_prefix}: {err_msg} Error: {err}",
+                    details=traceback.format_exc(),
+                )
+                return ValidationResult(
+                    success=False,
+                    message=err_msg
+                )
+            except requests.exceptions.ConnectionError as err:
+                err_msg = (
+                    "Connection Error occurred. Check the Discovery URL / API Root URL provided."
+                )
+                self.logger.error(
+                    message=f"{self.log_prefix}: {err_msg} Error: {err}",
+                    details=traceback.format_exc(),
+                )
+                raise STIXTAXIIException(err_msg)
+            except requests.exceptions.RequestException as err:
+                err_msg = "Request Exception occurred."
+                self.logger.error(
+                    message=f"{self.log_prefix}: {err_msg} Error: {err}",
+                    details=traceback.format_exc(),
+                )
+                raise STIXTAXIIException(err_msg)
+            except Exception as err:
+                err_msg = "Exception occurred while fetching the objects from collection"
+                self.logger.error(
+                    message=f"{self.log_prefix}: {err_msg} Error: {err}",
+                    details=traceback.format_exc(),
+                )
+                raise STIXTAXIIException(err_msg)
             block_id = 1
+            collection_indicator_count = 0
             for block in content_blocks:
                 try:
                     temp = tempfile.TemporaryFile()
@@ -365,25 +573,40 @@ class STIXTAXIIPlugin(PluginBase):
                         stix_package
                     )
                     indicators += extracted
+                    collection_indicator_count += len(extracted)
+                    total_log = f"Total {collection_indicator_count} indicators pulled till now"
                     if is_skipped is True:
                         self.logger.info(
-                            f"Plugin STIX/TAXII: Block-{block_id} parsed, {len(extracted)} indicator(s) pulled, some indicators might have been discarded."
+                            f"{self.log_prefix}: Block-{block_id} parsed, {len(extracted)} indicator(s) pulled, some indicators might have been discarded."
+                            f" {total_log}"
                         )
                     else:
                         self.logger.info(
-                            f"Plugin STIX/TAXII: Block-{block_id} parsed, {len(extracted)} indicator(s) pulled."
+                            f"{self.log_prefix}: Block-{block_id} parsed, {len(extracted)} indicator(s) pulled."
+                            f" {total_log}"
                         )
                     temp.close()
                 except Exception as e:
                     self.logger.info(
-                        f"Plugin STIX/TAXII: Couldn't parse Block-{block_id}."
+                        f"{self.log_prefix}: Couldn't parse Block-{block_id}."
                     )
                     self.logger.error(
-                        f"Plugin STIX/TAXII: Following exception occured while extracting indicator(s) from Block-{block_id} - {repr(e)}"
+                        f"{self.log_prefix}: Following exception occured while extracting indicator(s) from Block-{block_id} - {repr(e)}",
+                        details=traceback.format_exc()
                     )
                     block_id += 1
                     continue
                 block_id += 1
+                
+            self.logger.info(
+                f"{self.log_prefix}: Completed parsing of '{collection}' collection."
+                f" Total {collection_indicator_count} indicators parsed successfully."
+            )
+            
+        self.logger.info(
+            f"{self.log_prefix}: Completed parsing of ({', '.join(filtered_collections)}) collections."
+            f" Total {len(indicators)} indicators parsed successfully."
+        )
         return indicators
 
     def _extract_observables_2x(self, pattern: str, data: dict):
@@ -400,155 +623,451 @@ class STIXTAXIIPlugin(PluginBase):
                     kind["type"] == IndicatorType.SHA256
                     or kind["type"] == IndicatorType.MD5
                 ):
-                    observables.append(
-                        Indicator(
-                            value=match.replace("'", ""),
-                            type=kind["type"],
-                            **data,
+                    try:
+                        observables.append(
+                            Indicator(
+                                value=match.replace("'", ""),
+                                type=kind["type"],
+                                **data,
+                            )
                         )
-                    )
+                    except:
+                        is_skipped = True
                 else:
-                    observables.append(
-                        Indicator(value=match[1], type=kind["type"], **data)
-                    )
+                    try:
+                        observables.append(
+                            Indicator(value=match[1], type=kind["type"], **data)
+                        )
+                    except:
+                        is_skipped = True
         return observables, not (is_skipped)
 
     def _extract_indicators_2x(self, objects):
         indicators = []
-        is_skipped = False
+        is_skipped_final = False
+        modified_time = None
         for o in objects:
             if o.get("type").lower() != "indicator":
-                is_skipped = True
+                is_skipped_final = True
                 continue
+            created_time = self._str_to_datetime(o.get("created"))
+            modified_time = self._str_to_datetime(o.get("modified"))
             data = {
                 "comments": o.get("description") or o.get("pattern") or "",
                 "reputation": int(o.get("confidence", 50) / 10),
-                "firstSeen": self._str_to_datetime(o.get("created")),
-                "lastSeen": self._str_to_datetime(o.get("modified")),
+                "firstSeen": created_time,
+                "lastSeen": modified_time,
             }
             extracted, is_skipped = self._extract_observables_2x(
                 o.get("pattern", ""), data
             )
+            if is_skipped:
+                is_skipped_final = True
             indicators += extracted
-        return indicators, is_skipped
+        return indicators, is_skipped_final
+    
+    def update_storage(self, configuration, bundle, last_added_date, storage, collection, execution_details, bundle_id):
+        next_value_21 = bundle.get("next")
+        objects = bundle.get("objects", [])
+        
+        if objects:
+            if configuration["pagination_method"] == "next":
+                if configuration["version"] == "2.1" and next_value_21:
+                    storage["in_execution"] = {
+                        collection: {
+                            "next": next_value_21,
+                            "last_added_date": last_added_date
+                        }
+                    }
+                elif configuration["version"] == "2.0" and len(objects) >= LIMIT:
+                    try:
+                        next_value_20 = int(storage.get("in_execution", {}).get(collection, {}).get("next", 0)) + (LIMIT * bundle_id)
+                    except:
+                        next_value_20 = 0
+                    storage["in_execution"] = {
+                        collection: {
+                            "next": next_value_20,
+                            "last_added_date": last_added_date
+                        }
+                    }
+                else:
+                    storage["in_execution"] = {}
+                    execution_details[collection] = pytz.utc.localize(datetime.now())
+            else:
+                if configuration["version"] == "2.1" and bundle.get("more") and last_added_date:
+                    storage["in_execution"] = {
+                        collection: {
+                            "next": next_value_21,
+                            "last_added_date": last_added_date
+                        }
+                    }
+                elif configuration["version"] == "2.0" and len(objects) >= LIMIT and last_added_date:
+                    try:
+                        next_value_20 = int(storage.get("in_execution", {}).get(collection, {}).get("next", 0)) + (LIMIT * bundle_id)
+                    except:
+                        next_value_20 = 0
+                    # next_value_20 = int(storage.get("in_execution", {}).get(collection, 0)) + (LIMIT * bundle_id)
+                    storage["in_execution"] = {
+                        collection: {
+                            "next": next_value_20,
+                            "last_added_date": last_added_date
+                        }
+                    }
+                else:
+                    storage["in_execution"] = {}
+                    execution_details[collection] = pytz.utc.localize(datetime.now())
+        else:
+            storage["in_execution"] = {}
+            execution_details[collection] = pytz.utc.localize(datetime.now())
+            
+        return
 
-    def pull_20x(self, configuration, start_time):
+    def paginate(self, configuration, pages, collection, storage, execution_details, indicators):
+        bundle_id = 1
+        collection_indicator_count = 0
+        collection_skip_count = 0
+        for bundle, last_added_date in pages:
+            objects = bundle.get("objects", [])
+            extracted, is_skipped = self._extract_indicators_2x(
+                objects
+            )
+            indicators += extracted
+            extracted_count = len(extracted)
+            skip_count = len(objects) - extracted_count
+            collection_indicator_count += extracted_count
+            self.total_indicators += extracted_count
+            collection_skip_count += skip_count
+            self.total_skipped += skip_count
+            total_log = f"Total {collection_indicator_count} indicators pulled for '{collection}' collection till now."
+            if is_skipped is True:
+                self.logger.info(
+                    f"{self.log_prefix}: Collection: '{collection}' Bundle-{bundle_id} parsed, {extracted_count} indicator(s) pulled, {skip_count} indicators have been discarded."
+                    f" {total_log}"
+                )
+            else:
+                self.logger.info(
+                    f"{self.log_prefix}: Collection: '{collection}' Bundle-{bundle_id} parsed, {extracted_count} indicator(s) pulled."
+                    f" {total_log}"
+                )
+
+            self.total_bundle_count += 1
+
+            if self.total_bundle_count == BUNDLE_LIMIT:
+                self.logger.info(
+                    f"{self.log_prefix}: Bundle limit of {BUNDLE_LIMIT} is reached while executing '{collection}' collection."
+                    "The execution will be continued in the next cycle."
+                    f" Total {collection_indicator_count} indicators parsed and {collection_skip_count} indicators skipped for '{collection}' collection."
+                )
+                self.logger.debug(
+                    f"{self.log_prefix}: Updating the collection execution details with the next page details"
+                )
+                self.update_storage(
+                    configuration=configuration,
+                    bundle=bundle,
+                    last_added_date=last_added_date,
+                    storage=storage,
+                    collection=collection,
+                    execution_details=execution_details,
+                    bundle_id=bundle_id
+                )
+                storage["collections"] = self.convert_datetime_to_string(execution_details)
+                self.logger.debug(
+                    f"{self.log_prefix}: Updated the collection execution details successfully. Collection execution details: {storage}"
+                )
+                return indicators
+            bundle_id += 1
+
+        self.logger.info(
+            f"{self.log_prefix}: Completed parsing of '{collection}' collection."
+            f" Total {collection_indicator_count} indicators parsed and {collection_skip_count} indicators skipped."
+        )
+        self.logger.debug(
+            f"{self.log_prefix}: Successfully parsed {self.total_bundle_count} bundles."
+        )
+        return
+    
+    def get_page(self, func, configuration, start_time, next=None, start=0):
+        headers = self._add_user_agent()
+        if configuration["version"] == "2.1":
+            pages = as_pages21(
+                func,
+                plugin=self,
+                per_request=LIMIT,
+                added_after=start_time,
+                next=next,
+                with_header=True,
+                headers=headers
+            )
+        else:
+            pages = as_pages20(
+                func,
+                plugin=self,
+                per_request=LIMIT,
+                added_after=start_time,
+                start=start,
+                with_header=True,
+                headers=headers
+            )
+
+        return pages
+
+    def pull_2x(self, configuration, start_time):
         """Pull implementation for version 2.x."""
         indicators = []
-        apiroot = ApiRoot20(
-            configuration["discovery_url"].strip(),
-            user=configuration["username"].strip(),
-            password=configuration["password"],
-            verify=self.ssl_validation,
-            proxies=self.proxy,
-        )
-        all_collections = [c.title for c in apiroot.collections]
+        collection_execution_details = {}
+        new_collection_details = {}
+        collection_name_object = {}
+        storage = {}
+        self.total_indicators = 0
+        self.total_skipped = 0
+        self.total_bundle_count = 0
+
+        if self.storage is not None:
+            storage = self.storage
+            if storage.get("collections", {}):
+                collection_execution_details = self.convert_string_to_datetime(storage.get("collections", {}))
+        else:
+            storage = {}
+
+        delay_config = configuration.get("delay", 0) or 0
+        delay_time = int(delay_config)
+        username = configuration.get("username", "").strip()
+        password = configuration.get("password", "")
+        if configuration["version"] == "2.1":
+            apiroot = ApiRoot21(
+                configuration["discovery_url"].strip(),
+                user=username,
+                password=password,
+                verify=self.ssl_validation,
+                proxies=self.proxy,
+            )
+        else:
+            apiroot = ApiRoot20(
+                configuration["discovery_url"].strip(),
+                user=username,
+                password=password,
+                verify=self.ssl_validation,
+                proxies=self.proxy,
+            )
+        all_collections = []
+        for c in apiroot.collections:
+            all_collections.append(c.title)
+            collection_name_object[c.title] = c
+
         filtered_collections = self._filter_collections(
             all_collections, configuration["collection_names"]
         )
         self.logger.info(
-            f"Plugin STIX/TAXII: Following collections will be fetched - {', '.join(filtered_collections)}."
+            f"{self.log_prefix}: Following collections will be fetched - {', '.join(filtered_collections)}."
         )
-        for collection in filter(
-            lambda x: x.title in filtered_collections, apiroot.collections
-        ):
-            bundle_id = 1
-            try:
-                self.logger.info(
-                    f"Plugin STIX/TAXII: Parsing collection - {collection.title}."
-                )
-                for bundle in as_pages20(
-                    collection.get_objects,
-                    per_request=100,
-                    added_after=start_time,
-                ):
-                    extracted, is_skipped = self._extract_indicators_2x(
-                        bundle.get("objects", [])
-                    )
-                    indicators += extracted
-                    if is_skipped is True:
-                        self.logger.info(
-                            f"Plugin STIX/TAXII: Bundle-{bundle_id} parsed, {len(extracted)} indicator(s) pulled, some indicators might have been discarded."
-                        )
-                    else:
-                        self.logger.info(
-                            f"Plugin STIX/TAXII: Bundle-{bundle_id} parsed, {len(extracted)} indicator(s) pulled."
-                        )
-                    bundle_id += 1
-            except KeyError:
-                # if there is no data in a collection
-                pass
-        return indicators
 
-    def pull_21x(self, configuration, start_time):
-        """Pull implementation for version 2.x."""
-        indicators = []
-        apiroot = ApiRoot21(
-            configuration["discovery_url"].strip(),
-            user=configuration["username"].strip(),
-            password=configuration["password"],
-            verify=self.ssl_validation,
-            proxies=self.proxy,
+        self.logger.debug(
+            f"{self.log_prefix}: Collection execution details - {storage}."
         )
-        all_collections = [c.title for c in apiroot.collections]
-        filtered_collections = self._filter_collections(
-            all_collections, configuration["collection_names"]
-        )
-        self.logger.info(
-            f"Plugin STIX/TAXII: Following collections will be fetched - {', '.join(filtered_collections)}."
-        )
-        for collection in filter(
-            lambda x: x.title in filtered_collections, apiroot.collections
-        ):
-            bundle_id = 1
+
+        if storage.get("in_execution", {}):
+            for collection, next_page_details in storage.get("in_execution").items():
+                if collection not in filtered_collections:
+                    break
+                collection_object = collection_name_object[collection]
+                
+                if configuration["pagination_method"] == "next":
+                    next_start_time = collection_execution_details[collection]
+                    next_value = next_page_details.get("next")
+                    next_val = next_value
+                    start_val = next_value
+                else:
+                    next_value = next_page_details.get("last_added_date")
+                    next_start_time = self._str_to_datetime(next_value)
+                    next_val = None
+                    start_val = 0
+
+                try:
+                    next_start_time = next_start_time - timedelta(minutes=delay_time)
+                    next_start_time = pytz.utc.localize(next_start_time)
+                except:
+                    pass
+                self.logger.info(
+                    f"{self.log_prefix}: Executing the collection '{collection}' with start time {next_start_time}"
+                )
+                try:
+                    pages = self.get_page(
+                        func=collection_object.get_objects,
+                        configuration=configuration,
+                        start_time=next_start_time,
+                        next=next_val,
+                        start=start_val
+                    )
+
+                    fetched_indicators = self.paginate(configuration, pages, collection, storage, collection_execution_details, indicators)
+                    if fetched_indicators is not None:
+                        self.logger.info(
+                            f"{self.log_prefix}: Successfully parsed {self.total_indicators} indicators"
+                            f" and {self.total_skipped} indicators were skipped."
+                        )
+                        return indicators
+                except requests.exceptions.ProxyError as err:
+                    err_msg = (
+                        "Invalid proxy configuration."
+                    )
+                    self.logger.error(
+                        message=f"{self.log_prefix}: {err_msg} Error: {err}",
+                        details=traceback.format_exc(),
+                    )
+                    raise STIXTAXIIException(err_msg)
+                except requests.exceptions.ConnectionError as err:
+                    err_msg = (
+                        "Connection Error occurred. Check the Discovery URL / API Root URL provided."
+                    )
+                    self.logger.error(
+                        message=f"{self.log_prefix}: {err_msg} Error: {err}",
+                        details=traceback.format_exc(),
+                    )
+                    raise STIXTAXIIException(err_msg)
+                except requests.exceptions.RequestException as err:
+                    if not("416" in str(err) or "request range not satisfiable" in str(err).lower()):
+                        err_msg = "Request Exception occurred."
+                        self.logger.error(
+                            message=f"{self.log_prefix}: {err_msg} Error: {err}",
+                            details=traceback.format_exc(),
+                        )
+                        raise STIXTAXIIException(err_msg)
+                    self.logger.info(
+                        f"{self.log_prefix}: Received status code 416, exiting the pulling of '{collection}' collection. Response: {str(err)}."
+                    )
+                except Exception as err:
+                    if not("416" in str(err) or "request range not satisfiable" in str(err).lower()):
+                        err_msg = "Exception occurred while fetching the objects of collection"
+                        self.logger.error(
+                            message=f"{self.log_prefix}: {err_msg} Error: {err}",
+                            details=traceback.format_exc(),
+                        )
+                        raise STIXTAXIIException(err_msg)
+                    self.logger.info(
+                        f"{self.log_prefix}: Received status code 416, exiting the pulling of '{collection}' collection. Response: {str(err)}."
+                    )
+
+                collection_execution_details[collection] = datetime.now()
+            storage["in_execution"] = {}
+
+        for collection in apiroot.collections:
+            collection_name = collection.title
+            if collection_name not in filtered_collections:
+                continue
+
+            new_collection_details[collection_name] = pytz.utc.localize(collection_execution_details.get(collection_name, start_time))
+
+        sorted_collection = sorted(new_collection_details, key=lambda k: new_collection_details[k])
+
+        for collection in sorted_collection:
+            collection_object = collection_name_object[collection]
+            start_time = new_collection_details[collection] - timedelta(minutes=delay_time)
             try:
                 self.logger.info(
-                    f"Plugin STIX/TAXII: Parsing collection - {collection.title}."
+                    f"{self.log_prefix}: Parsing collection - '{collection}'. Start time: {start_time} (UTC)"
                 )
-                for bundle in as_pages21(
-                    collection.get_objects,
-                    per_request=100,
-                    added_after=start_time,
-                ):
-                    extracted, is_skipped = self._extract_indicators_2x(
-                        bundle.get("objects", [])
+                pages = self.get_page(
+                    func=collection_object.get_objects,
+                    configuration=configuration,
+                    start_time=start_time
+                )
+
+                fetched_indicators = self.paginate(configuration, pages, collection, storage, new_collection_details, indicators)
+                if fetched_indicators is not None:
+                    self.logger.info(
+                        f"{self.log_prefix}: Successfully parsed {self.total_indicators} indicators"
+                        f" and {self.total_skipped} indicators were skipped."
                     )
-                    indicators += extracted
-                    if is_skipped is True:
-                        self.logger.info(
-                            f"Plugin STIX/TAXII: Bundle-{bundle_id} parsed, {len(extracted)} indicator(s) pulled, some indicators might have been discarded."
-                        )
-                    else:
-                        self.logger.info(
-                            f"Plugin STIX/TAXII: Bundle-{bundle_id} parsed, {len(extracted)} indicator(s) pulled."
-                        )
-                    bundle_id += 1
+                    return indicators
+
+                storage["in_execution"] = {}
+                new_collection_details[collection] = pytz.utc.localize(datetime.now())
             except KeyError:
                 # if there is no data in a collection
-                pass
+                storage["in_execution"] = {}
+                new_collection_details[collection] = pytz.utc.localize(datetime.now())
+            except requests.exceptions.ProxyError as err:
+                err_msg = (
+                    "Invalid proxy configuration."
+                )
+                self.logger.error(
+                    message=f"{self.log_prefix}: {err_msg} Error: {err}.",
+                    details=traceback.format_exc(),
+                )
+                raise STIXTAXIIException(err_msg)
+            except requests.exceptions.ConnectionError as err:
+                err_msg = (
+                    "Connection Error occurred. Check the Discovery URL / API Root URL provided."
+                )
+                self.logger.error(
+                    message=f"{self.log_prefix}: {err_msg} Error: {err}.",
+                    details=traceback.format_exc(),
+                )
+                raise STIXTAXIIException(err_msg)
+            except requests.exceptions.RequestException as err:
+                if "416" in str(err) or "request range not satisfiable" in str(err).lower():
+                    storage["in_execution"] = {}
+                    self.logger.info(
+                        f"{self.log_prefix}: Received status code 416, exiting the pulling of '{collection}' collection. Response: {str(err)}."
+                    )
+                    new_collection_details[collection] = pytz.utc.localize(datetime.now())
+                else:
+                    err_msg = "Exception occurred while fetching the objects of collection."
+                    self.logger.error(
+                        message=f"{self.log_prefix}: {err_msg} Error: {err}.",
+                        details=traceback.format_exc(),
+                    )
+                    raise STIXTAXIIException(err_msg)
+            except Exception as err:
+                if "416" in str(err) or "request range not satisfiable" in str(err).lower():
+                    storage["in_execution"] = {}
+                    self.logger.info(
+                        f"{self.log_prefix}: Received status code 416, exiting the pulling of '{collection}' collection. Response: {str(err)}."
+                    )
+                    new_collection_details[collection] = pytz.utc.localize(datetime.now())
+                else:
+                    err_msg = "Exception occurred while fetching the objects of collection."
+                    self.logger.error(
+                        message=f"{self.log_prefix}: {err_msg} Error: {err}",
+                        details=traceback.format_exc(),
+                    )
+                    raise STIXTAXIIException(err_msg)
+
+        storage["collections"] = self.convert_datetime_to_string(new_collection_details)
+        self.logger.debug(f"{self.log_prefix}: Storage value after completion of the pull cycle: {storage}")
+        self.logger.info(
+            f"{self.log_prefix}: Successfully parsed {self.total_indicators} indicators"
+            f" and {self.total_skipped} indicators were skipped."
+        )
         return indicators
 
     def _pull(self, configuration, last_run_at):
-        delay_config = configuration.get("delay", 0) or 0
-        delay_time = int(delay_config)
         if not last_run_at:
-            start_time = pytz.utc.localize(
-                datetime.now() - timedelta(days=int(configuration["days"]))
+            start_time = datetime.now() - timedelta(days=int(configuration["days"]))
+            self.logger.info(
+                f"{self.log_prefix}: Starting the initial pull execution for Discovery URL: {configuration.get('discovery_url', 'Not found')},"
+                f" Version: {configuration.get('version', 'Not found')}"
+                f" and start time: {start_time}."
             )
         else:
-            start_time = pytz.utc.localize(last_run_at)
-
-        start_time = start_time - timedelta(minutes=delay_time)
-        self.logger.info(
-            f"Plugin STIX/TAXII: Start time for the pull cycle - {start_time} (UTC)"
+            start_time = last_run_at
+            self.logger.info(
+                f"{self.log_prefix}: Starting the pull execution for Discovery URL: {configuration.get('discovery_url', 'Not found')},"
+                f" Version: {configuration.get('version', 'Not found')} and"
+                f" start time: {start_time}."
+            )
+            
+        self.logger.debug(
+            f"{self.log_prefix}: Filter details - Type: {configuration.get('type', 'Not found')},"
+            f" Severity: {configuration.get('severity', 'Not found')}, Reputation: {configuration.get('reputation', 'Not found')}."
         )
+
         if configuration["version"] == "1":
             indicators = self.pull_1x(configuration, start_time)
-        elif configuration["version"] == "2.0":
-            indicators = self.pull_20x(configuration, start_time)
-        elif configuration["version"] == "2.1":
-            indicators = self.pull_21x(configuration, start_time)
-        return list(
+        else:
+            indicators = self.pull_2x(configuration, start_time)
+            
+        filtered_list = list(
             filter(
                 lambda x: x.severity.value in configuration["severity"]
                 and x.reputation >= int(configuration["reputation"])
@@ -565,30 +1084,47 @@ class STIXTAXIIPlugin(PluginBase):
                 indicators,
             )
         )
+        self.logger.info(
+            f"{self.log_prefix}: Pulled {len(filtered_list)} indicators successfully and"
+            f" skipped {len(indicators) - len(filtered_list)} indicators because of the applied filters"
+        )
+        return filtered_list
 
     def pull(self):
         """Pull indicators from TAXII server."""
-        return self._pull(self.configuration, self.last_run_at)
+        try:
+            return self._pull(self.configuration, self.last_run_at)
+        except STIXTAXIIException as err:
+            raise err
+        except Exception as err:
+            self.logger.error(
+                f"{self.log_prefix}: Error occurred while pulling the indicators. Error: {err}",
+                details=traceback.format_exc()
+            )
 
     def _validate_collections(self, configuration):
         try:
-            if configuration["version"] == "1":
+            version = configuration["version"]
+            discovery_url = configuration["discovery_url"].strip()
+            username = configuration.get("username", "").strip()
+            password = configuration.get("password", "")
+            if version == "1":
                 client = self._build_client(configuration)
                 all_collections = self._get_collections(client)
-            elif configuration["version"] == "2.0":
+            elif version == "2.0":
                 apiroot = ApiRoot20(
-                    configuration["discovery_url"].strip(),
-                    user=configuration["username"].strip(),
-                    password=configuration["password"],
+                    discovery_url,
+                    user=username,
+                    password=password,
                     verify=self.ssl_validation,
                     proxies=self.proxy,
                 )
                 all_collections = [c.title for c in apiroot.collections]
-            elif configuration["version"] == "2.1":
+            elif version == "2.1":
                 apiroot = ApiRoot21(
-                    configuration["discovery_url"].strip(),
-                    user=configuration["username"].strip(),
-                    password=configuration["password"],
+                    discovery_url,
+                    user=username,
+                    password=password,
                     verify=self.ssl_validation,
                     proxies=self.proxy,
                 )
@@ -605,26 +1141,67 @@ class STIXTAXIIPlugin(PluginBase):
             return ValidationResult(
                 success=True, message="Validated successfully."
             )
+        except requests.exceptions.ProxyError as err:
+            err_msg = (
+                "Invalid proxy configuration."
+            )
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg} Error: {err}",
+                details=traceback.format_exc(),
+            )
+            return ValidationResult(
+                success=False,
+                message=err_msg
+            )
+        except requests.exceptions.ConnectionError as err:
+            err_msg = (
+                "Connection Error occurred. Check the Discovery URL / API Root URL provided."
+            )
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg} Error: {err}",
+                details=traceback.format_exc(),
+            )
+            return ValidationResult(
+                success=False,
+                message=err_msg
+            )
         except requests.exceptions.RequestException as ex:
-            self.logger.error(f"Plugin STIX/TAXII: {repr(ex)}")
+            self.logger.error(
+                f"{self.log_prefix}: Exception occurred while connecting to the the server. Error: {str(ex)}.",
+                details=traceback.format_exc()
+            )
             return ValidationResult(
                 success=False,
                 message="Exception occurred while connecting to the the server. Check logs",
             )
         except exceptions.UnsuccessfulStatusError as ex:
+            self.logger.error(
+                f"{self.log_prefix}: {str(ex)}",
+                details=traceback.format_exc()
+            )
             if ex.status == "UNAUTHORIZED":
-                self.logger.error(f"Plugin STIX/TAXII: {repr(ex)}")
                 return ValidationResult(
                     success=False,
                     message="Invalid/Blank Username/Password provided.",
                 )
             else:
-                self.logger.error(f"Plugin STIX/TAXII: {repr(ex)}")
                 return ValidationResult(
                     success=False, message="Check logs for more details."
                 )
+        except STIXTAXIIException as ex:
+            self.logger.error(
+                f"{self.log_prefix}: Could not fetch the collection list from the server. Error: {str(ex)}",
+                details=traceback.format_exc()
+            )
+            return ValidationResult(
+                success=False,
+                message=str(ex),
+            )
         except Exception as ex:
-            self.logger.error(f"Plugin STIX/TAXII: {repr(ex)}")
+            self.logger.error(
+                f"{self.log_prefix}: Could not fetch the collection list from the server. Error: {str(ex)}.",
+                details=traceback.format_exc()
+            )
             return ValidationResult(
                 success=False,
                 message="Could not fetch the collection list from the server. Check all of the parameters.",
@@ -633,29 +1210,70 @@ class STIXTAXIIPlugin(PluginBase):
     def _validate_uname_pass(self, configuration):
         try:
             self._pull(configuration, datetime.now())
-        except requests.exceptions.RequestException as ex:
-            self.logger.error(f"Plugin STIX/TAXII: {repr(ex)}")
+        except requests.exceptions.ProxyError as err:
+            err_msg = (
+                "Invalid proxy configuration."
+            )
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg} Error: {err}",
+                details=traceback.format_exc(),
+            )
             return ValidationResult(
                 success=False,
-                message="Exception occurred while connecting to the the server. Check logs",
+                message=err_msg
+            )
+        except requests.exceptions.ConnectionError as err:
+            err_msg = (
+                "Connection Error occurred. Check the Discovery URL / API Root URL provided."
+            )
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg} Error: {err}",
+                details=traceback.format_exc(),
+            )
+            return ValidationResult(
+                success=False,
+                message=err_msg
+            )
+        except requests.exceptions.RequestException as ex:
+            self.logger.error(
+                f"{self.log_prefix}: Validation error occurred while connecting to the the server. Error: {str(ex)}.",
+                details=traceback.format_exc()
+            )
+            return ValidationResult(
+                success=False,
+                message="Error occurred while connecting to the the server. Check logs",
             )
         except exceptions.UnsuccessfulStatusError as ex:
+            self.logger.error(
+                f"{self.log_prefix}: Validation error occurred. Error: {str(ex)}",
+                details=traceback.format_exc()
+            )
             if ex.status == "UNAUTHORIZED":
-                self.logger.error(f"Plugin STIX/TAXII: {repr(ex)}")
                 return ValidationResult(
                     success=False,
-                    message="Invalid/Blank Username/Password provided.",
+                    message="Invalid Username/Password provided.",
                 )
             else:
-                self.logger.error(f"Plugin STIX/TAXII: {repr(ex)}")
                 return ValidationResult(
                     success=False, message="Check logs for more details."
                 )
-        except Exception as ex:
-            self.logger.error(f"Plugin STIX/TAXII: {repr(ex)}")
+        except STIXTAXIIException as ex:
+            # self.logger.error(
+            #     f"{self.log_prefix}: Validation error occurred. Error: {str(ex)}",
+            #     details=traceback.format_exc()
+            # )
             return ValidationResult(
                 success=False,
-                message="Check logs for more details.",
+                message=ex,
+            )
+        except Exception as ex:
+            self.logger.error(
+                f"{self.log_prefix}: Validation error occurred. Error: {str(ex)}",
+                details=traceback.format_exc()
+            )
+            return ValidationResult(
+                success=False,
+                message="Validation error occurred. Check logs for more details.",
             )
         else:
             return ValidationResult(
@@ -664,113 +1282,176 @@ class STIXTAXIIPlugin(PluginBase):
 
     def validate(self, configuration):
         """Validate the configuration."""
+        # Discovery URL
+        discovery_url = configuration.get("discovery_url", "").strip()
         if (
             "discovery_url" not in configuration
-            or type(configuration["discovery_url"]) != str
-            or not configuration["discovery_url"].strip()
+            or not discovery_url
         ):
-            self.logger.error(
-                "Plugin STIX/TAXII: No discovery_url found in the configuration parameters."
-            )
+            err_msg = "Discovery URL / API Root URL is a required field."
+            self.logger.error(f"{self.log_prefix}: {err_msg}")
             return ValidationResult(
-                success=False, message="Invalid Discovery URL provided."
+                success=False,
+                message=err_msg,
+            )
+        elif not isinstance(discovery_url, str):
+            err_msg = "Invalid Discovery URL / API Root URL Provided."
+            self.logger.error(f"{self.log_prefix}: {err_msg}")
+            return ValidationResult(
+                success=False,
+                message=err_msg,
+            )
+            
+        # Username
+        username = configuration.get("username", "").strip()
+        if not isinstance(username, str):
+            err_msg = "Invalid Username Provided."
+            self.logger.error(f"{self.log_prefix}: {err_msg}")
+            return ValidationResult(
+                success=False,
+                message=err_msg,
+            )
+            
+        # Password
+        password = configuration.get("password", "")
+        if not isinstance(password, str):
+            err_msg = "Invalid Password Provided."
+            self.logger.error(f"{self.log_prefix}: {err_msg}")
+            return ValidationResult(
+                success=False,
+                message=err_msg,
             )
 
+        # STIX/TAXII Version
+        version = configuration.get("version", "").strip()
+        if "version" not in configuration or not version:
+            err_msg = "STIX/TAXII Version is a required field."
+            self.logger.error(f"{self.log_prefix}: {err_msg}")
+            return ValidationResult(success=False, message=err_msg)
+        elif version not in ["1", "2.0", "2.1"]:
+            err_msg = "Invalid value for STIX/TAXII Version provided. Avialable values are '1', '2.0', or '2.1'."
+            self.logger.error(f"{self.log_prefix}: {err_msg}")
+            return ValidationResult(success=False, message=err_msg)
+
+        # Collection Names
+        collection_names = configuration.get("collection_names", "").strip()
         if (
             "collection_names" not in configuration
-            or type(configuration["collection_names"]) != str
+            or not isinstance(collection_names, str)
         ):
+            err_msg = "Invalid Collection Names provided."
             self.logger.error(
-                "Plugin STIX/TAXII: No Collection Names  found in the configuration parameters."
+                f"{self.log_prefix}: {err_msg}"
             )
             return ValidationResult(
-                success=False, message="Invalid Collection Names provided."
+                success=False, message=err_msg
             )
 
-        if "type" not in configuration or configuration["type"] not in [
-            "both",
-            "malware",
-            "url",
-        ]:
-            self.logger.error(
-                "Plugin STIX/TAXII: Invalid value for 'Type of Threat data to pull' provided. "
-                "Allowed values are Both, Malware or URL."
+        # Type of Threat data to pull
+        type = configuration.get("type", [])
+        if "type" not in configuration or not type:
+            err_msg = "Type of Threat data to pull is a required field."
+            self.logger.error(f"{self.log_prefix}: {err_msg}")
+            return ValidationResult(success=False, message=err_msg)
+        elif type not in ["both", "malware", "url"]:
+            err_msg = "Invalid value for Type of Threat data to pull provided. Avialable values are 'both', 'malware' or 'url'."
+            self.logger.error(f"{self.log_prefix}: {err_msg}")
+            return ValidationResult(success=False, message=err_msg)
+        
+        # Pagination Method
+        pagination_method = configuration.get("pagination_method", "").strip()
+        if "pagination_method" not in configuration or not pagination_method:
+            err_msg = "Pagination Method is a required field."
+            self.logger.error(f"{self.log_prefix}: {err_msg}")
+            return ValidationResult(success=False, message=err_msg)
+        elif pagination_method not in ["next", "last_added_date"]:
+            err_msg = "Invalid value for Pagination Method provided. Avialable values are 'next' or 'last_added_date'."
+            self.logger.error(f"{self.log_prefix}: {err_msg}")
+            return ValidationResult(success=False, message=err_msg)
+        
+        # Reputation
+        reputation = configuration.get("reputation", 0)
+        if "reputation" not in configuration or reputation is None:
+            err_msg = "Reputation is a required field."
+            self.logger.error(f"{self.log_prefix}: {err_msg}")
+            return ValidationResult(success=False, message=err_msg)
+        elif not isinstance(reputation, int):
+            err_msg = (
+                "Invalid value for Reputation provided. "
+                "Must be an integer."
             )
-            return ValidationResult(
-                success=False,
-                message=(
-                    "Invalid value for 'Type of Threat data to pull' provided."
-                    "Allowed values are 'Both', 'Malware' or 'URL'."
-                ),
+            self.logger.error(f"{self.log_prefix}: {err_msg}")
+            return ValidationResult(success=False, message=err_msg)
+        elif int(reputation) < 1 or int(reputation) > 10:
+            err_msg = (
+                "Invalid value for Reputation provided. "
+                "Select a value between 1 - 10."
             )
+            self.logger.error(f"{self.log_prefix}: {err_msg}")
+            return ValidationResult(success=False, message=err_msg)
 
-        try:
-            if (
-                "reputation" not in configuration
-                or not configuration["reputation"]
-                or int(configuration["reputation"]) < 1
-                or int(configuration["reputation"]) > 10
-            ):
-                self.logger.error(
-                    "Plugin STIX/TAXII: Validation error occured Error: Invalid reputation provided."
-                )
-                return ValidationResult(
-                    success=False,
-                    message="Invalid reputation provided. Must range from 1 to 10.",
-                )
-        except ValueError:
-            return ValidationResult(
-                success=False,
-                message="Invalid reputation provided.",
+        # Initial Range
+        initial_range = configuration.get("days", 0)
+        if "days" not in configuration or initial_range is None:
+            err_msg = "Initial Range (in days) is a required field."
+            self.logger.error(f"{self.log_prefix}: {err_msg}")
+            return ValidationResult(success=False, message=err_msg)
+        elif not isinstance(initial_range, int):
+            err_msg = (
+                "Invalid value for Initial Range (in days) provided. "
+                "Must be an integer."
             )
+            self.logger.error(f"{self.log_prefix}: {err_msg}")
+            return ValidationResult(success=False, message=err_msg)
+        elif int(initial_range) <= 0 or int(initial_range) > 365:
+            err_msg = (
+                "Invalid value for Initial Range (in days) provided. "
+                "Select a value between 1 - 365."
+            )
+            self.logger.error(f"{self.log_prefix}: {err_msg}")
+            return ValidationResult(success=False, message=err_msg)
 
-        try:
-            if (
-                "days" not in configuration
-                or not configuration["days"]
-                or int(configuration["days"]) <= 0
-            ):
-                self.logger.error(
-                    "Plugin STIX/TAXII: Validation error occured Error: Invalid days provided."
-                )
-                return ValidationResult(
-                    success=False,
-                    message="Invalid Number of days provided.",
-                )
-        except ValueError:
-            return ValidationResult(
-                success=False,
-                message="Invalid Number of days provided.",
+        # Delay
+        delay_config = configuration.get("delay", 0) or 0
+        if not isinstance(delay_config, int):
+            err_msg = (
+                "Invalid value for Look Back provided. "
+                "Must be an integer."
             )
-
-        try:
-            delay_config = configuration.get("delay", 0) or 0
-            if not (0 <= int(delay_config) <= 1440):
-                self.logger.error(
-                    "Plugin STIX/TAXII: Validation error occured Error: Invalid Look Back provided. Valid value is anything between 0 to 1440"
-                )
-                return ValidationResult(
-                    success=False,
-                    message="Invalid Look Back value provided.",
-                )
-        except Exception as exp:
-            self.logger.error(
-                message="Plugin STIX/TAXII: Validation error occured Error: Invalid Look Back provided. Valid value is anything between 0 to 1440",
-                details=str(exp),
+            self.logger.error(f"{self.log_prefix}: {err_msg}")
+            return ValidationResult(success=False, message=err_msg)
+        elif not (0 <= int(delay_config) <= 1440):
+            err_msg = (
+                "Invalid value for Look Back provided. "
+                "Select a value between 0 - 1440."
             )
-            return ValidationResult(
-                success=False,
-                message="Invalid Look Back value provided.",
+            self.logger.error(f"{self.log_prefix}: {err_msg}")
+            return ValidationResult(success=False, message=err_msg)
+        
+        severity = configuration.get("severity", [])
+        if "severity" not in configuration or not severity:
+            err_msg = "Severity is a required field."
+            self.logger.error(f"{self.log_prefix}: {err_msg}")
+            return ValidationResult(success=False, message=err_msg)
+        elif not (
+            all(
+                sev in ["unknown", "low", "medium", "high", "critical"]
+                for sev in severity
             )
+        ):
+            err_msg = "Invalid value for Severity provided. Avialable values are 'unknown', 'low', 'medium', 'high' or 'critical'."
+            self.logger.error(f"{self.log_prefix}: {err_msg}")
+            return ValidationResult(success=False, message=err_msg)
 
         validate_collections = self._validate_collections(configuration)
-        validate_uname_pass = self._validate_uname_pass(configuration)
-
         if validate_collections.success == False:
             return validate_collections
-        elif validate_uname_pass.success == False:
+
+        validate_uname_pass = self._validate_uname_pass(configuration)
+        if validate_uname_pass.success == False:
             return validate_uname_pass
 
+        self.logger.info(f"{self.log_prefix}: Successfully validated configuration parameters.")
         return ValidationResult(
             success=True, message="Validated successfully."
         )

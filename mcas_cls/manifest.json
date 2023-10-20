@@ -1,35 +1,34 @@
 {
-    "name": "Microsoft Defender for Cloud Apps",
-    "id": "mcas_cls",
-    "version": "2.0.0",
-    "mapping": "Microsoft Defender for Cloud Apps Default Mappings",
-    "types": [
-        "alerts",
-        "events"
-    ],
-    "description": "This plugin is used to fetch unsanctioned data from the Microsoft Defender for Cloud Apps platform. This plugin does not support sharing of Indicators to Microsoft Defender for Cloud Apps.",
-    "configuration": [
-        {
-            "label": "Portal URL",
-            "key": "portal_url",
-            "type": "text",
-            "default": "",
-            "mandatory": true,
-            "description": "Microsoft Defender for Cloud Apps portal URL, in which the traffic logs are to be ingested. (exclude http(s)://)."
-        },
-        {
-            "label": "API Token",
-            "key": "token",
-            "type": "password",
-            "mandatory": true,
-            "description": "Microsoft Defender for Cloud Apps portal's API token for authentication."
-        },
-        {
-            "label": "Data Source",
-            "key": "data_source",
-            "type": "text",
-            "mandatory": true,
-            "description": "The data source in which the traffic logs are to be uploaded from CLS."
-        }
-    ]
+  "name": "Microsoft Defender for Cloud Apps",
+  "id": "mcas_cls",
+  "version": "2.0.1",
+  "mapping": "Microsoft Defender for Cloud Apps Default Mappings",
+  "types": [
+    "events"
+  ],
+  "description": "This plugin is used to ingest events data (Application and Page) to the Microsoft Defender for Cloud Apps platform. This plugin provides support for the ingestion of JSON and CEF formatted logs.",
+  "configuration": [
+    {
+      "label": "Portal URL",
+      "key": "portal_url",
+      "type": "text",
+      "default": "",
+      "mandatory": true,
+      "description": "Microsoft Defender for Cloud Apps portal URL, in which the traffic logs are to be ingested. (exclude http(s)://)."
+    },
+    {
+      "label": "API Token",
+      "key": "token",
+      "type": "password",
+      "mandatory": true,
+      "description": "Microsoft Defender for Cloud Apps portal's API token for authentication."
+    },
+    {
+      "label": "Data Source",
+      "key": "data_source",
+      "type": "text",
+      "mandatory": true,
+      "description": "The data source in which the traffic logs are to be uploaded from CLS."
+    }
+  ]
 }

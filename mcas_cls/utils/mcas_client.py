@@ -37,6 +37,7 @@ import time
 import json
 import requests
 import threading
+import traceback
 
 from .mcas_constants import (
     API_GET_URL,
@@ -44,19 +45,21 @@ from .mcas_constants import (
     MAX_RETRIES,
     RETRY_SLEEP_TIME,
     DATAFILE,
+    PLATFORM_NAME,
+    INGESTION_DATAFILE,
 )
-from .mcas_exceptions import (
-    MaxRetriesExceededError,
-)
-from netskope.common.utils import add_user_agent
+from .mcas_exceptions import MaxRetriesExceededError, MCASPluginException
+
+from .mcas_helper import add_mcas_user_agent, parse_response
 
 
 class MCASClient:
     """MCAS CLient."""
 
-    def __init__(self, configuration: dict, logger, *, verify_ssl, proxy):
+    def __init__(self, configuration: dict, logger, *, verify_ssl, proxy, log_prefix):
         """Initialize."""
         self.configuration = configuration
+        self.log_prefix = log_prefix
         self.logger = logger
         self.data_length = 0
         self.data_type = None
@@ -64,62 +67,73 @@ class MCASClient:
         self.proxy = proxy
         self.datafile = DATAFILE
 
-    def _log_custom_error_message(self, status_code, response_body):
+    def _log_custom_error_message(self, status_code, response_body, purpose_log):
         """Log custom error message based on the status code.
 
         :param status_code: The response status code
         :param response_body: The response body
         """
         if status_code in [400, 404]:
-            self.logger.error(
-                "HTTP client error occurred. Status code: {}. Response: {}".format(
-                    status_code, response_body
-                )
-            )
+            err_msg = "HTTP client error occurred."
         elif status_code == 403:
-            self.logger.error(
-                "Invalid Authorization. Status code: {}. Response: {}".format(
-                    status_code, response_body
-                )
-            )
+            err_msg = "Invalid Authorization."
+        elif status_code == 401:
+            err_msg = "Authentication failed due to invalid API Token."
+
+        self.logger.error(
+            message=f"{self.log_prefix}: Error occurred while trying to {purpose_log}- {err_msg} Status code: {status_code}.",
+            details=f"Received API response: {response_body}",
+        )
+        return err_msg
 
     def _post_retry_process(
-        self, req_type, status_code, retry_count, response_body
+        self, req_type, status_code, retry_count, response_body, purpose_log=""
     ):
         # If it has done enough retries or the API call is successful or there is a client error,
         # don't retry.
 
         retry_log_message = {
-            "get": "Could not initiate the file upload after {} retries",
-            "put": "Could not upload the file after {} retries",
-            "post": "Could not notify MCAS to start processing the data after {} retries",
+            "get": "{}: Could not initiate the file upload after {} retries",
+            "put": "{}: Could not upload the file after {} retries",
+            "post": "{}: Could not notify Microsoft Defender for Cloud Apps to start processing the data after {} retries",
         }
 
         error_log_message = {
-            "get": "An error occurred while initiating file upload for MCAS, status code: {} response: {}",
-            "put": "An error occurred while uploading the file on MCAS, status code: {} response: {}",
-            "post": "An error occurred while notifying MCAS to start processing the uploaded data, "
-            "status code: {} response: {}",
+            "get": "{}: An error occurred while initiating file upload for {}, status code: {}",
+            "put": "{}: An error occurred while uploading the file on {}, status code: {}",
+            "post": "{}: An error occurred while notifying {} to start processing the uploaded data, "
+            "status code: {}",
         }
 
         if status_code in [200, 201]:
             return
-
-        if status_code in [400, 403, 404]:
+        err_msg = "HTTP client error occurred."
+        if status_code in [400, 403, 404, 401]:
             # Exit with no error as these are client errors (except 500) and won't be recovered even
             # after docker restart
-            self._log_custom_error_message(status_code, response_body)
-            raise Exception(
-                f"HTTP client error occurred. Status code: {status_code}. Response: {response_body}"
+            err_msg = self._log_custom_error_message(
+                status_code, response_body, purpose_log
             )
+            raise MCASPluginException(err_msg)
 
-        elif not (status_code == 429 or status_code >= 500):
+        elif status_code == 413:
+            err_msg = "The request body is too large and exceeds the maximum permissible limit."
             self.logger.error(
-                error_log_message[req_type].format(status_code, response_body)
+                message=f"{self.log_prefix}: Error occurred while trying to {purpose_log}- {err_msg}  Status code: {status_code}.",
+                details=f"Received API response: {response_body}",
             )
-            raise Exception(
-                f"HTTP client error occurred. Status code: {status_code}. Response: {response_body}"
+            raise MCASPluginException(err_msg)
+
+        elif not (status_code == 429 or status_code >= 500 and status_code < 600):
+            self.logger.error(
+                message=(
+                    error_log_message[req_type].format(
+                        self.log_prefix, PLATFORM_NAME, status_code
+                    )
+                ),
+                details=f"Received API response: {response_body}",
             )
+            raise MCASPluginException(err_msg)
 
         if retry_count == MAX_RETRIES:
             """This means we have done enough retries."""
@@ -127,13 +141,18 @@ class MCASClient:
             # Even after retrying MAX_RETRIES times if it could not ingest data into MCAS,
             # raise a custom exception.
 
-            self.logger.error(retry_log_message[req_type].format(MAX_RETRIES))
+            self.logger.error(
+                message=(
+                    retry_log_message[req_type].format(self.log_prefix, MAX_RETRIES)
+                ),
+                details=f"Received API response: {response_body}",
+            )
             raise MaxRetriesExceededError(
-                retry_log_message[req_type].format(MAX_RETRIES)
+                retry_log_message[req_type].format(self.log_prefix, MAX_RETRIES)
             )
 
     def _api_request(
-        self, req_type, uri, params={}, headers={}, proxies={}, data=None
+        self, method, uri, params={}, headers={}, proxies={}, data=None, files=None
     ):
         """Call the appropriate API call based on request type param.
 
@@ -146,107 +165,138 @@ class MCASClient:
         :raises MaxRetriesExceededError: When data ingestion fails even after max. number of retries
         """
         retry_log_message = {
-            "get": "Could not initiate the file upload. Retrying in {} seconds. Status Code: {}. Response: {}",
-            "put": "Could not upload the log file to MCAS. Retrying in {} seconds. Status Code: {}. Response: {}",
-            "post": "Could not notify MCAS to start processing the data. Retrying in {} seconds. "
-            "Status Code: {}. Response: {}",
+            "get": "{}: Could not initiate the file upload. Retrying in {} seconds. Status Code: {}.",
+            "put": "{}: Could not upload the log file to Microsoft Defender for Cloud Apps. Retrying in {} seconds. Status Code: {}.",
+            "post": "{}: Could not notify Microsoft Defender for Cloud Apps to start processing the data. Retrying in {} seconds. "
+            "Status Code: {}.",
+        }
+
+        api_purpose = {
+            "get": "Initiate the file upload.",
+            "put": "Perform file upload.",
+            "post": "Finalize file upload.",
         }
 
         retry, retry_count = True, 1
         try:
+            purpose_log = api_purpose[method.lower()]
+            display_headers = {
+                k: v for k, v in headers.items() if k not in {"Authorization"}
+            }
+            debuglog_msg = f"{self.log_prefix} : API Request to {purpose_log} - Method={method},  URL={uri},  headers={display_headers}, "
+            if params:
+                debuglog_msg += f"params={params}"
+            if data:
+                debuglog_msg += f" data={data}"
+
+            self.logger.debug(debuglog_msg + f", Ingestion_file={self.ingestion_file}")
+
             while retry_count <= MAX_RETRIES:
-                if req_type == "get":
-                    response = requests.get(
-                        uri,
-                        params=params,
-                        headers=add_user_agent(headers),
-                        proxies=proxies,
-                        verify=self.verify_ssl,
-                    )
-
-                elif req_type == "put":
-                    put_data = str.encode("\n".join(json.dumps(x) for x in data))
-                    file_name = self.datafile.format(threading.get_ident())
-                    files = {"file": (file_name, put_data)}
-                    response = requests.put(
-                        uri,
-                        files=files,
-                        headers=add_user_agent(headers),
-                        proxies=proxies,
-                        verify=self.verify_ssl,
-                    )
-
-                elif req_type == "post":
-                    response = requests.post(
-                        uri,
-                        data=data,
-                        headers=add_user_agent(headers),
-                        proxies=proxies,
-                        verify=self.verify_ssl,
-                    )
-
+                response = requests.request(
+                    url=uri,
+                    method=method,
+                    params=params,
+                    data=data,
+                    files=files,
+                    headers=headers,
+                    proxies=proxies,
+                )
                 status_code = response.status_code
                 response_body = response.text
+                self.logger.debug(
+                    f"{self.log_prefix} : Received API Response to {purpose_log} - Method={method}, Status Code={status_code}, Ingestion_file={self.ingestion_file}"
+                )
                 # Do not retry in case of client errors and successful API call.
-                retry = status_code == 429 or status_code >= 500
+                retry = status_code == 429 or (status_code >= 500 and status_code < 600)
                 if retry_count == MAX_RETRIES or not retry:
                     self._post_retry_process(
-                        req_type, status_code, retry_count, response_body
+                        req_type=method.lower(),
+                        status_code=status_code,
+                        retry_count=retry_count,
+                        response_body=response_body,
+                        purpose_log=purpose_log,
                     )
                     return response
 
                 self.logger.error(
-                    retry_log_message[req_type].format(
-                        RETRY_SLEEP_TIME, status_code, response_body
-                    )
+                    message=(
+                        retry_log_message[method.lower()].format(
+                            self.log_prefix,
+                            RETRY_SLEEP_TIME,
+                            status_code,
+                        )
+                    ),
+                    details=f"Received API Response. {response_body}",
                 )
-
                 time.sleep(RETRY_SLEEP_TIME)
                 retry_count += 1
 
-        except requests.exceptions.HTTPError as err:
-            self.logger.error("HTTP error occurred: {}".format(err))
-            raise
-        except requests.exceptions.ConnectionError as err:
-            self.logger.error("Connection error occurred: {}".format(err))
-            raise
-        except requests.exceptions.Timeout as err:
-            self.logger.error("Request timed out: {}".format(err))
-            raise
-        except requests.exceptions.RequestException as err:
-            self.logger.error(
-                "An error occurred while making REST API call to MCAS: {}".format(
-                    err
-                )
+        except requests.exceptions.ProxyError as exp:
+            err_msg = (
+                "ProxyError occurred while trying to {}. "
+                "Verify proxy configuration.".format(purpose_log)
             )
-            raise
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg} Error: {exp}",
+                details=str(traceback.format_exc()),
+            )
+            raise MCASPluginException(err_msg)
+        except requests.exceptions.HTTPError as err:
+            err_msg = f"HTTP error occurred while trying to {purpose_log}."
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg} Error: {err}",
+                details=f"Received API response {response_body}",
+            )
+            raise MCASPluginException(err_msg)
+        except requests.exceptions.ConnectionError as err:
+            err_msg = f"Connection error occurred while trying to {purpose_log}."
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg} Error: {err}",
+                details=str(traceback.format_exc()),
+            )
+            raise MCASPluginException(err_msg)
+        except requests.exceptions.Timeout as err:
+            err_msg = f"Request timed out while trying to {purpose_log}."
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg} Error: {err}",
+                details=str(traceback.format_exc()),
+            )
+            raise MCASPluginException(err_msg)
+        except requests.exceptions.RequestException as err:
+            err_msg = f"An error occurred while making REST API call to {purpose_log}."
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg} Error: {err}",
+                details=str(traceback.format_exc()),
+            )
+            raise MCASPluginException(err_msg)
         except MaxRetriesExceededError as err:
             raise err
+        except MCASPluginException as err:
+            raise err
         except Exception as err:
+            toast_msg = "Unexcepted error occurred check logs."
             self.logger.error(
-                "An error occurred while processing the API response: {}".format(
-                    err
-                )
+                message=(
+                    "{}: An error occurred while processing the API response: {}".format(
+                        self.log_prefix, err
+                    )
+                ),
+                details=str(traceback.format_exc()),
             )
-            raise
+            raise MCASPluginException(toast_msg)
 
     def validate_token(self):
         """To check whether the token is valid or not."""
-        ingestion_file = self.datafile.format(threading.get_ident())
-        headers = {
-            "Authorization": f"Token {self.configuration.get('token').strip()}"
-        }
+        self.ingestion_file = self.datafile.format(threading.get_ident())
+        headers = {"Authorization": f"Token {self.configuration.get('token')}"}
 
-        params = {"filename": ingestion_file, "source": "GENERIC_CEF"}
+        params = {"filename": self.ingestion_file, "source": "GENERIC_CEF"}
 
-        get_uri = API_GET_URL.format(
-            self.configuration.get("portal_url").strip()
+        get_uri = API_GET_URL.format(self.configuration.get("portal_url", "").strip())
+
+        self._api_request(
+            "get", get_uri, params, add_mcas_user_agent(headers), self.proxy
         )
-        try:
-            self._api_request("get", get_uri, params, headers, self.proxy)
-            return True
-        except Exception:
-            raise
 
     def _post_data(self, portal_url, api_token, body, data_source):
         """Post the given data to MCAS Platform.
@@ -257,41 +307,72 @@ class MCASClient:
         :param data_source: Name of data source, where records to be ingested
         :raises MaxRetriesExceededError: When data ingestion fails even after max. number of retries
         """
-        ingestion_file = self.datafile.format(threading.get_ident())
+        self.ingestion_file = INGESTION_DATAFILE.format(
+            threading.get_ident(), self.data_type, self.sub_type
+        )
         # Step 1 : initiate the file upload
         headers = {"Authorization": f"Token {api_token}"}
 
-        params = {"filename": ingestion_file, "source": "GENERIC_CEF"}
+        params = {"filename": self.ingestion_file, "source": "GENERIC_CEF"}
 
         get_uri = API_GET_URL.format(portal_url)
-        response_get = self._api_request(
-            "get", get_uri, params, headers, self.proxy
+        resp_get = self._api_request(
+            "GET",
+            get_uri,
+            params,
+            headers=add_mcas_user_agent(headers),
+            proxies=self.proxy,
         )
 
+        self.logger.info(
+            f"{self.log_prefix}: API Request Successful to Initiate the file upload. Ingestion_file={self.ingestion_file} "
+        )
         # Step 2 : Upload the file
-        response_get = response_get.json()
+        response_get = parse_response(self, response=resp_get)
         upload_url = response_get["url"]
-        headers_put = {"x-ms-blob-type": "BlockBlob"}
-        self._api_request(
-            "put",
-            upload_url,
-            headers=headers_put,
-            proxies=self.proxy,
-            data=body,
-        )
+        if upload_url:
+            headers_put = {"x-ms-blob-type": "BlockBlob"}
+            put_data = str.encode("\n".join(json.dumps(x) for x in body))
+            files = {"file": (self.ingestion_file, put_data)}
+            self._api_request(
+                "PUT",
+                upload_url,
+                headers=add_mcas_user_agent(headers_put),
+                proxies=self.proxy,
+                files=files,
+            )
+            self.logger.info(
+                f"{self.log_prefix}: API Request Successful to Perform file upload. Ingestion_file={self.ingestion_file} "
+            )
 
-        # Step 3 : Notify MCAS so that it can start processing the data
-        post_uri = API_POST_URL.format(portal_url)
-        body = {"uploadUrl": upload_url, "inputStreamName": data_source}
-        self._api_request(
-            "post",
-            post_uri,
-            data=body,
-            headers=headers,
-            proxies=self.proxy,
-        )
+            # Step 3 : Notify MCAS so that it can start processing the data
+            post_uri = API_POST_URL.format(portal_url)
+            body = {"uploadUrl": upload_url, "inputStreamName": data_source}
+            self._api_request(
+                "POST",
+                post_uri,
+                data=body,
+                headers=headers,
+                proxies=self.proxy,
+            )
+            self.logger.info(
+                f"{self.log_prefix}: API Request Successful to Finalize file upload. Ingestion_file={self.ingestion_file} "
+            )
 
-    def push(self, data, data_type):
+            log_msg = "[{}] [{}] Successfully ingested {} {}(s) to {}.".format(
+                self.data_type,
+                self.sub_type,
+                self.data_length,
+                self.data_type,
+                PLATFORM_NAME,
+            )
+            self.logger.info(f"{self.log_prefix}: {log_msg}")
+        else:
+            log_msg = f"{self.log_prefix}: Could not upload the log file to {PLATFORM_NAME}. Hence, Ingestion of {self.data_length} records will be skipped."
+            self.logger.error(log_msg)
+            raise MCASPluginException(log_msg)
+
+    def push(self, data, data_type, sub_type):
         """Call method of "post_data" with appropriate parameters.
 
         :param data: The data to be ingested
@@ -300,10 +381,11 @@ class MCASClient:
         # Setting a few properties of data being ingested
         self.data_length = len(data)
         self.data_type = data_type
+        self.sub_type = sub_type
 
         self._post_data(
-            self.configuration.get("portal_url").strip(),
-            self.configuration.get("token").strip(),
+            self.configuration.get("portal_url", "").strip(),
+            self.configuration.get("token", ""),
             data,
-            self.configuration.get("data_source").strip(),
+            self.configuration.get("data_source", "").strip(),
         )

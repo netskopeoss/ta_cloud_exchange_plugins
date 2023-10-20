@@ -32,13 +32,19 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 """MCAS Helper."""
 
-
+import requests
+import json
 from jsonschema import validate
 
-from .mcas_exceptions import (
-    MappingValidationError,
-)
+from .mcas_exceptions import MappingValidationError, MCASPluginException
 from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
+
+from .mcas_constants import (
+    PLUGIN_VERSION,
+    PLATFORM_NAME,
+    MODULE_NAME,
+)
+from netskope.common.utils import add_user_agent
 
 
 def validate_extension(instance):
@@ -95,7 +101,7 @@ def validate_header(instance):
     properties_schema = {
         "default_value": {"type": "string"},
         "mapping_field": {"type": "string"},
-        "transformation": {"type": "string"}
+        "transformation": {"type": "string"},
     }
 
     one_of_sub_schema = [
@@ -152,7 +158,7 @@ def validate_extension_field(instance):
             "mapping_field": {"type": "string"},
             "default_value": {"type": "string"},
             "is_json_path": {"type": "boolean"},
-            "transformation": {"type": "string"}
+            "transformation": {"type": "string"},
         },
         "minProperties": 0,
         "maxProperties": 4,
@@ -183,42 +189,47 @@ def get_mcas_mappings(mappings, data_type):
     :param mapping_file: Name of mapping file
     :return: Read mappings
     """
-    data_type_specific_mapping = mappings["taxonomy"][data_type]
+    if data_type in mappings["taxonomy"]:
+        data_type_specific_mapping = mappings["taxonomy"][data_type]
 
-    if data_type == "json":
-        return mappings["delimiter"], mappings["cef_version"], mappings["taxonomy"]
-
-    # Validate the headers of each mapped subtype
-    for subtype, subtype_map in data_type_specific_mapping.items():
-        subtype_header = subtype_map["header"]
-        try:
-            validate_header(subtype_header)
-        except JsonSchemaValidationError as err:
-            raise MappingValidationError(
-                'Error occurred while validating mcas header for type "{}". '
-                "Error: {}".format(subtype, err)
+        if data_type == "json":
+            return (
+                mappings["delimiter"],
+                mappings["cef_version"],
+                mappings["taxonomy"],
             )
 
-    # Validate the extension for each mapped subtype
-    for subtype, subtype_map in data_type_specific_mapping.items():
-        subtype_extension = subtype_map["extension"]
-        try:
-            validate_extension(subtype_extension)
-        except JsonSchemaValidationError as err:
-            raise MappingValidationError(
-                'Error occurred while validating mcas extension for type "{}". '
-                "Error: {}".format(subtype, err)
-            )
-
-        # Validate each extension
-        for cef_field, ext_dict in subtype_extension.items():
+        # Validate the headers of each mapped subtype
+        for subtype, subtype_map in data_type_specific_mapping.items():
+            subtype_header = subtype_map["header"]
             try:
-                validate_extension_field(ext_dict)
+                validate_header(subtype_header)
             except JsonSchemaValidationError as err:
                 raise MappingValidationError(
-                    'Error occurred while validating mcas extension field "{}" for '
-                    'type "{}". Error: {}'.format(cef_field, subtype, err)
+                    'Error occurred while validating mcas header for type "{}". '
+                    "Error: {}".format(subtype, err)
                 )
+
+        # Validate the extension for each mapped subtype
+        for subtype, subtype_map in data_type_specific_mapping.items():
+            subtype_extension = subtype_map["extension"]
+            try:
+                validate_extension(subtype_extension)
+            except JsonSchemaValidationError as err:
+                raise MappingValidationError(
+                    'Error occurred while validating mcas extension for type "{}". '
+                    "Error: {}".format(subtype, err)
+                )
+
+            # Validate each extension
+            for cef_field, ext_dict in subtype_extension.items():
+                try:
+                    validate_extension_field(ext_dict)
+                except JsonSchemaValidationError as err:
+                    raise MappingValidationError(
+                        'Error occurred while validating mcas extension field "{}" for '
+                        'type "{}". Error: {}'.format(cef_field, subtype, err)
+                    )
 
     return mappings["delimiter"], mappings["cef_version"], mappings["taxonomy"]
 
@@ -232,3 +243,48 @@ def extract_subtypes(mappings, data_type):
     """
     taxonomy = mappings["taxonomy"].get(data_type, {})
     return [subtype for subtype in taxonomy]
+
+
+def add_mcas_user_agent(headers=None) -> str:
+    """Add Client Name to request plugin make.
+
+    Returns:
+        str: String containing the Client Name.
+    """
+    headers = add_user_agent(headers)
+    ce_added_agent = headers.get("User-Agent", "netskope-ce")
+    user_agent = "{}-{}-{}-v{}".format(
+        ce_added_agent,
+        MODULE_NAME.lower(),
+        PLATFORM_NAME.replace(" ", "-").lower(),
+        PLUGIN_VERSION,
+    )
+    headers.update({"User-Agent": user_agent})
+    return headers
+
+
+def parse_response(self, response: requests.models.Response):
+    """Parse Response will return JSON from response object.
+
+    Args:
+        response (response): Response object.
+
+    Returns:
+        Any: Response Json.
+    """
+    try:
+        return response.json()
+    except json.JSONDecodeError as err:
+        err_msg = f"Invalid JSON response received from API. Error: {str(err)}"
+        self.logger.error(
+            message=f"{self.log_prefix}: {err_msg}",
+            details=f"API response: {response.text}",
+        )
+        raise MCASPluginException(err_msg)
+    except Exception as exp:
+        err_msg = f"Unexpected error occurred while parsing json response. Error: {exp}"
+        self.logger.error(
+            message=f"{self.log_prefix}: {err_msg}",
+            details=f"API Response: {response.text}",
+        )
+        raise MCASPluginException(err_msg)

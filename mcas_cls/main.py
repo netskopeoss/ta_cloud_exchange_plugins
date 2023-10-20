@@ -32,7 +32,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 """MCAS Plugin."""
 
-
+import os
+import traceback
 import json
 import jsonpath
 
@@ -49,6 +50,7 @@ from .utils.mcas_exceptions import (
     EmptyExtensionError,
     FieldNotFoundError,
     MaxRetriesExceededError,
+    MCASPluginException
 )
 from .utils.mcas_cef_generator import (
     CEFGenerator,
@@ -58,9 +60,55 @@ from .utils.mcas_client import (
     MCASClient,
 )
 
+from .utils.mcas_constants import (
+    PLUGIN_VERSION,
+    PLATFORM_NAME,
+    MODULE_NAME,
+)
+
 
 class MCASPlugin(PluginBase):
     """MCAS Plugin class."""
+
+    def __init__(
+        self,
+        name,
+        *args,
+        **kwargs,
+    ):
+        """Initialize MCASPlugin class."""
+        super().__init__(
+            name,
+            *args,
+            **kwargs,
+        )
+        self.plugin_name, self.plugin_version = self._get_plugin_info()
+        self.log_prefix = f"{MODULE_NAME} {self.plugin_name} [{name}]"
+
+    def _get_plugin_info(self) -> tuple:
+        """Get plugin name and version from manifest.
+        Returns:
+            tuple: Tuple of plugin's name and version fetched from manifest.
+        """
+        try:
+            file_path = os.path.join(
+                str(os.path.dirname(os.path.abspath(__file__))),
+                "manifest.json",
+            )
+            with open(file_path, "r") as manifest:
+                manifest_json = json.load(manifest)
+                plugin_name = manifest_json.get("name", PLATFORM_NAME)
+                plugin_version = manifest_json.get("version", PLUGIN_VERSION)
+                return (plugin_name, plugin_version)
+        except Exception as exp:
+            self.logger.error(
+                message=(
+                    f"{self.log_prefix}: Error occurred while"
+                    f" getting plugin details. Error: {exp}"
+                ),
+                details=str(traceback.format_exc()),
+            )
+        return (PLATFORM_NAME, PLUGIN_VERSION)
 
     def get_mapping_value_from_json_path(self, data, json_path):
         """Fetch the value from given JSON object using given JSON path.
@@ -79,9 +127,9 @@ class MCASPlugin(PluginBase):
         :return: fetched value
         """
         return (
-            data[field]
+            (data[field], True)
             if data[field] or isinstance(data[field], int)
-            else "null"
+            else ("null", False)
         )
 
     def get_subtype_mapping(self, mappings, subtype):
@@ -112,25 +160,27 @@ class MCASPlugin(PluginBase):
         mapping_variables = {"$tenant_name": tenant.name}
 
         missing_fields = []
+        mapped_field_flag = False
         # Iterate over mapped headers
         for cef_header, header_mapping in header_mappings.items():
             try:
-                headers[cef_header] = self.get_field_value_from_data(
+                headers[cef_header], mapped_field = self.get_field_value_from_data(
                     header_mapping, data, data_type, subtype, False
                 )
+
+                if mapped_field:
+                    mapped_field_flag = mapped_field
 
                 # Handle variable mappings
                 if (
                     isinstance(headers[cef_header], str)
                     and headers[cef_header].lower() in mapping_variables
                 ):
-                    headers[cef_header] = mapping_variables[
-                        headers[cef_header].lower()
-                    ]
+                    headers[cef_header] = mapping_variables[headers[cef_header].lower()]
             except FieldNotFoundError as err:
                 missing_fields.append(str(err))
 
-        return headers
+        return headers, mapped_field_flag
 
     def get_extensions(self, extension_mappings, data, data_type, subtype):
         """Get extensions.
@@ -143,21 +193,24 @@ class MCASPlugin(PluginBase):
         """
         extension = {}
         missing_fields = []
+        mapped_field_flag = False
 
         # Iterate over mapped extensions
         for cef_extension, extension_mapping in extension_mappings.items():
             try:
-                extension[cef_extension] = self.get_field_value_from_data(
+                extension[cef_extension], mapped_field = self.get_field_value_from_data(
                     extension_mapping,
                     data,
                     data_type,
                     subtype,
                     is_json_path="is_json_path" in extension_mapping,
                 )
+                if mapped_field:
+                    mapped_field_flag = mapped_field
             except FieldNotFoundError as err:
                 missing_fields.append(str(err))
 
-        return extension
+        return extension, mapped_field_flag
 
     def get_field_value_from_data(
         self, extension_mapping, data, data_type, subtype, is_json_path=False
@@ -186,10 +239,8 @@ class MCASPlugin(PluginBase):
            NP    |     NP     |        NP      |           - (Not possible)
         -----------------------------------------------------------------------
         """
-        if (
-            "mapping_field" in extension_mapping
-            and extension_mapping["mapping_field"]
-        ):
+        mapped_field = False
+        if "mapping_field" in extension_mapping and extension_mapping["mapping_field"]:
             if is_json_path:
                 # If mapping field specified by JSON path is present in data, map that field, else skip by raising
                 # exception:
@@ -197,31 +248,38 @@ class MCASPlugin(PluginBase):
                     data, extension_mapping["mapping_field"]
                 )
                 if value:
-                    return ",".join([str(val) for val in value])
+                    mapped_field = True
+                    return ",".join([str(val) for val in value]), mapped_field
                 else:
-                    raise FieldNotFoundError(
-                        extension_mapping["mapping_field"]
-                    )
+                    raise FieldNotFoundError(extension_mapping["mapping_field"])
             else:
                 # If mapping is present in data, map that field, else skip by raising exception
-                if (
-                    extension_mapping["mapping_field"] in data
-                ):  # case #1 and case #4
+                if extension_mapping["mapping_field"] in data:  # case #1 and case #4
+                    if (
+                        extension_mapping.get("transformation") == "Time Stamp"
+                        and data[extension_mapping["mapping_field"]]
+                    ):
+                        try:
+                            mapped_field = True
+                            return (
+                                int(data[extension_mapping["mapping_field"]]),
+                                mapped_field,
+                            )
+                        except Exception:
+                            pass
                     return self.get_mapping_value_from_field(
                         data, extension_mapping["mapping_field"]
                     )
                 elif "default_value" in extension_mapping:
                     # If mapped value is not found in response and default is mapped, map the default value (case #2)
-                    return extension_mapping["default_value"]
+                    return extension_mapping["default_value"], mapped_field
                 else:  # case #6
-                    raise FieldNotFoundError(
-                        extension_mapping["mapping_field"]
-                    )
+                    raise FieldNotFoundError(extension_mapping["mapping_field"])
         else:
             # If mapping is not present, 'default_value' must be there because of validation (case #3 and case #5)
-            return extension_mapping["default_value"]
+            return extension_mapping["default_value"], mapped_field
 
-    def map_json_data(self, mappings, data, data_type, subtype):
+    def map_json_data(self, mappings, data):
         """Filter the raw data and returns the filtered data.
 
         :param mappings: List of fields to be pushed
@@ -229,15 +287,16 @@ class MCASPlugin(PluginBase):
         :param logger: Logger object for logging purpose
         :return: Mapped data based on fields given in mapping file
         """
-        
-        if mappings == []:
+
+        if not (mappings and data):
+            # If mapping is empty or data is empty return data.
             return data
 
         mapped_dict = {}
         for key in mappings:
             if key in data:
                 mapped_dict[key] = data[key]
-        
+
         return mapped_dict
 
     def transform(self, raw_data, data_type, subtype):
@@ -248,27 +307,35 @@ class MCASPlugin(PluginBase):
         :param subtype: subtype of data being transformed
         :return: list of transformed data
         """
+        skip_count = 0
         if not self.configuration.get("transformData", True):
-            if data_type not in ["alerts", "events"]:
-                return raw_data
-
             try:
                 delimiter, cef_version, mcas_mappings = get_mcas_mappings(
                     self.mappings, "json"
                 )
             except KeyError as err:
                 self.logger.error(
-                    "Error in mcas mapping file. Error: {}".format(str(err))
+                    message=(
+                        f"{self.log_prefix}: An error occurred while fetching the mappings. Error: {err}"
+                    ),
+                    details=str(traceback.format_exc()),
                 )
                 raise
             except MappingValidationError as err:
-                self.logger.error(str(err))
+                self.logger.error(
+                    message=(
+                        f"{self.log_prefix}: An error occurred while validating the mapping file. {err}"
+                    ),
+                    details=str(traceback.format_exc()),
+                )
                 raise
             except Exception as err:
                 self.logger.error(
-                    "An error occurred while mapping data using given json mappings. Error: {}".format(
-                        str(err)
-                    )
+                    message=(
+                        f"{self.log_prefix}: An error occurred while mapping data "
+                        f"using given json mappings. Error: {err}"
+                    ),
+                    details=str(traceback.format_exc()),
                 )
                 raise
 
@@ -278,22 +345,34 @@ class MCASPlugin(PluginBase):
                 )
             except Exception:
                 self.logger.error(
-                    'Error occurred while retrieving mappings for datatype: "{}" (subtype "{}"). '
-                    "Transformation will be skipped.".format(
-                        data_type, subtype
-                    )
+                    message=(
+                        f"{self.log_prefix}: Error occurred while retrieving "
+                        f"mappings for datatype: {data_type} (subtype: {subtype}) "
+                        "Transformation will be skipped."
+                    ),
+                    details=str(traceback.format_exc()),
                 )
                 raise
 
             transformed_data = []
 
             for data in raw_data:
-                transformed_data.append(
-                    self.map_json_data(subtype_mapping, data, data_type, subtype)
+                mapped_dict = self.map_json_data(subtype_mapping, data)
+                if mapped_dict:
+                    transformed_data.append(mapped_dict)
+                else:
+                    skip_count += 1
+
+            if skip_count > 0:
+                self.logger.debug(
+                    "{}: Plugin couldn't process {} records because they "
+                    "either had no data or contained invalid/missing "
+                    "fields according to the configured JSON mapping. "
+                    "Therefore, the transformation and ingestion for those "
+                    "records were skipped.".format(self.log_prefix, skip_count)
                 )
 
             return transformed_data
-                
 
         else:
             try:
@@ -302,90 +381,134 @@ class MCASPlugin(PluginBase):
                 )
             except KeyError as err:
                 self.logger.error(
-                    "Error in mcas mapping file. Error: {}".format(str(err))
+                    message=(
+                        f"{self.log_prefix}: An error occurred while fetching the mappings. Error: {err}"
+                    ),
+                    details=str(traceback.format_exc()),
                 )
                 raise
             except MappingValidationError as err:
-                self.logger.error(str(err))
+                self.logger.error(
+                    message=(
+                        f"{self.log_prefix}: An error occurred while validating the mapping file. {err}"
+                    ),
+                    details=str(traceback.format_exc()),
+                )
                 raise
             except Exception as err:
                 self.logger.error(
-                    "An error occurred while mapping data using given json mappings. Error: {}".format(
-                        str(err)
-                    )
+                    message=(
+                        f"{self.log_prefix}: An error occurred while mapping data "
+                        f"using given json mappings. Error: {err}"
+                    ),
+                    details=str(traceback.format_exc()),
                 )
                 raise
 
             cef_generator = CEFGenerator(
-                self.mappings,
-                delimiter,
-                cef_version,
-                self.logger,
+                self.mappings, delimiter, cef_version, self.logger, self.log_prefix
             )
 
+            # First retrieve the mapping of subtype being transformed
+            try:
+                subtype_mapping = self.get_subtype_mapping(
+                    mcas_mappings[data_type], subtype
+                )
+            except KeyError as err:
+                self.logger.info(
+                    f"{self.log_prefix}: Unable to find the "
+                    f"[{data_type}]:[{subtype}] mappings in the mapping file, "
+                    "Transformation of current batch will be skipped."
+                )
+                return []
+            except Exception:
+                self.logger.error(
+                    message=(
+                        f"{self.log_prefix}: Error occurred while retrieving "
+                        f"mappings for subtype {subtype}. "
+                        "Transformation of current batch will be skipped."
+                    ),
+                    details=str(traceback.format_exc()),
+                )
+                return []
+
             transformed_data = []
-
             for data in raw_data:
-
-                # First retrieve the mapping of subtype being transformed
-                try:
-                    subtype_mapping = self.get_subtype_mapping(
-                        mcas_mappings[data_type], subtype
-                    )
-                except Exception:
-                    self.logger.error(
-                        'Error occurred while retrieving mappings for subtype "{}". '
-                        "Transformation of current record will be skipped.".format(
-                            subtype
-                        )
-                    )
+                if not data:
+                    skip_count += 1
                     continue
 
                 # Generating the CEF header
                 try:
-                    header = self.get_headers(
+                    header, mapped_flag_header = self.get_headers(
                         subtype_mapping["header"], data, data_type, subtype
                     )
                 except Exception as err:
                     self.logger.error(
-                        "[{}][{}]: Error occurred while creating CEF header: {}. Transformation of "
-                        "current record will be skipped.".format(
-                            data_type, subtype, str(err)
-                        )
+                        message=(
+                            f"{self.log_prefix}: [{data_type}][{subtype}]- Error "
+                            f"occurred while creating CEF header: {err}. "
+                            "Transformation of current record will be skipped."
+                        ),
+                        details=str(traceback.format_exc()),
                     )
+                    skip_count += 1
                     continue
 
                 try:
-                    extension = self.get_extensions(
+                    extension, mapped_flag_extension = self.get_extensions(
                         subtype_mapping["extension"], data, data_type, subtype
                     )
                 except Exception as err:
                     self.logger.error(
-                        "[{}][{}]: Error occurred while creating CEF extension: {}. Transformation of "
-                        "the current record will be skipped".format(
-                            data_type, subtype, str(err)
-                        )
+                        message=(
+                            f"{self.log_prefix}: [{data_type}][{subtype}]- Error "
+                            f"occurred while creating CEF extension: {err}. "
+                            "Transformation of the current record will be skipped."
+                        ),
+                        details=str(traceback.format_exc()),
                     )
+                    skip_count += 1
                     continue
 
                 try:
-                    transformed_data.append(
-                        cef_generator.get_cef_event(
-                            header, extension, data_type, subtype
-                        )
+                    if not (mapped_flag_header or mapped_flag_extension):
+                        skip_count += 1
+                        continue
+                    cef_generated_event = cef_generator.get_cef_event(
+                        header, extension, data_type, subtype
                     )
+                    if cef_generated_event:
+                        transformed_data.append(cef_generated_event)
+
                 except EmptyExtensionError:
                     self.logger.error(
-                        "[{}][{}]: Got empty extension during transformation."
-                        "Transformation of current record will be skipped".format(
-                            data_type, subtype
-                        )
+                        message=(
+                            f"{self.log_prefix}: [{data_type}][{subtype}]- Got "
+                            "empty extension during transformation. "
+                            "Transformation of current record will be skipped."
+                        ),
+                        details=str(traceback.format_exc()),
                     )
+                    skip_count += 1
                 except Exception as err:
                     self.logger.error(
-                        "[{}][{}]: An error occurred during transformation."
-                        " Error: {}".format(data_type, subtype, str(err))
+                        message=(
+                            f"{self.log_prefix}: [{data_type}][{subtype}]- An "
+                            f"error occurred during transformation. Error: {err}"
+                        ),
+                        details=str(traceback.format_exc()),
                     )
+                    skip_count += 1
+
+            if skip_count > 0:
+                self.logger.debug(
+                    "{}: Plugin couldn't process {} records because they "
+                    "either had no data or contained invalid/missing "
+                    "fields according to the configured mapping. "
+                    "Therefore, the transformation and ingestion for those "
+                    "records were skipped.".format(self.log_prefix, skip_count)
+                )
             return transformed_data
 
     def push(self, transformed_data, data_type, subtype):
@@ -401,15 +524,33 @@ class MCASPlugin(PluginBase):
             self.logger,
             verify_ssl=self.ssl_validation,
             proxy=self.proxy,
+            log_prefix=self.log_prefix,
         )
         try:
-            mcas_client.push(
-                transformed_data,
-                data_type,
-            )
+            mcas_client.push(transformed_data, data_type, subtype)
         except MaxRetriesExceededError as err:
-            self.logger.error(f"Error while pushing data: {err}")
+            self.logger.error(
+                message=str(err),
+                details=str(traceback.format_exc()),
+            )
             raise err
+        except MCASPluginException as err:
+            self.logger.error(
+                message=(
+                    f"{self.log_prefix}: Error occurred while ingesting [{data_type}]:[{subtype}]."
+                ),
+                details=str(traceback.format_exc()),
+            )
+            raise err
+        except Exception as exp:
+            self.logger.error(
+                message=(
+                    f"{self.log_prefix}: Error occurred while ingesting [{data_type}]:[{subtype}]."
+                    f"Error: {exp}"
+                ),
+                details=str(traceback.format_exc()),
+            )
+            raise exp
 
     def validate(self, configuration):
         """Validate configuration.
@@ -420,7 +561,7 @@ class MCASPlugin(PluginBase):
         Returns:
             ValidationResult: Result of the validation with a message.
         """
-        mcas_validator = MCASValidator(self.logger)
+        mcas_validator = MCASValidator(self.logger, self.log_prefix)
 
         if (
             "portal_url" not in configuration
@@ -428,8 +569,11 @@ class MCASPlugin(PluginBase):
             or not configuration["portal_url"].strip()
         ):
             self.logger.error(
-                "MCAS Plugin: Validation error occurred. Error: "
-                "Invalid Portal url found in the configuration parameters."
+                message=(
+                    f"{self.log_prefix}: Validation error occurred. Error: "
+                    "Invalid Portal url found in the configuration parameters."
+                ),
+                details=str(traceback.format_exc()),
             )
             return ValidationResult(
                 success=False, message="Invalid Portal url provided."
@@ -437,8 +581,11 @@ class MCASPlugin(PluginBase):
 
         if not mcas_validator.validate_portal_url(configuration["portal_url"]):
             self.logger.error(
-                "MCAS Plugin: Validation error occurred. Error: "
-                "Invalid portal url found in the configuration parameters."
+                message=(
+                    f"{self.log_prefix}: Validation error occurred. Error: "
+                    "Invalid portal url found in the configuration parameters."
+                ),
+                details=str(traceback.format_exc()),
             )
             return ValidationResult(
                 success=False,
@@ -448,26 +595,28 @@ class MCASPlugin(PluginBase):
         if (
             "token" not in configuration
             or type(configuration["token"]) != str
-            or not configuration.get("token").strip()
+            or not configuration.get("token")
         ):
             self.logger.error(
-                "MCAS Plugin: Validation error occurred. Error: "
-                "Invalid token found in the configuration parameters."
+                message=(
+                    f"{self.log_prefix}: Validation error occurred. Error: "
+                    "Invalid token found in the configuration parameters."
+                ),
+                details=str(traceback.format_exc()),
             )
-            return ValidationResult(
-                success=False, message="Invalid token provided."
-            )
+            return ValidationResult(success=False, message="Invalid token provided.")
 
         if (
             "data_source" not in configuration
             or type(configuration["data_source"]) != str
-            or not mcas_validator.validate_data_source(
-                configuration["data_source"]
-            )
+            or not mcas_validator.validate_data_source(configuration["data_source"])
         ):
             self.logger.error(
-                "MCAS Plugin: Validation error occurred. Error: "
-                "Invalid data source found in the configuration parameters."
+                message=(
+                    f"{self.log_prefix}: Validation error occurred. Error: "
+                    "Invalid data source found in the configuration parameters."
+                ),
+                details=str(traceback.format_exc()),
             )
             return ValidationResult(
                 success=False,
@@ -477,16 +626,19 @@ class MCASPlugin(PluginBase):
 
         mappings = self.mappings.get("jsonData", None)
         mappings = json.loads(mappings)
-        if type(mappings) != dict or not mcas_validator.validate_mcas_map(
+        if not isinstance(mappings, dict) or not mcas_validator.validate_mcas_map(
             mappings
         ):
             self.logger.error(
-                "MCAS Plugin: Validation error occurred. Error: "
-                "Invalid mcas attribute mapping found in the configuration parameters."
+                message=(
+                    f"{self.log_prefix}: Validation error occurred. Error: "
+                    "Invalid attribute mapping found in the configuration parameters."
+                ),
+                details=str(traceback.format_exc()),
             )
             return ValidationResult(
                 success=False,
-                message="Invalid mcas attribute mapping provided.",
+                message="Invalid attribute mapping provided.",
             )
 
         try:
@@ -495,16 +647,28 @@ class MCASPlugin(PluginBase):
                 self.logger,
                 verify_ssl=self.ssl_validation,
                 proxy=self.proxy,
+                log_prefix=self.log_prefix,
             )
             mcas_client.validate_token()
+        except MCASPluginException as e:
+            self.logger.error(
+                message=(f"{self.log_prefix}: Validation error occurred. Error: {e}"),
+                details=str(traceback.format_exc()),
+            )
+            return ValidationResult(
+                success=False,
+                message=str(e),
+            )
         except Exception as e:
             self.logger.error(
-                f"MCAS Plugin: Validation error occurred. Error: {e}"
+                message=(f"{self.log_prefix}: Validation error occurred. Error: {e}"),
+                details=str(traceback.format_exc()),
             )
             return ValidationResult(
                 success=False,
                 message="Invalid portal url or token.",
             )
+        
 
         return ValidationResult(success=True, message="Validation successful.")
 

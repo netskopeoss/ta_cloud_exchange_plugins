@@ -101,3 +101,9 @@ class MaxRetriesExceededError(Error):
     def __init__(self, message):
         """Initialize."""
         self.message = message
+
+
+class MCASPluginException(Exception):
+    """Crowdstrike plugin custom exception class."""
+
+    pass

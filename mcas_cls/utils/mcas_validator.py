@@ -36,6 +36,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 import re
 import csv
 import io
+import traceback
 from jsonschema import validate
 from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
 
@@ -43,10 +44,11 @@ from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
 class MCASValidator(object):
     """MCAS Validator."""
 
-    def __init__(self, logger):
+    def __init__(self, logger, log_prefix):
         """Init method."""
         super().__init__()
         self.logger = logger
+        self.log_prefix = log_prefix
 
     def validate_portal_url(self, portal_url):
         """Validate Portal url. If not present, issues appropriate logs and exists docker.
@@ -57,9 +59,9 @@ class MCASValidator(object):
         if not portal_url:
             return False
 
-        if portal_url.strip().startswith(
-            "http://"
-        ) or portal_url.strip().startswith("https://"):
+        if portal_url.strip().startswith("http://") or portal_url.strip().startswith(
+            "https://"
+        ):
             return False
 
         return True
@@ -93,26 +95,26 @@ class MCASValidator(object):
 
         validate(instance=instance, schema=schema)
 
-    def validate_json(self, instance):	
-        """Validate the schema of given taxonomy JSON.	
-        Args:	
-            instance: The JSON object to be validated	
-        Returns:	
-            True if the schema is valid, False otherwise	
-        """	
-        schema = {	
-            "type": "object",	
-            "patternProperties": {	
-                ".*": {	
-                    "type": "object",	
-                    "patternProperties": {	
-                        ".*": {	
-                            "type": "array",	
-                        }	
-                    }	
-                },	
-            },	
-        }	
+    def validate_json(self, instance):
+        """Validate the schema of given taxonomy JSON.
+        Args:
+            instance: The JSON object to be validated
+        Returns:
+            True if the schema is valid, False otherwise
+        """
+        schema = {
+            "type": "object",
+            "patternProperties": {
+                ".*": {
+                    "type": "object",
+                    "patternProperties": {
+                        ".*": {
+                            "type": "array",
+                        }
+                    },
+                },
+            },
+        }
         validate(instance=instance, schema=schema)
 
     def validate_mapping_schema(self, mappings):
@@ -144,22 +146,33 @@ class MCASValidator(object):
             validate(instance=mappings, schema=schema)
         except JsonSchemaValidationError as err:
             self.logger.error(
-                "Error occurred while validating JSON schema: {}".format(err)
+                message=(
+                    "{}: Validation error occurred. "
+                    "Error: validating JSON schema: {}".format(self.log_prefix, err)
+                ),
+                details=str(traceback.format_exc()),
             )
+
             return False
 
         # Validate the schema of all taxonomy
         for data_type, dtype_taxonomy in mappings["taxonomy"].items():
-            if data_type == "json":	
-                self.validate_json(dtype_taxonomy)	
+            if data_type == "json":
+                self.validate_json(dtype_taxonomy)
             else:
                 for subtype, subtype_taxonomy in dtype_taxonomy.items():
                     try:
                         self.validate_taxonomy(subtype_taxonomy)
                     except JsonSchemaValidationError as err:
                         self.logger.error(
-                            'Error occurred while validating JSON schema for type "{}" and subtype "{}": '
-                            "{}".format(data_type, subtype, err)
+                            message=(
+                                "{}: Validation error occurred. Error: "
+                                'while validating JSON schema for type "{}" '
+                                'and subtype "{}": {}'.format(
+                                    self.log_prefix, data_type, subtype, err
+                                )
+                            ),
+                            details=str(traceback.format_exc()),
                         )
                         return False
             return True
@@ -171,16 +184,18 @@ class MCASValidator(object):
         :returns: Whether the provided value is valid or not. True in case of valid value, False otherwise
         """
         if not mappings:
-            self.logger.error("Could not find mcas mappings.")
+            self.logger.error(f"{self.log_prefix}: Could not find mcas mappings.")
             return False
         try:
             if self.validate_mapping_schema(mappings):
                 return True
         except Exception as err:
             self.logger.error(
-                "An error occurred while validating the fields from the mapping file: {}".format(
-                    str(err)
-                )
+                message=(
+                    f"{self.log_prefix}: An error occurred while validating the fields from the mapping file."
+                    f"Error: {err}"
+                ),
+                details=str(traceback.format_exc()),
             )
 
         return False
@@ -195,14 +210,11 @@ class MCASValidator(object):
             Whether the provided value is valid or not. True in case of valid value, False otherwise
         """
         try:
-            csviter = csv.DictReader(
-                io.StringIO(valid_extensions), strict=True
-            )
+            csviter = csv.DictReader(io.StringIO(valid_extensions), strict=True)
             headers = next(csviter)
 
             if all(
-                header in headers
-                for header in ["CEF Key Name", "Length", "Data Type"]
+                header in headers for header in ["CEF Key Name", "Length", "Data Type"]
             ):
                 return True
         except Exception:

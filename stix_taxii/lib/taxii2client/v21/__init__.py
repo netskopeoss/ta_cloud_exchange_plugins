@@ -19,7 +19,7 @@ from ..exceptions import AccessError, ValidationError
 log = logging.getLogger(__name__)
 
 
-def as_pages(func, per_request=0, *args, **kwargs):
+def as_pages(func, next=None, plugin=None, per_request=0, headers=None, *args, **kwargs):
     """Creates a generator for TAXII 2.1 endpoints that support pagination.
 
     Args:
@@ -29,8 +29,11 @@ def as_pages(func, per_request=0, *args, **kwargs):
 
     Use args or kwargs to pass filter information or other arguments required to make the call.
     """
-    envelope = func(limit=per_request, *args, **kwargs)
-    yield envelope
+    if next:
+        envelope, last_added_date = func(plugin=plugin, limit=per_request, next=next, headers=headers, *args, **kwargs)
+    else:
+        envelope, last_added_date = func(plugin=plugin, limit=per_request, headers=headers, *args, **kwargs)
+    yield envelope, last_added_date
 
     total_obtained = _grab_total_items_from_resource(envelope)
     if envelope.get("more", False) and total_obtained != per_request:
@@ -39,8 +42,8 @@ def as_pages(func, per_request=0, *args, **kwargs):
 
     # The while loop will not be executed if the response is received in full.
     while envelope.get("more", False):
-        envelope = func(limit=per_request, next=envelope.get("next", ""), *args, **kwargs)
-        yield envelope
+        envelope, last_added_date = func(plugin=plugin, limit=per_request, headers=headers, next=envelope.get("next", ""), *args, **kwargs)
+        yield envelope, last_added_date
 
 
 class Status(_TAXIIEndpoint):
@@ -369,11 +372,18 @@ class Collection(_TAXIIEndpoint):
         self._populate_fields(**response)
         self._loaded = True
 
-    def get_objects(self, accept=MEDIA_TYPE_TAXII_V21, **filter_kwargs):
+    def get_objects(self, plugin=None, accept=MEDIA_TYPE_TAXII_V21, headers=None, **filter_kwargs):
         """Implement the ``Get Objects`` endpoint (section 5.3)"""
         self._verify_can_read()
+        with_header = False
+        if "with_header" in filter_kwargs:
+            with_header = filter_kwargs.pop("with_header")
         query_params = _filter_kwargs_to_query_params(filter_kwargs)
-        return self._conn.get(self.objects_url, headers={"Accept": accept}, params=query_params)
+        if headers:
+            headers["Accept"] = accept
+        else:
+            headers = {"Accept": accept}
+        return self._conn.get(self.objects_url, headers=headers, params=query_params, plugin=plugin, with_header=with_header)
 
     def get_object(self, obj_id, accept=MEDIA_TYPE_TAXII_V21, **filter_kwargs):
         """Implement the ``Get an Object`` endpoint (section 5.5)"""

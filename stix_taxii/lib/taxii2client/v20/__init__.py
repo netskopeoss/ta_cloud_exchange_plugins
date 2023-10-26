@@ -28,10 +28,15 @@ ch.setFormatter(formatter)
 log.addHandler(ch)
 
 
-def as_pages(func, start=0, per_request=0, *args, **kwargs):
+def as_pages(func, start=0, plugin=None, per_request=0, with_header=False, headers=None, *args, **kwargs):
     """Creates a generator for TAXII 2.0 endpoints that support pagination."""
-    resp = func(start=start, per_request=per_request, *args, **kwargs)
-    yield _to_json(resp)
+    resp = func(plugin=plugin, start=start, per_request=per_request, headers=headers, *args, **kwargs)
+    if with_header:
+        response_headers = resp.headers
+        last_added_date = response_headers.get("X-TAXII-Date-Added-Last")
+        yield _to_json(resp), last_added_date
+    else:
+        yield _to_json(resp)
     total_obtained, total_available = _grab_total_items(resp)
 
     if total_obtained != per_request:
@@ -41,8 +46,13 @@ def as_pages(func, start=0, per_request=0, *args, **kwargs):
     start += per_request
     while start < total_available:
 
-        resp = func(start=start, per_request=per_request, *args, **kwargs)
-        yield _to_json(resp)
+        resp = func(plugin=plugin, start=start, per_request=per_request, headers=headers, *args, **kwargs)
+        if with_header:
+            response_headers = resp.headers
+            last_added_date = response_headers.get("X-TAXII-Date-Added-Last")
+            yield _to_json(resp), last_added_date
+        else:
+            yield _to_json(resp)
 
         total_in_request, total_available = _grab_total_items(resp)
         total_obtained += total_in_request
@@ -369,16 +379,19 @@ class Collection(_TAXIIEndpoint):
         self._populate_fields(**response)
         self._loaded = True
 
-    def get_objects(self, accept=MEDIA_TYPE_STIX_V20, start=0, per_request=0, **filter_kwargs):
+    def get_objects(self, plugin=None, accept=MEDIA_TYPE_STIX_V20, start=0, per_request=0, headers=None, **filter_kwargs):
         """Implement the ``Get Objects`` endpoint (section 5.3). For pagination requests use ``as_pages`` method."""
         self._verify_can_read()
         query_params = _filter_kwargs_to_query_params(filter_kwargs)
-        headers = {"Accept": accept}
+        if headers:
+            headers["Accept"] = accept
+        else:
+            headers = {"Accept": accept}
 
         if per_request > 0:
             headers["Range"] = "items {}-{}".format(start, (start + per_request) - 1)
 
-        return self._conn.get(self.objects_url, headers=headers, params=query_params)
+        return self._conn.get(self.objects_url, headers=headers, plugin=plugin, params=query_params)
 
     def get_object(self, obj_id, version=None, accept=MEDIA_TYPE_STIX_V20):
         """Implement the ``Get an Object`` endpoint (section 5.5)"""

@@ -1,7 +1,7 @@
 {
   "name": "STIX/TAXII Plugin",
   "id": "stix_taxii",
-  "version": "2.1.0",
+  "version": "3.0.0",
   "description": "The STIX/TAXII plugin polls TAXII feeds and extracts observables from them. This plugin does not support sharing of indicators to TAXII feeds.",
   "patch_supported": false,
   "push_supported": false,
@@ -25,6 +25,7 @@
         }
       ],
       "mandatory": true,
+      "description": "STIX/TAXII Version.",
       "default": "1"
     },
     {
@@ -55,7 +56,25 @@
       "type": "text",
       "default": "",
       "mandatory": false,
-      "description": "Collections (CSV) from which data need to fetch. Leave empty to fetch data from all of the collections."
+      "description": "Collections (CSV) from which data needs to be fetched. Leave empty to fetch data from all of the collections."
+    },
+    {
+      "label": "Pagination Method",
+      "key": "pagination_method",
+      "description": "Pagination Method to use while pulling the indicators. Contact your STIX/TAXII support to choose the appropriate option.",
+      "type": "choice",
+      "choices": [
+        {
+          "key": "Next",
+          "value": "next"
+        },
+        {
+          "key": "X-TAXII-Date-Added-Last",
+          "value": "last_added_date"
+        }
+      ],
+      "mandatory": true,
+      "default": "next"
     },
     {
       "label": "Initial Range (in days)",
@@ -70,7 +89,7 @@
       "key": "delay",
       "type": "number",
       "mandatory": false,
-      "description": "Number of minutes to backdate the start time for pulling the data. Valid value is anything between 0 to 1440"
+      "description": "Number of minutes to backdate the start time for pulling the data. Valid value is anything between 0 to 1440."
     },
     {
       "label": "Type of Threat data to pull",
@@ -128,7 +147,7 @@
         "unknown"
       ],
       "mandatory": false,
-      "description": "Only indicators with matching severity will be saved."
+      "description": "Only indicators with matching severity will be saved. For STIX/TAXII version 2.0 and 2.1, Unknown should be selected because for all the indicators fetched from these versions would have Unknown severity."
     },
     {
       "label": "Reputation",

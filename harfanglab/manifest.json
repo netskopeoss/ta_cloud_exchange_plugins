@@ -1,0 +1,26 @@
+{
+  "name": "HarfangLab",
+  "id": "HarfangLab",
+  "version": "1.0.0",
+  "description": "This plugin is used to share indicators of type MD5, SHA256 and URLs (IPv4, IPv6, Domains, URLs) to IOC List (Threat Intelligence > IOC List) on HarfangLab. This plugin does not support pulling of indicators.",
+  "patch_supported": true,
+  "push_supported": true,
+  "configuration": [
+    {
+      "label": "Tenant URL",
+      "key": "fqdn",
+      "type": "text",
+      "default": "",
+      "mandatory": true,
+      "description": "Tenant URL of your HarfangLab platform."
+    },
+    {
+      "label": "API Token",
+      "key": "apikey",
+      "type": "password",
+      "default": "",
+      "description": "API Token of your user available from Administration > Users.",
+      "mandatory": true
+    }
+  ]
+}

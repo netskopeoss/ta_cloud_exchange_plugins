@@ -1,0 +1,44 @@
+{
+  "name": "External Website",
+  "id": "external_website",
+  "version": "1.0.0",
+  "description": "This plugin is used to fetch data from any External Website and extract indicators of type URL (URL, Domains, IPv4), SHA256, and MD5. This plugin does not support sharing of Indicators.",
+  "patch_supported": false,
+  "push_supported": false,
+  "configuration": [
+    {
+      "label": "External Website URL",
+      "key": "url",
+      "type": "text",
+      "mandatory": true,
+      "default": "",
+      "description": "Add URL of External Website from where you want to pull data."
+    },
+    {
+      "label": "Type of Threat data to pull",
+      "key": "type",
+      "type": "multichoice",
+      "choices": [
+        {
+          "key": "SHA256",
+          "value": "sha256"
+        },
+        {
+          "key": "MD5",
+          "value": "md5"
+        },
+        {
+          "key": "URL",
+          "value": "url"
+        }
+      ],
+      "default": [
+        "sha256",
+        "md5",
+        "url"
+      ],
+      "mandatory": true,
+      "description": "Type of Threat data to pull. Allowed values are SHA256, MD5, URL."
+    }
+  ]
+}

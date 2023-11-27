@@ -1,3 +1,7 @@
+# 2.0.0
+## Changed
+- Plugin API Changed from Fireeye to Mandiant.
+
 # 1.0.3
 ## Changed
 - Changed plugin name to Google Mandiant.

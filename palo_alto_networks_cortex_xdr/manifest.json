@@ -1,0 +1,153 @@
+{
+  "name": "Palo Alto Networks Cortex XDR",
+  "id": "palo_alto_networks_cortex_xdr",
+  "version": "1.0.0",
+  "description": "This plugin fetches indicators of type SHA256 and MD5 from Palo Alto Networks Cortex XDR and supports the sharing of SHA256, MD5, and URL (Domain and IPv4) indicators to the Palo Alto Networks Cortex XDR platform.",
+  "patch_supported": true,
+  "push_supported": true,
+  "configuration": [
+    {
+      "label": "Base URL",
+      "key": "base_url",
+      "type": "text",
+      "default": "",
+      "mandatory": true,
+      "description": "Base URL of the Palo Alto Networks Cortex XDR tenant. e.g. https://api-TENANTNAME.xdr.REGION.paloaltonetworks.com"
+    },
+    {
+      "label": "API Key ID",
+      "key": "api_key_id",
+      "type": "text",
+      "default": "",
+      "mandatory": true,
+      "description": "API Key ID can be found in API Keys under Configurations section from Palo Alto Networks Cortex XDR Platform."
+    },
+    {
+      "label": "API Key",
+      "key": "api_key",
+      "type": "password",
+      "default": "",
+      "mandatory": true,
+      "description": "API Key can be found in API Keys under Configurations section from Palo Alto Networks Cortex XDR Platform."
+    },
+    {
+      "label": "Authentication Method",
+      "key": "auth_method",
+      "type": "choice",
+      "choices": [
+        {
+          "key": "Standard",
+          "value": "standard"
+        },
+        {
+          "key": "Advanced",
+          "value": "advanced"
+        }
+      ],
+      "default": "standard",
+      "mandatory": true,
+      "description": "Select the authentication method that is used while creating the API Key."
+    },
+    {
+      "label": "Enable Polling",
+      "key": "is_pull_required",
+      "type": "choice",
+      "choices": [
+        {
+          "key": "Yes",
+          "value": "Yes"
+        },
+        {
+          "key": "No",
+          "value": "No"
+        }
+      ],
+      "default": "Yes",
+      "mandatory": true,
+      "description": "Enable/Disable polling Threat IoCs from Palo Alto Networks Cortex XDR. Disable if you only need to push Threat IoCs to Palo Alto Networks Cortex XDR."
+    },
+    {
+      "label": "Type of Threat data to pull",
+      "key": "threat_data_type",
+      "type": "multichoice",
+      "choices": [
+        {
+          "key": "SHA256",
+          "value": "sha256"
+        },
+        {
+          "key": "MD5",
+          "value": "md5"
+        }
+      ],
+      "default": [
+        "sha256",
+        "md5"
+      ],
+      "mandatory": false,
+      "description": "Type of Threat data to pull. Allowed values are SHA256 and MD5."
+    },
+    {
+      "label": "Severity",
+      "key": "severity",
+      "type": "multichoice",
+      "choices": [
+        {
+          "key": "Informational",
+          "value": "informational"
+        },
+        {
+          "key": "Low",
+          "value": "low"
+        },
+        {
+          "key": "Medium",
+          "value": "medium"
+        },
+        {
+          "key": "High",
+          "value": "high"
+        },
+        {
+          "key": "Critical",
+          "value": "critical"
+        }
+      ],
+      "default": [
+        "informational",
+        "low",
+        "medium",
+        "high",
+        "critical"
+      ],
+      "mandatory": false,
+      "description": "Only indicators with matching severity will be saved."
+    },
+    {
+      "label": "Enable Tagging",
+      "key": "enable_tagging",
+      "type": "choice",
+      "choices": [
+        {
+          "key": "Yes",
+          "value": "yes"
+        },
+        {
+          "key": "No",
+          "value": "no"
+        }
+      ],
+      "default": "yes",
+      "mandatory": true,
+      "description": "Enable/Disable tagging functionality."
+    },
+    {
+      "label": "Initial Range (in days)",
+      "key": "days",
+      "type": "number",
+      "mandatory": true,
+      "default": 7,
+      "description": "Number of days to pull the Threat IoCs for the initial run."
+    }
+  ]
+}

@@ -1,13 +1,11 @@
 """Mandiant Plugin implementation to pull data from Mandiant Platform."""
 
-import requests
 import datetime
 import time
-from datetime import timedelta
-from requests.auth import HTTPBasicAuth
-import json
-from typing import List
-
+import base64
+import traceback
+from pydantic import ValidationError
+from typing import List, Tuple
 
 from netskope.integrations.cte.plugin_base import (
     PluginBase,
@@ -22,7 +20,17 @@ from netskope.integrations.cte.models import (
     SeverityType,
     TagIn,
 )
-from netskope.common.utils import add_user_agent
+from .utils.mandiant_constants import (
+    MODULE_NAME,
+    PLUGIN_NAME,
+    PLUGIN_VERSION,
+    PLATFORM_NAME,
+    BASE_URL,
+    PAGE_SIZE,
+    PAGE_LIMIT,
+    DATE_FORMAT_FOR_IOCS,
+)
+from .utils.mandiant_helper import MandiantPluginException, MandiantPluginHelper
 
 MANDIANT_TO_INTERNAL_TYPE = {
     "md5": IndicatorType.MD5,
@@ -33,87 +41,52 @@ MANDIANT_TO_INTERNAL_TYPE = {
 }
 
 
-class AuthenticationException(Exception):
-    pass
-
-
 class MandiantPlugin(PluginBase):
     """MandiantPlugin class for pulling threat information."""
 
-    def handle_error(self, resp):
-        """Handle the different HTTP response code.
+    def __init__(
+        self,
+        name,
+        *args,
+        **kwargs,
+    ):
+        """Initialize Plugin class."""
+        super().__init__(
+            name,
+            *args,
+            **kwargs,
+        )
+        self.plugin_name, self.plugin_version = self._get_plugin_info()
+        self.log_prefix = f"{MODULE_NAME} {self.plugin_name}"
+        if name:
+            self.log_prefix = f"{self.log_prefix} [{name}]"
+        self.mandiant_helper = MandiantPluginHelper(
+            logger=self.logger,
+            log_prefix=self.log_prefix,
+            plugin_name=self.plugin_name,
+            plugin_version=self.plugin_version,
+        )
 
-        Args:
-            resp (requests.models.Response): Response object
-            returned from API call.
+    def _get_plugin_info(self) -> Tuple:
+        """Get plugin name and version from manifest.
+
         Returns:
-            dict: Returns the dictionary of response JSON
-            when the response code is 200.
-        Raises:
-            HTTPError: When the response code is not 200.
+            tuple: Tuple of plugin's name and version fetched from manifest.
         """
-        if resp.status_code == 200 or resp.status_code == 201:
-            try:
-                return resp.json()
-            except ValueError:
-                self.notifier.error(
-                    "Plugin: Mandiant, "
-                    "Exception occurred while parsing JSON response."
-                )
-                self.logger.error(
-                    "Plugin: Mandiant, "
-                    "Exception occurred while parsing JSON response."
-                )
-        if resp.status_code == 204:
-            return {}
-        elif resp.status_code == 400:
-            auth_reponse = resp.text
-            result_dict = json.loads(auth_reponse)
-            err_msg = result_dict["error"]
-            if(
-                "errorMessage" in result_dict
-                and err_msg == "invalid_basic_auth"
-            ):
-                raise AuthenticationException(
-                    "Invalid Key ID or Key Secret Provided."
-                )
-            else:
-                self.notifier.error(
-                        "Plugin: Mandiant, "
-                        "Received exit code 400, Bad Request."
-                    )
-                self.logger.error(
-                        "Plugin: Mandiant, "
-                        "Received exit code 400, Bad Request"
-                )
-        elif resp.status_code == 403:
-            self.notifier.error(
-                "Plugin: Mandiant, "
-                "Received exit code 403, Forbidden User"
-            )
+        try:
+            manifest_json = MandiantPlugin.metadata
+            plugin_name = manifest_json.get("name", PLUGIN_NAME)
+            plugin_version = manifest_json.get("version", PLUGIN_VERSION)
+            return plugin_name, plugin_version
+        except Exception as exp:
             self.logger.error(
-                "Plugin: Mandiant, "
-                "Received exit code 403, Forbidden User"
+                message=(
+                    f"{MODULE_NAME} {PLUGIN_NAME}: Error occurred while"
+                    f" getting plugin details. Error: {exp}"
+                ),
+                details=str(traceback.format_exc()),
             )
-        elif resp.status_code >= 500 and resp.status_code < 600:
-            self.notifier.error(
-                f"Plugin: Mandiant, "
-                f"Received exit code {resp.status_code}, HTTP server Error"
-            )
-            self.logger.error(
-                f"Plugin: Mandiant, "
-                f"Received exit code {resp.status_code}, HTTP server Error"
-            )
-        else:
-            self.notifier.error(
-                f"Plugin: Mandiant, "
-                f"Received exit code {resp.status_code}, HTTP Error"
-            )
-            self.logger.error(
-                f"Plugin: Mandiant, "
-                f"Received exit code {resp.status_code}, HTTP Error"
-            )
-        resp.raise_for_status()
+        return PLUGIN_NAME, PLUGIN_VERSION
 
     def get_severity_from_int(self, severity):
         """Get severity from score.
@@ -136,143 +109,269 @@ class MandiantPlugin(PluginBase):
             return SeverityType.CRITICAL
         return SeverityType.UNKNOWN
 
-    def _create_tags(
-        self, utils: TagUtils, tags: List,
-    ) -> (List[str]):
-        """Create new tag(s) in database if required."""
-        tag_names = []
+    def create_tags(self, tags: List) -> tuple:
+        """Create Tags.
+
+        Args:
+            tags (List): Tags list from API Response.
+
+        Returns:
+            tuple: Tuple of created tags and skipped tags.
+        """
+        tag_utils = TagUtils()
+        created_tags, skipped_tags = set(), set()
+
         for tag in tags:
+            tag_name = tag.strip()
             try:
-                if not utils.exists(tag.strip()):
-                    utils.create_tag(
-                        TagIn(
-                            name=tag.strip(),
-                            color="#ED3347",
+                if not tag_utils.exists(tag_name):
+                    tag_utils.create_tag(TagIn(name=tag_name, color="#ED3347"))
+                created_tags.add(tag_name)
+            except ValueError:
+                skipped_tags.add(tag_name)
+            except Exception as exp:
+                self.logger.error(
+                    message=(
+                        "{}: Unexpected error occurred"
+                        " while creating tag {}. Error: {}".format(
+                            self.log_prefix_with_name, tag_name, exp
                         )
-                    )
-            except ValueError as e:
-                self.logger.error(f"Mandiant Error: {e}")
-            else:
-                tag_names.append(tag.strip())
-        tag_names = set(tag_names)
-        return list(tag_names)
+                    ),
+                    details=str(traceback.format_exc()),
+                )
+                skipped_tags.add(tag_name)
+
+        return list(created_tags), list(skipped_tags)
+
+    def convert_into_date_time(self, date: str):
+        """Convert str to datetime object.
+
+        Args:
+            date (str): str.
+
+        Returns:
+            datetime: datetime object.
+        """
+        try:
+            return (
+                datetime.datetime.strptime(date, DATE_FORMAT_FOR_IOCS) if date else None
+            )
+        except Exception:
+            return None
 
     def get_indicators(self, headers):
+        """
+        Get the indicators from Mandiant platform.
+
+        Args:
+            headers(obj): headers for API call.
+        Returns:
+            list: List of indicators.
+        """
         indicator_list = []
-        query_endpoint = "https://api.intelligence.fireeye.com/v4/indicator"
-        if self.configuration.get("exclude_osint") == "Yes":
-            self.configuration["exclude_osint"] = True
-        else:
-            self.configuration["exclude_osint"] = False
+        total_skipped_tags = set()
+        skipped_count = 0
+        page_count = 0
+        query_endpoint = f"{BASE_URL}/v4/indicator"
+        self.logger.info(f"{self.log_prefix}: Pulling indicators from {PLATFORM_NAME}.")
+
+        storage = self.storage if self.storage is not None else {}
+
+        last_updated = storage.get("last_updated", "")
+        exclude_osint = self.configuration.get("exclude_osint") == "Yes"
+        mscore = self.configuration.get("mscore", 80)
+        self.logger.debug(
+            f"{self.log_prefix}: Pulling indicators. Filters: mscore: {mscore}"
+            f", exclude_osint: {exclude_osint}. Storage: {storage}."
+        )
+
+        start_time = None
         if not self.last_run_at:
-            start_time = datetime.datetime.now() - timedelta(
+            start_time = datetime.datetime.now() - datetime.timedelta(
                 hours=int(self.configuration["hours"])
             )
-            epoch_time = datetime.datetime.timestamp(start_time)
+        elif last_updated:
+            start_time = self.convert_into_date_time(last_updated)
         else:
             start_time = self.last_run_at
-            epoch_time = datetime.datetime.timestamp(start_time)
+
+        epoch_time = (
+            start_time.timestamp() if start_time else self.last_run_at.timestamp()
+        )
+
         current_time = time.time()
+
         query_params = {
             "start_epoch": int(epoch_time),
             "end_epoch": int(current_time),
-            "limit": 1000,
-            "gte_mscore": self.configuration.get("mscore", 50),
-            "exclude_osint": self.configuration["exclude_osint"]
+            "limit": PAGE_SIZE,
+            "gte_mscore": mscore,
+            "exclude_osint": exclude_osint,
+            "sort_by": "last_updated:asc",
         }
+        last_indicator_timestamp = None
         while True:
             try:
+                page_count += 1
+                current_page_skip_count = 0
+                current_extracted_indicators = []
                 headers = self.reload_auth_token(headers)
-                ioc_response = requests.get(
-                    query_endpoint,
-                    headers=add_user_agent(headers),
+
+                resp_json = self.mandiant_helper.api_helper(
+                    logger_msg=f"pulling indicators for page {page_count}",
+                    url=query_endpoint,
+                    method="GET",
+                    headers=headers,
                     params=query_params,
                     verify=self.ssl_validation,
                     proxies=self.proxy,
                 )
-                resp_json = self.handle_error(ioc_response)
-                if resp_json.get("errors"):
-                    err_msg = resp_json.get("errors")[0].get("message")
-                    self.notifier.error(
-                        f"Plugin: Mandiant, "
-                        f"Unable to Fetch Indicator Details, "
-                        f"Error: {err_msg}"
-                    )
-                    self.logger.error(
-                        f"Plugin: Mandiant, "
-                        f"Unable to Fetch Indicator Details, "
-                        f"Error: {err_msg}"
-                    )
                 indicators_json_list = resp_json.get("indicators", [])
-                if indicators_json_list:
-                    for indicator in indicators_json_list:
+                for indicator in indicators_json_list:
+                    try:
+                        last_indicator_timestamp = indicator.get("last_updated")
                         categories = []
                         if self.configuration["enable_tagging"] == "Yes":
                             for source in indicator.get("sources", []):
                                 categories += source.get("category", [])
+
                             for attributed_association in indicator.get(
                                 "attributed_associations", []
                             ):
-                                if attributed_association.get(
-                                    "type"
-                                ) in ["malware", "threat-actor"]:
+                                if attributed_association.get("type") in [
+                                    "malware",
+                                    "threat-actor",
+                                ]:
                                     categories.append(
                                         attributed_association.get("name")
                                     )
+
                         if (
-                            len(indicator.get("value")) > 0
-                            and len(indicator.get("type")) > 0
+                            indicator.get("value")
+                            and indicator.get("type")
                             and indicator.get("type")
                             in ["md5", "url", "fqdn", "ipv4", "ipv6"]
                         ):
-                            indicator_list.append(
+                            tags, skipped_tags = self.create_tags(categories)
+                            total_skipped_tags.update(skipped_tags)
+
+                            current_extracted_indicators.append(
                                 Indicator(
                                     value=indicator.get("value").lower(),
                                     type=MANDIANT_TO_INTERNAL_TYPE.get(
                                         indicator.get("type")
                                     ),
-                                    firstSeen=datetime.datetime.strptime(
-                                        indicator.get("first_seen"),
-                                        "%Y-%m-%dT%H:%M:%S.%f%z",
+                                    firstSeen=self.convert_into_date_time(
+                                        indicator.get("first_seen")
                                     ),
-                                    lastSeen=datetime.datetime.strptime(
-                                        indicator.get("last_seen"),
-                                        "%Y-%m-%dT%H:%M:%S.%f%z",
+                                    lastSeen=self.convert_into_date_time(
+                                        indicator.get("last_seen")
                                     ),
                                     severity=self.get_severity_from_int(
                                         indicator.get("mscore", 0)
                                     ),
-                                    tags=self._create_tags(
-                                        TagUtils(), categories
-                                    ),
+                                    tags=tags,
                                 )
                             )
-                            categories.clear()
                         else:
-                            self.logger.warn(
-                                "Plugin: Mandiant: Skipping the record as "
-                                "IOC value and/or IOC type not found or "
-                                "IOC type not in [md5, fqdn, url]."
-                            )
+                            current_page_skip_count += 1
+                    except (ValidationError, Exception) as error:
+                        current_page_skip_count += 1
+                        error_message = (
+                            "Validation error occurred"
+                            if isinstance(error, ValidationError)
+                            else "Unexpected error occurred"
+                        )
+                        self.logger.error(
+                            message=(
+                                f"{self.log_prefix}: {error_message} while"
+                                f" creating indicator. This record "
+                                f"will be skipped. Error: {error}."
+                            ),
+                            details=str(traceback.format_exc()),
+                        )
 
-                if "next" not in resp_json or "next" == "":
+                skipped_count += current_page_skip_count
+                indicator_list.extend(current_extracted_indicators)
+                self.logger.info(
+                    f"{self.log_prefix}: Successfully fetched "
+                    f"{len(current_extracted_indicators)} indicator(s) "
+                    f"for page {page_count}. Total indicator(s) "
+                    f"fetched - {len(indicator_list)}."
+                )
+
+                if not resp_json.get("next") or len(indicators_json_list) < PAGE_SIZE:
+                    storage.clear()
                     break
                 else:
-                    if "start_epoch" and "end_epoch" in query_params.keys():
-                        del query_params["start_epoch"]
-                        del query_params["end_epoch"]
-                    query_params["next"] = resp_json["next"]
+                    query_params = {"next": resp_json.get("next"), "limit": PAGE_SIZE}
 
-            except requests.ConnectionError:
-                raise requests.ConnectionError(
-                    "Cannot make connection to the API endpoint"
+                if page_count >= PAGE_LIMIT:
+                    storage.clear()
+                    if last_indicator_timestamp:
+                        storage["last_updated"] = last_indicator_timestamp
+                    self.logger.info(
+                        f"{self.log_prefix}: Page limit of {PAGE_LIMIT} has "
+                        f"reached. Returning {len(indicator_list)} "
+                        "indicator(s). The pulling of the indicators will be "
+                        "resumed in the next pull cycle."
+                    )
+                    self.logger.info(
+                        f"{self.log_prefix}: Completed fetching indicators for"
+                        f" the plugin. Total indicator(s) fetched "
+                        f"{len(indicator_list)}, skipped {skipped_count} "
+                        f"indicator(s), total {len(total_skipped_tags)} "
+                        "tag(s) skipped."
+                    )
+                    return indicator_list
+
+            except MandiantPluginException as ex:
+                storage.clear()
+                if last_indicator_timestamp:
+                    storage["last_updated"] = last_indicator_timestamp
+                err_msg = (
+                    f"{self.log_prefix}: Error occurred while executing "
+                    "the pull cycle. The pulling of the indicators will be"
+                    f" resumed in the next pull cycle. Error: {ex}."
                 )
-
-            except Exception as e:
                 self.logger.error(
-                    "Something went wrong"
+                    message=err_msg, details=(str(traceback.format_exc()))
                 )
-                raise e
+                break
+
+            except Exception as ex:
+                storage.clear()
+                if last_indicator_timestamp:
+                    storage["last_updated"] = last_indicator_timestamp
+                err_msg = (
+                    f"{self.log_prefix}: Error occurred while executing "
+                    "the pull cycle. The pulling of the indicators will be"
+                    f" resumed in the next pull cycle. Error: {ex}."
+                )
+                self.logger.error(
+                    message=err_msg, details=(str(traceback.format_exc()))
+                )
+                break
+
+        self.logger.info(
+            f"{self.log_prefix}: Total indicator(s) fetched "
+            f"{len(indicator_list)}, skipped {skipped_count} "
+            f"indicator(s), total {len(total_skipped_tags)} "
+            "tag(s) skipped."
+        )
+        if skipped_count > 0:
+            self.logger.info(
+                f"{self.log_prefix}: Skipped {skipped_count} record(s)"
+                " as indicator value might be None or invalid."
+            )
+        if len(total_skipped_tags) > 0:
+            self.logger.info(
+                f"{self.log_prefix}: {len(total_skipped_tags)} tag(s) "
+                "skipped as they were longer than expected size or due"
+                " to some other exceptions that occurred while "
+                "creation of them. tags: "
+                f"({', '.join(total_skipped_tags)})."
+            )
         return indicator_list
 
     def pull(self):
@@ -281,77 +380,60 @@ class MandiantPlugin(PluginBase):
         Returns : List[cte.models.Indicators] :
         List of indicator objects received from the Mandiant platform.
         """
-        self.configuration["key_id"] = self.configuration[
-            "key_id"
-            ].replace(
-            " ", "")
-        self.configuration["key_secret"] = self.configuration[
-            "key_secret"
-            ].replace(
-            " ", ""
-        )
+        key_id = self.configuration["key_id"].strip()
+        key_secret = self.configuration["key_secret"]
+
         try:
-            auth_json = self.get_auth_json(
-                self.configuration.get("key_id"),
-                self.configuration.get("key_secret"),
-            )
+            auth_json = self.get_auth_json(key_id, key_secret, "pulling indicators")
             auth_token = auth_json.get("access_token")
+            if not auth_token:
+                raise MandiantPluginException(
+                    f"Invalid access token received from {PLATFORM_NAME} platform."
+                )
             headers = {
                 "accept": "application/json",
                 "Authorization": f"Bearer {auth_token}",
-                "Content-Type": "application/x-www-form-urlencoded"
+                "Content-Type": "application/x-www-form-urlencoded",
             }
             return self.get_indicators(headers)
-
-        except requests.exceptions.ProxyError:
-            self.notifier.error(
-                "Plugin: Mandiant, Invalid proxy configuration."
-            )
+        except MandiantPluginException as err:
             self.logger.error(
-                "Plugin: Mandiant, Invalid proxy configuration."
+                message=(
+                    f"{self.log_prefix}: Error occurred while pulling"
+                    f" indicators. Error: {err}"
+                ),
+                details=str(traceback.format_exc()),
             )
-            raise requests.HTTPError(
-                "Plugin: Mandiant, Invalid proxy configuration."
-            )
-        except requests.exceptions.ConnectionError:
-            self.notifier.error(
-                "Plugin: Mandiant, "
-                "Unable to establish connection with Mandiant platform. "
-                "Proxy server or Mandiant API is not reachable."
-            )
+            raise err
+        except Exception as exp:
             self.logger.error(
-                "Plugin: Mandiant, "
-                "Unable to establish connection with Mandiant platform. "
-                "Proxy server or Mandiant API is not reachable."
+                message=(
+                    f"{self.log_prefix}: Error occurred while pulling"
+                    f" indicators. Error: {exp}"
+                ),
+                details=str(traceback.format_exc()),
             )
-            raise requests.HTTPError(
-                "Plugin: Mandiant, "
-                "Unable to establish connection with Mandiant platform. "
-                "Proxy server or Mandiant API is not reachable."
-            )
-        except requests.exceptions.RequestException as e:
-            self.logger.error(
-                "Plugin: Mandiant, "
-                "Exception occurred while making an API call to "
-                "Mandiant platform"
-            )
-            raise e
-        except AuthenticationException as e:
-            raise e
+            raise exp
 
     def reload_auth_token(self, headers):
         """Reload the access token after Expiry."""
-        if self.storage.get(
-            "token_expiry", datetime.datetime.now()
-        ) < datetime.datetime.now():
+        if (
+            self.storage.get("token_expiry", datetime.datetime.now())
+            < datetime.datetime.now()
+        ):
             self.logger.info(
-                "Plugin: Mandiant, access token expired generating new token"
+                f"{self.log_prefix}: Access token is expired. Generating new token."
             )
             auth_json = self.get_auth_json(
                 self.configuration.get("key_id"),
                 self.configuration.get("key_secret"),
+                "re-generating the access token",
             )
             auth_token = auth_json.get("access_token")
+            if not auth_token:
+                raise MandiantPluginException(
+                    f"Invalid access token received from {PLATFORM_NAME} platform."
+                )
             headers["Authorization"] = f"Bearer {auth_token}"
         return headers
 
@@ -365,194 +447,202 @@ class MandiantPlugin(PluginBase):
             cte.plugin_base.ValidateResult:
             ValidateResult object with success flag and message.
         """
-        self.logger.info(
-            "Plugin: Mandiant, Executing validate method for Mandiant plugin"
-        )
+        validation_err_msg = f"{self.log_prefix}: Validation error occurred."
 
-        if "key_id" not in data or not data["key_id"] or type(
-            data["key_id"]
-        ) != str:
-            self.logger.error(
-                "Plugin: Mandiant, Validation error occurred. "
-                "Error: Type of Key ID should be non-empty string."
-            )
+        key_id = data.get("key_id", "").strip()
+        if not key_id:
+            err_msg = "Key ID is a required configuration parameter."
+            self.logger.error(f"{validation_err_msg} {err_msg}")
             return ValidationResult(
                 success=False,
-                message="Invalid Key ID provided.",
+                message=err_msg,
+            )
+        elif not isinstance(key_id, str):
+            err_msg = "Invalid Key ID provided in configuration parameters."
+            self.logger.error(f"{validation_err_msg} {err_msg}")
+            return ValidationResult(
+                success=False,
+                message=err_msg,
+            )
+        key_secret = data.get("key_secret", "")
+        if not key_secret:
+            err_msg = "Key Secret is a required configuration parameter."
+            self.logger.error(f"{validation_err_msg} {err_msg}")
+            return ValidationResult(
+                success=False,
+                message=err_msg,
+            )
+        elif not isinstance(key_secret, str):
+            err_msg = "Invalid Key Secret provided in configuration parameters."
+            self.logger.error(f"{validation_err_msg} {err_msg}")
+            return ValidationResult(
+                success=False,
+                message=err_msg,
             )
 
-        if (
-            "key_secret" not in data
-            or not data["key_secret"]
-            or type(data["key_secret"]) != str
-        ):
+        initial_range = data.get("hours")
+        if initial_range is None:
+            err_msg = "Initial Range (in hours) is a required configuration parameter."
+            self.logger.error(f"{validation_err_msg} {err_msg}")
+            return ValidationResult(
+                success=False,
+                message=err_msg,
+            )
+        if not isinstance(initial_range, int):
+            err_msg = (
+                "Invalid value provided in Initial Range (in hours) "
+                "in configuration parameter. Initial Range (in hours) "
+                "should be positive integer value."
+            )
+            self.logger.error(f"{validation_err_msg} {err_msg}")
+            return ValidationResult(success=False, message=err_msg)
+        elif not (0 < initial_range <= 24):
+            err_msg = (
+                "Initial Range(in hours) should be non-zero"
+                " positive integer less than or equal to 24."
+            )
+            self.logger.error(f"{validation_err_msg} {err_msg}")
+            return ValidationResult(
+                success=False,
+                message=err_msg,
+            )
+
+        mscore = data.get("mscore")
+        if mscore is None:
+            err_msg = (
+                "Minimum Indicator Confidential Score (IC-Score) is a"
+                " required configuration parameter."
+            )
+            self.logger.error(f"{validation_err_msg} {err_msg}")
+            return ValidationResult(
+                success=False,
+                message=err_msg,
+            )
+        elif not isinstance(mscore, int):
+            err_msg = (
+                "Invalid value provided in Minimum Indicator Confidential "
+                "Score (IC-Score) configuration parameter. Minimum Indicator "
+                "Confidential Score (IC-Score) should be positive integer "
+                "value."
+            )
+            self.logger.error(f"{validation_err_msg} {err_msg}")
+            return ValidationResult(success=False, message=err_msg)
+        elif not (0 <= mscore <= 100):
+            err_msg = (
+                "Minimum Indicator Confidential Score (IC-Score) should be "
+                "in range of 0 to 100."
+            )
+            self.logger.error(f"{validation_err_msg} {err_msg}")
+            return ValidationResult(
+                success=False,
+                message=err_msg,
+            )
+        exclude_osint = data.get("exclude_osint")
+        if exclude_osint and exclude_osint not in ["Yes", "No"]:
             self.logger.error(
-                "Plugin: Mandiant, Validation error occurred. "
-                "Error: Type of Key Secret should be non-empty string."
+                f"{validation_err_msg} Value of Exclude Open Source "
+                "indicators should be 'Yes' or 'No'."
             )
             return ValidationResult(
                 success=False,
-                message="Invalid Key Secret provided.",
+                message="Invalid value for 'Exclude Open Source indicators' "
+                "provided. Allowed values are 'Yes' or 'No'.",
             )
-        if (
-            "hours" not in data
-            or not data["hours"]
-            or type(data["hours"]) != int
-            or not (0 < data["hours"] <= 24)
-        ):
+        enable_tagging = data.get("enable_tagging")
+        if enable_tagging and enable_tagging not in ["Yes", "No"]:
             self.logger.error(
-                "Plugin: Mandiant, Validation error occurred. "
-                "Error: Type of Initial Range (in hours) "
-                "should be non-zero positive integer less than or equal to 24."
-            )
-            return ValidationResult(
-                success=False,
-                message="Error: Type of Initial Range should be "
-                        "non-zero positive integer less than or equal to 24.",
-            )
-        if (
-            "mscore" not in data
-            or not isinstance(data["mscore"], int)
-            or not (0 <= data["mscore"] <= 100)
-        ):
-            self.logger.error(
-                "Plugin: Mandiant, Validation error occurred. "
-                "Error: Value of Minimum Indicator Confidential Score (IC-Score) "
-                "should be in range of 0 to 100."
-            )
-            return ValidationResult(
-                success=False,
-                message="Invalid IC-Score value provided.",
-            )
-        if "exclude_osint" not in data or data[
-            "exclude_osint"
-        ] not in ["Yes", "No"]:
-            self.logger.error(
-                "Mandiant Plugin: "
-                "Value of Exclude Open Source indicators should be 'Yes' or 'No'."
-            )
-            return ValidationResult(
-                success=False,
-                message="Invalid value for 'Exclude Open Source indicators' provided."
-                "Allowed values are 'Yes', or 'No'.",
-            )
-        if "enable_tagging" not in data or data[
-            "enable_tagging"
-        ] not in ["Yes", "No"]:
-            self.logger.error(
-                "Mandiant Plugin: "
-                "Value of Enable Tagging should be 'Yes' or 'No'."
+                f"{validation_err_msg} Value of Enable Tagging should "
+                "be 'Yes' or 'No'."
             )
             return ValidationResult(
                 success=False,
                 message="Invalid value for 'Enable Tagging' provided."
-                "Allowed values are 'Yes', or 'No'.",
+                " Allowed values are 'Yes' or 'No'.",
             )
 
-        return self.validate_auth_params(data["key_id"], data["key_secret"])
+        return self.validate_auth_params(key_id, key_secret, validation_err_msg)
 
-    def validate_auth_params(self, key_id, key_secret):
+    def validate_auth_params(self, key_id, key_secret, validation_err_msg):
         """Validate the authentication params with Mandiant platform.
 
         Args:
             key_id (str): Client ID required to generate access token.
             key_secret (str): Client Secret required to generate access token.
+            validation_err_msg (str): Validation error message.
         Returns:
             ValidationResult: ValidationResult object having
             validation results after making an API call.
         """
         try:
-            self.get_auth_json(key_id, key_secret)
+            self.get_auth_json(
+                key_id, key_secret, "validating auth credentials", is_validation=True
+            )
             return ValidationResult(
                 success=True,
-                message="Validation successfull for Mandiant Plugin",
+                message="Validation successfull.",
             )
-        except requests.exceptions.ProxyError:
+        except MandiantPluginException as err:
             self.logger.error(
-                "Plugin: Mandiant, Validation Error, "
-                "Invalid proxy configuration."
+                message=(f"{validation_err_msg} Error: {err}"),
+                details=str(traceback.format_exc()),
             )
             return ValidationResult(
                 success=False,
-                message="Validation Error, Invalid proxy configuration.",
+                message=str(err),
             )
-        except requests.exceptions.ConnectionError:
+        except Exception as exp:
+            err_msg = "Unexpected validation error occurred."
             self.logger.error(
-                "Plugin: Mandiant, Validation Error, "
-                "Unable to establish connection with Mandiant Platform API"
+                message=(f"{validation_err_msg} Error: {exp}"),
+                details=str(traceback.format_exc()),
             )
             return ValidationResult(
                 success=False,
-                message="Validation Error, "
-                "Unable to establish connection with Mandiant Platform API",
-            )
-        except requests.HTTPError as err:
-            self.logger.error(
-                f"Plugin: Mandiant, Validation Error, "
-                f"Error in validating Credentials {repr(err)}"
-            )
-            return ValidationResult(
-                success=False,
-                message=f"Plugin: Mandiant, Validation Error, "
-                        f"Error in validating Credentials {repr(err)}"
-            )
-        except AuthenticationException as e:
-            return ValidationResult(
-                success=False,
-                message=f"Validation Error: {e}",
+                message=f"{err_msg} Check logs for more details.",
             )
 
-    def get_auth_json(self, client_key, key_secret):
+    def get_auth_json(self, client_key, key_secret, logger_msg, is_validation=False):
         """Get the access token from Mandiant platform.
 
         Args:
             key_id (str): Client ID required to generate access token.
             key_secret (str): Client Secret required to generate access token.
+            logger_msg: logger message.
+            is_validation : API call from validation method or not
         Returns:
             json: JSON response data in case of Success.
         """
-        client_key = client_key.strip()
-        key_secret = key_secret.strip()
-        auth_endpoint = "https://api.intelligence.fireeye.com/token"
+        auth_endpoint = f"{BASE_URL}/token"
+        auth_token_bytes = f"{client_key}:{key_secret}".encode("ascii")
+        base64_auth_token_bytes = base64.b64encode(auth_token_bytes)
+        base64_auth_token = base64_auth_token_bytes.decode("ascii")
+        headers = {
+            "Authorization": f"Basic {base64_auth_token}",
+            "Content-Type": "application/x-www-form-urlencoded",
+            "accept": "application/json",
+        }
 
-        headers = {"grant_type": "client_credentials",
-                   'Content-Type': 'application/x-www-form-urlencoded',
-                   'accept': 'application/json', }
+        data = {"grant_type": "client_credentials"}
+
         try:
-            resp = requests.post(
-                auth_endpoint, auth=HTTPBasicAuth(
-                    client_key, key_secret
-                ),
-                data=headers
+            resp = self.mandiant_helper.api_helper(
+                url=auth_endpoint,
+                method="POST",
+                data=data,
+                headers=headers,
+                verify=self.ssl_validation,
+                proxies=self.proxy,
+                logger_msg=logger_msg,
+                is_validation=is_validation,
             )
-            auth_json = self.handle_error(resp)
-            auth_errors = auth_json.get("errors")
-            if auth_errors:
-                err_msg = auth_errors[0].get("message", "")
-                self.notifier.error(
-                    "Plugin: Mandiant, Unable to generate Auth token. "
-                    f"Error: {err_msg}"
-                )
-                self.logger.error(
-                    "Plugin: Mandiant, Unable to generate Auth token. "
-                    f"Error: {err_msg}"
-                )
-                raise requests.HTTPError(
-                    f"Plugin: Mandiant, Unable to generate Auth token. "
-                    f"Error: {err_msg}"
-                )
             if self.storage is not None:
                 self.storage[
                     "token_expiry"
                 ] = datetime.datetime.now() + datetime.timedelta(
-                    seconds=int(auth_json.get("expires_in", 1799))
+                    seconds=int(resp.get("expires_in", 1799))
                 )
-            return auth_json
-        except requests.ConnectionError:
-            raise requests.ConnectionError(
-                "Cannot make connection to the API endpoint"
-            )
-        except AuthenticationException:
+            return resp
+        except MandiantPluginException:
             raise
-        except Exception as e:
-            raise e
+        except Exception:
+            raise

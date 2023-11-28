@@ -1,0 +1,24 @@
+{
+  "name": "Webhook",
+  "description": "This plugin is used to send JSON data to publicly accessible webhook.",
+  "id": "webhook_cto",
+  "version": "1.0.0",
+  "pulling_supported": false,
+  "receiving_supported": true,
+  "configuration": [
+    {
+      "label": "Configuration Parameters",
+      "name": "params",
+      "type": "step",
+      "fields": [
+        {
+          "label": "Webhook URL",
+          "key": "webhook_url",
+          "type": "text",
+          "mandatory": true,
+          "description": "Webhook URL."
+        }
+      ]
+    }
+  ]
+}

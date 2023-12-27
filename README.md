@@ -1,4 +1,4 @@
-##Netskope Cloud Exchange Plugins 
+# Netskope Cloud Exchange Plugins 
 
 <div style="text-align: justify">
 An admin can configure plugins. Netskope Cloud Exchange (CE) comes with a library of supported plugins. In the case where the integration for desired product is not available, CE allows users to add their own Cloud Exchange plugin. 

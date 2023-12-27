@@ -9,24 +9,19 @@ When building a plugin the following guildlines need to be followed.
 
 ## CTE [Plugin Name] v[Plugin Version] Plugin Guide
 
-
-[TOC]
-
-
-
-## Description {#description}
+## Description 
 
 &lt;Add a brief description regarding this plugin guide understanding.>
 
 
-### Prerequisites {#prerequisites}
+### Prerequisites 
 
 
 
 * List down all the prerequisites as bullet points.
 
 
-### Connectivity to the following hosts {#connectivity-to-the-following-hosts}
+### Connectivity to the following hosts 
 
 
 
@@ -34,20 +29,19 @@ When building a plugin the following guildlines need to be followed.
 * [https://hub.docker.com](https://hub.dokcker.com)
 
 
-## CE Version Compatibility {#ce-version-compatibility}
+## CE Version Compatibility 
 
 Netskope CE version x, version y
 
 Product name and version (If applicable)
 
 
-## Plugin Scope {#plugin-scope}
+## Plugin Scope 
 
 &lt; One-liner description for the plugin workflow>
 
 
-### Type of data supported  {#type-of-data-supported}
-
+### Type of data supported 
 
 <table>
   <tr>
@@ -66,12 +60,12 @@ Product name and version (If applicable)
 
 
 
-### Mappings {#mappings}
+### Mappings 
 
 Add a one-liner description explaining the purpose/use of mapping
 
 
-#### Severity Mapping {#severity-mapping}
+#### Severity Mapping 
 
 
 <table>
@@ -97,7 +91,7 @@ Add a one-liner description explaining the purpose/use of mapping
 
 
 
-#### Pull Mapping {#pull-mapping}
+#### Pull Mapping 
 
 
 <table>
@@ -123,7 +117,7 @@ Add a one-liner description explaining the purpose/use of mapping
 
 
 
-#### Push Mapping {#push-mapping}
+#### Push Mapping 
 
 
 <table>
@@ -149,7 +143,7 @@ Add a one-liner description explaining the purpose/use of mapping
 
 
 
-## Permissions  {#permissions}
+## Permissions  
 
 
 
@@ -157,10 +151,10 @@ Add a one-liner description explaining the purpose/use of mapping
 * Permission needed 2
 
 
-## API Details {#api-details}
+## API Details 
 
 
-### List of APIs used {#list-of-apis-used}
+### List of APIs used 
 
 
 <table>
@@ -184,12 +178,12 @@ Add a one-liner description explaining the purpose/use of mapping
 
 
 
-### API Endpoint name {#api-endpoint-name}
+### API Endpoint name 
 
 **Parameters: **(add in tabular format)
 
 
-#### Pull Data  {#pull-data}
+#### Pull Data  
 
 **Example:**
 
@@ -217,7 +211,7 @@ ABC
 
 
 
-## Performance Matrix {#performance-matrix}
+## Performance Matrix 
 
 Description mentioning how to refer to this performance matrix
 
@@ -249,17 +243,17 @@ CPU: 16 Cores
 
 
 
-## User Agent {#user-agent}
+## User Agent 
 
 The user-agent added in this plugin is in the following format netskope-ce-&lt;ce_version>-&lt;module>-&lt;plugin_name>-&lt;plugin_version>
 
 
-## Workflow {#workflow}
+## Workflow 
 
 Briefly list all the points needed for the plugin. Check the CTE ThreatConnect plugin guide hosted on the Netskope docs for reference. [https://docs.netskope.com/en/netskope-help/integrations-439794/netskope-cloud-exchange/threat-exchange-module/configure-3rd-party-threat-exchange-plugins/threatconnect-plugin-for-threat-exchange/](https://docs.netskope.com/en/netskope-help/integrations-439794/netskope-cloud-exchange/threat-exchange-module/configure-3rd-party-threat-exchange-plugins/threatconnect-plugin-for-threat-exchange/)
 
 
-## Configuration on Netskope Tenant {#configuration-on-netskope-tenant}
+## Configuration on Netskope Tenant 
 
 Follow the steps provided in the below document to configure the Netskope Tenant:
 
@@ -274,10 +268,10 @@ Follow the steps provided in the below document in order to configure the Netsko
 [https://docs.netskope.com/en/netskope-help/integrations-439794/netskope-cloud-exchange/get-started-with-cloud-exchange/configure-the-netskope-plugin-for-threat-exchange/](https://docs.netskope.com/en/netskope-help/integrations-439794/netskope-cloud-exchange/get-started-with-cloud-exchange/configure-the-netskope-plugin-for-threat-exchange/)
 
 
-## Configuration on &lt;Third party product name> {#configuration-on-<third-party-product-name>}
+## Configuration on &lt;Third party product name> 
 
 
-### Obtaining configuration parameter {#obtaining-configuration-parameter}
+### Obtaining configuration parameter 
 
 
 
@@ -286,34 +280,34 @@ Follow the steps provided in the below document in order to configure the Netsko
 * Add necessary screenshots.
 
 
-## Configuration on Netskope CE {#configuration-on-netskope-ce}
+## Configuration on Netskope CE 
 
 
-### [Plugin Name] Plugin configuration {#[plugin-name]-plugin-configuration}
+### [Plugin Name] Plugin configuration 
 
 
 
 * Add detailed steps along with screenshots.
 
 
-### Adding Business Rule {#adding-business-rule}
+### Adding Business Rule 
 
 
 
 * Steps with proper Screenshots.
 
 
-### Adding SIEM Mapping/Sharing/Queue/Actions {#adding-siem-mapping-sharing-queue-actions}
+### Adding SIEM Mapping/Sharing/Queue/Actions 
 
 
 
 * Steps with proper Screenshots.
 
 
-## Validation {#validation}
+## Validation 
 
 
-### Validate the Pull {#validate-the-pull}
+### Validate the Pull 
 
 
 
@@ -322,7 +316,7 @@ Follow the steps provided in the below document in order to configure the Netsko
 * Add Steps to verify the data pulled from a third-party platform.
 
 
-### Validate the Push {#validate-the-push}
+### Validate the Push 
 
 
 
@@ -330,7 +324,7 @@ Follow the steps provided in the below document in order to configure the Netsko
 * Provide screenshots of pushed data for all supported IOC  types.
 
 
-## Troubleshooting {#troubleshooting}
+## Troubleshooting 
 
 
 
@@ -339,7 +333,7 @@ Follow the steps provided in the below document in order to configure the Netsko
 * Point 3
 
 
-## Limitation {#limitation}
+## Limitation 
 
 
 

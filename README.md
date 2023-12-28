@@ -4,7 +4,7 @@
 An admin can configure plugins. Netskope Cloud Exchange (CE) comes with a library of supported plugins. In the case where the integration for desired product is not available, CE allows users to add their own Cloud Exchange plugin. 
 Additionally, each plugin that is published as part of the CE has its own configuration guide that administrators can and should refer to.
 
-When building a plugin the following guildlines need to be followed. 
+When building a plugin the following guildelines need to be followed. 
 </div>
 
 ## CTE [Plugin Name] v[Plugin Version] Plugin Guide

@@ -1,0 +1,34 @@
+{
+  "name": "CyberArk",
+  "description": "CyberArk plugin performs action on CyberArk users like - Add users to a role and Remove users from a role. \n Note: It does not support fetching users/host or their scores from CyberArk.",
+  "id": "cyberark_ure",
+  "type": [],
+  "netskope": false,
+  "version": "1.0.0",
+  "configuration": [
+    {
+      "label": "Tenant URL",
+      "key": "url",
+      "type": "text",
+      "default": "",
+      "mandatory": true,
+      "description": "Tenant URL for CyberArk. Example - 'https://<Tenant_ID>.id.cyberark.cloud' or 'https://<Tenant_ID>.id.idaptive.com'."
+    },
+    {
+      "label": "Username",
+      "key": "service_user",
+      "type": "text",
+      "default": "",
+      "mandatory": true,
+      "description": "Username for CyberArk. Make sure to include the domain(suffix) example - user@domain."
+    },
+    {
+      "label": "Password",
+      "key": "service_password",
+      "type": "password",
+      "default": "",
+      "mandatory": true,
+      "description": "Password associated with your CyberArk username."
+    }
+  ]
+}

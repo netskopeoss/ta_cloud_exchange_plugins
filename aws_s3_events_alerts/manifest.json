@@ -1,168 +1,210 @@
 {
-    "name": "AWS S3 Events, Alerts",
-    "id": "aws_s3_events_alerts",
-    "version": "1.0.0",
-    "mapping": "AWS S3 Events, Alerts Default Mappings",
-    "netskope": false,
-    "types": [
-        "events",
-        "alerts"
-    ],
-    "description": "This plugin is used to deliver events and alerts data to the AWS S3 platform. To access the plugin, you would need the credentials of AWS S3 instance. Note: This plugin is designed to send raw data to S3.",
-    "configuration": [
+  "name": "AWS S3 Events, Alerts",
+  "id": "aws_s3_events_alerts",
+  "version": "1.1.0",
+  "mapping": "AWS S3 Events, Alerts Default Mappings",
+  "netskope": false,
+  "types": [
+    "events",
+    "alerts"
+  ],
+  "description": "This plugin is used to deliver events and alerts data to the AWS S3 platform. To access the plugin, you would need the credentials of AWS S3 instance. Note: This plugin is designed to send raw data to S3.",
+  "configuration": [
+    {
+      "label": "Authentication Method",
+      "key": "authentication_method",
+      "type": "choice",
+      "choices": [
         {
-            "label": "AWS Access Key ID (Public Key)",
-            "key": "aws_public_key",
-            "type": "text",
-            "default": "",
-            "mandatory": true,
-            "description": "AWS S3 access key id for AWS S3 authentication."
+          "key": "Deployed on AWS",
+          "value": "deployed_on_aws"
         },
         {
-            "label": "AWS Secret Access Key (Private Key)",
-            "key": "aws_private_key",
-            "type": "password",
-            "default": "",
-            "mandatory": true,
-            "description": "AWS S3 secret access key for AWS S3 authentication."
-        },
-        {
-            "label": "Region Name",
-            "key": "region_name",
-            "type": "choice",
-            "choices": [
-                {
-                    "key": "US East (N. Virginia) [us-east-1]",
-                    "value": "None"
-                },
-                {
-                    "key": "US East (Ohio) [us-east-2]",
-                    "value": "us-east-2"
-                },
-                {
-                    "key": "US West (N. California) [us-west-1]",
-                    "value": "us-west-1"
-                },
-                {
-                    "key": "US West (Oregon) [us-west-2]",
-                    "value": "us-west-2"
-                },
-                {
-                    "key": "Africa (Cape Town) [af-south-1]",
-                    "value": "af-south-1"
-                },
-                {
-                    "key": "Asia Pacific (Hong Kong) [ap-east-1]",
-                    "value": "ap-east-1"
-                },
-                {
-                    "key": "Asia Pacific (Mumbai) [ap-south-1]",
-                    "value": "ap-south-1"
-                },
-                {
-                    "key": "Asia Pacific (Tokyo) [ap-northeast-1]",
-                    "value": "ap-northeast-1"
-                },
-                {
-                    "key": "Asia Pacific (Seoul) [ap-northeast-2]",
-                    "value": "ap-northeast-2"
-                },
-                {
-                    "key": "Asia Pacific (Osaka) [ap-northeast-3]",
-                    "value": "ap-northeast-3"
-                },
-                {
-                    "key": "Asia Pacific (Singapore) [ap-southeast-1]",
-                    "value": "ap-southeast-1"
-                },
-                {
-                    "key": "Asia Pacific (Sydney) [ap-southeast-2]",
-                    "value": "ap-southeast-2"
-                },
-                {
-                    "key": "Canada (Central) [ca-central-1]",
-                    "value": "ca-central-1"
-                },
-                {
-                    "key": "China (Beijing) [cn-north-1]",
-                    "value": "cn-north-1"
-                },
-                {
-                    "key": "China (Ningxia) [cn-northwest-1]",
-                    "value": "cn-northwest-1"
-                },
-                {
-                    "key": "Europe (Frankfurt) [eu-central-1]",
-                    "value": "eu-central-1"
-                },
-                {
-                    "key": "Europe (Ireland) [eu-west-1]",
-                    "value": "eu-west-1"
-                },
-                {
-                    "key": "Europe (London) [eu-west-2]",
-                    "value": "eu-west-2"
-                },
-                {
-                    "key": "Europe (Paris) [eu-west-3]",
-                    "value": "eu-west-3"
-                },
-                {
-                    "key": "Europe (Milan) [eu-south-1]",
-                    "value": "eu-south-1"
-                },
-                {
-                    "key": "Europe (Stockholm) [eu-north-1]",
-                    "value": "eu-north-1"
-                },
-                {
-                    "key": "Middle East (Bahrain) [me-south-1]",
-                    "value": "me-south-1"
-                },
-                {
-                    "key": "South America (São Paulo) [sa-east-1]",
-                    "value": "sa-east-1"
-                },
-                {
-                    "key": "Asia Pacific (Hyderabad) [ap-south-2]",
-                    "value": "ap-south-2"
-                },
-                {
-                    "key": "Asia Pacific (Jakarta) [ap-southeast-3]",
-                    "value": "ap-southeast-3"
-                },
-                {
-                    "key": "Europe (Spain) [eu-south-2]",
-                    "value": "eu-south-2"
-                },
-                {
-                    "key": "Europe (Zurich) [eu-central-2]",
-                    "value": "eu-central-2"
-                },
-                {
-                    "key": "Middle East (UAE) [me-central-1]",
-                    "value": "me-central-1"
-                }
-            ],
-            "default": "None",
-            "mandatory": true,
-            "description": "Region name to get AWS S3 Bucket from."
-        },
-        {
-            "label": "Bucket Name",
-            "key": "bucket_name",
-            "type": "text",
-            "default": "",
-            "mandatory": true,
-            "description": "Bucket Name in which the data object will be stored."
-        },
-        {
-            "label": "Object Prefix",
-            "key": "obj_prefix",
-            "type": "text",
-            "default": "",
-            "mandatory": true,
-            "description": "Object prefix for the data object name while pushing it to AWS S3."
+          "key": "AWS IAM Roles Anywhere",
+          "value": "aws_iam_roles_anywhere"
         }
-    ]
+      ],
+      "default": "deployed_on_aws",
+      "mandatory": true,
+      "description": "Select the method to be used for AWS client authentication."
+    },
+    {
+      "label": "Private Key",
+      "key": "private_key_file",
+      "type": "textarea",
+      "default": "",
+      "mandatory": false,
+      "description": "Private Key for decrypting the AWS Private CA Certificate. Required for 'AWS IAM Roles Anywhere' authentication type."
+    },
+    {
+      "label": "Certificate Body",
+      "key": "public_certificate_file",
+      "type": "textarea",
+      "default": "",
+      "mandatory": false,
+      "description": "Certificate Body for AWS Public/Private CA Certificate. Required for 'AWS IAM Roles Anywhere' authentication type."
+    },
+    {
+      "label": "Password Phrase",
+      "key": "pass_phrase",
+      "type": "password",
+      "default": "",
+      "mandatory": false,
+      "description": "Password Phrase for decrypting the CA Certificate. Required for 'AWS IAM Roles Anywhere' authentication type."
+    },
+    {
+      "label": "Profile ARN",
+      "key": "profile_arn",
+      "type": "text",
+      "default": "",
+      "mandatory": false,
+      "description": "AWS Profile ARN for AWS client authentication. Required for 'AWS IAM Roles Anywhere' authentication type."
+    },
+    {
+      "label": "Role ARN",
+      "key": "role_arn",
+      "type": "text",
+      "default": "",
+      "mandatory": false,
+      "description": "AWS Role ARN for AWS client authentication. Required for 'AWS IAM Roles Anywhere' authentication type."
+    },
+    {
+      "label": "Trust Anchor ARN",
+      "key": "trust_anchor_arn",
+      "type": "text",
+      "default": "",
+      "mandatory": false,
+      "description": "AWS Trust Anchor ARN for AWS client authentication. Required for 'AWS IAM Roles Anywhere' authentication type."
+    },
+    {
+      "label": "AWS S3 Bucket Region Name",
+      "key": "region_name",
+      "type": "choice",
+      "choices": [
+        {
+          "key": "US East (N. Virginia) [us-east-1]",
+          "value": "us-east-1"
+        },
+        {
+          "key": "US East (Ohio) [us-east-2]",
+          "value": "us-east-2"
+        },
+        {
+          "key": "US West (N. California) [us-west-1]",
+          "value": "us-west-1"
+        },
+        {
+          "key": "US West (Oregon) [us-west-2]",
+          "value": "us-west-2"
+        },
+        {
+          "key": "Africa (Cape Town) [af-south-1]",
+          "value": "af-south-1"
+        },
+        {
+          "key": "Asia Pacific (Hong Kong) [ap-east-1]",
+          "value": "ap-east-1"
+        },
+        {
+          "key": "Asia Pacific (Mumbai) [ap-south-1]",
+          "value": "ap-south-1"
+        },
+        {
+          "key": "Asia Pacific (Tokyo) [ap-northeast-1]",
+          "value": "ap-northeast-1"
+        },
+        {
+          "key": "Asia Pacific (Seoul) [ap-northeast-2]",
+          "value": "ap-northeast-2"
+        },
+        {
+          "key": "Asia Pacific (Osaka) [ap-northeast-3]",
+          "value": "ap-northeast-3"
+        },
+        {
+          "key": "Asia Pacific (Singapore) [ap-southeast-1]",
+          "value": "ap-southeast-1"
+        },
+        {
+          "key": "Asia Pacific (Sydney) [ap-southeast-2]",
+          "value": "ap-southeast-2"
+        },
+        {
+          "key": "Canada (Central) [ca-central-1]",
+          "value": "ca-central-1"
+        },
+        {
+          "key": "China (Beijing) [cn-north-1]",
+          "value": "cn-north-1"
+        },
+        {
+          "key": "China (Ningxia) [cn-northwest-1]",
+          "value": "cn-northwest-1"
+        },
+        {
+          "key": "Europe (Frankfurt) [eu-central-1]",
+          "value": "eu-central-1"
+        },
+        {
+          "key": "Europe (Ireland) [eu-west-1]",
+          "value": "eu-west-1"
+        },
+        {
+          "key": "Europe (London) [eu-west-2]",
+          "value": "eu-west-2"
+        },
+        {
+          "key": "Europe (Paris) [eu-west-3]",
+          "value": "eu-west-3"
+        },
+        {
+          "key": "Europe (Milan) [eu-south-1]",
+          "value": "eu-south-1"
+        },
+        {
+          "key": "Europe (Stockholm) [eu-north-1]",
+          "value": "eu-north-1"
+        },
+        {
+          "key": "Middle East (Bahrain) [me-south-1]",
+          "value": "me-south-1"
+        },
+        {
+          "key": "South America (São Paulo) [sa-east-1]",
+          "value": "sa-east-1"
+        },
+        {
+          "key": "Asia Pacific (Hyderabad) [ap-south-2]",
+          "value": "ap-south-2"
+        },
+        {
+          "key": "Asia Pacific (Jakarta) [ap-southeast-3]",
+          "value": "ap-southeast-3"
+        },
+        {
+          "key": "Europe (Spain) [eu-south-2]",
+          "value": "eu-south-2"
+        },
+        {
+          "key": "Europe (Zurich) [eu-central-2]",
+          "value": "eu-central-2"
+        },
+        {
+          "key": "Middle East (UAE) [me-central-1]",
+          "value": "me-central-1"
+        }
+      ],
+      "default": "us-east-1",
+      "mandatory": true,
+      "description": "AWS S3 Bucket Region Name from where to get the AWS S3 Bucket. Make sure that the region name matches the region in the Profile ARN and Trust Anchor ARN."
+    },
+    {
+      "label": "AWS S3 Bucket Name",
+      "key": "bucket_name",
+      "type": "text",
+      "default": "",
+      "mandatory": true,
+      "description": "AWS S3 Bucket Name in which the data object will be stored."
+    }
+  ]
 }

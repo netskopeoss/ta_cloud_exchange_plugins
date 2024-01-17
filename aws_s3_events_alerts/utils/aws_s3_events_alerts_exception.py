@@ -28,9 +28,9 @@ SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
 CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-"""
 
-"""AWS S3 Events, Alerts Plugin."""
+AWS S3 Events, Alerts Plugin.
+"""
 
 
 class Error(Exception):
@@ -40,7 +40,8 @@ class Error(Exception):
 
 
 class MappingValidationError(Error):
-    """Exception raised when validation fails for AWS S3 Events, Alerts mappings file.
+    """Exception raised when validation fails for AWS S3 Events,
+      Alerts mappings file.
 
     :attribute: message -- explanation of the error
     """
@@ -48,3 +49,9 @@ class MappingValidationError(Error):
     def __init__(self, message):
         """Initialize."""
         self.message = message
+
+
+class AWSS3EventsAlertsException(Exception):
+    """AWS S3 Events, Alerts plugin Custom Exception class."""
+
+    pass

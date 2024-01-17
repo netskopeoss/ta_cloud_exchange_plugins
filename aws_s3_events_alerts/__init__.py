@@ -1,1 +1,1 @@
-"""AWS S3 Events, Alerts Plugin."""
+"""CLS AWS S3 Events, Alerts Plugin."""

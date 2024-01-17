@@ -1,3 +1,7 @@
+# 1.3.0
+## Changed
+- Updated the path for Put RTR Script action.
+
 # 1.2.0
 ## Removed
 - Removed functionality for restarting Netskope client from Put RTR Script action.

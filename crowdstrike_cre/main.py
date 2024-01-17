@@ -52,9 +52,10 @@ from netskope.integrations.cre.plugin_base import PluginBase, ValidationResult
 
 PAGE_SIZE = 5000
 BATCH_SIZE = 1000
-MAC_PUT_DIR = "/Users"
+MAC_PUT_DIR = r"/Library/Application Support/Netskope/STAgent"
+WINDOWS_PUT_DIR = r"C:\Program Files (x86)\Netskope\STAgent"  # noqa
 PLUGIN_NAME = "CrowdStrike"
-PLUGIN_VERSION = "1.2.0"
+PLUGIN_VERSION = "1.3.0"
 MODULE_NAME = "URE"
 MAX_API_CALLS = 3
 CROWDSTRIKE_DATE_FORMAT = r"%Y-%m-%dT%H:%M:%SZ"
@@ -103,15 +104,10 @@ class CrowdstrikePlugin(PluginBase):
             tuple: Tuple of plugin's name and version fetched from manifest.
         """
         try:
-            file_path = os.path.join(
-                str(os.path.dirname(os.path.abspath(__file__))),
-                "manifest.json",
-            )
-            with open(file_path, "r") as manifest:
-                manifest_json = json.load(manifest)
-                plugin_name = manifest_json.get("name", PLUGIN_NAME)
-                plugin_version = manifest_json.get("version", PLUGIN_VERSION)
-                return (plugin_name, plugin_version)
+            manifest_json = CrowdstrikePlugin.metadata
+            plugin_name = manifest_json.get("name", PLUGIN_NAME)
+            plugin_version = manifest_json.get("version", PLUGIN_VERSION)
+            return plugin_name, plugin_version
         except Exception as exp:
             self.logger.error(
                 message=(
@@ -290,6 +286,10 @@ class CrowdstrikePlugin(PluginBase):
         try:
             for retry_counter in range(MAX_API_CALLS):
                 response = request()
+                debug_msg = (
+                    f"API response for {logger_msg} - {response.status_code}."
+                )
+                self.logger.debug(f"{self.log_prefix}: {debug_msg}")
                 if response.status_code == 429:
                     resp_json = self.parse_response(response=response)
                     api_err_msg = str(
@@ -382,7 +382,7 @@ class CrowdstrikePlugin(PluginBase):
             err_msg = f"HTTP Error occurred while {logger_msg}."
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {err}",
-                details=traceback.format_exc()
+                details=traceback.format_exc(),
             )
             raise CrowdstrikeException(err_msg)
         except CrowdstrikeException as exp:
@@ -590,6 +590,7 @@ class CrowdstrikePlugin(PluginBase):
                     )
             else:
                 self.handle_error(resp=response, logger_msg=logger_msg)
+        return
 
     def _get_session_id(self, device_id: str) -> str:
         """Get session id of the connection made to the device.
@@ -654,6 +655,68 @@ class CrowdstrikePlugin(PluginBase):
                 )
             )
 
+    def _change_directory(
+        self, session_id: str, device_id: str, platform_name: str
+    ) -> None:
+        """Change directory in the remote host.
+
+        Args:
+            session_id (str): Session Id to change directory against.
+            device_id (str): Id of the remote host.
+            platform_name (str): platform name of host.
+        """
+        self.logger.debug(
+            f"{self.log_prefix}: Changing directory in the "
+            f'host having ID "{device_id}" and platform'
+            f' name "{platform_name}".'
+        )
+        base_url, client_id, client_secret = self._get_credentials(
+            configuration=self.configuration
+        )
+        auth_json = self.get_auth_json(
+            base_url=base_url,
+            client_id=client_id,
+            client_secret=client_secret,
+        )
+        auth_token = auth_json.get("access_token")
+        headers = {
+            "Authorization": f"Bearer {auth_token}",
+            "Content-Type": "application/json",
+        }
+
+        if platform_name == "Mac":
+            cmd = f"cd '{MAC_PUT_DIR}'"
+        elif platform_name == "Windows":
+            cmd = f"cd '{WINDOWS_PUT_DIR}'"
+        else:
+            err_msg = (
+                f'Unsupported platform name "{platform_name}" received. Hence '
+                f'skipped execution of the "Put RTR Script" action on '
+                f'device "{device_id}".'
+            )
+            self.logger.error(f"{self.log_prefix}: {err_msg}")
+            raise CrowdstrikeException(err_msg)
+
+        cloud_request_id, is_queued = self._execute_command(
+            "cd", cmd, session_id, device_id, headers
+        )
+        status = self._check_command_status(
+            cloud_request_id=cloud_request_id,
+            device_id=device_id,
+            cmd=cmd,
+            headers=headers,
+        )
+        if not (status or is_queued):
+            self._block_until_completed(
+                status=status,
+                cloud_request_id=cloud_request_id,
+                device_id=device_id,
+                cmd=cmd,
+                headers=headers,
+            )
+
+        return
+
     def _remove_files_from_device(
         self, session_id: str, device_id: str, platform_name: str
     ):
@@ -708,7 +771,7 @@ class CrowdstrikePlugin(PluginBase):
                     '{}: Execution of command "{}" on host with ID "{}" '
                     "is in RTR queue.".format(self.log_prefix, cmd, device_id)
                 )
-            if status is False and is_queued is False:
+            if not (status or is_queued):
                 self._block_until_completed(
                     status=status,
                     cloud_request_id=cloud_request_id,
@@ -716,6 +779,7 @@ class CrowdstrikePlugin(PluginBase):
                     cmd=cmd,
                     headers=headers,
                 )
+        return
 
     def _block_until_completed(
         self,
@@ -800,25 +864,6 @@ class CrowdstrikePlugin(PluginBase):
             "Authorization": f"Bearer {auth_token}",
             "Content-Type": "application/json",
         }
-        if platform_name == "Mac":
-            cmd = f"cd '{MAC_PUT_DIR}'"
-            cloud_request_id, is_queued = self._execute_command(
-                "cd", cmd, session_id, device_id, headers
-            )
-            status = self._check_command_status(
-                cloud_request_id=cloud_request_id,
-                device_id=device_id,
-                cmd=cmd,
-                headers=headers,
-            )
-            if status is False and is_queued is False:
-                self._block_until_completed(
-                    status=status,
-                    cloud_request_id=cloud_request_id,
-                    device_id=device_id,
-                    cmd=cmd,
-                    headers=headers,
-                )
 
         cloud_request_id, is_queued = self._execute_command(
             "put", f"put '{file}'", session_id, device_id, headers
@@ -826,7 +871,7 @@ class CrowdstrikePlugin(PluginBase):
         status = self._check_command_status(
             cloud_request_id, device_id, f"put {file}", headers
         )
-        if status is False and is_queued is False:
+        if not (status or is_queued):
             self._block_until_completed(
                 status=status,
                 cloud_request_id=cloud_request_id,
@@ -834,6 +879,8 @@ class CrowdstrikePlugin(PluginBase):
                 cmd=f"put {file}",
                 headers=headers,
             )
+
+        return
 
     def _execute_command(
         self,
@@ -937,14 +984,24 @@ class CrowdstrikePlugin(PluginBase):
                 raise CrowdstrikeException(err_msg)
 
             elif resources[0].get("complete") is False and stderr == "":
-                self.logger.info(
+                self.logger.debug(
                     '{}: Execution of "{}" on host ID "{}" is still '
                     "in progress. API Response: {}".format(
                         self.log_prefix, cmd, device_id, resources
                     )
                 )
                 return False
-            elif resources[0].get("complete") is True:
+            elif resources[0].get("complete") is True and stderr != "":
+                err_msg = (
+                    'Unable to execute the "{}" command on '
+                    'host ID "{}". Error: {}'.format(cmd, device_id, stderr)
+                )
+                self.logger.error(
+                    message=f"{self.log_prefix}: {err_msg}",
+                    details=str(resources),
+                )
+                raise CrowdstrikeException(err_msg)
+            elif resources[0].get("complete") is True and stderr == "":
                 self.logger.info(
                     '{}: Successfully executed command "{}" on host ID'
                     ' "{}".'.format(self.log_prefix, cmd, device_id)
@@ -1012,6 +1069,7 @@ class CrowdstrikePlugin(PluginBase):
                 'having id "{}".'.format(self.log_prefix, device_id)
             )
         self.handle_error(resp=resp, logger_msg=logger_msg)
+        return
 
     def fetch_records(self) -> List[Record]:
         """Get the all the Agent ID list from the Query Endpoint.
@@ -1212,7 +1270,6 @@ class CrowdstrikePlugin(PluginBase):
 
         auth_token = auth_json.get("access_token")
         headers = {"Authorization": f"Bearer {auth_token}"}
-        headers = self.reload_auth_token(headers)
         params = {"ids": [host_id]}
         self.logger.debug(
             '{}: Getting platform name for host ID "{}" using '
@@ -1357,10 +1414,17 @@ class CrowdstrikePlugin(PluginBase):
             # Step 3: Get platform name with host id.
             platform_name = self._get_host_platform_name(host_id=record.uid)
 
-            # Step 4: Remove the present file from RTR cloud.
+            # Step 4: Change directory in the host.
+            self._change_directory(
+                session_id=session_id,
+                device_id=device,
+                platform_name=platform_name,
+            )
+
+            # Step 5: Remove the present file from RTR cloud.
             self._remove_files_from_device(session_id, device, platform_name)
 
-            # Step 5: Put file on device.
+            # Step 6: Put file on device.
             self._put_file_on_device(
                 session_id=session_id,
                 score=score_to_be_put,
@@ -1368,7 +1432,7 @@ class CrowdstrikePlugin(PluginBase):
                 platform_name=platform_name,
             )
 
-            # Step 6: Delete the session with host.
+            # Step 7: Delete the session with host.
             self._delete_session(session_id, device)
             self.logger.info(
                 "{}: Successfully executed {} action on "
@@ -1624,11 +1688,6 @@ class CrowdstrikePlugin(PluginBase):
             json: JSON response data in case of Success.
         """
         auth_endpoint = f"{base_url}/oauth2/token"
-        self.logger.debug(
-            '{}: Fetching auth token from {} using endpoint "{}".'.format(
-                self.log_prefix, self.plugin_name, auth_endpoint
-            )
-        )
         auth_params = {
             "grant_type": "client_credentials",
             "client_id": client_id,
@@ -1653,9 +1712,6 @@ class CrowdstrikePlugin(PluginBase):
                 ] = datetime.datetime.now() + datetime.timedelta(
                     seconds=int(resp_json.get("expires_in", 1799))
                 )
-            self.logger.debug(
-                "{}: Successfully fetched auth token.".format(self.log_prefix)
-            )
             return resp_json
         elif response.status_code == 400:
             resp_json = self.parse_response(response)

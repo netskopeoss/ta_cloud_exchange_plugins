@@ -1,7 +1,7 @@
 {
   "name": "Microsoft Defender for Cloud Apps",
   "id": "mcas_cls",
-  "version": "2.0.1",
+  "version": "2.1.0",
   "mapping": "Microsoft Defender for Cloud Apps Default Mappings",
   "types": [
     "events"
@@ -17,11 +17,53 @@
       "description": "Microsoft Defender for Cloud Apps portal URL, in which the traffic logs are to be ingested. (exclude http(s)://)."
     },
     {
+      "label": "Authentication Method",
+      "key": "auth_method",
+      "type": "choice",
+      "choices": [
+        {
+          "key": "Legacy Method (API Token)",
+          "value": "legacy"
+        },
+        {
+          "key": "OAuth 2.0 (Application context)",
+          "value": "oauth"
+        }
+      ],
+      "default": "legacy",
+      "mandatory": true,
+      "description": "The authentication method used to access the Microsoft Defender for Cloud Apps."
+    },
+    {
+      "label": "Tenant ID",
+      "key": "tenant_id",
+      "type": "text",
+      "default": "",
+      "mandatory": false,
+      "description": "Tenant ID of your Azure application. It is required only if the 'OAuth 2.0 (Application context)' method is selected."
+    },
+    {
+      "label": "Client ID",
+      "key": "client_id",
+      "type": "text",
+      "default": "",
+      "mandatory": false,
+      "description": "Client ID of your Azure application. It is required only if the 'OAuth 2.0 (Application context)' method is selected."
+    },
+    {
+      "label": "Client Secret",
+      "key": "client_secret",
+      "type": "password",
+      "default": "",
+      "mandatory": false,
+      "description": "Client Secret of your Azure application. It is required only if the 'OAuth 2.0 (Application context)' method is selected."
+    },
+    {
       "label": "API Token",
       "key": "token",
       "type": "password",
-      "mandatory": true,
-      "description": "Microsoft Defender for Cloud Apps portal's API token for authentication."
+      "mandatory": false,
+      "description": "Microsoft Defender for Cloud Apps portal's API token for authentication. It is required only if the 'Legacy Method (API Token)' method is selected."
     },
     {
       "label": "Data Source",

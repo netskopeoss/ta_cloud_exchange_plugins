@@ -28,9 +28,8 @@ SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
 CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-"""
 
-"""MCAS Validator."""
+MCAS Validator."""
 
 
 import re
@@ -50,20 +49,25 @@ class MCASValidator(object):
         self.logger = logger
         self.log_prefix = log_prefix
 
-    def validate_portal_url(self, portal_url):
-        """Validate Portal url. If not present, issues appropriate logs and exists docker.
-
-        :param: portal_url: the Portal url to be validated
-        :returns: Whether the provided value is valid or not. True in case of valid value, False otherwise
+    def validate_portal_url(self, portal_url: str) -> bool:
         """
-        if not portal_url:
+        Validates a portal URL.
+
+        Args:
+            url (str): The URL to be validated.
+
+        Returns:
+            bool: True if the URL is valid, False otherwise.
+        """
+
+        if portal_url.startswith("http://") or portal_url.startswith("https://"):
             return False
 
-        if portal_url.strip().startswith("http://") or portal_url.strip().startswith(
-            "https://"
+        if not re.match(
+            r"^((?=[a-z0-9-]{1,63}\.)(xn--)?[a-z0-9]+(-[a-z0-9]+)*\.)+[a-z]{2,63}$",  # noqa
+            portal_url,
         ):
             return False
-
         return True
 
     def validate_data_source(self, data_source):
@@ -147,8 +151,8 @@ class MCASValidator(object):
         except JsonSchemaValidationError as err:
             self.logger.error(
                 message=(
-                    "{}: Validation error occurred. "
-                    "Error: validating JSON schema: {}".format(self.log_prefix, err)
+                    f"{self.log_prefix}: Validation error occurred. "
+                    f"Error: validating JSON schema: {err}."
                 ),
                 details=str(traceback.format_exc()),
             )

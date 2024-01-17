@@ -28,9 +28,8 @@ SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
 CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-"""
 
-"""MCAS CLient."""
+MCAS CLient."""
 
 
 import time
@@ -47,6 +46,8 @@ from .mcas_constants import (
     DATAFILE,
     PLATFORM_NAME,
     INGESTION_DATAFILE,
+    APPLICATION_ID,
+    OAUTH_URL,
 )
 from .mcas_exceptions import MaxRetriesExceededError, MCASPluginException
 
@@ -78,7 +79,7 @@ class MCASClient:
         elif status_code == 403:
             err_msg = "Invalid Authorization."
         elif status_code == 401:
-            err_msg = "Authentication failed due to invalid API Token."
+            err_msg = "Authentication failed due to invalid credentials."
 
         self.logger.error(
             message=f"{self.log_prefix}: Error occurred while trying to {purpose_log}- {err_msg} Status code: {status_code}.",
@@ -89,8 +90,8 @@ class MCASClient:
     def _post_retry_process(
         self, req_type, status_code, retry_count, response_body, purpose_log=""
     ):
-        # If it has done enough retries or the API call is successful or there is a client error,
-        # don't retry.
+        # If it has done enough retries or the API call is successful or
+        # there is a client error, don't retry.
 
         retry_log_message = {
             "get": "{}: Could not initiate the file upload after {} retries",
@@ -138,8 +139,8 @@ class MCASClient:
         if retry_count == MAX_RETRIES:
             """This means we have done enough retries."""
 
-            # Even after retrying MAX_RETRIES times if it could not ingest data into MCAS,
-            # raise a custom exception.
+            # Even after retrying MAX_RETRIES times if it could not
+            # ingest data into MCAS, raise a custom exception.
 
             self.logger.error(
                 message=(
@@ -152,7 +153,16 @@ class MCASClient:
             )
 
     def _api_request(
-        self, method, uri, params={}, headers={}, proxies={}, data=None, files=None
+        self,
+        method,
+        uri,
+        purpose,
+        params={},
+        headers={},
+        proxies={},
+        data=None,
+        files=None,
+        is_from_validation=False,
     ):
         """Call the appropriate API call based on request type param.
 
@@ -165,31 +175,36 @@ class MCASClient:
         :raises MaxRetriesExceededError: When data ingestion fails even after max. number of retries
         """
         retry_log_message = {
-            "get": "{}: Could not initiate the file upload. Retrying in {} seconds. Status Code: {}.",
-            "put": "{}: Could not upload the log file to Microsoft Defender for Cloud Apps. Retrying in {} seconds. Status Code: {}.",
-            "post": "{}: Could not notify Microsoft Defender for Cloud Apps to start processing the data. Retrying in {} seconds. "
+            "init": "{}: Could not initiate the file upload. Retrying in {} seconds. Status Code: {}.",
+            "upload": "{}: Could not upload the log file to Microsoft Defender for Cloud Apps. Retrying in {} seconds. Status Code: {}.",
+            "finalize": "{}: Could not notify Microsoft Defender for Cloud Apps to start processing the data. Retrying in {} seconds. "
             "Status Code: {}.",
+            "generate token": "{}: Could not generate the token. Retrying in {} seconds. Status Code: {}.",
         }
 
         api_purpose = {
-            "get": "Initiate the file upload.",
-            "put": "Perform file upload.",
-            "post": "Finalize file upload.",
+            "init": "Initiate the file upload",
+            "upload": "Perform file upload",
+            "finalize": "Finalize file upload",
+            "generate token": "Generating the token",
         }
 
         retry, retry_count = True, 1
         try:
-            purpose_log = api_purpose[method.lower()]
+            purpose_log = api_purpose[purpose.lower()]
             display_headers = {
                 k: v for k, v in headers.items() if k not in {"Authorization"}
             }
             debuglog_msg = f"{self.log_prefix} : API Request to {purpose_log} - Method={method},  URL={uri},  headers={display_headers}, "
             if params:
                 debuglog_msg += f"params={params}"
-            if data:
+            if data and purpose.lower() != "generate token":
                 debuglog_msg += f" data={data}"
 
-            self.logger.debug(debuglog_msg + f", Ingestion_file={self.ingestion_file}")
+            if purpose != "generate token":
+                debuglog_msg += f", Ingestion_file={self.ingestion_file}"
+
+            self.logger.debug(debuglog_msg)
 
             while retry_count <= MAX_RETRIES:
                 response = requests.request(
@@ -203,9 +218,17 @@ class MCASClient:
                 )
                 status_code = response.status_code
                 response_body = response.text
+                debug_log = ""
+                if purpose != "generate token":
+                    debug_log += f", Ingestion_file={self.ingestion_file}"
+
                 self.logger.debug(
-                    f"{self.log_prefix} : Received API Response to {purpose_log} - Method={method}, Status Code={status_code}, Ingestion_file={self.ingestion_file}"
+                    f"{self.log_prefix} : Received API Response to {purpose_log} - Method={method}, Status Code={status_code}, {debug_log}."
                 )
+
+                if is_from_validation:
+                    return response
+
                 # Do not retry in case of client errors and successful API call.
                 retry = status_code == 429 or (status_code >= 500 and status_code < 600)
                 if retry_count == MAX_RETRIES or not retry:
@@ -220,7 +243,7 @@ class MCASClient:
 
                 self.logger.error(
                     message=(
-                        retry_log_message[method.lower()].format(
+                        retry_log_message[purpose.lower()].format(
                             self.log_prefix,
                             RETRY_SLEEP_TIME,
                             status_code,
@@ -245,7 +268,7 @@ class MCASClient:
             err_msg = f"HTTP error occurred while trying to {purpose_log}."
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {err}",
-                details=f"Received API response {response_body}",
+                details=str(traceback.format_exc()),
             )
             raise MCASPluginException(err_msg)
         except requests.exceptions.ConnectionError as err:
@@ -288,21 +311,96 @@ class MCASClient:
     def validate_token(self):
         """To check whether the token is valid or not."""
         self.ingestion_file = self.datafile.format(threading.get_ident())
-        headers = {"Authorization": f"Token {self.configuration.get('token')}"}
 
         params = {"filename": self.ingestion_file, "source": "GENERIC_CEF"}
 
         get_uri = API_GET_URL.format(self.configuration.get("portal_url", "").strip())
 
         self._api_request(
-            "get", get_uri, params, add_mcas_user_agent(headers), self.proxy
+            "get",
+            get_uri,
+            "init",
+            params,
+            self.get_headers(True),
+            self.proxy,
         )
 
-    def _post_data(self, portal_url, api_token, body, data_source):
+    def get_headers(self, is_from_validation=False):
+        """
+        Generates the headers for the API request.
+
+        Parameters:
+            is_from_validation (bool): A flag indicating whether the request is from a validation process.
+                                      Defaults to False.
+
+        Returns:
+            dict: The headers to be used in the API request.
+        """
+        auth_method = self.configuration.get("auth_method")
+        if auth_method and auth_method == "oauth":
+            token = self.generate_token(is_from_validation)
+            return add_mcas_user_agent({"Authorization": f"Bearer {token}"})
+        else:
+            return add_mcas_user_agent(
+                {"Authorization": f"Token {self.configuration.get('token','')}"}
+            )
+
+    def generate_token(self, is_from_validation):
+        """
+        Generates a token for authentication.
+
+        Parameters:
+            is_from_validation (bool): A flag indicating whether the request is from a validation process.
+
+        Returns:
+            str: The generated token.
+        """
+
+        headers = add_mcas_user_agent(
+            {
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Accept": "application/json",
+            }
+        )
+        tenant_id = self.configuration.get("tenant_id", "").strip()
+        authBody = {
+            "scope": f"{APPLICATION_ID}/.default",
+            "client_id": self.configuration.get("client_id", "").strip(),
+            "client_secret": self.configuration.get("client_secret", ""),
+            "grant_type": "client_credentials",
+        }
+        try:
+            response = self._api_request(
+                "post",
+                f"{OAUTH_URL}/{tenant_id}/oauth2/v2.0/token",
+                "generate token",
+                headers=headers,
+                proxies=self.proxy,
+                data=authBody,
+                is_from_validation=is_from_validation,
+            )
+            if response.status_code == 200:
+                resp = parse_response(self, response=response)
+                return resp.get("access_token", "")
+            else:
+                if is_from_validation:
+                    err_msg = "Verify Tenant ID, Client ID and Client Secret provided in configuration parameters."
+                else:
+                    err_msg = f"Error while generating token. Error: {response.text}."
+                self.logger.error(
+                    message=f"{self.log_prefix}: {err_msg}",
+                    details=f"API response: {response.text}",
+                )
+                raise MCASPluginException(err_msg)
+        except MCASPluginException as err:
+            raise err
+        except Exception as e:
+            raise e
+
+    def _post_data(self, portal_url, body, data_source):
         """Post the given data to MCAS Platform.
 
         :param portal_url: portal url to get the API url
-        :param api_token: api token to access the MCAS
         :param body: The actual data being ingested
         :param data_source: Name of data source, where records to be ingested
         :raises MaxRetriesExceededError: When data ingestion fails even after max. number of retries
@@ -311,7 +409,7 @@ class MCASClient:
             threading.get_ident(), self.data_type, self.sub_type
         )
         # Step 1 : initiate the file upload
-        headers = {"Authorization": f"Token {api_token}"}
+        headers = self.get_headers()
 
         params = {"filename": self.ingestion_file, "source": "GENERIC_CEF"}
 
@@ -319,13 +417,14 @@ class MCASClient:
         resp_get = self._api_request(
             "GET",
             get_uri,
+            "init",
             params,
-            headers=add_mcas_user_agent(headers),
+            headers,
             proxies=self.proxy,
         )
 
         self.logger.info(
-            f"{self.log_prefix}: API Request Successful to Initiate the file upload. Ingestion_file={self.ingestion_file} "
+            f"{self.log_prefix}: API Request Successful to Initiate the file upload. Ingestion_file={self.ingestion_file}."
         )
         # Step 2 : Upload the file
         response_get = parse_response(self, response=resp_get)
@@ -337,12 +436,13 @@ class MCASClient:
             self._api_request(
                 "PUT",
                 upload_url,
+                "upload",
                 headers=add_mcas_user_agent(headers_put),
                 proxies=self.proxy,
                 files=files,
             )
             self.logger.info(
-                f"{self.log_prefix}: API Request Successful to Perform file upload. Ingestion_file={self.ingestion_file} "
+                f"{self.log_prefix}: API Request Successful to Perform file upload. Ingestion_file={self.ingestion_file}."
             )
 
             # Step 3 : Notify MCAS so that it can start processing the data
@@ -351,12 +451,13 @@ class MCASClient:
             self._api_request(
                 "POST",
                 post_uri,
+                "finalize",
                 data=body,
                 headers=headers,
                 proxies=self.proxy,
             )
             self.logger.info(
-                f"{self.log_prefix}: API Request Successful to Finalize file upload. Ingestion_file={self.ingestion_file} "
+                f"{self.log_prefix}: API Request Successful to Finalize file upload. Ingestion_file={self.ingestion_file}."
             )
 
             log_msg = "[{}] [{}] Successfully ingested {} {}(s) to {}.".format(
@@ -385,7 +486,6 @@ class MCASClient:
 
         self._post_data(
             self.configuration.get("portal_url", "").strip(),
-            self.configuration.get("token", ""),
             data,
             self.configuration.get("data_source", "").strip(),
         )

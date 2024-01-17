@@ -1,3 +1,7 @@
+# 2.1.0
+## Added
+- Added new authentication method.
+
 # 2.0.1
 ## Changed
 - Updated Plugin description.

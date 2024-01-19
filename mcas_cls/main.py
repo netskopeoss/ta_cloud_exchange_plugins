@@ -28,11 +28,10 @@ SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
 CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+    MCAS Plugin.
 """
 
-"""MCAS Plugin."""
-
-import os
 import traceback
 import json
 import jsonpath
@@ -50,7 +49,7 @@ from .utils.mcas_exceptions import (
     EmptyExtensionError,
     FieldNotFoundError,
     MaxRetriesExceededError,
-    MCASPluginException
+    MCASPluginException,
 )
 from .utils.mcas_cef_generator import (
     CEFGenerator,
@@ -91,15 +90,10 @@ class MCASPlugin(PluginBase):
             tuple: Tuple of plugin's name and version fetched from manifest.
         """
         try:
-            file_path = os.path.join(
-                str(os.path.dirname(os.path.abspath(__file__))),
-                "manifest.json",
-            )
-            with open(file_path, "r") as manifest:
-                manifest_json = json.load(manifest)
-                plugin_name = manifest_json.get("name", PLATFORM_NAME)
-                plugin_version = manifest_json.get("version", PLUGIN_VERSION)
-                return (plugin_name, plugin_version)
+            manifest_json = MCASPlugin.metadata
+            plugin_name = manifest_json.get("name", PLATFORM_NAME)
+            plugin_version = manifest_json.get("version", PLUGIN_VERSION)
+            return (plugin_name, plugin_version)
         except Exception as exp:
             self.logger.error(
                 message=(
@@ -332,8 +326,8 @@ class MCASPlugin(PluginBase):
             except Exception as err:
                 self.logger.error(
                     message=(
-                        f"{self.log_prefix}: An error occurred while mapping data "
-                        f"using given json mappings. Error: {err}"
+                        f"{self.log_prefix}: An error occurred while mapping "
+                        f"data using given json mappings. Error: {err}"
                     ),
                     details=str(traceback.format_exc()),
                 )
@@ -347,8 +341,8 @@ class MCASPlugin(PluginBase):
                 self.logger.error(
                     message=(
                         f"{self.log_prefix}: Error occurred while retrieving "
-                        f"mappings for datatype: {data_type} (subtype: {subtype}) "
-                        "Transformation will be skipped."
+                        f"mappings for datatype: {data_type} "
+                        f"(subtype: {subtype}) Transformation will be skipped."
                     ),
                     details=str(traceback.format_exc()),
                 )
@@ -414,7 +408,7 @@ class MCASPlugin(PluginBase):
                 subtype_mapping = self.get_subtype_mapping(
                     mcas_mappings[data_type], subtype
                 )
-            except KeyError as err:
+            except KeyError:
                 self.logger.info(
                     f"{self.log_prefix}: Unable to find the "
                     f"[{data_type}]:[{subtype}] mappings in the mapping file, "
@@ -446,9 +440,9 @@ class MCASPlugin(PluginBase):
                 except Exception as err:
                     self.logger.error(
                         message=(
-                            f"{self.log_prefix}: [{data_type}][{subtype}]- Error "
-                            f"occurred while creating CEF header: {err}. "
-                            "Transformation of current record will be skipped."
+                            f"{self.log_prefix}: [{data_type}][{subtype}]- "
+                            f"Error occurred while creating CEF header: {err}."
+                            " Transformation of current record will be skipped."
                         ),
                         details=str(traceback.format_exc()),
                     )
@@ -484,8 +478,8 @@ class MCASPlugin(PluginBase):
                 except EmptyExtensionError:
                     self.logger.error(
                         message=(
-                            f"{self.log_prefix}: [{data_type}][{subtype}]- Got "
-                            "empty extension during transformation. "
+                            f"{self.log_prefix}: [{data_type}][{subtype}]- Got"
+                            " empty extension during transformation. "
                             "Transformation of current record will be skipped."
                         ),
                         details=str(traceback.format_exc()),
@@ -562,84 +556,91 @@ class MCASPlugin(PluginBase):
             ValidationResult: Result of the validation with a message.
         """
         mcas_validator = MCASValidator(self.logger, self.log_prefix)
-
-        if (
-            "portal_url" not in configuration
-            or type(configuration["portal_url"]) != str
-            or not configuration["portal_url"].strip()
+        validation_err_msg = f"{self.log_prefix}: Validation error occurred."
+        portal_url = configuration.get("portal_url", "").strip()
+        if not portal_url:
+            err_msg = "Portal url is a required configuration parameter."
+            self.logger.error(f"{validation_err_msg} {err_msg}")
+            return ValidationResult(success=False, message=err_msg)
+        elif not isinstance(portal_url, str) or not mcas_validator.validate_portal_url(
+            portal_url
         ):
-            self.logger.error(
-                message=(
-                    f"{self.log_prefix}: Validation error occurred. Error: "
-                    "Invalid Portal url found in the configuration parameters."
-                ),
-                details=str(traceback.format_exc()),
-            )
-            return ValidationResult(
-                success=False, message="Invalid Portal url provided."
-            )
+            err_msg = "Invalid Portal url provided."
+            self.logger.error(f"{validation_err_msg} {err_msg}")
+            return ValidationResult(success=False, message=err_msg)
 
-        if not mcas_validator.validate_portal_url(configuration["portal_url"]):
-            self.logger.error(
-                message=(
-                    f"{self.log_prefix}: Validation error occurred. Error: "
-                    "Invalid portal url found in the configuration parameters."
-                ),
-                details=str(traceback.format_exc()),
-            )
-            return ValidationResult(
-                success=False,
-                message="Invalid Portal url provided. Portal url should not start with 'http(s)://'",
-            )
+        auth_method = configuration.get("auth_method", "legacy").strip()
+        if not auth_method:
+            err_msg = "Authentication Method is a required configuration parameter."
+            self.logger.error(f"{validation_err_msg} {err_msg}")
+            return ValidationResult(success=False, message=err_msg)
+        elif auth_method not in ["legacy", "oauth"]:
+            err_msg = "Invalid Authentication Method provided. Authentication Method should be 'Legacy Method (API Token)' or 'OAuth 2.0 (Application context)'."
+            self.logger.error(f"{validation_err_msg} {err_msg}")
+            return ValidationResult(success=False, message=err_msg)
 
-        if (
-            "token" not in configuration
-            or type(configuration["token"]) != str
-            or not configuration.get("token")
-        ):
-            self.logger.error(
-                message=(
-                    f"{self.log_prefix}: Validation error occurred. Error: "
-                    "Invalid token found in the configuration parameters."
-                ),
-                details=str(traceback.format_exc()),
-            )
-            return ValidationResult(success=False, message="Invalid token provided.")
+        if auth_method == "legacy":
+            token = configuration.get("token", "")
+            if not token:
+                err_msg = "API Token is a required configuration parameter."
+                self.logger.error(f"{validation_err_msg} {err_msg}")
+                return ValidationResult(success=False, message=err_msg)
+            elif not isinstance(token, str):
+                err_msg = "Invalid API Token provided."
+                self.logger.error(f"{validation_err_msg} {err_msg}")
+                return ValidationResult(success=False, message=err_msg)
+        else:
+            tenant_id = configuration.get("tenant_id", "").strip()
+            if not tenant_id:
+                err_msg = "Tenant ID is a required configuration parameter."
+                self.logger.error(f"{validation_err_msg} {err_msg}")
+                return ValidationResult(success=False, message=err_msg)
+            elif not isinstance(tenant_id, str):
+                err_msg = "Invalid Tenant ID provided."
+                self.logger.error(f"{validation_err_msg} {err_msg}")
+                return ValidationResult(success=False, message=err_msg)
+            client_id = configuration.get("client_id", "").strip()
+            if not client_id:
+                err_msg = "Client ID is a required configuration parameter."
+                self.logger.error(f"{validation_err_msg} {err_msg}")
+                return ValidationResult(success=False, message=err_msg)
+            elif not isinstance(client_id, str):
+                err_msg = "Invalid Client ID provided."
+                self.logger.error(f"{validation_err_msg} {err_msg}")
+                return ValidationResult(success=False, message=err_msg)
+            client_secret = configuration.get("client_secret", "")
+            if not client_secret:
+                err_msg = "Client Secret is a required configuration parameter."
+                self.logger.error(f"{validation_err_msg} {err_msg}")
+                return ValidationResult(success=False, message=err_msg)
+            elif not isinstance(client_secret, str):
+                err_msg = "Invalid Client Secret provided."
+                self.logger.error(f"{validation_err_msg} {err_msg}")
+                return ValidationResult(success=False, message=err_msg)
 
-        if (
-            "data_source" not in configuration
-            or type(configuration["data_source"]) != str
-            or not mcas_validator.validate_data_source(configuration["data_source"])
-        ):
-            self.logger.error(
-                message=(
-                    f"{self.log_prefix}: Validation error occurred. Error: "
-                    "Invalid data source found in the configuration parameters."
-                ),
-                details=str(traceback.format_exc()),
+        data_source = configuration.get("data_source", "").strip()
+        if not data_source:
+            err_msg = "Data Source is a required configuration parameter."
+            self.logger.error(f"{validation_err_msg} {err_msg}")
+            return ValidationResult(success=False, message=err_msg)
+        elif not isinstance(
+            data_source, str
+        ) or not mcas_validator.validate_data_source(data_source):
+            err_msg = (
+                "Invalid Data Source provided. Data Source should contain "
+                "letters, numbers and special characters(_-)"
             )
-            return ValidationResult(
-                success=False,
-                message="Invalid data source provided. Data source should contain "
-                "letters, numbers and special characters(_-)",
-            )
+            self.logger.error(f"{validation_err_msg} {err_msg}")
+            return ValidationResult(success=False, message=err_msg)
 
         mappings = self.mappings.get("jsonData", None)
         mappings = json.loads(mappings)
         if not isinstance(mappings, dict) or not mcas_validator.validate_mcas_map(
             mappings
         ):
-            self.logger.error(
-                message=(
-                    f"{self.log_prefix}: Validation error occurred. Error: "
-                    "Invalid attribute mapping found in the configuration parameters."
-                ),
-                details=str(traceback.format_exc()),
-            )
-            return ValidationResult(
-                success=False,
-                message="Invalid attribute mapping provided.",
-            )
+            err_msg = "Invalid attribute mapping provided."
+            self.logger.error(f"{validation_err_msg} {err_msg}")
+            return ValidationResult(success=False, message=err_msg)
 
         try:
             mcas_client = MCASClient(
@@ -652,7 +653,7 @@ class MCASPlugin(PluginBase):
             mcas_client.validate_token()
         except MCASPluginException as e:
             self.logger.error(
-                message=(f"{self.log_prefix}: Validation error occurred. Error: {e}"),
+                message=(f"{validation_err_msg} Error: {e}"),
                 details=str(traceback.format_exc()),
             )
             return ValidationResult(
@@ -661,14 +662,13 @@ class MCASPlugin(PluginBase):
             )
         except Exception as e:
             self.logger.error(
-                message=(f"{self.log_prefix}: Validation error occurred. Error: {e}"),
+                message=(f"{validation_err_msg} Error: {e}"),
                 details=str(traceback.format_exc()),
             )
             return ValidationResult(
                 success=False,
-                message="Invalid portal url or token.",
+                message="Unexpected error occurred, check logs for more details.",
             )
-        
 
         return ValidationResult(success=True, message="Validation successful.")
 

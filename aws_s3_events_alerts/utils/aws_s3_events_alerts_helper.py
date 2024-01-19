@@ -28,13 +28,11 @@ SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
 CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+AWS S3 Events, Alerts Plugin.
 """
 
-"""AWS S3 Events, Alerts Plugin."""
-
-
-from datetime import datetime
-
+from typing import Dict, List
 from jsonschema import validate
 from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
 
@@ -43,15 +41,17 @@ from .aws_s3_events_alerts_exception import (
 )
 
 
-def map_data(mappings, data, logger, data_type, subtype):
-    """Filter the raw data and returns the filtered data, which will be further pushed to AWS S3.
+def map_data(mappings: Dict, data: List) -> Dict:
+    """Filter the raw data and returns the filtered data,
+    which will be further pushed to AWS S3.
 
-    :param mappings: List of fields to be pushed to AWS S3 (read from mapping string)
-    :param data: Data to be mapped (retrieved from Netskope)
-    :param logger: Logger object for logging purpose
-    :param data_type: The type of data being mapped (alerts/events)
-    :param subtype: The subtype of data being mapped (for example DLP is a subtype of alerts data type)
-    :return: Mapped data based on fields given in mapping file
+    Args:
+        mappings (Dict): List of fields to be pushed to AWS S3
+      (read from mapping string)
+        data (List): Data to be mapped (retrieved from Netskope)
+
+    Returns:
+        Dict: Mapped Dictionary.
     """
     mapped_dict = {}
     ignored_fields = []
@@ -60,14 +60,14 @@ def map_data(mappings, data, logger, data_type, subtype):
             mapped_dict[key] = data[key]
         else:
             ignored_fields.append(key)
-
     return mapped_dict
 
 
 def validate_subtype(instance):
     """Validate the subtype object mapped in mapping JSON files.
 
-    :param instance: The subtype object to be validated
+    Args:
+        instance: The subtype object to be validated
     """
     schema = {
         "type": "array",
@@ -76,12 +76,16 @@ def validate_subtype(instance):
     validate(instance=instance, schema=schema)
 
 
-def get_mappings(mappings, data_type):
+def get_mappings(mappings: Dict, data_type: str, log_prefix) -> Dict:
     """Return the dict of mappings to be applied to raw data.
 
-    :param mappings: Mapping String
-    :param data_type: Data type (alert/event) for which the mappings are to be fetched
-    :return: Read mappings
+    Args:
+        mappings (Dict): Mapping String
+        data_type (str): Data type (alert/event) for which the
+        mappings are to be fetched
+
+    Returns:
+        Dict: Read mappings
     """
     mappings = mappings["taxonomy"]["json"][data_type]
 
@@ -90,10 +94,5 @@ def get_mappings(mappings, data_type):
         try:
             validate_subtype(subtype_map)
         except JsonSchemaValidationError as err:
-            raise MappingValidationError(
-                'AWS S3 Events, Alerts Plugin: Error occurred while validating mappings for type "{}".\
-                    Error: {}'.format(
-                    subtype, err
-                )
-            )
+            raise MappingValidationError(err)
     return mappings

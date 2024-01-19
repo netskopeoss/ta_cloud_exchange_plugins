@@ -1,61 +1,61 @@
 {
-    "name": "CrowdStrike",
-    "description": "Fetch ZTA scores from your CrowdStrike tenant. \n\n URE score calculation => CrowdStrike host assessment overall score * 10.",
-    "id": "crowdstrike_cre",
-    "type": [
-        "host"
-    ],
-    "version": "1.2.0",
-    "configuration": [
+  "name": "CrowdStrike",
+  "description": "This plugin fetches hosts and their respective ZTA scores from the CrowdStrike tenant. It also supports the Put RTR Script action on hosts.\n\n URE score calculation => CrowdStrike host assessment overall score * 10.",
+  "id": "crowdstrike_cre",
+  "type": [
+    "host"
+  ],
+  "version": "1.3.0",
+  "configuration": [
+    {
+      "label": "Base URL",
+      "key": "base_url",
+      "type": "choice",
+      "choices": [
         {
-            "label": "Base URL",
-            "key": "base_url",
-            "type": "choice",
-            "choices": [
-                {
-                    "key": "Commercial cloud (api.crowdstrike.com)",
-                    "value": "https://api.crowdstrike.com"
-                },
-                {
-                    "key": "US 2 (api.us-2.crowdstrike.com)",
-                    "value": "https://api.us-2.crowdstrike.com"
-                },
-                {
-                    "key": "Falcon on GovCloud (api.laggar.gcw.crowdstrike.com)",
-                    "value": "https://api.laggar.gcw.crowdstrike.com"
-                },
-                {
-                    "key": "EU cloud (api.eu-1.crowdstrike.com)",
-                    "value": "https://api.eu-1.crowdstrike.com"
-                }
-            ],
-            "default": "https://api.crowdstrike.com",
-            "mandatory": true,
-            "description": "Base URL of CrowdStrike instance. e.g. https://api.crowdstrike.com"
+          "key": "Commercial cloud (api.crowdstrike.com)",
+          "value": "https://api.crowdstrike.com"
         },
         {
-            "label": "Client ID",
-            "key": "client_id",
-            "type": "text",
-            "default": "",
-            "mandatory": true,
-            "description": "Client ID generated from the CrowdStrike platform."
+          "key": "US 2 (api.us-2.crowdstrike.com)",
+          "value": "https://api.us-2.crowdstrike.com"
         },
         {
-            "label": "Client Secret",
-            "key": "client_secret",
-            "type": "password",
-            "default": "",
-            "mandatory": true,
-            "description": "Client Secret generated from the CrowdStrike platform."
+          "key": "Falcon on GovCloud (api.laggar.gcw.crowdstrike.com)",
+          "value": "https://api.laggar.gcw.crowdstrike.com"
         },
         {
-            "label": "Maximum Score",
-            "key": "maximum_score",
-            "type": "number",
-            "default": 200,
-            "mandatory": true,
-            "description": "Only the host(s) with score less than or equal to the Maximum Score will be tracked."
+          "key": "EU cloud (api.eu-1.crowdstrike.com)",
+          "value": "https://api.eu-1.crowdstrike.com"
         }
-    ]
+      ],
+      "default": "https://api.crowdstrike.com",
+      "mandatory": true,
+      "description": "Base URL of CrowdStrike instance. e.g. https://api.crowdstrike.com"
+    },
+    {
+      "label": "Client ID",
+      "key": "client_id",
+      "type": "text",
+      "default": "",
+      "mandatory": true,
+      "description": "Client ID generated from the CrowdStrike platform."
+    },
+    {
+      "label": "Client Secret",
+      "key": "client_secret",
+      "type": "password",
+      "default": "",
+      "mandatory": true,
+      "description": "Client Secret generated from the CrowdStrike platform."
+    },
+    {
+      "label": "Maximum Score",
+      "key": "maximum_score",
+      "type": "number",
+      "default": 200,
+      "mandatory": true,
+      "description": "Only the host(s) with score less than or equal to the Maximum Score will be tracked."
+    }
+  ]
 }

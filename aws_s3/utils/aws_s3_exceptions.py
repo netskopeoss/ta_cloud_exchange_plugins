@@ -29,39 +29,10 @@ CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-AWS S3 WebTx Constants.
+AWS S3 WebTx plugin exceptions module.
 """
 
-REGIONS = [
-    "us-east-2",
-    "us-east-1",
-    "us-west-1",
-    "us-west-2",
-    "af-south-1",
-    "ap-east-1",
-    "ap-south-1",
-    "ap-northeast-3",
-    "ap-northeast-2",
-    "ap-southeast-1",
-    "ap-southeast-2",
-    "ap-northeast-1",
-    "ca-central-1",
-    "cn-north-1",
-    "cn-northwest-1",
-    "eu-central-1",
-    "eu-west-1",
-    "eu-west-2",
-    "eu-south-1",
-    "eu-west-3",
-    "eu-north-1",
-    "me-south-1",
-    "sa-east-1",
-    "ap-south-2",
-    "ap-southeast-3",
-    "eu-south-2",
-    "eu-central-2",
-    "me-central-1",
-]
-MODULE_NAME = "CLS"
-PLUGIN_NAME = "AWS S3 WebTx"
-PLUGIN_VERSION = "1.2.0"
+
+class AWSS3WebTXException(Exception):
+    "Custom Exception class for AWS S3 WebTX Plugin."
+    pass

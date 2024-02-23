@@ -601,7 +601,8 @@ class AnomaliThreatstreamPlugin(PluginBase):
             severity = self.configuration.get("severity")
             indicator_types = self.configuration.get("indicator_type")
             i_types = [
-                "hash" if indicator_type in ["md5", "sha256"] else indicator_type
+                "hash" if indicator_type in [
+                    "md5", "sha256"] else indicator_type
                 for indicator_type in indicator_types
             ]
             query_params["type"] = ",".join(i_types)
@@ -666,7 +667,8 @@ class AnomaliThreatstreamPlugin(PluginBase):
                                     tags_data = []
 
                                 if indicator.get("value") and indicator.get("type"):
-                                    tags, skipped_tags = self.create_tags(tags_data)
+                                    tags, skipped_tags = self.create_tags(
+                                        tags_data)
                                     total_skipped_tags.update(skipped_tags)
 
                                     description = indicator.get("description")
@@ -678,7 +680,8 @@ class AnomaliThreatstreamPlugin(PluginBase):
                                         indicator_type = IndicatorType.SHA256
                                     current_extracted_indicators.append(
                                         Indicator(
-                                            value=indicator.get("value").lower(),
+                                            value=indicator.get(
+                                                "value").lower(),
                                             type=ANOMALI_TO_INTERNAL_TYPE.get(
                                                 indicator_type
                                             ),
@@ -738,12 +741,14 @@ class AnomaliThreatstreamPlugin(PluginBase):
                         storage.clear()
                         break
                     else:
-                        query_params["update_id__gt"] = last_indicator.get("update_id")
+                        query_params["update_id__gt"] = last_indicator.get(
+                            "update_id")
 
                     if page_count >= PAGE_LIMIT:
                         storage.clear()
                         if last_indicator and last_indicator.get("modified_ts"):
-                            storage["last_updated"] = last_indicator.get("modified_ts")
+                            storage["last_updated"] = last_indicator.get(
+                                "modified_ts")
                         self.logger.info(
                             f"{self.log_prefix}: Page limit of {PAGE_LIMIT} "
                             f"has reached. Returning {len(indicator_list)} "
@@ -766,7 +771,8 @@ class AnomaliThreatstreamPlugin(PluginBase):
                 except AnomaliThreatstreamPluginException as ex:
                     storage.clear()
                     if last_indicator and last_indicator.get("modified_ts"):
-                        storage["last_updated"] = last_indicator.get("modified_ts")
+                        storage["last_updated"] = last_indicator.get(
+                            "modified_ts")
                     err_msg = (
                         f"{self.log_prefix}: Error occurred while executing "
                         "the pull cycle. The pulling of the indicators will be"
@@ -780,7 +786,8 @@ class AnomaliThreatstreamPlugin(PluginBase):
                 except Exception as ex:
                     storage.clear()
                     if last_indicator and last_indicator.get("modified_ts"):
-                        storage["last_updated"] = last_indicator.get("modified_ts")
+                        storage["last_updated"] = last_indicator.get(
+                            "modified_ts")
                     err_msg = (
                         f"{self.log_prefix}: Error occurred while executing "
                         "the pull cycle. The pulling of the indicators will be"
@@ -856,11 +863,11 @@ class AnomaliThreatstreamPlugin(PluginBase):
 
         if action_value == "share_ioc":
             if not indicators:
-                self.logger.info(f"{self.log_prefix}: No indicators found to push.")
+                self.logger.info(
+                    f"{self.log_prefix}: No indicators found to push.")
                 return PushResult(success=True, message="No indicators found.")
 
             action_params = action_dict.get("parameters", {})
-            classfication = action_params.get("classfication", "")
             hash_itype = action_params.get("hash_itype", "")
             ip_itype = action_params.get("ip_itype", "")
             ipv6_itype = action_params.get("ipv6_itype", "")
@@ -900,7 +907,7 @@ class AnomaliThreatstreamPlugin(PluginBase):
                         self.logger.error(
                             message=(
                                 f"{self.log_prefix}: Error occurred while "
-                                f"validating indicator. Error: {err}"
+                                f"sharing the indicator. Error: {err}"
                             ),
                             details=str(traceback.format_exc()),
                         )
@@ -920,9 +927,11 @@ class AnomaliThreatstreamPlugin(PluginBase):
 
             results = []
             size_in_bytes = sys.getsizeof(json.dumps(objects))
-            size_in_mb = size_in_bytes / (1024.0**2)  # Convert bytes to megabytes
+            # Convert bytes to megabytes
+            size_in_mb = size_in_bytes / (1024.0**2)
             if size_in_mb > TARGET_SIZE_MB:
-                chunk_data = self.anomali_threatstream_helper.split_into_size(objects)
+                chunk_data = self.anomali_threatstream_helper.split_into_size(
+                    objects)
                 results.extend(chunk_data)
             else:
                 results.append(objects)
@@ -930,10 +939,9 @@ class AnomaliThreatstreamPlugin(PluginBase):
             headers = self.get_headers(self.configuration)
             base_url = self.configuration.get("base_url").strip().strip("/")
             final_payload = {
-                "meta": {"classification": classfication, "allow_unresolved": "true"},
+                "meta": {"classification": "private", "allow_unresolved": True, "allow_update": True, "enrich": False},
             }
-            if classfication == "public":
-                final_payload["meta"]["remote_api"] = "true"
+
             page_count = 0
             total_count = 0
             for result in results:
@@ -951,7 +959,7 @@ class AnomaliThreatstreamPlugin(PluginBase):
                     self.logger.info(
                         f"{self.log_prefix}: Successfully shared {len(result)}"
                         f" indicator(s) for page {page_count}. Total indicator"
-                        f"(s) fetched - {total_count}."
+                        f"(s) shared - {total_count}."
                     )
                 except (AnomaliThreatstreamPluginException, Exception) as err:
                     skipped_count += len(result)
@@ -994,10 +1002,6 @@ class AnomaliThreatstreamPlugin(PluginBase):
                 success=False, message="Unsupported action provided."
             )
         if action_value == "share_ioc":
-            if not action.parameters.get("classfication"):
-                err_msg = "Classfication should not be empty."
-                self.logger.error(f"{self.log_prefix}: {err_msg}")
-                return ValidationResult(success=False, message=err_msg)
 
             if not action.parameters.get("url_itype"):
                 err_msg = "URL itype should not be empty."
@@ -1031,18 +1035,6 @@ class AnomaliThreatstreamPlugin(PluginBase):
         action_value = action.value
         if action_value == "share_ioc":
             return [
-                {
-                    "label": "Visibility",
-                    "key": "classfication",
-                    "type": "choice",
-                    "choices": [
-                        {"key": "Public", "value": "public"},
-                        {"key": "Private", "value": "private"},
-                    ],
-                    "default": "public",
-                    "mandatory": True,
-                    "description": ("Visibility of the indicator."),
-                },
                 {
                     "label": "URL iType",
                     "key": "url_itype",
@@ -1101,7 +1093,8 @@ class AnomaliThreatstreamPlugin(PluginBase):
                         {"key": "Infected Bot IP", "value": "bot_ip"},
                         {"key": "Brute Force IP", "value": "brute_ip"},
                         {"key": "Malware C&C IP", "value": "c2_ip"},
-                        {"key": "Commercial Webproxy IP", "value": "comm_proxy_ip"},
+                        {"key": "Commercial Webproxy IP",
+                            "value": "comm_proxy_ip"},
                         {"key": "Compromised IP", "value": "compromised_ip"},
                         {"key": "Cryptocurrency IP", "value": "crypto_ip"},
                         {"key": "DDOS IP", "value": "ddos_ip"},
@@ -1110,7 +1103,8 @@ class AnomaliThreatstreamPlugin(PluginBase):
                         {"key": "Exploit Kit IP", "value": "exploit_ip"},
                         {"key": "Fraud IP", "value": "fraud_ip"},
                         {"key": "I2P IP", "value": "i2p_ip"},
-                        {"key": "Information Stealer IP", "value": "infostealer_ip"},
+                        {"key": "Information Stealer IP",
+                            "value": "infostealer_ip"},
                         {"key": "Internet Of things Malicious IP", "value": "iot_ip"},
                         {"key": "Malware IP", "value": "mal_ip"},
                         {"key": "Peer-to-Peer C&C IP", "value": "p2pcnc"},
@@ -1141,13 +1135,15 @@ class AnomaliThreatstreamPlugin(PluginBase):
                     "type": "choice",
                     "choices": [
                         {"key": "Actor IPv6", "value": "actor_ipv6"},
-                        {"key": "Anonymous Proxy IPv6", "value": "anon_proxy_ipv6"},
+                        {"key": "Anonymous Proxy IPv6",
+                            "value": "anon_proxy_ipv6"},
                         {"key": "Anonymous VPN IPv6", "value": "anon_vpn_ipv6"},
                         {"key": "APT IPv6", "value": "apt_ipv6"},
                         {"key": "Infected Bot IPv6", "value": "bot_ipv6"},
                         {"key": "Brute Force IPv6", "value": "brute_ipv6"},
                         {"key": "Malware C&C IPv6", "value": "c2_ipv6"},
-                        {"key": "Commercial Webproxy IPv6", "value": "comm_proxy_ipv6"},
+                        {"key": "Commercial Webproxy IPv6",
+                            "value": "comm_proxy_ipv6"},
                         {"key": "Compromised IPv6", "value": "compromised_ipv6"},
                         {"key": "Cryptocurrency IPv6", "value": "crypto_ipv6"},
                         {"key": "DDOS IPv6", "value": "ddos_ipv6"},
@@ -1200,15 +1196,18 @@ class AnomaliThreatstreamPlugin(PluginBase):
                             "key": "Commercial Webproxy Domain",
                             "value": "comm_proxy_domain",
                         },
-                        {"key": "Compromised Domain", "value": "compromised_domain"},
-                        {"key": "Cryptocurrency Pool Domain", "value": "crypto_pool"},
+                        {"key": "Compromised Domain",
+                            "value": "compromised_domain"},
+                        {"key": "Cryptocurrency Pool Domain",
+                            "value": "crypto_pool"},
                         {
                             "key": "Disposable Email Domain",
                             "value": "disposable_email_domain",
                         },
                         {"key": "Downloader Domain", "value": "downloader_domain"},
                         {"key": "Dynamic DNS", "value": "dyn_dns"},
-                        {"key": "Data Exfiltration Domain", "value": "exfil_domain"},
+                        {"key": "Data Exfiltration Domain",
+                            "value": "exfil_domain"},
                         {"key": "Exploit Kit Domain", "value": "exploit_domain"},
                         {"key": "Fraud Domain", "value": "fraud_domain"},
                         {"key": "Free Email Domain", "value": "free_email_domain"},
@@ -1255,7 +1254,8 @@ class AnomaliThreatstreamPlugin(PluginBase):
                             "key": "Cryptocurrency Mining Software",
                             "value": "crypto_hash",
                         },
-                        {"key": "Downloader File Hash", "value": "downloader_hash"},
+                        {"key": "Downloader File Hash",
+                            "value": "downloader_hash"},
                         {"key": "Exploit Hash", "value": "exploit_md5"},
                         {"key": "Fraud Hash", "value": "fraud_md5"},
                         {"key": "Hack Tool File Hash", "value": "hack_tool_md5"},
@@ -1269,13 +1269,15 @@ class AnomaliThreatstreamPlugin(PluginBase):
                         },
                         {"key": "JA3/JA3S TLS Fingerprint", "value": "ja3_md5"},
                         {"key": "Malware File Hash", "value": "mal_md5"},
-                        {"key": "SSL Certificate Hash", "value": "mal_sslcert_sha1"},
+                        {"key": "SSL Certificate Hash",
+                            "value": "mal_sslcert_sha1"},
                         {"key": "Phishing File Hash", "value": "phish_md5"},
                         {
                             "key": "Point Of Sale Malicious File Hash",
                             "value": "pos_hash",
                         },
-                        {"key": "Ransomware File Hash", "value": "ransomware_hash"},
+                        {"key": "Ransomware File Hash",
+                            "value": "ransomware_hash"},
                         {"key": "Rootkit File Hash", "value": "rootkit_hash"},
                         {"key": "Trojan File Hash", "value": "trojan_hash"},
                     ],

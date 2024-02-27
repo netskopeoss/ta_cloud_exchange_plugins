@@ -1,0 +1,52 @@
+{
+  "name": "Commvault",
+  "id": "commvault",
+  "version": "1.0.0",
+  "description": "This plugin shares URLs(backup anomaly insights) with Netskope (Cloud Exchange) to inform organizations when suspicious behaviour and data changes are occurring within backup content using Commvault REST APIs. The plugin also supports the sharing of URLs(Anamoly Detections) from Netskope (Cloud Exchange) to Commvault.",
+  "patch_supported": true,
+  "push_supported": true,
+  "configuration": [
+    {
+      "label": "Command Center API URL",
+      "key": "commandcenter_url",
+      "type": "text",
+      "default": "",
+      "mandatory": true,
+      "description": "Command Center URL where alerts are pushed to/pulled from For eg: 'https://commandcenter.nam.contoso.com/'"
+    },
+    {
+      "label": "Commvault Access Token",
+      "key": "auth_token",
+      "type": "password",
+      "default": "",
+      "mandatory": true,
+      "description": "Enter the Access Token generated from the 'Profile > Access tokens Section' of your Commvault platform."
+    },
+    {
+      "label": "Enable Polling",
+      "key": "is_pull_required",
+      "type": "choice",
+      "choices": [
+        {
+          "key": "Yes",
+          "value": "Yes"
+        },
+        {
+          "key": "No",
+          "value": "No"
+        }
+      ],
+      "default": "Yes",
+      "mandatory": true,
+      "description": "Enable/Disable polling Threat IoCs from Commvault. Disable if you only need to push Threat IoCs to Commvault."
+    },
+    {
+      "label": "Initial Range (in days)",
+      "key": "days",
+      "type": "number",
+      "mandatory": true,
+      "default": 7,
+      "description": "Number of days to pull the data for the initial run."
+    }
+  ]
+}

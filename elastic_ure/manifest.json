@@ -1,0 +1,68 @@
+{
+  "name": "Elastic",
+  "description": "This plugin fetches users available at **Security > Explore > Users > All users** page and their respective risk scores available at **Security > Explore > Users > User risk** page from the configured Elastic instance.\n\n URE score calculation => | 100 - Elastic Risk Score | x 10.",
+  "id": "elastic_ure",
+  "type": [
+    "user"
+  ],
+  "version": "1.0.0",
+  "configuration": [
+    {
+      "label": "Base URL",
+      "key": "base_url",
+      "type": "text",
+      "mandatory": true,
+      "description": "API Base URL of Elastic instance."
+    },
+    {
+      "label": "Authentication Method",
+      "key": "authentication_method",
+      "type": "choice",
+      "choices": [
+        {
+          "key": "Basic Authentication (Username-Password)",
+          "value": "basic_auth"
+        },
+        {
+          "key": "API Key Authentication",
+          "value": "api_key_auth"
+        }
+      ],
+      "default": "basic_auth",
+      "mandatory": true,
+      "description": "Select the Authentication Method used to perform the API call to Elastic instance."
+    },
+    {
+      "label": "Username",
+      "key": "username",
+      "type": "text",
+      "default": "",
+      "mandatory": false,
+      "description": "Username for the Elastic instance. Required for 'Basic Authentication (Username-Password)' authentication type."
+    },
+    {
+      "label": "Password",
+      "key": "password",
+      "type": "password",
+      "default": "",
+      "mandatory": false,
+      "description": "Password for the Elastic instance. Required for 'Basic Authentication (Username-Password)' authentication type."
+    },
+    {
+      "label": "API Key",
+      "key": "api_key",
+      "type": "password",
+      "default": "",
+      "mandatory": false,
+      "description": "API Key for Elastic instance. Required for 'API Key Authentication' authentication type."
+    },
+    {
+      "label": "Initial Range (in days)",
+      "key": "days",
+      "type": "number",
+      "mandatory": true,
+      "default": 7,
+      "description": "Number of days to pull users for initial run."
+    }
+  ]
+}

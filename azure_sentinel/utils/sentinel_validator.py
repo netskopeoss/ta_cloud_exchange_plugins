@@ -32,6 +32,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 Microsoft Azure Sentinel Validator.
 """
 
+import traceback
 from jsonschema import validate
 from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
 
@@ -82,7 +83,10 @@ class AzureSentinelValidator(object):
             return True
         except JsonSchemaValidationError as err:
             self.logger.error(
-                "{}: Error occurred while validating Mapping "
-                "String: {}".format(self.log_prefix, err)
+                message=(
+                    "{}: Error occurred while validating Mapping "
+                    "String: {}".format(self.log_prefix, err)
+                ),
+                details=str(traceback.format_exc()),
             )
         return False

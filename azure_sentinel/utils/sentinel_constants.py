@@ -39,7 +39,7 @@ RESOURCE = "/api/logs"
 API_BASE_URL = "https://{}.ods.opinsights.azure.com{}?api-version=2016-04-01"
 MAX_RETRIES = 3
 RETRY_SLEEP_TIME = 60
-attribute_dtype_map = {
+ATTRIBUTE_DTYPE_MAP = {
     "dlp_incident_id": "string",
     "app_session_id": "string",
     "transaction_id": "string",
@@ -65,3 +65,12 @@ attribute_dtype_map = {
     "modified_date": "datetime",
     "created_date": "datetime",
 }
+MODULE_NAME = "CLS"
+PLUGIN_NAME = "Microsoft Azure Sentinel"
+PLUGIN_VERSION = "3.0.0"
+VALIDATION_ALPHANUM_PATTERN = r"^[a-zA-Z0-9_]+$"
+VALIDATION_DIGITS_PATTERN = r"^[\d_]+$"
+MAX_API_CALL = 3
+DEFAULT_WAIT = 30
+TARGET_SIZE_MB = 30
+BATCH_SIZE = 10000

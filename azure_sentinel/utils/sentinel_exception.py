@@ -50,10 +50,7 @@ class MappingValidationError(Error):
         self.message = message
 
 
-class MaxRetriesExceededError(Error):
-    """Exception raised when maximum number of retries exceeded while pulling
-    data from Netskope."""
+class AzureSentinelException(Exception):
+    """Azure Sentinel plugin Custom Exception class."""
 
-    def __init__(self, message):
-        """Initialize."""
-        self.message = message
+    pass

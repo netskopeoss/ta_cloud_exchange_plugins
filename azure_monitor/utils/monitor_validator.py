@@ -28,9 +28,8 @@ SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
 CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-"""
 
-"""Azure Monitor Validator."""
+Azure Monitor Validator."""
 
 
 import io
@@ -42,10 +41,11 @@ from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
 class AzureMonitorValidator(object):
     """Azure Monitor validator class."""
 
-    def __init__(self, logger):
+    def __init__(self, logger, log_prefix):
         """Initialize."""
         super().__init__()
         self.logger = logger
+        self.log_prefix = log_prefix
 
     def validate_taxonomy(self, instance):
         """Validate the schema of given taxonomy JSON.
@@ -85,7 +85,7 @@ class AzureMonitorValidator(object):
                         ".*": {
                             "type": "array",
                         }
-                    }
+                    },
                 },
             },
         }
@@ -123,8 +123,8 @@ class AzureMonitorValidator(object):
             validate(instance=mappings, schema=schema)
         except JsonSchemaValidationError as err:
             self.logger.error(
-                "Azure Monitor CLS Plugin: Validation error occurred. Error: "
-                "validating JSON schema: {}".format(err)
+                "{}: Validation error occurred. Error: validating"
+                " JSON schema: {}".format(self.log_prefix, err)
             )
             return False
 
@@ -138,9 +138,9 @@ class AzureMonitorValidator(object):
                         self.validate_taxonomy(subtype_taxonomy)
                     except JsonSchemaValidationError as err:
                         self.logger.error(
-                            "Azure Monitor CLS Plugin: Validation error occurred. Error: "
-                            'while validating JSON schema for type "{}" and subtype "{}": '
-                            "{}".format(data_type, subtype, err)
+                            "{}: Validation error occurred. Error: while "
+                            'validating JSON schema for type "{}" and subtype "{}": '
+                            "{}".format(self.log_prefix, data_type, subtype, err)
                         )
                         return False
         return True
@@ -163,10 +163,8 @@ class AzureMonitorValidator(object):
 
         except Exception as err:
             self.logger.error(
-                "Azure Monitor CLS Plugin: Validation error occurred. "
-                "Error: {}".format(
-                    str(err)
-                )
+                "{}: Validation error occurred. Error: {}"
+                "".format(self.log_prefix, str(err))
             )
 
         return False
@@ -182,14 +180,11 @@ class AzureMonitorValidator(object):
             True in case of valid value, False otherwise
         """
         try:
-            csviter = csv.DictReader(
-                io.StringIO(valid_extensions), strict=True
-            )
+            csviter = csv.DictReader(io.StringIO(valid_extensions), strict=True)
             headers = next(csviter)
 
             if all(
-                header in headers
-                for header in ["CEF Key Name", "Length", "Data Type"]
+                header in headers for header in ["CEF Key Name", "Length", "Data Type"]
             ):
                 return True
         except Exception:

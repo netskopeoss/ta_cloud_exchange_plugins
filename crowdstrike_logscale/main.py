@@ -4,6 +4,7 @@ from typing import List
 import requests
 import os
 import traceback
+import uuid
 from datetime import datetime
 from netskope.integrations.cls.plugin_base import PluginBase, ValidationResult
 from .utils.crowdstrike_logscale_validator import CrowdStrikeLogScaleValidator
@@ -47,24 +48,19 @@ class CrowdStrikeLogScalePlugin(PluginBase):
             tuple: Tuple of plugin's name and version fetched from manifest.
         """
         try:
-            file_path = os.path.join(
-                str(os.path.dirname(os.path.abspath(__file__))),
-                "manifest.json",
-            )
-            with open(file_path, "r") as manifest:
-                manifest_json = json.load(manifest)
-                plugin_name = manifest_json.get("name", PLATFORM_NAME)
-                plugin_version = manifest_json.get("version", PLUGIN_VERSION)
-                return (plugin_name, plugin_version)
+            manifest_json = CrowdStrikeLogScalePlugin.metadata
+            plugin_name = manifest_json.get("name", PLATFORM_NAME)
+            plugin_version = manifest_json.get("version", PLUGIN_VERSION)
+            return plugin_name, plugin_version
         except Exception as exp:
-            self.logger.info(
+            self.logger.error(
                 message=(
                     f"{MODULE_NAME} {PLATFORM_NAME}: Error occurred while"
-                    " getting plugin details. Error: {}".format(exp)
+                    f" getting plugin details. Error: {exp}"
                 ),
-                details=traceback.format_exc(),
+                details=str(traceback.format_exc()),
             )
-        return (PLATFORM_NAME, PLUGIN_VERSION)
+        return PLATFORM_NAME, PLUGIN_VERSION
 
     @staticmethod
     def get_subtype_mapping(mappings, subtype):
@@ -273,6 +269,13 @@ class CrowdStrikeLogScalePlugin(PluginBase):
         :param subtype: The subtype of data being pushed.
         E.g. subtypes of alert is "dlp", "policy" etc.
         """
+        uid = uuid.uuid1()
+
+        self.logger.debug(
+            f"{self.log_prefix}: [{data_type}] [{subtype}]"
+            f" Received {len(transformed_data)} logs to "
+            f"push to {self.plugin_name}. UUID: {uid}"
+        )
         crowdstrike_logscale_client = CrowdStrikeLogScaleClient(
             self.configuration,
             self.logger,
@@ -283,13 +286,13 @@ class CrowdStrikeLogScalePlugin(PluginBase):
         )
         try:
             crowdstrike_logscale_client.push(
-                transformed_data, data_type, subtype
+                transformed_data, data_type, subtype,uid
             )
         except Exception as err:
             # Raise this exception from here so that it does not update
             # the checkpoint, as this means data ingestion is failed
             # even after a few retries.
-            err_msg = "Could not ingest data into CrowdStrike LogScale."
+            err_msg = f"Could not ingest data into {self.plugin_name}. UUID: {uid}."
             self.logger.error(
                 message="{}: {} Error: {}".format(
                     self.log_prefix, err_msg, err

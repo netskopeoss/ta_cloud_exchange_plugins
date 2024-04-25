@@ -1,31 +1,31 @@
 {
-    "name": "CrowdStrike LogScale",
-    "id": "crowdstrike_logscale",
-    "version": "1.0.0",
-    "mapping": "CrowdStrike LogScale Default Mappings",
-    "description": "This plugin is used to deliver alerts, events, and webtx data. This plugin only supports sharing raw **JSON** data to CrowdStrike LogScale HTTP Event Collector.",
-    "netskope": false,
-    "types": [
-        "alerts",
-        "events",
-        "webtx"
-    ],
-    "configuration": [
-        {
-            "label": "CrowdStrike LogScale Host",
-            "key": "hostname",
-            "type": "text",
-            "default": "",
-            "mandatory": true,
-            "description": "URL of your CrowdStrike LogScale platform."
-        },
-        {
-            "label": "Ingest Token",
-            "key": "token",
-            "type": "password",
-            "default": "",
-            "mandatory": true,
-            "description": "Ingest token of your CrowdStrike LogScale platform. You can generate it from Settings>Ingest Tokens>Add Token."
-        }
-    ]
+  "name": "CrowdStrike LogScale",
+  "id": "crowdstrike_logscale",
+  "version": "1.1.0",
+  "mapping": "CrowdStrike LogScale Default Mappings",
+  "description": "This plugin is used to deliver alerts, events, and webtx data. This plugin only supports sharing raw **JSON** data to CrowdStrike LogScale HTTP Event Collector.",
+  "netskope": false,
+  "types": [
+    "alerts",
+    "events",
+    "webtx"
+  ],
+  "configuration": [
+    {
+      "label": "CrowdStrike LogScale Host",
+      "key": "hostname",
+      "type": "text",
+      "default": "",
+      "mandatory": true,
+      "description": "URL of your CrowdStrike LogScale platform."
+    },
+    {
+      "label": "Ingest Token",
+      "key": "token",
+      "type": "password",
+      "default": "",
+      "mandatory": true,
+      "description": "Ingest token of your CrowdStrike LogScale platform. You can generate it from Settings>Ingest Tokens>Add Token."
+    }
+  ]
 }

@@ -17,8 +17,8 @@ import decimal
 import json
 from datetime import datetime
 
-from .exceptions import ParamValidationError
-from .utils import is_json_value_header, parse_to_aware_datetime
+from ..botocore.exceptions import ParamValidationError
+from ..botocore.utils import is_json_value_header, parse_to_aware_datetime
 
 
 def validate_parameters(params, shape):
@@ -288,7 +288,7 @@ class ParamValidator:
 
     @type_check(valid_types=(str,))
     def _validate_string(self, param, shape, errors, name):
-        # Validate range.  For a string, the min/max contraints
+        # Validate range.  For a string, the min/max constraints
         # are of the string length.
         # Looks like:
         # "WorkflowId":{

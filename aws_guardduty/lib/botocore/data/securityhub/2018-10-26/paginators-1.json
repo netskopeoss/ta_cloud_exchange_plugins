@@ -71,6 +71,36 @@
       "output_token": "NextToken",
       "limit_key": "MaxResults",
       "result_key": "FindingAggregators"
+    },
+    "ListSecurityControlDefinitions": {
+      "input_token": "NextToken",
+      "output_token": "NextToken",
+      "limit_key": "MaxResults",
+      "result_key": "SecurityControlDefinitions"
+    },
+    "ListStandardsControlAssociations": {
+      "input_token": "NextToken",
+      "output_token": "NextToken",
+      "limit_key": "MaxResults",
+      "result_key": "StandardsControlAssociationSummaries"
+    },
+    "GetFindingHistory": {
+      "input_token": "NextToken",
+      "output_token": "NextToken",
+      "limit_key": "MaxResults",
+      "result_key": "Records"
+    },
+    "ListConfigurationPolicies": {
+      "input_token": "NextToken",
+      "output_token": "NextToken",
+      "limit_key": "MaxResults",
+      "result_key": "ConfigurationPolicySummaries"
+    },
+    "ListConfigurationPolicyAssociations": {
+      "input_token": "NextToken",
+      "output_token": "NextToken",
+      "limit_key": "MaxResults",
+      "result_key": "ConfigurationPolicyAssociationSummaries"
     }
   }
 }

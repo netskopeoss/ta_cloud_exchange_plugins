@@ -15,7 +15,7 @@
 from binascii import crc32
 from struct import unpack
 
-from .exceptions import EventStreamError
+from botocore.exceptions import EventStreamError
 
 # byte length of the prelude (total_length + header_length + prelude_crc)
 _PRELUDE_LENGTH = 12
@@ -41,7 +41,7 @@ class InvalidHeadersLength(ParserError):
     """Headers length is longer than the maximum."""
 
     def __init__(self, length):
-        message = "Header length of {} exceeded the maximum of {}".format(
+        message = 'Header length of {} exceeded the maximum of {}'.format(
             length,
             _MAX_HEADERS_LENGTH,
         )
@@ -52,7 +52,7 @@ class InvalidPayloadLength(ParserError):
     """Payload length is longer than the maximum."""
 
     def __init__(self, length):
-        message = "Payload length of {} exceeded the maximum of {}".format(
+        message = 'Payload length of {} exceeded the maximum of {}'.format(
             length,
             _MAX_PAYLOAD_LENGTH,
         )
@@ -64,7 +64,7 @@ class ChecksumMismatch(ParserError):
 
     def __init__(self, expected, calculated):
         message = (
-            "Checksum mismatch: expected 0x{:08x}, calculated 0x{:08x}".format(
+            'Checksum mismatch: expected 0x{:08x}, calculated 0x{:08x}'.format(
                 expected,
                 calculated,
             )
@@ -80,7 +80,7 @@ class NoInitialResponseError(ParserError):
     """
 
     def __init__(self):
-        message = "First event was not of the initial-response type"
+        message = 'First event was not of the initial-response type'
         super().__init__(message)
 
 
@@ -92,14 +92,14 @@ class DecodeUtils:
     that value.
     """
 
-    UINT8_BYTE_FORMAT = "!B"
-    UINT16_BYTE_FORMAT = "!H"
-    UINT32_BYTE_FORMAT = "!I"
-    INT8_BYTE_FORMAT = "!b"
-    INT16_BYTE_FORMAT = "!h"
-    INT32_BYTE_FORMAT = "!i"
-    INT64_BYTE_FORMAT = "!q"
-    PRELUDE_BYTE_FORMAT = "!III"
+    UINT8_BYTE_FORMAT = '!B'
+    UINT16_BYTE_FORMAT = '!H'
+    UINT32_BYTE_FORMAT = '!I'
+    INT8_BYTE_FORMAT = '!b'
+    INT16_BYTE_FORMAT = '!h'
+    INT32_BYTE_FORMAT = '!i'
+    INT64_BYTE_FORMAT = '!q'
+    PRELUDE_BYTE_FORMAT = '!III'
 
     # uint byte size to unpack format
     UINT_BYTE_FORMAT = {
@@ -228,7 +228,7 @@ class DecodeUtils:
         :param data: The bytes to parse from.
 
         :type length_byte_size: int
-        :param length_byte_size: The byte size of the preceeding integer that
+        :param length_byte_size: The byte size of the preceding integer that
         represents the length of the array. Supported values are 1, 2, and 4.
 
         :rtype: (bytes, int)
@@ -254,7 +254,7 @@ class DecodeUtils:
         :param bytes: The bytes to parse from.
 
         :type length_byte_size: int
-        :param length_byte_size: The byte size of the preceeding integer that
+        :param length_byte_size: The byte size of the preceding integer that
         represents the length of the array. Supported values are 1, 2, and 4.
 
         :rtype: (str, int)
@@ -263,7 +263,7 @@ class DecodeUtils:
         array_bytes, consumed = DecodeUtils.unpack_byte_array(
             data, length_byte_size
         )
-        return array_bytes.decode("utf-8"), consumed
+        return array_bytes.decode('utf-8'), consumed
 
     @staticmethod
     def unpack_uuid(data):
@@ -352,13 +352,13 @@ class EventStreamMessage:
         self.crc = crc
 
     def to_response_dict(self, status_code=200):
-        message_type = self.headers.get(":message-type")
-        if message_type == "error" or message_type == "exception":
+        message_type = self.headers.get(':message-type')
+        if message_type == 'error' or message_type == 'exception':
             status_code = 400
         return {
-            "status_code": status_code,
-            "headers": self.headers,
-            "body": self.payload,
+            'status_code': status_code,
+            'headers': self.headers,
+            'body': self.payload,
         }
 
 
@@ -406,7 +406,7 @@ class EventStreamHeaderParser:
         event stream message.
 
         :rtype: dict
-        :returns: A dicionary of header key, value pairs.
+        :returns: A dictionary of header key, value pairs.
         """
         self._data = data
         return self._parse_headers()
@@ -454,7 +454,7 @@ class EventStreamBuffer:
     """
 
     def __init__(self):
-        self._data = b""
+        self._data = b''
         self._prelude = None
         self._header_parser = EventStreamHeaderParser()
 
@@ -613,7 +613,7 @@ class EventStream:
     def _parse_event(self, event):
         response_dict = event.to_response_dict()
         parsed_response = self._parser.parse(response_dict, self._output_shape)
-        if response_dict["status_code"] == 200:
+        if response_dict['status_code'] == 200:
             return parsed_response
         else:
             raise EventStreamError(parsed_response, self._operation_name)
@@ -621,8 +621,8 @@ class EventStream:
     def get_initial_response(self):
         try:
             initial_event = next(self._event_generator)
-            event_type = initial_event.headers.get(":event-type")
-            if event_type == "initial-response":
+            event_type = initial_event.headers.get(':event-type')
+            if event_type == 'initial-response':
                 return initial_event
         except StopIteration:
             pass

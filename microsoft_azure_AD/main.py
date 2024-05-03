@@ -34,13 +34,11 @@ URE Microsoft Azure AD Plugin.
 
 import datetime
 import json
-import os
-import time
 import traceback
 from typing import Dict, List, Optional
 
-import requests
-from netskope.common.utils import add_user_agent
+from pydantic import ValidationError
+
 from netskope.integrations.cre.models import (
     Action,
     ActionWithoutParams,
@@ -48,22 +46,17 @@ from netskope.integrations.cre.models import (
     RecordType,
 )
 from netskope.integrations.cre.plugin_base import PluginBase, ValidationResult
-from pydantic import ValidationError
 
-PAGE_SIZE = "999"
-PAGE_RECORD_SCORE = "500"
-BASE_URL = "https://graph.microsoft.com/v1.0"
-GROUP_TYPES = ["Security", "Microsoft 365"]
-PLATFORM_NAME = "Microsoft Azure AD"
-MODULE_NAME = "URE"
-PLUGIN_VERSION = "1.2.0"
-MAX_API_CALLS = 4
-
-
-class MicrosoftAzureADException(Exception):
-    """Microsoft Azure AD exception class."""
-
-    pass
+from .utils.constants import (
+    BASE_URL,
+    GROUP_TYPES,
+    MAX_GROUPS,
+    MODULE_NAME,
+    PAGE_RECORD_SCORE,
+    PLATFORM_NAME,
+    PLUGIN_VERSION,
+)
+from .utils.helper import MicrosoftAzureADException, MicrosoftAzureADPluginHelper
 
 
 class MicrosoftAzureADPlugin(PluginBase):
@@ -87,23 +80,24 @@ class MicrosoftAzureADPlugin(PluginBase):
         )
         self.plugin_name, self.plugin_version = self._get_plugin_info()
         self.log_prefix = f"{MODULE_NAME} {self.plugin_name} [{name}]"
+        self.azure_AD_helper = MicrosoftAzureADPluginHelper(
+            logger=self.logger,
+            log_prefix=self.log_prefix,
+            plugin_name=self.plugin_name,
+            plugin_version=self.plugin_version,
+        )
 
     def _get_plugin_info(self) -> tuple:
-        """Get plugin name and version from manifest.
+        """Get plugin name and version from metadata.
 
         Returns:
-            tuple: Tuple of plugin's name and version fetched from manifest.
+            tuple: Tuple of plugin's name and version fetched from metadata.
         """
         try:
-            file_path = os.path.join(
-                str(os.path.dirname(os.path.abspath(__file__))),
-                "manifest.json",
-            )
-            with open(file_path, "r") as manifest:
-                manifest_json = json.load(manifest)
-                plugin_name = manifest_json.get("name", PLATFORM_NAME)
-                plugin_version = manifest_json.get("version", PLUGIN_VERSION)
-                return (plugin_name, plugin_version)
+            metadata_json = MicrosoftAzureADPlugin.metadata
+            plugin_name = metadata_json.get("name", PLATFORM_NAME)
+            plugin_version = metadata_json.get("version", PLUGIN_VERSION)
+            return (plugin_name, plugin_version)
         except Exception as exp:
             self.logger.info(
                 message=(
@@ -116,29 +110,6 @@ class MicrosoftAzureADPlugin(PluginBase):
             )
         return (PLATFORM_NAME, PLUGIN_VERSION)
 
-    def _add_user_agent(self, header=None) -> Dict:
-        """Add User-Agent in the headers of any request.
-
-        Args:
-            header: Headers needed to pass to the Third Party Platform.
-
-        Returns:
-            Dict: Dictionary containing the User-Agent.
-        """
-        headers = add_user_agent(header=header)
-        ce_added_agent = headers.get("User-Agent", "netskope-ce")
-        headers.update(
-            {
-                "User-Agent": "{}-{}-{}-v{}".format(
-                    ce_added_agent,
-                    MODULE_NAME.lower(),
-                    self.plugin_name.lower().replace(" ", "_"),
-                    self.plugin_version,
-                ),
-            }
-        )
-        return headers
-
     def _add_to_group(self, user_info: dict, group_info: dict) -> None:
         """Add specified user to the specified group.
 
@@ -150,7 +121,8 @@ class MicrosoftAzureADPlugin(PluginBase):
             MicrosoftAzureADException: If any unexpected error occurred
             from API side
         """
-        headers = self.reload_auth_token(self.configuration)
+        logger_msg = "adding user(s) to the group"
+        headers = self.reload_auth_token(self.configuration, logger_msg)
         user_id, user_email = user_info.get("id"), user_info.get("email")
         group_id, group_name = group_info.get("id"), group_info.get(
             "displayName"
@@ -160,19 +132,18 @@ class MicrosoftAzureADPlugin(PluginBase):
             "named '{}' and ID '{}'".format(user_email, group_name, group_id)
         )
         self.logger.info(f"{self.log_prefix}: Adding {logger_msg}.")
-        headers["Content-Type"] = "application/json"
+        headers = self.get_headers(headers)
         url = f"{BASE_URL}/groups/{group_id}/members/$ref"
         data = {"@odata.id": f"{BASE_URL}/directoryObjects/{user_id}"}
 
-        response = self._api_helper(
-            lambda: requests.post(
-                url=url,
-                headers=self._add_user_agent(headers),
-                proxies=self.proxy,
-                verify=self.ssl_validation,
-                data=json.dumps(data),
-            ),
-            f"adding {logger_msg}",
+        response = self.azure_AD_helper.api_helper(
+            url=url,
+            method="POST",
+            headers=headers,
+            proxies=self.proxy,
+            verify=self.ssl_validation,
+            data=json.dumps(data),
+            logger_msg=f"adding {logger_msg}",
             is_handle_error_required=False,
         )
 
@@ -185,7 +156,7 @@ class MicrosoftAzureADPlugin(PluginBase):
             )
             return
         elif response.status_code == 400:
-            resp_json = self.parse_response(response=response)
+            resp_json = self.azure_AD_helper.parse_response(response=response)
             api_err_msg = resp_json.get(
                 "error", "No error details found in API response."
             )
@@ -201,7 +172,7 @@ class MicrosoftAzureADPlugin(PluginBase):
             )
             return
 
-        self.handle_error(
+        self.azure_AD_helper.handle_error(
             response, logger_msg
         )  # For capturing unexpected errors
 
@@ -216,7 +187,8 @@ class MicrosoftAzureADPlugin(PluginBase):
             MicrosoftAzureADException: If any unexpected error occurred
             from API side
         """
-        headers = self.reload_auth_token(self.configuration)
+        logger_msg = "removing user(s) from the group"
+        headers = self.reload_auth_token(self.configuration, logger_msg)
         user_id, user_email = user_info.get("id"), user_info.get("email")
 
         group_id, group_name = group_info.get("id"), group_info.get(
@@ -227,17 +199,16 @@ class MicrosoftAzureADPlugin(PluginBase):
             "and ID '{}'".format(user_email, group_name, group_id)
         )
         self.logger.info(f"{self.log_prefix}: Removing {logger_msg}.")
-        headers["Content-Type"] = "application/json"
+        headers = self.get_headers(headers)
         url = f"{BASE_URL}/groups/{group_id}/members/{user_id}/$ref"
 
-        response = self._api_helper(
-            lambda: requests.delete(
-                url=url,
-                headers=self._add_user_agent(headers),
-                proxies=self.proxy,
-                verify=self.ssl_validation,
-            ),
-            logger_msg,
+        response = self.azure_AD_helper.api_helper(
+            url=url,
+            method="DELETE",
+            headers=headers,
+            proxies=self.proxy,
+            verify=self.ssl_validation,
+            logger_msg=logger_msg,
             is_handle_error_required=False,
         )
 
@@ -250,7 +221,7 @@ class MicrosoftAzureADPlugin(PluginBase):
             return
 
         elif response.status_code == 404:
-            resp_json = self.parse_response(response=response)
+            resp_json = self.azure_AD_helper.parse_response(response=response)
             api_err_msg = resp_json.get(
                 "error", "No error details found in API response."
             )
@@ -265,7 +236,7 @@ class MicrosoftAzureADPlugin(PluginBase):
             self.logger.warn(err_msg)
             return
 
-        self.handle_error(
+        self.azure_AD_helper.handle_error(
             response, logger_msg
         )  # For capturing unexpected errors
 
@@ -317,20 +288,20 @@ class MicrosoftAzureADPlugin(PluginBase):
                 }
             )
         url = f"{BASE_URL}/groups"
-        headers = self.reload_auth_token(self.configuration)
-        headers["Content-Type"] = "application/json"
+        logger_msg = "creating a group"
+        headers = self.reload_auth_token(self.configuration, logger_msg)
+        headers = self.get_headers(headers)
         logger_msg = "creating new group named '{}' on {}".format(
             group_name, PLATFORM_NAME
         )
-        response = self._api_helper(
-            lambda: requests.post(
-                url=url,
-                headers=self._add_user_agent(headers),
-                proxies=self.proxy,
-                verify=self.ssl_validation,
-                data=json.dumps(body),
-            ),
-            logger_msg,
+        response = self.azure_AD_helper.api_helper(
+            url=url,
+            method="POST",
+            headers=headers,
+            proxies=self.proxy,
+            verify=self.ssl_validation,
+            data=json.dumps(body),
+            logger_msg=logger_msg,
             is_handle_error_required=False,
         )
 
@@ -341,14 +312,14 @@ class MicrosoftAzureADPlugin(PluginBase):
                     self.log_prefix, group_name, group_type, PLATFORM_NAME
                 )
             )
-            response_json = self.parse_response(response=response)
+            response_json = self.azure_AD_helper.parse_response(response=response)
             return {
                 "id": response_json.get("id"),  # Group ID
                 "displayName": response_json.get("displayName"),  # Group Name
             }
 
         elif response.status_code == 400:
-            resp_json = self.parse_response(response=response)
+            resp_json = self.azure_AD_helper.parse_response(response=response)
             err_msg = (
                 "Unable to create group named '{}' on "
                 "{} platform.".format(group_name, PLATFORM_NAME)
@@ -363,74 +334,85 @@ class MicrosoftAzureADPlugin(PluginBase):
             )
             raise MicrosoftAzureADException(err_msg)
 
-        return self.handle_error(
+        return self.azure_AD_helper.handle_error(
             response, logger_msg
         )  # For capturing any unexpected error.
 
     def _get_all_groups(self) -> List:
-        """Gets all group details.
+        """Get all group details.
 
         Returns:
             total_group_name_array (list): List of groups.
         """
-        url = f"{BASE_URL}/groups"
-        headers = self.reload_auth_token(self.configuration)
-        headers["Content-Type"] = "application/json"
+        url = f"{BASE_URL}/groups?$filter=not groupTypes/any(s:s eq 'DynamicMembership')"  # noqa
 
         params = {
-            "$top": PAGE_RECORD_SCORE,
+            "$top": MAX_GROUPS,
             "$orderby": "displayName",  # To get data in sorted order.
             "$select": "id,displayName,groupTypes",
             # We need only id,displayName and groupTypes hence
             # getting those fields only from API.
+            "$count": "true",  # To enable advance query on Azure AD.
         }
         # all the group names will be added in this variable.
         total_group_name_array = []
+        logger_msg = "fetching all groups"
 
         while True:
-            resp_json = self._api_helper(
-                lambda: requests.get(
-                    url,
-                    headers=self._add_user_agent(headers),
-                    params=params,
-                    proxies=self.proxy,
-                    verify=self.ssl_validation,
-                ),
-                f"fetching groups from {PLATFORM_NAME}",
+            headers = self.reload_auth_token(self.configuration, logger_msg)
+            headers = self.get_headers(headers)
+            headers["ConsistencyLevel"] = (
+                "eventual"  # Enable advance query on Azure AD.
             )
+            resp_json = self.azure_AD_helper.api_helper(
+                url=url,
+                method="GET",
+                headers=headers,
+                params=params,
+                proxies=self.proxy,
+                verify=self.ssl_validation,
+                logger_msg=f"fetching groups from {PLATFORM_NAME}",
+            )
+
             # stores the number of groups in that particular pagination query
             current_group_array = resp_json.get("value", [])
-            total_group_name_array.extend(
-                [
-                    {
-                        "id": each_group.get("id"),
-                        # Note: displayName is the actual group
-                        # name shown in UI of Microsoft Azure AD
-                        "displayName": each_group.get("displayName"),
-                        # Note: display_name is the field we'll be using
-                        # to show group name in URE action configuration
-                        # E.g. If Security Group is there then group will be
-                        # displayed as "Group Name (Security)". Similarly for
-                        # Microsoft 365 group name will be
-                        # "Group Name (Microsoft 365)"
-                        "display_name": "{} (Security)".format(
-                            each_group.get("displayName")
-                        )
-                        if not each_group.get("groupTypes")
-                        else "{} (Microsoft 365)".format(
-                            each_group.get("displayName")
-                        ),
-                        "group_type": "Security"
-                        if not each_group.get("groupTypes")
-                        else "Microsoft 365",
-                    }
-                    for each_group in current_group_array
-                ]
-            )
+            for each_group in current_group_array:
+                if each_group.get("membershipRule"):
+                    # Skip all the dynamic groups.
+                    continue
+                group_type = each_group.get("groupTypes", [])
+
+                if (
+                    not group_type
+                    and not each_group.get("mailEnabled", False)
+                    and each_group.get("securityEnabled", True)
+                ):
+                    display_name = each_group.get("displayName")
+                    total_group_name_array.append(
+                        {
+                            "id": each_group.get("id"),
+                            "displayName": display_name,
+                            "group_type": "Security",
+                            "display_name": f"{display_name} (Security)",
+                        }
+                    )
+                    continue
+                elif "Unified" in group_type:
+                    display_name = each_group.get("displayName")
+                    total_group_name_array.append(
+                        {
+                            "id": each_group.get("id"),
+                            "displayName": display_name,
+                            "group_type": "Microsoft 365",
+                            "display_name": f"{display_name} (Microsoft 365)",
+                        }
+                    )
+                else:
+                    continue
 
             # if number of groups is less than page size, we know that
             # this is the last page of the request. Hence, we break
-            if len(current_group_array) < int(PAGE_SIZE):
+            if len(current_group_array) < MAX_GROUPS:
                 break
             # likewise this is another check for last page
             # Microsoft graph won't provide nextLink of page
@@ -439,6 +421,7 @@ class MicrosoftAzureADPlugin(PluginBase):
                 break
 
             url = resp_json.get("@odata.nextLink")  # For pagination
+            params = {}  # Reset params for next page
 
         return total_group_name_array
 
@@ -477,30 +460,31 @@ class MicrosoftAzureADPlugin(PluginBase):
         """
         url = f"{BASE_URL}/users/{email}"
         # Reload token for authentication.
-        headers = self.reload_auth_token(self.configuration)
-        headers["Content-Type"] = "application/json"
+        logger_msg = "getting user id from email"
+        headers = self.reload_auth_token(self.configuration, logger_msg)
+        headers = self.get_headers(headers)
         logger_msg = (
             "fetching user details for user with email {} from {}".format(
                 email, PLATFORM_NAME
             )
         )
-        response = self._api_helper(
-            lambda: requests.get(
-                url,
-                headers=self._add_user_agent(headers),
-                proxies=self.proxy,
-                verify=self.ssl_validation,
-            ),
-            logger_msg,
+        response = self.azure_AD_helper.api_helper(
+            url=url,
+            method="GET",
+            headers=headers,
+            proxies=self.proxy,
+            verify=self.ssl_validation,
+            logger_msg=logger_msg,
             is_handle_error_required=False,
         )
+
         if response.status_code == 200:
-            resp_json = self.parse_response(response=response)
+            resp_json = self.azure_AD_helper.parse_response(response=response)
             # Return email address and user id from response.
             return {"email": email, "id": resp_json.get("id")}
 
         elif response.status_code == 404:
-            resp_json = self.parse_response(response=response)
+            resp_json = self.azure_AD_helper.parse_response(response=response)
             api_err_msg = resp_json.get(
                 "error", "No error details found in API response."
             )
@@ -515,7 +499,7 @@ class MicrosoftAzureADPlugin(PluginBase):
             )
             raise MicrosoftAzureADException(err_msg)
 
-        self.handle_error(
+        self.azure_AD_helper.handle_error(
             response, logger_msg
         )  # For capturing unexpected errors
 
@@ -553,24 +537,25 @@ class MicrosoftAzureADPlugin(PluginBase):
         user_email = user_info.get("email")
         url = f"{BASE_URL}/identityProtection/riskyUsers/confirmCompromised"
 
-        headers = self.reload_auth_token(self.configuration)
-        headers["Content-Type"] = "application/json"
+        logger_msg = "performing Confirm Compromised action"
+        headers = self.reload_auth_token(self.configuration, logger_msg)
+        headers = self.get_headers(headers)
         data = {"userIds": [user_id]}
         logger_msg = (
             "performing Confirm compromised action on user "
             "with email '{}'".format(user_email)
         )
-        response = self._api_helper(
-            lambda: requests.post(
-                url=url,
-                headers=self._add_user_agent(headers),
-                data=json.dumps(data),
-                proxies=self.proxy,
-                verify=self.ssl_validation,
-            ),
-            logger_msg,
+        response = self.azure_AD_helper.api_helper(
+            url=url,
+            method="POST",
+            headers=headers,
+            data=json.dumps(data),
+            proxies=self.proxy,
+            verify=self.ssl_validation,
+            logger_msg=logger_msg,
             is_handle_error_required=False,
         )
+
         if response.status_code == 204:
             self.logger.info(
                 f"{self.log_prefix}: Successfully performed Confirm "
@@ -578,7 +563,7 @@ class MicrosoftAzureADPlugin(PluginBase):
             )
             return
 
-        self.handle_error(
+        self.azure_AD_helper.handle_error(
             response, logger_msg
         )  # For capturing unexpected errors
 
@@ -720,9 +705,9 @@ class MicrosoftAzureADPlugin(PluginBase):
                         for g in groups
                     ]
                     + [{"key": "Create new group", "value": new_group_dict}],
-                    "default": json.dumps(groups[0])
-                    if groups
-                    else new_group_dict,
+                    "default": (
+                        json.dumps(groups[0]) if groups else new_group_dict
+                    ),
                     "mandatory": True,
                     "description": "Select a group to add the user to.",
                 },
@@ -762,9 +747,11 @@ class MicrosoftAzureADPlugin(PluginBase):
                         {"key": g.get("display_name"), "value": json.dumps(g)}
                         for g in groups
                     ],
-                    "default": json.dumps(groups[0])
-                    if groups
-                    else f"No groups found on {PLATFORM_NAME} platform.",
+                    "default": (
+                        json.dumps(groups[0])
+                        if groups
+                        else f"No groups found on {PLATFORM_NAME} platform."
+                    ),
                     "mandatory": True,
                     "description": (
                         "Select group(s) from which the user"
@@ -877,8 +864,8 @@ class MicrosoftAzureADPlugin(PluginBase):
             )
             raise MicrosoftAzureADException(traceback.format_exc())
 
-    def get_auth_json(self, configuration):
-        """Get the OAUTH2 Json object with access token from
+    def get_auth_json(self, configuration, log_msg):
+        """Get the OAUTH2 Json object with access token from \
             Microsoft Azure AD platform.
 
         Args:
@@ -911,21 +898,19 @@ class MicrosoftAzureADPlugin(PluginBase):
             "client_secret": client_secret,
             "resource": "https://graph.microsoft.com",
         }
-        logger_msg = "validating auth credentials"
-        resp = self._api_helper(
-            lambda: requests.get(
-                auth_endpoint,
-                data=auth_params,
-                proxies=self.proxy,
-                verify=self.ssl_validation,
-                headers=self._add_user_agent(),
-            ),
-            logger_msg,
+        logger_msg = log_msg
+        resp = self.azure_AD_helper.api_helper(
+            url=auth_endpoint,
+            method="GET",
+            data=auth_params,
+            proxies=self.proxy,
+            verify=self.ssl_validation,
+            logger_msg=logger_msg,
             is_handle_error_required=False,
         )
 
         if resp.status_code == 400:
-            resp_json = self.parse_response(response=resp)
+            resp_json = self.azure_AD_helper.parse_response(response=resp)
             err_msg = (
                 "Received exit code 400. Invalid Request. Verify Client "
                 "(Application) ID and Tenant ID provided in "
@@ -941,7 +926,7 @@ class MicrosoftAzureADPlugin(PluginBase):
                 "Received exit code 401. Verify Client Secret provided"
                 " in configuration parameters."
             )
-            resp_json = self.parse_response(response=resp)
+            resp_json = self.azure_AD_helper.parse_response(response=resp)
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg}",
                 details=str(resp_json),
@@ -953,7 +938,7 @@ class MicrosoftAzureADPlugin(PluginBase):
                 "Tenant ID provided in configuration parameters."
             )
             try:
-                resp_json = self.parse_response(response=resp)
+                resp_json = self.azure_AD_helper.parse_response(response=resp)
                 self.logger.error(
                     message=f"{self.log_prefix}: {err_msg}",
                     details=str(resp_json),
@@ -967,7 +952,7 @@ class MicrosoftAzureADPlugin(PluginBase):
                 raise MicrosoftAzureADException(err_msg)
 
         # Check for other possible errors
-        auth_json = self.handle_error(resp, logger_msg)
+        auth_json = self.azure_AD_helper.handle_error(resp, logger_msg)
         if self.storage is not None:
             # The logic of adding time is necessary so we can use
             # the same token for 30 mins. We store in storage with
@@ -977,17 +962,24 @@ class MicrosoftAzureADPlugin(PluginBase):
             ] = datetime.datetime.now() + datetime.timedelta(
                 seconds=int(auth_json.get("expires_in", 1799))
             )
-
         auth_token = auth_json.get("access_token")
+        if not auth_token:
+            err_msg = (
+                "Access token is not found in the response. "
+                "Verify the provided configuration parameters."
+            )
+            self.logger.error(
+                    message=f"{self.log_prefix}: {err_msg}",
+                    details=traceback.format_exc(),
+                )
+            raise MicrosoftAzureADException(err_msg)
         # We store the headers in configuration. This is important
         # because we can access the token header simply via self
         # Methods we created will demand configuration in method arguments
         headers = {"Authorization": f"Bearer {auth_token}"}
         self.configuration["headers"] = headers
 
-        return auth_json
-
-    def reload_auth_token(self, configuration: dict) -> dict:
+    def reload_auth_token(self, configuration: dict, log_msg: str) -> dict:
         """Reload Auth Token.
 
         Args:
@@ -999,9 +991,9 @@ class MicrosoftAzureADPlugin(PluginBase):
         headers = self.configuration.get("headers", None)
         if headers is None:
             # create a token
-            auth_json = self.get_auth_json(configuration)
-            auth_token = auth_json.get("access_token")
-            headers = {"Authorization": f"Bearer {auth_token}"}
+            log_msg = f"generating token while {log_msg}"
+            self.get_auth_json(configuration, log_msg)
+            headers = self.configuration.get("headers")
             return headers
 
         elif self.storage is not None:
@@ -1010,19 +1002,32 @@ class MicrosoftAzureADPlugin(PluginBase):
                     "token_expiry",
                     datetime.datetime.now() - datetime.timedelta(minutes=1),
                 )
-                < datetime.datetime.now()
+                < (datetime.datetime.now() + datetime.timedelta(seconds=5))
             ):
                 # Reload token
                 self.logger.info(
                     f"{self.log_prefix}: OAUTH2 token expired. "
                     "Generating a new token."
                 )
-                auth_json = self.get_auth_json(configuration)
-                auth_token = auth_json.get("access_token")
-                headers = {"Authorization": f"Bearer {auth_token}"}
+                log_msg = f"token expired while {log_msg}. Generating a new token"
+                self.get_auth_json(configuration, log_msg)
+                headers = self.configuration.get("headers")
             return headers
         else:
             return headers
+
+    def get_headers(self, headers):
+        """Get headers with additional fields.
+
+        Args:
+            headers (dict): Request headers
+
+        Returns:
+            headers: headers with additional fields.
+        """
+        headers["Content-Type"] = "application/json"
+        headers["Accept"] = "*/*"
+        return headers
 
     def validate(self, configuration):
         """Validate the Plugin configuration parameters.
@@ -1038,10 +1043,9 @@ class MicrosoftAzureADPlugin(PluginBase):
             ValidateResult: ValidateResult object with success flag and
                             message.
         """
-        if (
-            "client_id" not in configuration
-            or not str(configuration.get("client_id", "")).strip()
-        ):
+        # Validate client_id
+        client_id = configuration.get("client_id", "").strip()
+        if not client_id:
             err_msg = "Client (Application) ID is a required field."
             self.logger.error(
                 "{}: Validation error occurred. Error: {}".format(
@@ -1053,14 +1057,14 @@ class MicrosoftAzureADPlugin(PluginBase):
                 message=err_msg,
             )
 
-        elif not isinstance(configuration.get("client_id"), str):
+        elif not isinstance(client_id, str):
             err_msg = "Invalid Client (Application) ID value provided."
             self.logger.error(f"{self.log_prefix}: {err_msg}")
             return ValidationResult(success=False, message=err_msg)
 
-        if "client_secret" not in configuration or not str(
-            configuration.get("client_secret", "")
-        ):
+        # Validate client_secret
+        client_secret = configuration.get("client_secret", "")
+        if not client_secret:
             err_msg = "Client Secret is a required field."
             self.logger.error(
                 "{}: Validation error occurred. Error: {}".format(
@@ -1072,7 +1076,7 @@ class MicrosoftAzureADPlugin(PluginBase):
                 message=err_msg,
             )
 
-        elif not isinstance(configuration.get("client_secret"), str):
+        elif not isinstance(client_secret, str):
             err_msg = "Invalid Client Secret value provided."
             self.logger.error(
                 "{}: Validation error occurred. Error: {}".format(
@@ -1081,10 +1085,9 @@ class MicrosoftAzureADPlugin(PluginBase):
             )
             return ValidationResult(success=False, message=err_msg)
 
-        if (
-            "tenant_id" not in configuration
-            or not str(configuration.get("tenant_id", "")).strip()
-        ):
+        # Validate tenant_id
+        tenant_id = configuration.get("tenant_id")
+        if not tenant_id:
             err_msg = "Tenant ID is a required field."
             self.logger.error(
                 "{}: Validation error occurred. Error: {}".format(
@@ -1096,7 +1099,7 @@ class MicrosoftAzureADPlugin(PluginBase):
                 message=err_msg,
             )
 
-        elif not isinstance(configuration.get("tenant_id"), str):
+        elif not isinstance(tenant_id, str):
             err_msg = "Invalid Tenant ID value provided."
             self.logger.error(
                 "{}: Validation error occurred. Error: {}".format(
@@ -1135,39 +1138,6 @@ class MicrosoftAzureADPlugin(PluginBase):
                 ),
             )
 
-        except requests.exceptions.ProxyError as err:
-            err_msg = "Invalid proxy configuration."
-            self.logger.error(
-                message=(f"{self.log_prefix}: {err_msg} Error: {err}"),
-                details=traceback.format_exc(),
-            )
-            return ValidationResult(
-                success=False,
-                message=err_msg,
-            )
-
-        except requests.exceptions.ConnectionError as err:
-            err_msg = (
-                "Unable to establish connection with {} platform API.".format(
-                    PLATFORM_NAME
-                )
-            )
-            self.logger.error(
-                message=(f"{self.log_prefix}: {err_msg} Error: {err}"),
-                details=traceback.format_exc(),
-            )
-            return ValidationResult(
-                success=False,
-                message=err_msg,
-            )
-
-        except requests.HTTPError as err:
-            err_msg = "HTTP Error occurred while validating credentials."
-            self.logger.error(
-                message=f"{self.log_prefix}: {err_msg} Error: {err}",
-                details=traceback.format_exc(),
-            )
-
         except MicrosoftAzureADException as exp:
             self.logger.error(
                 message="{}: Validation error occurred. Error: {}".format(
@@ -1202,23 +1172,22 @@ class MicrosoftAzureADPlugin(PluginBase):
         Returns:
             Raise error if valid base url is not selected.
         """
-        auth_json = self.get_auth_json(configuration)
-        auth_token = auth_json.get("access_token")
-
-        headers = {"Authorization": f"Bearer {auth_token}"}
+        log_msg = "validating auth credentials"
+        self.get_auth_json(configuration, log_msg)
+        headers = self.configuration.get("headers")
 
         # get the top 1 user from Microsoft Graph for checking
         # whether we are connected to the API
         query_endpoint = f"{BASE_URL}/identityProtection/riskyUsers?$top=1"
 
-        self._api_helper(
-            lambda: requests.get(
-                query_endpoint,
-                headers=self._add_user_agent(headers),
-                proxies=self.proxy,
-                verify=self.ssl_validation,
-            ),
-            "validating authentication credentials",
+        self.azure_AD_helper.api_helper(
+            url=query_endpoint,
+            method="GET",
+            headers=headers,
+            proxies=self.proxy,
+            verify=self.ssl_validation,
+            logger_msg="validating authentication credentials",
+            is_validation=True,
         )
 
     def fetch_records(self) -> List[Record]:
@@ -1227,63 +1196,92 @@ class MicrosoftAzureADPlugin(PluginBase):
         Returns:
             List[Record]: List of records to be stored on the platform.
         """
+        self.logger.info(
+            f"{self.log_prefix}: Fetching records from "
+            f"{PLATFORM_NAME} platform."
+        )
         url = (
             f"{BASE_URL}/identityProtection/riskyUsers?$top="
             + PAGE_RECORD_SCORE
         )
 
-        headers = self.reload_auth_token(self.configuration)
-        headers["Content-Type"] = "application/json"
-
+        logger_msg = "fetching records"
         total_records = []
+        page_count = 1
 
         while True:
-            resp_json = self._api_helper(
-                lambda: requests.get(
-                    url,
-                    headers=self._add_user_agent(headers),
+            try:
+                headers = self.reload_auth_token(self.configuration, logger_msg)
+                headers = self.get_headers(headers)
+                self.logger.info(
+                    f"{self.log_prefix}: Fetching users for page {page_count}"
+                    f" from {PLATFORM_NAME} platform."
+                )
+                resp_json = self.azure_AD_helper.api_helper(
+                    url=url,
+                    method="GET",
+                    headers=headers,
                     proxies=self.proxy,
                     verify=self.ssl_validation,
-                ),
-                f"fetching user(s) from {PLATFORM_NAME}",
-            )
-            current_user_list = resp_json.get("value")
-            current_user_count = len(current_user_list)
+                    logger_msg=f"fetching user(s) for page {page_count} from {PLATFORM_NAME}",  # noqa
+                )
 
-            # We get all the user id and store it in total user id list
-            for each_user in current_user_list:
-                try:
-                    currRecord = Record(
-                        uid=each_user.get(
-                            "userPrincipalName",
-                        ),
-                        type=RecordType.USER,
-                        score=None,
-                    )
-                    total_records.append(currRecord)
-                except ValidationError as err:
-                    self.logger.error(
-                        message="{}: Skipping user with id {}.".format(
-                            self.log_prefix,
-                            each_user.get("id", "User ID Not Found."),
-                        ),
-                        details="Error Details: {}. \nRecord Data: {}".format(
-                            err, each_user
-                        ),
-                    )
+                current_user_list = resp_json.get("value")
+                current_user_count = len(current_user_list)
 
-            # if number of groups is less than page size, we know that
-            # this is the last page of the request. Hence, we break
-            if current_user_count < int(PAGE_RECORD_SCORE):
-                break
-            # likewise this is another check for last page
-            # Microsoft graph won't provide nextLink of page
-            # Hence, we break
-            if "@odata.nextLink" not in resp_json.keys():
-                break
+                # We get all the user id and store it in total user id list
+                for each_user in current_user_list:
+                    try:
+                        currRecord = Record(
+                            uid=each_user.get(
+                                "userPrincipalName",
+                            ),
+                            type=RecordType.USER,
+                            score=None,
+                        )
+                        total_records.append(currRecord)
+                    except ValidationError as err:
+                        self.logger.error(
+                            message="{}: Skipping user with id {}.".format(
+                                self.log_prefix,
+                                each_user.get("id", "User ID Not Found."),
+                            ),
+                            details="Error Details: {}. \nRecord Data: {}".format(
+                                err, each_user
+                            ),
+                        )
+                self.logger.info(
+                    f"{self.log_prefix}: Successfully fetched "
+                    f"{current_user_count} user(s) in page {page_count}."
+                    f" Total user(s) fetched: {len(total_records)}."
+                )
+                page_count += 1
+                # if number of groups is less than page size, we know that
+                # this is the last page of the request. Hence, we break
+                if current_user_count < int(PAGE_RECORD_SCORE):
+                    break
+                # likewise this is another check for last page
+                # Microsoft graph won't provide nextLink of page
+                # Hence, we break
+                if "@odata.nextLink" not in resp_json.keys():
+                    break
 
-            url = resp_json.get("@odata.nextLink")
-
+                url = resp_json.get("@odata.nextLink")
+            except MicrosoftAzureADException:
+                raise
+            except Exception as exp:
+                self.logger.error(
+                    message=(
+                        f"{self.log_prefix}: Unexpected error occurred "
+                        f"while fetching users from {PLATFORM_NAME} "
+                        f"platform. Error: {exp}"
+                    ),
+                    details=str(traceback.format_exc()),
+                )
+        self.logger.info(
+            f"{self.log_prefix}: Successfully fetched {len(total_records)}"
+            f" user(s) from {PLATFORM_NAME} platform."
+        )
         return total_records
 
     def fetch_scores(self, records: List[Record]) -> List[Record]:
@@ -1295,49 +1293,76 @@ class MicrosoftAzureADPlugin(PluginBase):
         Returns:
             List: List of users with scores assigned.
         """
+        self.logger.info(
+            f"{self.log_prefix}: Fetching score(s) for {len(records)}"
+            f" record(s) from {PLATFORM_NAME} platform."
+        )
         url = (
             f"{BASE_URL}/identityProtection/riskyUsers?$top="
             + PAGE_RECORD_SCORE
         )
-        headers = self.reload_auth_token(self.configuration)
-        headers["Content-Type"] = "application/json"
 
+        logger_msg = "fetching scores"
         score_users = {}
         total_scores = []
+        page_count = 1
 
         while True:
-            resp_json = self._api_helper(
-                lambda: requests.get(
-                    url,
-                    headers=self._add_user_agent(headers),
+            try:
+                headers = self.reload_auth_token(self.configuration, logger_msg)
+                headers = self.get_headers(headers)
+                self.logger.debug(
+                    f"{self.log_prefix}: Fetching scores for users in page {page_count}"
+                    f" from {PLATFORM_NAME} platform."
+                )
+                resp_json = self.azure_AD_helper.api_helper(
+                    url=url,
+                    method="GET",
+                    headers=headers,
                     proxies=self.proxy,
                     verify=self.ssl_validation,
-                ),
-                f"fetching scores for users from {PLATFORM_NAME}",
-            )
+                    logger_msg=f"fetching scores for users from {PLATFORM_NAME}",
+                )
 
-            current_user_list = resp_json.get("value")
-            current_user_count = len(current_user_list)
+                current_user_list = resp_json.get("value")
+                current_user_count = len(current_user_list)
 
-            record_uid_list = []
+                record_uid_list = []
 
-            # store just emails in an array
-            for record in records:
-                record_uid_list.append(record.uid)
+                # store just emails in an array
+                for record in records:
+                    record_uid_list.append(record.uid)
 
-            for each_user in current_user_list:
-                current_uid = each_user.get("userPrincipalName")
-                if current_uid in record_uid_list:
-                    current_score = each_user.get("riskLevel")
-                    # store email as key and score as value
-                    score_users[current_uid] = current_score
+                for each_user in current_user_list:
+                    current_uid = each_user.get("userPrincipalName")
+                    if current_uid in record_uid_list:
+                        current_score = each_user.get("riskLevel")
+                        # store email as key and score as value
+                        score_users[current_uid] = current_score
 
-            if current_user_count < int(PAGE_RECORD_SCORE):
-                break
-            if "@odata.nextLink" not in resp_json.keys():
-                break
+                self.logger.debug(
+                        f"{self.log_prefix}: Successfully fetched scores for "
+                        f"{current_user_count} user(s) in page {page_count}."
+                        f" Total score(s) fetched: {len(score_users)}."
+                    )
+                page_count += 1
+                if current_user_count < int(PAGE_RECORD_SCORE):
+                    break
+                if "@odata.nextLink" not in resp_json.keys():
+                    break
 
-            url = resp_json.get("@odata.nextLink")
+                url = resp_json.get("@odata.nextLink")
+            except MicrosoftAzureADException:
+                raise
+            except Exception as exp:
+                self.logger.error(
+                    message=(
+                        f"{self.log_prefix}: Unexpected error occurred "
+                        f"while fetching scores from {PLATFORM_NAME} "
+                        f"platform. Error: {exp}"
+                    ),
+                    details=str(traceback.format_exc()),
+                )
 
         if score_users:
             for key, value in score_users.items():
@@ -1370,193 +1395,8 @@ class MicrosoftAzureADPlugin(PluginBase):
                         },
                         details=f"Error details: {error}",
                     )
-
+        self.logger.info(
+            f"{self.log_prefix}: Successfully fetched score(s) for "
+            f"{len(total_scores)} record(s) from {PLATFORM_NAME} platform."
+        )
         return total_scores
-
-    def parse_response(self, response):
-        """Parse Response will return JSON from response object.
-
-        Args:
-            response (response): Response object.
-
-        Returns:
-            json: Response Json.
-        """
-        try:
-            return response.json()
-        except json.JSONDecodeError as err:
-            err_msg = f"Invalid JSON response received from API. Error: {err}"
-            self.logger.error(f"{self.log_prefix}: {err_msg}")
-            raise MicrosoftAzureADException(err_msg)
-        except Exception as exp:
-            err_msg = (
-                "Unexpected error occurred while parsing"
-                " json response. Error: {}".format(exp)
-            )
-            self.logger.error(
-                message=f"{self.log_prefix}: {err_msg}",
-                details=traceback.format_exc(),
-            )
-            raise MicrosoftAzureADException(err_msg)
-
-    def handle_error(
-        self, resp: requests.models.Response, logger_msg: str
-    ) -> Dict:
-        """Handle the different HTTP response code.
-
-        Args:
-            resp (requests.models.Response): Response object returned
-                from API call.
-            logger_msg
-        Returns:
-            dict: Returns the dictionary of response JSON when the
-                response code is 200.
-        Raises:
-            MicrosoftAzureADException: When the response code is
-            not 200,201 and 204.
-        """
-        if resp.status_code in [200, 201]:
-            return self.parse_response(response=resp)
-        elif resp.status_code == 204:
-            return {}
-        elif resp.status_code == 403:
-            err_msg = (
-                "Received exit code 403, Forbidden user while {}.".format(
-                    logger_msg
-                )
-            )
-            resp_json = self.parse_response(response=resp)
-            self.logger.error(
-                message=f"{self.log_prefix}: {err_msg}",
-                details=str(resp_json),
-            )
-            raise MicrosoftAzureADException(err_msg)
-        elif resp.status_code >= 400 and resp.status_code < 500:
-            err_msg = (
-                "Received exit code {}, HTTP client error while {}.".format(
-                    resp.status_code, logger_msg
-                )
-            )
-            resp_json = self.parse_response(response=resp)
-            self.logger.error(
-                message=f"{self.log_prefix}: {err_msg}",
-                details=str(resp_json),
-            )
-            raise MicrosoftAzureADException(err_msg)
-        elif resp.status_code >= 500 and resp.status_code < 600:
-            err_msg = (
-                f"Received exit code {resp.status_code}. HTTP Server Error."
-            )
-            resp_json = self.parse_response(response=resp)
-            self.logger.error(
-                message=f"{self.log_prefix}: {err_msg}",
-                details=str(resp_json),
-            )
-            raise MicrosoftAzureADException(err_msg)
-        else:
-            err_msg = f"Received exit code {resp.status_code}. HTTP Error."
-            self.logger.error(f"{self.log_prefix}: {err_msg}")
-            raise MicrosoftAzureADException(err_msg)
-
-    def _api_helper(
-        self, request, logger_msg: str, is_handle_error_required=True
-    ):
-        """API Helper perform API request to ThirdParty platform
-        and captures all the possible errors for requests.
-
-        Args:
-            request (request): Requests object.
-            logger_msg (str): Logger string.
-            is_handle_error_required (bool, optional): Is handling status
-            code is required?. Defaults to True.
-
-        Returns:
-            dict: Response dictionary.
-        """
-        try:
-            retry_counter = 0
-            for _ in range(MAX_API_CALLS):
-                response = request()
-                if response.status_code == 429:
-                    resp_json = self.parse_response(response=response)
-                    api_err_msg = str(
-                        resp_json.get(
-                            "error",
-                            "No error details found in API response.",
-                        )
-                    )
-                    if retry_counter == 3:
-                        err_msg = (
-                            "Received exit code 429, API rate limit "
-                            "exceeded while {}. Max retries for rate limit "
-                            "handler exceeded hence returning status"
-                            " code 429.".format(logger_msg)
-                        )
-                        self.logger.error(
-                            message=f"{self.log_prefix}: {err_msg}",
-                            details=api_err_msg,
-                        )
-                        raise MicrosoftAzureADException(err_msg)
-                    retry_after = int(response.headers.get("Retry-After", 60))
-                    retry_counter += 1
-                    self.logger.error(
-                        message=(
-                            "{}: Received exit code 429, API rate limit"
-                            " exceeded while {}. Retrying after {} "
-                            "seconds. {} retries remaining.".format(
-                                self.log_prefix,
-                                logger_msg,
-                                retry_after,
-                                3 - retry_counter,
-                            )
-                        ),
-                        details=api_err_msg,
-                    )
-                    if retry_after > 300:
-                        err_msg = (
-                            "'Retry-After' value received from response "
-                            "headers while {} is greater than 5 minutes hence"
-                            " returning status code 429.".format(logger_msg)
-                        )
-                        self.logger.error(f"{self.log_prefix}: {err_msg}")
-                        raise MicrosoftAzureADException(err_msg)
-                    time.sleep(retry_after)
-                    continue
-                else:
-                    return (
-                        self.handle_error(response, logger_msg)
-                        if is_handle_error_required
-                        else response
-                    )
-        except requests.exceptions.ProxyError as error:
-            err_msg = "Invalid proxy configuration provided."
-            self.logger.error(
-                message=f"{self.log_prefix}: {err_msg} Error: {error}",
-                details=traceback.format_exc(),
-            )
-            raise MicrosoftAzureADException(err_msg)
-
-        except requests.exceptions.ConnectionError as error:
-            err_msg = (
-                "Unable to establish connection with {} "
-                "platform. Proxy server or {}"
-                " is not reachable. Error: {}".format(
-                    PLATFORM_NAME, PLATFORM_NAME, error
-                )
-            )
-            self.logger.error(
-                message=f"{self.log_prefix}: {err_msg}",
-                details=traceback.format_exc(),
-            )
-            raise MicrosoftAzureADException(err_msg)
-
-        except Exception as exp:
-            err_msg = (
-                "Error occurred while requesting "
-                "to {} server. Error: {}".format(PLATFORM_NAME, exp)
-            )
-            self.logger.error(
-                message=f"{self.log_prefix}: {err_msg}",
-                details=traceback.format_exc(),
-            )
-            raise MicrosoftAzureADException(err_msg)

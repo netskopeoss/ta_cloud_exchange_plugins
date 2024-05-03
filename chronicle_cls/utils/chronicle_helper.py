@@ -30,9 +30,10 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
 
-"""Chronicle Plugin Helper."""
+"""CLS Google Chronicle Plugin Helper."""
 
 
+import sys
 from jsonschema import validate
 
 from .chronicle_exceptions import (
@@ -240,3 +241,33 @@ def extract_subtypes(mappings, data_type):
     """
     taxonomy = mappings["taxonomy"][data_type]
     return [subtype for subtype in taxonomy]
+
+
+def split_into_size(data_list):
+    """
+    Split a list into parts, each approximately with a target size in MB.
+
+    Parameters:
+    - data_list: The list of data to be split.
+
+    Returns:
+    A list of parts, each with a total size approximately equal to the target size.
+    """
+    result = []
+    current_part = []
+    current_size_mb = 0
+
+    for item in data_list:
+        item_size_mb = sys.getsizeof(f"{item}") / (1024 * 1024)  # Convert bytes to MB
+        if current_size_mb + item_size_mb <= 1:
+            current_part.append(item)
+            current_size_mb += item_size_mb
+        else:
+            result.append(current_part)
+            current_part = [item]
+            current_size_mb = item_size_mb
+
+    if current_part:
+        result.append(current_part)
+
+    return result

@@ -30,11 +30,12 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
 
-"""Chronicle Validator."""
+"""CLS Google Chronicle Plugin Validator."""
 
 
 import io
 import csv
+import traceback
 from jsonschema import validate
 from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
 
@@ -42,10 +43,11 @@ from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
 class ChronicleValidator(object):
     """Chronicle validator class."""
 
-    def __init__(self, logger):
+    def __init__(self, logger, log_prefix):
         """Initialize."""
         super().__init__()
         self.logger = logger
+        self.log_prefix = log_prefix
 
     def validate_taxonomy(self, instance):
         """Validate the schema of given taxonomy JSON.
@@ -121,9 +123,13 @@ class ChronicleValidator(object):
         try:
             validate(instance=mappings, schema=schema)
         except JsonSchemaValidationError as err:
-            self.logger.error(
-                "Chronicle Plugin: Validation error occurred. Error: "
+            err_msg = (
+                "Validation error occurred. Error: "
                 "validating JSON schema: {}".format(err)
+            )
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg}",
+                details=str(traceback.format_exc())
             )
             return False
 
@@ -136,10 +142,14 @@ class ChronicleValidator(object):
                     try:
                         self.validate_taxonomy(subtype_taxonomy)
                     except JsonSchemaValidationError as err:
-                        self.logger.error(
-                            "Chronicle Plugin: Validation error occurred. Error: "
+                        err_msg = (
+                            "Validation error occurred. Error: "
                             'while validating JSON schema for type "{}" and subtype "{}": '
                             "{}".format(data_type, subtype, err)
+                        )
+                        self.logger.error(
+                            message=f"{self.log_prefix}: {err_msg}",
+                            details=str(traceback.format_exc())
                         )
                         return False
             return True
@@ -159,10 +169,12 @@ class ChronicleValidator(object):
             if self.validate_mapping_schema(mappings):
                 return True
         except Exception as err:
+            err_msg = (
+                "Validation error occurred. Error: {}".format(str(err))
+            )
             self.logger.error(
-                "Chronicle Plugin: Validation error occurred. Error: {}".format(
-                    str(err)
-                )
+                message=f"{self.log_prefix}: {err_msg}",
+                details=str(traceback.format_exc())
             )
 
         return False

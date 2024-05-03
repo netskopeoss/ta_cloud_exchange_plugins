@@ -1,3 +1,11 @@
+# 2.1.0
+## Added
+- Added support for CTEP alert type.
+- Added support for incident event type.
+
+## Fixed
+- Bug fixes and improvements in transformation.
+
 # 2.0.2
 
 ## Fixed

@@ -32,6 +32,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 CTE CrowdStrike Plugin's main file which contains the implementation of all the
 plugin's methods.
 """
+
 import datetime
 import json
 import os
@@ -1742,6 +1743,7 @@ class CrowdStrikePlugin(PluginBase):
             )
             logger_msg = f"updating indicators to {IOC_MANAGEMENT}"
             try:
+                headers = self.reload_auth_token(headers)
                 response = self.crowdstrike_helper.api_helper(
                     url=push_endpoint,
                     method="PATCH",
@@ -1845,6 +1847,7 @@ class CrowdStrikePlugin(PluginBase):
                 f" with {IOC_MANAGEMENT}."
             )
             logger_msg = f"sharing indicators to {IOC_MANAGEMENT}"
+            headers = self.reload_auth_token(headers)
             try:
                 response = self.crowdstrike_helper.api_helper(
                     url=push_endpoint,

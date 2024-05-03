@@ -10,8 +10,8 @@
 # distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF
 # ANY KIND, either express or implied. See the License for the specific
 # language governing permissions and limitations under the License.
-from .exceptions import ClientError
-from .utils import get_service_module_name
+from botocore.exceptions import ClientError
+from botocore.utils import get_service_module_name
 
 
 class BaseClientExceptions:
@@ -49,8 +49,8 @@ class BaseClientExceptions:
             for exception_cls in self._code_to_exception.values()
         ]
         raise AttributeError(
-            rf"{self} object has no attribute {name}. "
-            rf"Valid exceptions are: {', '.join(exception_cls_names)}"
+            fr"{self} object has no attribute {name}. "
+            fr"Valid exceptions are: {', '.join(exception_cls_names)}"
         )
 
 
@@ -83,7 +83,7 @@ class ClientExceptionsFactory:
             cls_props[exception_name] = exception_cls
             code = str(error_shape.error_code)
             code_to_exception[code] = exception_cls
-        cls_name = str(get_service_module_name(service_model) + "Exceptions")
+        cls_name = str(get_service_module_name(service_model) + 'Exceptions')
         client_exceptions_cls = type(
             cls_name, (BaseClientExceptions,), cls_props
         )

@@ -13,11 +13,11 @@
 
 import logging
 
-from .compat import _warn_deprecated_python
-from .session import Session
+from ..boto3.compat import _warn_deprecated_python
+from ..boto3.session import Session
 
 __author__ = "Amazon Web Services"
-__version__ = "1.24.58"
+__version__ = "1.34.44"
 
 
 # The default Boto3 session; autoloaded when needed.

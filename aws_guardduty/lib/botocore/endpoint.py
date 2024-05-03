@@ -19,15 +19,15 @@ import threading
 import time
 import uuid
 
-from . import parsers
-from .awsrequest import create_request_object
-from .exceptions import HTTPClientError
-from .history import get_global_history_recorder
-from .hooks import first_non_none_response
-from .httpchecksum import handle_checksum_body
-from .httpsession import URLLib3Session
-from .response import StreamingBody
-from .utils import (
+from ..botocore import parsers
+from ..botocore.awsrequest import create_request_object
+from ..botocore.exceptions import HTTPClientError
+from ..botocore.history import get_global_history_recorder
+from ..botocore.hooks import first_non_none_response
+from ..botocore.httpchecksum import handle_checksum_body
+from ..botocore.httpsession import URLLib3Session
+from ..botocore.response import StreamingBody
+from ..botocore.utils import (
     get_environ_proxies,
     is_valid_endpoint_url,
     is_valid_ipv6_endpoint_url,
@@ -298,9 +298,9 @@ class Endpoint:
         )
 
         http_response_record_dict = response_dict.copy()
-        http_response_record_dict[
-            "streaming"
-        ] = operation_model.has_streaming_output
+        http_response_record_dict["streaming"] = (
+            operation_model.has_streaming_output
+        )
         history_recorder.record("HTTP_RESPONSE", http_response_record_dict)
 
         protocol = operation_model.metadata["protocol"]

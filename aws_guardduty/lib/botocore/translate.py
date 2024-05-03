@@ -13,7 +13,7 @@
 # language governing permissions and limitations under the License.
 import copy
 
-from .utils import merge_dicts
+from ..botocore.utils import merge_dicts
 
 
 def build_retry_config(

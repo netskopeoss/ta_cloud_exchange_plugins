@@ -22,9 +22,11 @@ import os
 import platform
 import socket
 import warnings
-from ..botocore import client as botocoreclient
-from ..botocore import configloader, credentials
 
+from ..botocore import client as botocore_client
+from ..botocore import configloader as botocore_configloader
+from ..botocore import credentials as botocore_credentials
+from ..botocore import tokens as botocore_tokens
 from ..botocore import (
     UNSIGNED,
     __version__,
@@ -36,39 +38,42 @@ from ..botocore import (
     translate,
     waiter,
 )
-from .compat import HAS_CRT, MutableMapping
-from .configprovider import (
+from ..botocore.compat import HAS_CRT, MutableMapping
+from ..botocore.configprovider import (
     BOTOCORE_DEFAUT_SESSION_VARIABLES,
     ConfigChainFactory,
+    ConfiguredEndpointProvider,
     ConfigValueStore,
     DefaultConfigResolver,
     SmartDefaultsConfigStoreFactory,
     create_botocore_default_config_mapping,
 )
-
-# from .errorfactory
-from .errorfactory import ClientExceptionsFactory
-from .exceptions import (
+from ..botocore.errorfactory import ClientExceptionsFactory
+from ..botocore.exceptions import (
     ConfigNotFound,
     InvalidDefaultsMode,
     PartialCredentialsError,
     ProfileNotFound,
     UnknownServiceError,
 )
-from .hooks import (
+from ..botocore.hooks import (
     EventAliaser,
     HierarchicalEmitter,
     first_non_none_response,
 )
-from .loaders import create_loader
-from .model import ServiceModel
-from .parsers import ResponseParserFactory
-from .regions import EndpointResolver
-from .utils import (
+from ..botocore.loaders import create_loader
+from ..botocore.model import ServiceModel
+from ..botocore.parsers import ResponseParserFactory
+from ..botocore.regions import EndpointResolver
+from ..botocore.useragent import UserAgentString
+from ..botocore.utils import (
     EVENT_ALIASES,
     IMDSRegionProvider,
     validate_region_name,
 )
+
+from ..botocore.compat import HAS_CRT  # noqa
+
 
 logger = logging.getLogger(__name__)
 
@@ -136,6 +141,7 @@ class Session:
         self._profile = None
         self._config = None
         self._credentials = None
+        self._auth_token = None
         self._profile_map = None
         # This is a dict that stores per session specific config variable
         # overrides via set_config_variable().
@@ -154,6 +160,7 @@ class Session:
 
     def _register_components(self):
         self._register_credential_provider()
+        self._register_token_provider()
         self._register_data_loader()
         self._register_endpoint_resolver()
         self._register_event_emitter()
@@ -163,9 +170,18 @@ class Session:
         self._register_monitor()
         self._register_default_config_resolver()
         self._register_smart_defaults_factory()
+        self._register_user_agent_creator()
 
     def _register_event_emitter(self):
         self._components.register_component("event_emitter", self._events)
+
+    def _register_token_provider(self):
+        self._components.lazy_register_component(
+            "token_provider", self._create_token_resolver
+        )
+
+    def _create_token_resolver(self):
+        return botocore_tokens.create_token_resolver(self)
 
     def _register_credential_provider(self):
         self._components.lazy_register_component(
@@ -173,7 +189,7 @@ class Session:
         )
 
     def _create_credential_resolver(self):
-        return credentials.create_credential_resolver(
+        return botocore_credentials.create_credential_resolver(
             self, region_name=self._last_client_region_used
         )
 
@@ -186,8 +202,9 @@ class Session:
     def _register_endpoint_resolver(self):
         def create_default_resolver():
             loader = self.get_component("data_loader")
-            endpoints = loader.load_data("endpoints")
-            return EndpointResolver(endpoints)
+            endpoints, path = loader.load_data_with_path("endpoints")
+            uses_builtin = loader.is_builtin_path(path)
+            return EndpointResolver(endpoints, uses_builtin_data=uses_builtin)
 
         self._internal_components.lazy_register_component(
             "endpoint_resolver", create_default_resolver
@@ -252,6 +269,10 @@ class Session:
             "monitor", self._create_csm_monitor
         )
 
+    def _register_user_agent_creator(self):
+        uas = UserAgentString.from_environment()
+        self._components.register_component("user_agent_creator", uas)
+
     def _create_csm_monitor(self):
         if self.get_config_variable("csm_enabled"):
             client_id = self.get_config_variable("csm_client_id")
@@ -272,12 +293,8 @@ class Session:
         return None
 
     def _get_crt_version(self):
-        try:
-            import awscrt
-
-            return awscrt.__version__
-        except AttributeError:
-            return "Unknown"
+        user_agent_creator = self.get_component("user_agent_creator")
+        return user_agent_creator._crt_version or "Unknown"
 
     @property
     def available_profiles(self):
@@ -419,7 +436,7 @@ class Session:
         if self._config is None:
             try:
                 config_file = self.get_config_variable("config_file")
-                self._config = configloader.load_config(config_file)
+                self._config = botocore_configloader.load_config(config_file)
             except ConfigNotFound:
                 self._config = {"profiles": {}}
             try:
@@ -429,7 +446,9 @@ class Session:
                 # can validate the user is not referring to a nonexistent
                 # profile.
                 cred_file = self.get_config_variable("credentials_file")
-                cred_profiles = configloader.raw_config_parse(cred_file)
+                cred_profiles = botocore_configloader.raw_config_parse(
+                    cred_file
+                )
                 for profile in cred_profiles:
                     cred_vars = cred_profiles[profile]
                     if profile not in self._config["profiles"]:
@@ -443,7 +462,7 @@ class Session:
     def get_default_client_config(self):
         """Retrieves the default config for creating clients
 
-        :rtype: botocore.client.Config
+        :rtype: botocore_client.Config
         :returns: The default client config object when creating clients. If
             the value is ``None`` then there is no default config object
             attached to the session.
@@ -453,7 +472,7 @@ class Session:
     def set_default_client_config(self, client_config):
         """Sets the default config for creating clients
 
-        :type client_config: botocore.client.Config
+        :type client_config: botocore_client.Config
         :param client_config: The default client config object when creating
             clients. If the value is ``None`` then there is no default config
             object attached to the session.
@@ -477,7 +496,7 @@ class Session:
         :param token: An option session token used by STS session
             credentials.
         """
-        self._credentials = credentials.Credentials(
+        self._credentials = botocore_credentials.Credentials(
             access_key, secret_key, token
         )
 
@@ -495,6 +514,19 @@ class Session:
                 "credential_provider"
             ).load_credentials()
         return self._credentials
+
+    def get_auth_token(self):
+        """
+        Return the :class:`botocore_tokens.AuthToken` object associated with
+        this session. If the authorization token has not yet been loaded, this
+        will attempt to load it. If it has already been loaded, this will
+        return the cached authorization token.
+
+        """
+        if self._auth_token is None:
+            provider = self._components.get_component("token_provider")
+            self._auth_token = provider.load_token()
+        return self._auth_token
 
     def user_agent(self):
         """
@@ -866,7 +898,7 @@ class Session:
         :param aws_session_token: The session token to use when creating
             the client.  Same semantics as aws_access_key_id above.
 
-        :type config: botocore.client.Config
+        :type config: botocore_client.Config
         :param config: Advanced client configuration options. If a value
             is specified in the client config, its value will take precedence
             over environment variables and configuration values, but not over
@@ -875,7 +907,7 @@ class Session:
             the client will be the result of calling ``merge()`` on the
             default config with the config provided to this call.
 
-        :rtype: botocore.client.BaseClient
+        :rtype: botocore_client.BaseClient
         :return: A botocore client instance
 
         """
@@ -909,7 +941,7 @@ class Session:
         elif (
             aws_access_key_id is not None and aws_secret_access_key is not None
         ):
-            credentials = credentials.Credentials(
+            credentials = botocore_credentials.Credentials(
                 access_key=aws_access_key_id,
                 secret_key=aws_secret_access_key,
                 token=aws_session_token,
@@ -923,19 +955,34 @@ class Session:
             )
         else:
             credentials = self.get_credentials()
+        auth_token = self.get_auth_token()
         endpoint_resolver = self._get_internal_component("endpoint_resolver")
         exceptions_factory = self._get_internal_component("exceptions_factory")
-        config_store = self.get_component("config_store")
+        config_store = copy.copy(self.get_component("config_store"))
+        user_agent_creator = self.get_component("user_agent_creator")
+        # Session configuration values for the user agent string are applied
+        # just before each client creation because they may have been modified
+        # at any time between session creation and client creation.
+        user_agent_creator.set_session_config(
+            session_user_agent_name=self.user_agent_name,
+            session_user_agent_version=self.user_agent_version,
+            session_user_agent_extra=self.user_agent_extra,
+        )
         defaults_mode = self._resolve_defaults_mode(config, config_store)
         if defaults_mode != "legacy":
             smart_defaults_factory = self._get_internal_component(
                 "smart_defaults_factory"
             )
-            config_store = copy.deepcopy(config_store)
             smart_defaults_factory.merge_smart_defaults(
                 config_store, defaults_mode, region_name
             )
-        client_creator = botocoreclient.ClientCreator(
+
+        self._add_configured_endpoint_provider(
+            client_name=service_name,
+            config_store=config_store,
+        )
+
+        client_creator = botocore_client.ClientCreator(
             loader,
             endpoint_resolver,
             self.user_agent(),
@@ -945,6 +992,7 @@ class Session:
             response_parser_factory,
             exceptions_factory,
             config_store,
+            user_agent_creator=user_agent_creator,
         )
         client = client_creator.create_client(
             service_name=service_name,
@@ -956,6 +1004,7 @@ class Session:
             scoped_config=self.get_scoped_config(),
             client_config=config,
             api_version=api_version,
+            auth_token=auth_token,
         )
         monitor = self._get_internal_component("monitor")
         if monitor is not None:
@@ -1001,6 +1050,17 @@ class Session:
             )
 
         return lmode
+
+    def _add_configured_endpoint_provider(self, client_name, config_store):
+        chain = ConfiguredEndpointProvider(
+            full_config=self.full_config,
+            scoped_config=self.get_scoped_config(),
+            client_name=client_name,
+        )
+        config_store.set_config_provider(
+            logical_name="endpoint_url",
+            provider=chain,
+        )
 
     def _missing_cred_vars(self, access_key, secret_key):
         if access_key is not None and secret_key is None:
@@ -1081,7 +1141,15 @@ class ComponentLocator:
             # Only delete the component from the deferred dict after
             # successfully creating the object from the factory as well as
             # injecting the instantiated value into the _components dict.
-            del self._deferred[name]
+            try:
+                del self._deferred[name]
+            except KeyError:
+                # If we get here, it's likely that get_component was called
+                # concurrently from multiple threads, and another thread
+                # already deleted the entry. This means the factory was
+                # probably called twice, but cleaning up the deferred entry
+                # should not crash outright.
+                pass
         try:
             return self._components[name]
         except KeyError:

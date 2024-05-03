@@ -2,7 +2,7 @@
 import threading
 import time
 
-from ..exceptions import CapacityNotAvailableError
+from botocore.exceptions import CapacityNotAvailableError
 
 
 class Clock:
@@ -17,7 +17,6 @@ class Clock:
 
 
 class TokenBucket:
-
     _MIN_RATE = 0.5
 
     def __init__(self, max_rate, clock, min_rate=_MIN_RATE):

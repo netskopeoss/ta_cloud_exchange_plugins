@@ -19,10 +19,8 @@ import urllib3.util
 from urllib3.connection import HTTPConnection, VerifiedHTTPSConnection
 from urllib3.connectionpool import HTTPConnectionPool, HTTPSConnectionPool
 
-from . import utils
-
-# import botocore.utils
-from .compat import (
+from ..botocore import utils
+from botocore.compat import (
     HTTPHeaders,
     HTTPResponse,
     MutableMapping,
@@ -31,7 +29,7 @@ from .compat import (
     urlsplit,
     urlunsplit,
 )
-from .exceptions import UnseekableStreamError
+from botocore.exceptions import UnseekableStreamError
 
 logger = logging.getLogger(__name__)
 
@@ -68,41 +66,41 @@ class AWSConnection:
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._original_response_cls = self.response_class
-        # We'd ideally hook into httplib's states, but they're all
-        # __mangled_vars so we use our own state var.  This variable is set
-        # when we receive an early response from the server.  If this value is
-        # set to True, any calls to send() are noops.  This value is reset to
-        # false every time _send_request is called.  This is to workaround the
-        # fact that py2.6 (and only py2.6) has a separate send() call for the
-        # body in _send_request, as opposed to endheaders(), which is where the
-        # body is sent in all versions > 2.6.
+        # This variable is set when we receive an early response from the
+        # server. If this value is set to True, any calls to send() are noops.
+        # This value is reset to false every time _send_request is called.
+        # This is to workaround changes in urllib3 2.0 which uses separate
+        # send() calls in request() instead of delegating to endheaders(),
+        # which is where the body is sent in CPython's HTTPConnection.
         self._response_received = False
         self._expect_header_set = False
+        self._send_called = False
 
     def close(self):
         super().close()
         # Reset all of our instance state we were tracking.
         self._response_received = False
         self._expect_header_set = False
+        self._send_called = False
         self.response_class = self._original_response_cls
 
-    def _send_request(self, method, url, body, headers, *args, **kwargs):
+    def request(self, method, url, body=None, headers=None, *args, **kwargs):
+        if headers is None:
+            headers = {}
         self._response_received = False
         if headers.get("Expect", b"") == b"100-continue":
             self._expect_header_set = True
         else:
             self._expect_header_set = False
             self.response_class = self._original_response_cls
-        rval = super()._send_request(
-            method, url, body, headers, *args, **kwargs
-        )
+        rval = super().request(method, url, body, headers, *args, **kwargs)
         self._expect_header_set = False
         return rval
 
     def _convert_to_bytes(self, mixed_buffer):
         # Take a list of mixed str/bytes and convert it
         # all into a single bytestring.
-        # Any six.text_types will be encoded as utf-8.
+        # Any str will be encoded as utf-8.
         bytes_buffer = []
         for chunk in mixed_buffer:
             if isinstance(chunk, str):
@@ -212,10 +210,15 @@ class AWSConnection:
 
     def send(self, str):
         if self._response_received:
-            logger.debug(
-                "send() called, but reseponse already received. "
-                "Not sending data."
-            )
+            if not self._send_called:
+                # urllib3 2.0 chunks and calls send potentially
+                # thousands of times inside `request` unlike the
+                # standard library. Only log this once for sanity.
+                logger.debug(
+                    "send() called, but response already received. "
+                    "Not sending data."
+                )
+            self._send_called = True
             return
         return super().send(str)
 
@@ -301,7 +304,11 @@ def create_request_object(request_dict):
     """
     r = request_dict
     request_object = AWSRequest(
-        method=r["method"], url=r["url"], data=r["body"], headers=r["headers"]
+        method=r["method"],
+        url=r["url"],
+        data=r["body"],
+        headers=r["headers"],
+        auth_path=r.get("auth_path"),
     )
     request_object.context = r["context"]
     return request_object
@@ -427,7 +434,7 @@ class AWSRequest:
     """Represents the elements of an HTTP request.
 
     This class was originally inspired by requests.models.Request, but has been
-    boiled down to meet the specific use cases in  That being said this
+    boiled down to meet the specific use cases in botocore. That being said this
     class (even in requests) is effectively a named-tuple.
     """
 
@@ -443,7 +450,6 @@ class AWSRequest:
         auth_path=None,
         stream_output=False,
     ):
-
         self._request_preparer = self._REQUEST_PREPARER_CLS()
 
         # Default empty dicts for dict params.
@@ -563,7 +569,7 @@ class AWSResponse:
             # NOTE: requests would attempt to call stream and fall back
             # to a custom generator that would call read in a loop, but
             # we don't rely on this behavior
-            self._content = bytes().join(self.raw.stream()) or bytes()
+            self._content = b"".join(self.raw.stream()) or b""
 
         return self._content
 

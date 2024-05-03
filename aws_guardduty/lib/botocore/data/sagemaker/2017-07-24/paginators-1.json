@@ -353,6 +353,84 @@
       "output_token": "NextToken",
       "limit_key": "MaxResults",
       "result_key": "DeviceDeploymentSummaries"
+    },
+    "ListInferenceRecommendationsJobSteps": {
+      "input_token": "NextToken",
+      "output_token": "NextToken",
+      "limit_key": "MaxResults",
+      "result_key": "Steps"
+    },
+    "ListInferenceExperiments": {
+      "input_token": "NextToken",
+      "output_token": "NextToken",
+      "limit_key": "MaxResults",
+      "result_key": "InferenceExperiments"
+    },
+    "ListModelCardExportJobs": {
+      "input_token": "NextToken",
+      "output_token": "NextToken",
+      "limit_key": "MaxResults",
+      "result_key": "ModelCardExportJobSummaries"
+    },
+    "ListModelCardVersions": {
+      "input_token": "NextToken",
+      "output_token": "NextToken",
+      "limit_key": "MaxResults",
+      "result_key": "ModelCardVersionSummaryList"
+    },
+    "ListModelCards": {
+      "input_token": "NextToken",
+      "output_token": "NextToken",
+      "limit_key": "MaxResults",
+      "result_key": "ModelCardSummaries"
+    },
+    "ListMonitoringAlertHistory": {
+      "input_token": "NextToken",
+      "output_token": "NextToken",
+      "limit_key": "MaxResults",
+      "result_key": "MonitoringAlertHistory"
+    },
+    "ListMonitoringAlerts": {
+      "input_token": "NextToken",
+      "output_token": "NextToken",
+      "limit_key": "MaxResults",
+      "result_key": "MonitoringAlertSummaries"
+    },
+    "ListSpaces": {
+      "input_token": "NextToken",
+      "output_token": "NextToken",
+      "limit_key": "MaxResults",
+      "result_key": "Spaces"
+    },
+    "ListAliases": {
+      "input_token": "NextToken",
+      "output_token": "NextToken",
+      "limit_key": "MaxResults",
+      "result_key": "SageMakerImageVersionAliases"
+    },
+    "ListResourceCatalogs": {
+      "input_token": "NextToken",
+      "output_token": "NextToken",
+      "limit_key": "MaxResults",
+      "result_key": "ResourceCatalogs"
+    },
+    "ListClusterNodes": {
+      "input_token": "NextToken",
+      "output_token": "NextToken",
+      "limit_key": "MaxResults",
+      "result_key": "ClusterNodeSummaries"
+    },
+    "ListClusters": {
+      "input_token": "NextToken",
+      "output_token": "NextToken",
+      "limit_key": "MaxResults",
+      "result_key": "ClusterSummaries"
+    },
+    "ListInferenceComponents": {
+      "input_token": "NextToken",
+      "output_token": "NextToken",
+      "limit_key": "MaxResults",
+      "result_key": "InferenceComponents"
     }
   }
 }

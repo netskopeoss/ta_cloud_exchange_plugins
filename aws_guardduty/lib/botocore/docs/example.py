@@ -10,8 +10,8 @@
 # distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF
 # ANY KIND, either express or implied. See the License for the specific
 # language governing permissions and limitations under the License.
-from .shape import ShapeDocumenter
-from .utils import py_default
+from botocore.docs.shape import ShapeDocumenter
+from botocore.docs.utils import py_default
 
 
 class BaseExampleDocumenter(ShapeDocumenter):
@@ -46,9 +46,11 @@ class BaseExampleDocumenter(ShapeDocumenter):
             include=include,
             exclude=exclude,
         )
+        final_blank_line_section = section.add_new_section('final-blank-line')
+        final_blank_line_section.style.new_line()
 
     def document_recursive_shape(self, section, shape, **kwargs):
-        section.write("{'... recursive ...'}")
+        section.write('{\'... recursive ...\'}')
 
     def document_shape_default(
         self, section, shape, history, include=None, exclude=None, **kwargs
@@ -57,18 +59,18 @@ class BaseExampleDocumenter(ShapeDocumenter):
         if py_type is None:
             py_type = py_default(shape.type_name)
 
-        if self._context.get("streaming_shape") == shape:
-            py_type = "StreamingBody()"
+        if self._context.get('streaming_shape') == shape:
+            py_type = 'StreamingBody()'
         section.write(py_type)
 
     def document_shape_type_string(
         self, section, shape, history, include=None, exclude=None, **kwargs
     ):
-        if "enum" in shape.metadata:
-            for i, enum in enumerate(shape.metadata["enum"]):
-                section.write("'%s'" % enum)
-                if i < len(shape.metadata["enum"]) - 1:
-                    section.write("|")
+        if 'enum' in shape.metadata:
+            for i, enum in enumerate(shape.metadata['enum']):
+                section.write('\'%s\'' % enum)
+                if i < len(shape.metadata['enum']) - 1:
+                    section.write('|')
         else:
             self.document_shape_default(section, shape, history)
 
@@ -76,28 +78,28 @@ class BaseExampleDocumenter(ShapeDocumenter):
         self, section, shape, history, include=None, exclude=None, **kwargs
     ):
         param_shape = shape.member
-        list_section = section.add_new_section("list-value")
-        self._start_nested_param(list_section, "[")
+        list_section = section.add_new_section('list-value')
+        self._start_nested_param(list_section, '[')
         param_section = list_section.add_new_section(
-            "member", context={"shape": param_shape.name}
+            'member', context={'shape': param_shape.name}
         )
         self.traverse_and_document_shape(
             section=param_section, shape=param_shape, history=history
         )
-        ending_comma_section = list_section.add_new_section("ending-comma")
-        ending_comma_section.write(",")
-        ending_bracket_section = list_section.add_new_section("ending-bracket")
-        self._end_nested_param(ending_bracket_section, "]")
+        ending_comma_section = list_section.add_new_section('ending-comma')
+        ending_comma_section.write(',')
+        ending_bracket_section = list_section.add_new_section('ending-bracket')
+        self._end_nested_param(ending_bracket_section, ']')
 
     def document_shape_type_structure(
         self, section, shape, history, include=None, exclude=None, **kwargs
     ):
         if not shape.members:
-            section.write("{}")
+            section.write('{}')
             return
 
-        section = section.add_new_section("structure-value")
-        self._start_nested_param(section, "{")
+        section = section.add_new_section('structure-value')
+        self._start_nested_param(section, '{')
 
         input_members = self._add_members_to_shape(shape.members, include)
 
@@ -105,10 +107,10 @@ class BaseExampleDocumenter(ShapeDocumenter):
             if exclude and param in exclude:
                 continue
             param_section = section.add_new_section(param)
-            param_section.write("'%s': " % param)
+            param_section.write('\'%s\': ' % param)
             param_shape = input_members[param]
             param_value_section = param_section.add_new_section(
-                "member-value", context={"shape": param_shape.name}
+                'member-value', context={'shape': param_shape.name}
             )
             self.traverse_and_document_shape(
                 section=param_value_section,
@@ -118,30 +120,30 @@ class BaseExampleDocumenter(ShapeDocumenter):
             )
             if i < len(input_members) - 1:
                 ending_comma_section = param_section.add_new_section(
-                    "ending-comma"
+                    'ending-comma'
                 )
-                ending_comma_section.write(",")
+                ending_comma_section.write(',')
                 ending_comma_section.style.new_line()
-        self._end_structure(section, "{", "}")
+        self._end_structure(section, '{', '}')
 
     def document_shape_type_map(
         self, section, shape, history, include=None, exclude=None, **kwargs
     ):
-        map_section = section.add_new_section("map-value")
-        self._start_nested_param(map_section, "{")
+        map_section = section.add_new_section('map-value')
+        self._start_nested_param(map_section, '{')
         value_shape = shape.value
         key_section = map_section.add_new_section(
-            "key", context={"shape": shape.key.name}
+            'key', context={'shape': shape.key.name}
         )
-        key_section.write("'string': ")
+        key_section.write('\'string\': ')
         value_section = map_section.add_new_section(
-            "value", context={"shape": value_shape.name}
+            'value', context={'shape': value_shape.name}
         )
         self.traverse_and_document_shape(
             section=value_section, shape=value_shape, history=history
         )
-        end_bracket_section = map_section.add_new_section("ending-bracket")
-        self._end_nested_param(end_bracket_section, "}")
+        end_bracket_section = map_section.add_new_section('ending-bracket')
+        self._end_nested_param(end_bracket_section, '}')
 
     def _add_members_to_shape(self, members, include):
         if include:
@@ -173,39 +175,39 @@ class BaseExampleDocumenter(ShapeDocumenter):
             section.write(start + end)
             self._end_nested_param(section)
         else:
-            end_bracket_section = section.add_new_section("ending-bracket")
+            end_bracket_section = section.add_new_section('ending-bracket')
             self._end_nested_param(end_bracket_section, end)
 
 
 class ResponseExampleDocumenter(BaseExampleDocumenter):
-    EVENT_NAME = "response-example"
+    EVENT_NAME = 'response-example'
 
     def document_shape_type_event_stream(
         self, section, shape, history, **kwargs
     ):
-        section.write("EventStream(")
+        section.write('EventStream(')
         self.document_shape_type_structure(section, shape, history, **kwargs)
-        end_section = section.add_new_section("event-stream-end")
-        end_section.write(")")
+        end_section = section.add_new_section('event-stream-end')
+        end_section.write(')')
 
 
 class RequestExampleDocumenter(BaseExampleDocumenter):
-    EVENT_NAME = "request-example"
+    EVENT_NAME = 'request-example'
 
     def document_shape_type_structure(
         self, section, shape, history, include=None, exclude=None, **kwargs
     ):
-        param_format = "'%s'"
-        operator = ": "
-        start = "{"
-        end = "}"
+        param_format = '\'%s\''
+        operator = ': '
+        start = '{'
+        end = '}'
 
         if len(history) <= 1:
-            operator = "="
-            start = "("
-            end = ")"
-            param_format = "%s"
-        section = section.add_new_section("structure-value")
+            operator = '='
+            start = '('
+            end = ')'
+            param_format = '%s'
+        section = section.add_new_section('structure-value')
         self._start_nested_param(section, start)
         input_members = self._add_members_to_shape(shape.members, include)
 
@@ -217,7 +219,7 @@ class RequestExampleDocumenter(BaseExampleDocumenter):
             param_section.write(operator)
             param_shape = input_members[param]
             param_value_section = param_section.add_new_section(
-                "member-value", context={"shape": param_shape.name}
+                'member-value', context={'shape': param_shape.name}
             )
             self.traverse_and_document_shape(
                 section=param_value_section,
@@ -227,8 +229,8 @@ class RequestExampleDocumenter(BaseExampleDocumenter):
             )
             if i < len(input_members) - 1:
                 ending_comma_section = param_section.add_new_section(
-                    "ending-comma"
+                    'ending-comma'
                 )
-                ending_comma_section.write(",")
+                ending_comma_section.write(',')
                 ending_comma_section.style.new_line()
         self._end_structure(section, start, end)

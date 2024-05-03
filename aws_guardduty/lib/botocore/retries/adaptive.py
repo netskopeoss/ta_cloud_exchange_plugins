@@ -2,7 +2,7 @@ import logging
 import math
 import threading
 
-from ..retries import bucket, standard, throttling
+from botocore.retries import bucket, standard, throttling
 
 logger = logging.getLogger(__name__)
 
@@ -25,18 +25,17 @@ def register_retry_handler(client):
         clock=clock,
     )
     client.meta.events.register(
-        "before-send",
+        'before-send',
         limiter.on_sending_request,
     )
     client.meta.events.register(
-        "needs-retry",
+        'needs-retry',
         limiter.on_receiving_response,
     )
     return limiter
 
 
 class ClientRateLimiter:
-
     _MAX_RATE_ADJUST_SCALE = 2.0
 
     def __init__(

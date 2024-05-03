@@ -18,18 +18,18 @@ from io import IOBase
 from urllib3.exceptions import ProtocolError as URLLib3ProtocolError
 from urllib3.exceptions import ReadTimeoutError as URLLib3ReadTimeoutError
 
-from . import parsers
-from .compat import set_socket_timeout
-from .exceptions import (
+from botocore import parsers
+from botocore.compat import set_socket_timeout
+from botocore.exceptions import (
     IncompleteReadError,
     ReadTimeoutError,
     ResponseStreamingError,
 )
 
 # Keep these imported.  There's pre-existing code that uses them.
-from . import ScalarTypes  # noqa
-from .compat import XMLParseError  # noqa
-from .hooks import first_non_none_response  # noqa
+from botocore import ScalarTypes  # noqa
+from botocore.compat import XMLParseError  # noqa
+from botocore.hooks import first_non_none_response  # noqa
 
 
 logger = logging.getLogger(__name__)
@@ -138,7 +138,7 @@ class StreamingBody(IOBase):
         This is achieved by reading chunk of bytes (of size chunk_size) at a
         time from the raw stream, and then yielding lines from there.
         """
-        pending = b""
+        pending = b''
         for chunk in self.iter_chunks(chunk_size):
             lines = (pending + chunk).splitlines(True)
             for line in lines[:-1]:
@@ -178,22 +178,22 @@ class StreamingBody(IOBase):
 
 
 def get_response(operation_model, http_response):
-    protocol = operation_model.metadata["protocol"]
+    protocol = operation_model.metadata['protocol']
     response_dict = {
-        "headers": http_response.headers,
-        "status_code": http_response.status_code,
+        'headers': http_response.headers,
+        'status_code': http_response.status_code,
     }
     # TODO: Unfortunately, we have to have error logic here.
     # If it looks like an error, in the streaming response case we
     # need to actually grab the contents.
-    if response_dict["status_code"] >= 300:
-        response_dict["body"] = http_response.content
+    if response_dict['status_code'] >= 300:
+        response_dict['body'] = http_response.content
     elif operation_model.has_streaming_output:
-        response_dict["body"] = StreamingBody(
-            http_response.raw, response_dict["headers"].get("content-length")
+        response_dict['body'] = StreamingBody(
+            http_response.raw, response_dict['headers'].get('content-length')
         )
     else:
-        response_dict["body"] = http_response.content
+        response_dict['body'] = http_response.content
 
     parser = parsers.create_parser(protocol)
     return http_response, parser.parse(

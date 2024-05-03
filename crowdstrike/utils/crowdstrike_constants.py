@@ -31,6 +31,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 CTE CrowdStrike plugin constants.
 """
+
 from netskope.integrations.cte.models import (
     IndicatorType,
     SeverityType,
@@ -51,7 +52,7 @@ PAGE_SIZE = 9999
 MODULE_NAME = "CTE"
 PLUGIN_NAME = "CrowdStrike"
 PLATFORM_NAME = "CrowdStrike"
-PLUGIN_VERSION = "2.0.1"
+PLUGIN_VERSION = "2.0.2"
 MAX_API_CALLS = 3
 DEFAULT_WAIT_TIME = 60
 DEFAULT_BATCH_SIZE = 200

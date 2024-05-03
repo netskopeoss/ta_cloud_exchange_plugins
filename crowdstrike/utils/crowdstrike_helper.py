@@ -85,15 +85,16 @@ class CrowdStrikePluginHelper(object):
         Returns:
             Dict: Dictionary after adding User-Agent.
         """
+        if headers and "User-Agent" in headers:
+            return headers
         headers = add_user_agent(headers)
-        ce_added_agent = headers.get("User-Agent", "netskope-ce")
         user_agent = "{}-{}-{}/{}".format(
-            ce_added_agent,
+            headers.get("User-Agent", "netskope-ce"),
             MODULE_NAME.lower(),
             self.plugin_name.lower().replace(" ", "-"),
             self.plugin_version,
         )
-        headers.update({"User-Agent": user_agent})
+        headers["User-Agent"] = user_agent
         return headers
 
     def api_helper(
@@ -121,6 +122,7 @@ class CrowdStrikePluginHelper(object):
         Returns:
             dict: Response dictionary.
         """
+        headers = self._add_user_agent(headers)
         try:
             for retry_counter in range(MAX_API_CALLS):
                 response = requests.request(
@@ -128,7 +130,7 @@ class CrowdStrikePluginHelper(object):
                     method=method,
                     params=params,
                     data=data,
-                    headers=self._add_user_agent(headers),
+                    headers=headers,
                     verify=verify,
                     proxies=proxies,
                     json=json,

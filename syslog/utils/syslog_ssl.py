@@ -28,9 +28,8 @@ SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
 CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-"""
 
-"""Syslog Plugin SSL Log Handler."""
+Syslog Plugin SSL Log Handler."""
 
 
 import os
@@ -135,7 +134,6 @@ class SSLSysLogHandler(logging.handlers.SysLogHandler):
 
     def __init__(
         self,
-        transform_data,
         protocol,
         address,
         certs=None,
@@ -144,7 +142,6 @@ class SSLSysLogHandler(logging.handlers.SysLogHandler):
     ):
         """Init method."""
         self.protocol = protocol
-        self.transform_data = transform_data
         if protocol == "TLS":
             logging.Handler.__init__(self)
 
@@ -187,8 +184,7 @@ class SSLSysLogHandler(logging.handlers.SysLogHandler):
                 msg = msg.encode("utf-8")
                 if codecs:
                     msg = codecs.BOM_UTF8 + msg
-            if self.transform_data:
-                msg = prio + msg
+            msg = prio + msg
             try:
                 self.socket.write(str.encode(msg))
             except (KeyboardInterrupt, SystemExit):
@@ -210,9 +206,7 @@ class SSLSysLogHandler(logging.handlers.SysLogHandler):
                 )
                 prio = prio.encode("utf-8")
                 # Message is a string. Convert to bytes as required by RFC 5424
-                msg = msg.encode("utf-8")
-                if self.transform_data:
-                    msg = prio + msg
+                msg = prio + msg.encode("utf-8")
                 if self.unixsocket:
                     try:
                         self.socket.send(msg)

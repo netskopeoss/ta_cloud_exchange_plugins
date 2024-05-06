@@ -1,3 +1,8 @@
+# 3.2.0
+## Added
+- Added the RFC fields prefix in the JSON formatted data.
+- Added support to send 'Debug' logs.
+
 # 3.1.0
 ## Added
 - Added support for webtx JSON format to send specific fields to SIEM platform

@@ -28,13 +28,12 @@ SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
 CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-"""
 
-"""Syslog Plugin."""
-
+Syslog Plugin."""
 
 import collections
 import time
+import traceback
 from .syslog_constants import (
     SEVERITY_MAP,
     SEVERITY_UNKNOWN,
@@ -53,9 +52,7 @@ class CEFGenerator(object):
         self.log_prefix = log_prefix
         self.cef_version = cef_version  # Version of CEF being used
         self.mapping = mapping  # Mapping file content
-        self.extension = collections.namedtuple(
-            "Extension", ("key_name", "sanitizer")
-        )
+        self.extension = collections.namedtuple("Extension", ("key_name", "sanitizer"))
         self.extension_converter = collections.namedtuple(
             "Extension", ("key_name", "converter")
         )
@@ -95,16 +92,17 @@ class CEFGenerator(object):
                             field_converters[field] = self.extension_converter(
                                 key_name=field,
                                 converter=converters[
-                                    field_mapping.get(
-                                        "transformation", "String"
-                                    )
+                                    field_mapping.get("transformation", "String")
                                 ],
                             )
             return field_converters
         except Exception as err:
             self.logger.error(
-                f"{self.log_prefix}: Error occurred while parsing CEF "
-                f" transformation field. Error: {err}"
+                message=(
+                    f"{self.log_prefix}: Error occurred while parsing CEF "
+                    f"transformation field. Error: {err}"
+                ),
+                details=str(traceback.format_exc()),
             )
             raise
 
@@ -132,16 +130,17 @@ class CEFGenerator(object):
                             field_sanitizers[field] = self.extension(
                                 key_name=field,
                                 sanitizer=sanitizers[
-                                    field_mapping.get(
-                                        "transformation", "String"
-                                    )
+                                    field_mapping.get("transformation", "String")
                                 ],
                             )
             return field_sanitizers
         except Exception as err:
             self.logger.error(
-                f"{self.log_prefix}: Error occurred while parsing CEF "
-                f"transformation field. Error: {err}"
+                message=(
+                    f"{self.log_prefix}: Error occurred while parsing CEF "
+                    f"transformation field. Error: {err}"
+                ),
+                details=str(traceback.format_exc()),
             )
             raise
 
@@ -160,9 +159,7 @@ class CEFGenerator(object):
             return self._severity_sanitizer(headers[header], header)
         return self._prefix_field_str_sanitizer(headers[header], header)
 
-    def log_invalid_header(
-        self, possible_headers, headers, data_type, subtype
-    ):
+    def log_invalid_header(self, possible_headers, headers, data_type, subtype):
         """Issues log in case of invalid header found in mappings.
 
         Args:
@@ -177,8 +174,7 @@ class CEFGenerator(object):
                 self.logger.warn(
                     f"{self.log_prefix}: [{data_type}][{subtype}]- "
                     "Found invalid header configured in syslog mapping file: "
-                    f'"{configured_header}". Header '
-                    "field will be ignored."
+                    f"{configured_header}. Header field will be ignored."
                 )
 
     def webtx_timestamp(self, raw_data):
@@ -234,15 +230,11 @@ class CEFGenerator(object):
             # Validate and sanitise (if required) the incoming value
             # from Netskope before mapping it CEF
             try:
-                sanitized_value = self.valid_extensions[name].sanitizer(
-                    value, name
-                )
+                sanitized_value = self.valid_extensions[name].sanitizer(value, name)
                 if isinstance(sanitized_value, str):
                     sanitized_value = self._equals_escaper(sanitized_value)
 
-                extension_strs[
-                    self.valid_extensions[name].key_name
-                ] = sanitized_value
+                extension_strs[self.valid_extensions[name].key_name] = sanitized_value
             except KeyError:
                 self.logger.warn(
                     "{}: [{}][{}]- An error occurred while generating "
@@ -296,9 +288,7 @@ class CEFGenerator(object):
                                 str(headers[header]).lower(), SEVERITY_UNKNOWN
                             )
 
-                    cef_components.append(
-                        self.get_header_value(header, headers)
-                    )
+                    cef_components.append(self.get_header_value(header, headers))
 
                 except Exception as err:
                     self.logger.warn(

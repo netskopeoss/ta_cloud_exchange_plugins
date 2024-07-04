@@ -47,7 +47,7 @@ import re
 
 from urllib.parse import urlparse, parse_qs
 
-from requests.models import HTTPError
+from typing import Dict, Union
 
 from netskope.common.utils import add_user_agent
 
@@ -59,10 +59,11 @@ from netskope.integrations.cre.models import (
     Action,
 )
 
-MAX_RETRY_COUNT = 3
+MAX_RETRY_COUNT = 4
 PLATFORM_NAME = "Okta"
 MODULE_NAME = "URE"
-PLUGIN_VERSION = "1.1.0"
+PLUGIN_VERSION = "1.1.1"
+EVENTS_PROVIDER = "Netskope Security Events Provider"
 
 
 class OktaException(Exception):
@@ -95,26 +96,21 @@ class OktaPlugin(PluginBase):
             tuple: Tuple of plugin's name and version fetched from manifest.
         """
         try:
-            file_path = os.path.join(
-                str(os.path.dirname(os.path.abspath(__file__))),
-                "manifest.json",
-            )
-            with open(file_path, "r") as manifest:
-                manifest_json = json.load(manifest)
-                plugin_name = manifest_json.get("name", PLATFORM_NAME)
-                plugin_version = manifest_json.get("version", PLUGIN_VERSION)
-                return (plugin_name, plugin_version)
+            manifest_json = OktaPlugin.metadata
+            plugin_name = manifest_json.get("name", PLATFORM_NAME)
+            plugin_version = manifest_json.get("version", PLUGIN_VERSION)
+            return plugin_name, plugin_version
         except Exception as exp:
-            self.logger.info(
+            self.logger.error(
                 message=(
-                    f"{self.log_prefix}: Error occurred while"
+                    f"{MODULE_NAME} {PLATFORM_NAME}: Error occurred while"
                     f" getting plugin details. Error: {exp}"
                 ),
-                details=traceback.format_exc(),
+                details=str(traceback.format_exc()),
             )
-        return (PLATFORM_NAME, PLUGIN_VERSION)
+        return PLATFORM_NAME, PLUGIN_VERSION
 
-    def _add_user_agent(self, header=None):
+    def _add_user_agent(self, headers: Union[Dict, None] = None) -> Dict:
         """Add User-Agent in the headers of any request.
 
         Args:
@@ -123,15 +119,19 @@ class OktaPlugin(PluginBase):
         Returns:
             Dict: Dictionary containing the User-Agent.
         """
+        if headers and "User-Agent" in headers:
+            return headers
 
-        headers = add_user_agent(header)
+        headers = add_user_agent(header=headers)
         ce_added_agent = headers.get("User-Agent", "netskope-ce")
-        return "{}-{}-{}-v{}".format(
+        user_agent = "{}-{}-{}-v{}".format(
             ce_added_agent,
             MODULE_NAME.lower(),
             self.plugin_name.lower().replace(" ", "-"),
             self.plugin_version,
         )
+        headers.update({"User-Agent": user_agent})
+        return headers
 
     def handle_error(self, resp):
         resp_json = self.parse_response(resp)
@@ -200,8 +200,7 @@ class OktaPlugin(PluginBase):
             self.logger.debug(
                 f"{self.log_prefix}: API endpoint for {calling_method}: {url_endpoint}."
             )
-            user_agent = self._add_user_agent(headers)
-            headers["User-Agent"] = user_agent
+            headers = self._add_user_agent(headers)
             for retry in range(MAX_RETRY_COUNT + 1):
                 response = req(
                     url_endpoint,
@@ -237,7 +236,7 @@ class OktaPlugin(PluginBase):
                     self.logger.info(
                         f"{self.log_prefix}: Received status code {response.status_code} "
                         f"while {calling_method}. "
-                        f"Retrying after: {retry_after} seconds - Retry Attemp ({retry + 1})."
+                        f"Retrying after: {retry_after} seconds - Retry Attempt ({retry + 1})."
                     )
                     time.sleep(retry_after)
                 else:
@@ -250,7 +249,7 @@ class OktaPlugin(PluginBase):
             )
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {error}",
-                details=traceback.format_exc(),
+                details=str(traceback.format_exc()),
             )
             raise OktaException(err_msg)
         except requests.exceptions.ConnectionError as error:
@@ -261,21 +260,21 @@ class OktaPlugin(PluginBase):
             )
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {error}",
-                details=traceback.format_exc(),
+                details=str(traceback.format_exc()),
             )
             raise OktaException(err_msg)
         except requests.HTTPError as err:
             err_msg = f"HTTP Error occurred while {calling_method}."
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {err}",
-                details=traceback.format_exc(),
+                details=str(traceback.format_exc()),
             )
             raise OktaException(err_msg)
         except Exception as err:
             err_msg = f"Error occurred while {calling_method}."
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {err}",
-                details=traceback.format_exc(),
+                details=str(traceback.format_exc()),
             )
             raise OktaException(err)
 
@@ -411,7 +410,7 @@ class OktaPlugin(PluginBase):
                 retry_req=retry
             )
             all_groups += self.handle_error(groups)
-            links = re.findall(r"(https?://\S+)", groups.headers["link"])
+            links = re.findall(r"(https?://\S+)", groups.headers.get("link", ""))
             flag = False
             for link in links:
                 if "after" in link:
@@ -456,7 +455,7 @@ class OktaPlugin(PluginBase):
                 params
             )
             all_users += self.handle_error(users)
-            links = re.findall(r"(https?://\S+)", users.headers["link"])
+            links = re.findall(r"(https?://\S+)", users.headers.get("link", ""))
             flag = False
             for link in links:
                 if "after" in link:
@@ -823,54 +822,152 @@ class OktaPlugin(PluginBase):
                 )
                 self.logger.error(
                     message=error_msg,
-                    details=traceback.format_exc()
+                    details=str(traceback.format_exc())
                 )
                 raise OktaException(err)
+            
+    def get_all_security_events_provider(self, base_url, token, issuer, jwks_url):
+        """Get all Security Events Providers and check settings."""
+        url_endpoint = f"{base_url}/api/v1/security-events-providers"
+        after = ""
+        sep_id = None
+        security_event_provider_list = []
+        headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "Authorization": f"SSWS {token}",
+        }
+        params = {}
+        while True:
+            resp = self.make_request(
+                method="get",
+                calling_method=f"fetching existing security events providers from the {PLATFORM_NAME}",
+                url_endpoint=url_endpoint,
+                headers=headers,
+                params=params,
+                json={},
+                retry_req=True
+            )
+            security_event_provider_list += self.handle_error(resp)
+            links = re.findall(r"(https?://\S+)", resp.headers.get("link", ""))
+            flag = False
+            for link in links:
+                if "after" in link:
+                    parsed_url = urlparse(link)
+                    after_from_link = parse_qs(parsed_url.query)["after"]
+                    if after_from_link != after:
+                        params["after"] = after_from_link
+                        after = after_from_link
+                        flag = True
+                    else:
+                        flag = False
+            if not flag:
+                break
+        
+        for provider in security_event_provider_list:
+            if provider.get("name") == EVENTS_PROVIDER:
+                settings = provider.get("settings", {})
+                sep_id = provider.get("id", "")
+                if settings.get("issuer", "") == issuer and settings.get("jwks_url", "") == jwks_url:
+                    return True, sep_id
+                else:
+                    return False, sep_id
+        return False, sep_id
+    
+    def update_security_event_provider(self, base_url, token, issuer, jwks_url, sep_id, retry=True):
+        """Update the existing Security Event Provider"""
+        url_endpoint = f"{base_url}/api/v1/security-events-providers/{sep_id}"
+        body = {
+            "name": EVENTS_PROVIDER,
+            "type": "Netskope",
+            "settings": {
+                "issuer": issuer,
+                "jwks_url": jwks_url
+            },
+        }
+        headers = {
+            "Authorization": f"SSWS {token}"
+        }
+        resp = self.make_request(
+            "put",
+            "updating security events provider",
+            url_endpoint,
+            headers,
+            json=body,
+            retry_req=retry
+        )
+        if resp.status_code in [200, 201]:
+            self.logger.info(
+                f"{self.log_prefix}: Successfully updated Security Events Provider with the issuer '{issuer}'."
+            )
+            return
+        self.handle_error(resp)
+
 
     def generate_security_provider(self, base_url, token, issuer, jwks_url, retry=True):
-        """Create Security Event Provider in Okta tenant."""
-        try:
-            url_endpoint = f"{base_url}/api/v1/security-events-providers"
-            body = {
-                "name": "Netskope Security Events Provider",
-                "type": "Netskope",
-                "settings": {
-                    "issuer": issuer,
-                    "jwks_url": jwks_url
-                },
-            }
-            headers = {
-                "Authorization": f"SSWS {token}"
-            }
-            resp = self.make_request(
-                "post",
-                "Generating security provider",
-                url_endpoint,
-                headers,
-                json=body,
-                retry_req=retry
+        """Create Security Events Provider in Okta tenant."""
+        url_endpoint = f"{base_url}/api/v1/security-events-providers"
+        body = {
+            "name": EVENTS_PROVIDER,
+            "type": "Netskope",
+            "settings": {
+                "issuer": issuer,
+                "jwks_url": jwks_url
+            },
+        }
+        headers = {
+            "Authorization": f"SSWS {token}"
+        }
+        resp = self.make_request(
+            "post",
+            "generating security events provider",
+            url_endpoint,
+            headers,
+            json=body,
+            retry_req=retry
+        )
+        if resp.status_code in [200, 201]:
+            self.logger.info(
+                f"{self.log_prefix}: Successfully created Security Events Provider with the issuer '{issuer}'."
             )
-            if resp.status_code in [200, 201]:
-                self.logger.info(
-                    f"{self.log_prefix}: Successfully created Security provier with the issuer '{issuer}'."
-                )
-                return
+            return
 
-            json_resp = self.parse_response(resp)
-            error_causes = json_resp.get("errorCauses", [])
-            for error_cause in error_causes:
-                if (
-                    "The provided issuer already exists for this organization."
-                    in error_cause.get("errorSummary", "")
-                ):
-                    self.logger.info(
-                        f"{self.log_prefix}: The provided issuer already exists for this organization. "
-                        "New secrutiy provider will not be created, actions will be performed using the existing security provider."
+        json_resp = self.parse_response(resp)
+        error_causes = json_resp.get("errorCauses", [])
+        for error_cause in error_causes:
+            if (
+                "Security Events Provider name must be unique"
+                in error_cause.get("errorSummary", "")
+            ):
+                is_matched, sep_id = self.get_all_security_events_provider(base_url, token, issuer, jwks_url)
+                if not is_matched:
+                    error_msg = (
+                        f"{EVENTS_PROVIDER} already exists with a different Issuer than provided in the configuration. "
+                        f"Either delete the existing Security Events Provider from the {PLATFORM_NAME} platform or update the Issuer URL and JWKS URL."
                     )
-                    return
-            self.handle_error(resp)
-        except Exception as err:
-            raise OktaException(err)
+                    self.logger.error(
+                        f"{self.log_prefix}: {error_msg}",
+                    )
+                    raise OktaException(error_msg)
+                
+                # update SEP
+                self.update_security_event_provider(base_url, token, issuer, jwks_url, sep_id, True)
+                return
+            elif (
+                "The provided issuer already exists for this organization."
+                in error_cause.get("errorSummary", "")
+            ):
+                error_message = (
+                    f"{self.log_prefix}: "
+                    "The provided Issuer URL is already associated with other Security Events Provider. "
+                    "Either delete the existing Security Events Provider or use a unique Issuer URL."
+                )
+                self.logger.error(
+                    f"{self.log_prefix}: {error_message}",
+                    details=str(error_cause)
+                )
+                raise OktaException(error_message)
+        self.handle_error(resp)
 
     def get_action_fields(self, action: Action) -> List:
         """Get fields required for an action."""
@@ -984,7 +1081,7 @@ class OktaPlugin(PluginBase):
                 error_msg = "Error occurred while fetching groups."
                 self.logger.error(
                     message=f"{self.log_prefix}: {error_msg} Error: {err}",
-                    details=traceback.format_exc()
+                    details=str(traceback.format_exc())
                 )
                 return ValidationResult(
                     success=False,
@@ -1094,7 +1191,7 @@ class OktaPlugin(PluginBase):
             )
             self.logger.error(
                 f"{self.log_prefix}: {error_msg}",
-                details=traceback.format_exc()
+                details=str(traceback.format_exc())
             )
             return ValidationResult(
                 success=False,
@@ -1113,10 +1210,14 @@ class OktaPlugin(PluginBase):
                 success=True,
                 message="Validation successful."
             )
-        except OktaException:
+        except OktaException as err:
             error_msg = (
                 "Error occurred while generating security provider. "
-                "Check the credentials provided. "
+                f"{err}"
+            )
+            self.logger.error(
+                f"{self.log_prefix}: {err}",
+                details=str(traceback.format_exc())
             )
             return ValidationResult(
                 success=False,
@@ -1124,12 +1225,12 @@ class OktaPlugin(PluginBase):
             )
         except Exception as err:
             error_msg = (
-                "Error occurred while generating security provider. "
+                "Error occurred while generating security evnets provider. "
                 "Check the credentials provided. "
             )
             self.logger.error(
                 message=f"{self.log_prefix}: {error_msg}, Error: {err}",
-                details=traceback.format_exc()
+                details=str(traceback.format_exc())
             )
             return ValidationResult(
                 success=False,

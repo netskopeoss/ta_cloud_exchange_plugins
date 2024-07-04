@@ -1,26 +1,26 @@
 {
-    "name": "Okta",
-    "description": "Okta Plugin performs action on Okta users like - Add users to a group, Remove users from a group and Push risk score. \n Note: It does not support fetching users or host from Okta.",
-    "id": "okta_cre",
-    "type": [],
-    "netskope": false,
-    "version": "1.1.0",
-    "configuration": [
-        {
-            "label": "Okta Domain",
-            "key": "url",
-            "type": "text",
-            "default": "",
-            "mandatory": true,
-            "description": "Your Okta domain. e.g. https://<your-okta-domain>"
-        },
-        {
-            "label": "API Token",
-            "key": "api_token",
-            "type": "password",
-            "default": "",
-            "mandatory": true,
-            "description": "Your Okta API Token."
-        }
-    ]
+  "name": "Okta",
+  "description": "Okta Plugin performs action on Okta users like - Add users to a group, Remove users from a group and Push risk score. \n Note: It does not support fetching users or host from Okta.",
+  "id": "okta_cre",
+  "type": [],
+  "netskope": false,
+  "version": "1.1.1",
+  "configuration": [
+    {
+      "label": "Okta Domain",
+      "key": "url",
+      "type": "text",
+      "default": "",
+      "mandatory": true,
+      "description": "Your Okta domain. e.g. https://<your-okta-domain>"
+    },
+    {
+      "label": "API Token",
+      "key": "api_token",
+      "type": "password",
+      "default": "",
+      "mandatory": true,
+      "description": "Your Okta API Token."
+    }
+  ]
 }

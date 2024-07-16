@@ -141,8 +141,8 @@
       "key": "source",
       "type": "text",
       "mandatory": false,
-      "default": "",
-      "description": "This field indicates the origin of the Threat IoC on the CrowdStrike Custom IOC. If left blank, it defaults to Netskope - Cloud Threat Exchange. Otherwise, specify a value that will be displayed as Netskope - Cloud Threat Exchange | <IOC Source Value>. Limited to 200 characters."
+      "default": "Netskope - Cloud Threat Exchange",
+      "description": "The origin of the Threat IoC. This field can be utilized to trace the origin of the IoC on the CrowdStrike Custom IOC. Limited to 200 characters."
     }
   ]
 }

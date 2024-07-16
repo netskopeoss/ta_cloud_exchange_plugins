@@ -85,7 +85,6 @@ from .utils.crowdstrike_constants import (
     PLUGIN_VERSION,
     THREAT_MAPPING,
     THREAT_TYPES,
-    PREFIX_IOC_SOURCE_TAG,
 )
 from .utils.crowdstrike_helper import (
     CrowdstrikePluginException,
@@ -176,11 +175,7 @@ class CrowdStrikePlugin(PluginBase):
             indicators (indicators): Indicators received from business rule.
             action_dict (Dict): Action parameter dictionary.
         """
-        source = (
-            PREFIX_IOC_SOURCE_TAG
-            + " | "
-            + self.configuration.get("source", "").strip()
-        )
+        source = self.configuration.get("source", "").strip()
         action_params = action_dict.get("parameters", {})
         action = action_params.get("action", "").strip()
         platforms = action_params.get("platforms", ["windows", "mac", "linux"])
@@ -634,11 +629,7 @@ class CrowdStrikePlugin(PluginBase):
             # use the behavior timestamp of last detection id as checkpoint.
             # Or use the provided detection endpoint checkpoints from args.
             time_filter = checkpoint if checkpoint else initial_check_point
-            ioc_source_filter = (
-                f"behaviors.ioc_source:!*'{PREFIX_IOC_SOURCE_TAG}*'"
-            )
-            ioc_type_filter = f"behaviors.ioc_type:{threat_types_to_pull}"
-            filter_query = f"last_behavior:>='{time_filter}'+{ioc_type_filter}+{ioc_source_filter}"  # noqa
+            filter_query = f"last_behavior:>='{time_filter}'+behaviors.ioc_type:{threat_types_to_pull}"  # noqa
             query_params = {
                 "limit": PAGE_SIZE,
                 "filter": filter_query,
@@ -1615,7 +1606,6 @@ class CrowdStrikePlugin(PluginBase):
                 f"Updating {chunk_size} indicator(s) on {IOC_MANAGEMENT}"
             )
             try:
-                headers = self.reload_auth_token(headers)
                 response = self.crowdstrike_helper.api_helper(
                     url=push_endpoint,
                     method="PATCH",
@@ -1968,19 +1958,18 @@ class CrowdStrikePlugin(PluginBase):
             return ValidationResult(success=False, message=err_msg)
 
         source = configuration.get("source", "").strip()
-        prefixed_source = f"{PREFIX_IOC_SOURCE_TAG} | {source}"
-        if source:
-            if not isinstance(source, str):
-                err_msg = "Invalid value provided in the IOC Source."
-                self.logger.error(f"{self.log_prefix}: {err_msg}")
-                return ValidationResult(success=False, message=err_msg)
-            elif len(prefixed_source) > 200:
-                err_msg = (
-                    "Invalid value provided in the IOC Source. "
-                    "Size of source string should be less than 200 characters."
-                )
-                self.logger.error(f"{self.log_prefix}: {err_msg}")
-                return ValidationResult(success=False, message=err_msg)
+        if not source:
+            err_msg = "IOC Source is a required configuration parameter."
+            self.logger.error(f"{self.log_prefix}: {err_msg}")
+            return ValidationResult(success=False, message=err_msg)
+
+        elif not isinstance(source, str) or len(source) > 200:
+            err_msg = (
+                "Invalid value provided in the IOC Source. "
+                "Size of source string should be less than 200 characters."
+            )
+            self.logger.error(f"{self.log_prefix}: {err_msg}")
+            return ValidationResult(success=False, message=err_msg)
 
         days = configuration.get("days")
         if days is None:

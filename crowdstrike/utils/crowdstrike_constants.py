@@ -47,11 +47,7 @@ PAGE_SIZE = 9999
 MODULE_NAME = "CTE"
 PLUGIN_NAME = "CrowdStrike"
 PLATFORM_NAME = "CrowdStrike"
-<<<<<<< HEAD
 PLUGIN_VERSION = "2.1.0"
-=======
-PLUGIN_VERSION = "2.0.2"
->>>>>>> ee0f6499f5038c55c48f0e91b59ba87ebebdd56c
 MAX_API_CALLS = 3
 DEFAULT_WAIT_TIME = 60
 DEFAULT_BATCH_SIZE = 200
@@ -77,7 +73,6 @@ THREAT_MAPPING = {
     "ipv6": ["ipv6"],
 }
 DEFAULT_NETSKOPE_TAG = "netskope-ce"
-PREFIX_IOC_SOURCE_TAG = "Netskope - Cloud Threat Exchange"
 NON_CROWDSTRIKE_DISCOVERED = "non-CrowdStrike-discovered"
 IOC_SOURCE_PAGES = ["endpoint_detections", "ioc_management"]
 IOC_MANAGEMENT_SEVERITY_MAPPING = {

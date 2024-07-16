@@ -37,11 +37,6 @@ from netskope.integrations.cte.models import (
     SeverityType,
 )
 
-from netskope.integrations.cte.models import (
-    IndicatorType,
-    SeverityType,
-)
-
 BASE_URLS = [
     "https://api.crowdstrike.com",
     "https://api.us-2.crowdstrike.com",
@@ -52,12 +47,13 @@ PAGE_SIZE = 9999
 MODULE_NAME = "CTE"
 PLUGIN_NAME = "CrowdStrike"
 PLATFORM_NAME = "CrowdStrike"
-PLUGIN_VERSION = "2.0.2"
+PLUGIN_VERSION = "2.1.0"
 MAX_API_CALLS = 3
 DEFAULT_WAIT_TIME = 60
 DEFAULT_BATCH_SIZE = 200
 MAX_WAIT_TIME = 300
 MAX_LIMIT_FOR_HOSTS = 100
+MAX_RETRY_AFTER_IN_MIN = 5
 ISOLATE_REMEDIATE_BATCH_SIZE = 5000
 IOC_MANAGEMENT_INDICATORS_LIMIT = 1000000
 MAX_INDICATOR_THRESHOLD = 100000
@@ -90,14 +86,26 @@ IOC_MANAGEMENT_SEVERITY_MAPPING = {
 CROWDSTRIKE_TO_INTERNAL_TYPE = {
     "hash_md5": IndicatorType.MD5,
     "hash_sha256": IndicatorType.SHA256,
-    "domain": IndicatorType.URL,
+    "domain": getattr(IndicatorType, "DOMAIN", IndicatorType.URL),
     "sha256": IndicatorType.SHA256,
     "md5": IndicatorType.MD5,
-    "ipv4": IndicatorType.URL,
-    "ipv6": IndicatorType.URL,
+    "ipv4": getattr(IndicatorType, "IPV4", IndicatorType.URL),
+    "ipv6": getattr(IndicatorType, "IPV6", IndicatorType.URL),
 }
 INTERNAL_TYPES_TO_CROWDSTRIKE = {
     IndicatorType.MD5: "md5",
     IndicatorType.SHA256: "sha256",
     IndicatorType.URL: "domain",
 }
+
+# Bifurcated IndicatorType
+BIFURCATE_INDICATOR_TYPES = {
+    "url",
+    "domain",
+    "hostname",
+    "ipv4",
+    "ipv6",
+    "fqdn",
+}
+
+CASE_INSENSITIVE_IOC_TYPES = ["md5", "sha256", "ipv6"]

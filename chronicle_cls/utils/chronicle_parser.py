@@ -30,7 +30,7 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
 
-"""Chronicle Parser."""
+"""CLS Google Chronicle Plugin Parser."""
 import json
 
 mapping = {
@@ -66,9 +66,10 @@ mapping = {
 class UDMParser(object):
     """UDM Parser class."""
 
-    def __init__(self, data, logger, pairs, data_type, subtype):
+    def __init__(self, data, logger, log_prefix, pairs, data_type, subtype):
         """Init method."""
         self.logger = logger
+        self.log_prefix = log_prefix
         self.data = data
         self.pairs = pairs
         self.data_type = data_type
@@ -103,11 +104,12 @@ class UDMParser(object):
             if _severity != "":
                 self.pairs["security_result.severity"] = _severity
         except Exception as e:
-            self.logger.warn(
+            err_msg = (
                 f"[{self.data_type}][{self.subtype}]: An error occurred while generating "
                 f'UDM data for field: "severity", Error: {e}. '
                 f"Field will be ignored."
             )
+            self.logger.warn(f"{self.log_prefix}: {err_msg}")
 
         # Header fields
         try:
@@ -121,11 +123,12 @@ class UDMParser(object):
             # self.pairs["idm.is_alert"] = self.data.get("alert", False)
             # self.pairs["idm.is_significant"] = self._is_significant
         except Exception as e:
-            self.logger.warn(
+            err_msg = (
                 f"[{self.data_type}][{self.subtype}]: An error occurred while generating "
                 f"UDM data for Header fields, Error: {e}. "
                 f"Field will be ignored."
             )
+            self.logger.warn(f"{self.log_prefix}: {err_msg}")
 
         # Parse Activity to decide event type and action
         try:
@@ -178,11 +181,12 @@ class UDMParser(object):
                 self.pairs["metadata.event_type"] = "USER_RESOURCE_ACCESS"
 
         except Exception as e:
-            self.logger.warn(
+            err_msg = (
                 f"[{self.data_type}][{self.subtype}]: An error occurred while generating "
                 f'UDM data for field: "activity", Error: {e}. '
                 f"Field will be ignored."
             )
+            self.logger.warn(f"{self.log_prefix}: {err_msg}")
 
         # Parse Additional information
         try:
@@ -194,11 +198,12 @@ class UDMParser(object):
             elif dlp_file != "":
                 self.pairs["target.file.full_path"] = dlp_file
         except Exception as e:
-            self.logger.warn(
+            err_msg = (
                 f"[{self.data_type}][{self.subtype}]: An error occurred while generating "
                 f'UDM data for field: "file_path", Error: {e}. '
                 f"Field will be ignored."
             )
+            self.logger.warn(f"{self.log_prefix}: {err_msg}")
 
         self.parse_field(
             "organization_unit", "principal.administrative_domain"
@@ -209,11 +214,12 @@ class UDMParser(object):
             if browser != "" and browser != "unknown":
                 self.pairs["network.http.user_agent"] = browser
         except Exception as e:
-            self.logger.warn(
+            err_msg = (
                 f"[{self.data_type}][{self.subtype}]: An error occurred while generating "
                 f'UDM data for field: "browser", Error: {e}. '
                 f"Field will be ignored."
             )
+            self.logger.warn(f"{self.log_prefix}: {err_msg}")
 
         try:
             from_user = self.data.get("from_user", "")
@@ -221,22 +227,24 @@ class UDMParser(object):
             if len(from_user):
                 self.pairs["principal.user.email_addresses"] = from_user
         except Exception as e:
-            self.logger.warn(
+            err_msg = (
                 f"[{self.data_type}][{self.subtype}]: An error occurred while generating "
                 f'UDM data for field: "from_user", Error: {e}. '
                 f"Field will be ignored."
             )
+            self.logger.warn(f"{self.log_prefix}: {err_msg}")
 
         try:
             file_type = self.data.get("file_type", "")
             if file_type != "" and file_type.lower() != "unknown":
                 self.pairs["target.file.mime_type"] = file_type
         except Exception as e:
-            self.logger.warn(
+            err_msg = (
                 f"[{self.data_type}][{self.subtype}]: An error occurred while generating "
                 f'UDM data for field: "file_type", Error: {e}. '
                 f"Field will be ignored."
             )
+            self.logger.warn(f"{self.log_prefix}: {err_msg}")
 
         try:
             value = str(self.data.get("category", ""))
@@ -251,11 +259,12 @@ class UDMParser(object):
                 else:
                     self.pairs["security_result.category_details"] = [value]
         except Exception as e:
-            self.logger.warn(
+            err_msg = (
                 f"[{self.data_type}][{self.subtype}]: An error occurred while generating "
                 f'UDM data for field: "category", Error: {e}. '
                 f"Field will be ignored."
             )
+            self.logger.warn(f"{self.log_prefix}: {err_msg}")
 
         try:
             value = str(self.data.get("alert_type", ""))
@@ -270,11 +279,12 @@ class UDMParser(object):
                 else:
                     self.pairs["security_result.category_details"] = [value]
         except Exception as e:
-            self.logger.warn(
+            err_msg = (
                 f"[{self.data_type}][{self.subtype}]: An error occurred while generating "
                 f'UDM data for field: "alert_type", Error: {e}. '
                 f"Field will be ignored."
             )
+            self.logger.warn(f"{self.log_prefix}: {err_msg}")
 
         self.parse_field("malware_name", "security_result.threat_name")
 
@@ -287,11 +297,12 @@ class UDMParser(object):
                     "intermediary.user.email_addresses"
                 ] = shared_with
         except Exception as e:
-            self.logger.warn(
+            err_msg = (
                 f"[{self.data_type}][{self.subtype}]: An error occurred while generating "
                 f'UDM data for field: "shared_with", Error: {e}. '
                 f"Field will be ignored."
             )
+            self.logger.warn(f"{self.log_prefix}: {err_msg}")
 
         self.parse_field("sha256", "target.file.sha256")
         self.parse_field("md5", "target.file.md5")
@@ -317,11 +328,12 @@ class UDMParser(object):
             if len(user):
                 self.pairs["principal.user.email_addresses"] = user
         except Exception as e:
-            self.logger.warn(
+            err_msg = (
                 f"[{self.data_type}][{self.subtype}]: An error occurred while generating "
                 f'UDM data for field: "user", Error: {e}. '
                 f"Field will be ignored."
             )
+            self.logger.warn(f"{self.log_prefix}: {err_msg}")
 
         try:
             value = self.data.get("protocol", "")
@@ -332,33 +344,36 @@ class UDMParser(object):
                     "network.application_protocol"
                 ] = "UNKNOWN_APPLICATION_PROTOCOL"
         except Exception as e:
-            self.logger.warn(
+            err_msg = (
                 f"[{self.data_type}][{self.subtype}]: An error occurred while generating "
                 f'UDM data for field: "protocol", Error: {e}. '
                 f"Field will be ignored."
             )
+            self.logger.warn(f"{self.log_prefix}: {err_msg}")
 
         try:
             value = int(self.data.get("file_size", -1))
             if value != -1:
                 self.pairs["target.file.size"] = value
         except Exception as e:
-            self.logger.warn(
+            err_msg = (
                 f"[{self.data_type}][{self.subtype}]: An error occurred while generating "
                 f'UDM data for field: "file_size", Error: {e}. '
                 f"Field will be ignored."
             )
+            self.logger.warn(f"{self.log_prefix}: {err_msg}")
 
         try:
             value = self.data.get("nsdeviceuid", "")
             if value != "":
                 self.pairs["principal.asset_id"] = f"NS:{value}"
         except Exception as e:
-            self.logger.warn(
+            err_msg = (
                 f"[{self.data_type}][{self.subtype}]: An error occurred while generating "
                 f'UDM data for field: "device id", Error: {e}. '
                 f"Field will be ignored."
             )
+            self.logger.warn(f"{self.log_prefix}: {err_msg}")
 
         # Check whether the all the required fields are present or not based on event_types
         self.check_event_type()
@@ -366,20 +381,21 @@ class UDMParser(object):
         return self.pairs
 
     def parse_field(self, field_name, udm_field_name):
-        """parse the field."""
+        """Parse the field."""
         try:
             value = str(self.data.get(field_name, ""))
             if value != "":
                 self.pairs[udm_field_name] = value
         except Exception as e:
-            self.logger.warn(
+            err_msg = (
                 f"[{self.data_type}][{self.subtype}]: An error occurred while generating "
                 f'UDM data for field: "{field_name}", Error: {e}. '
                 f"Field will be ignored."
             )
+            self.logger.warn(f"{self.log_prefix}: {err_msg}")
 
     def is_valid_type(self, event_type, all_keys):
-        """validate type."""
+        """Validate type."""
         all_keys = " , ".join(all_keys)
         valid = True
         for field in mapping[event_type]:
@@ -394,7 +410,7 @@ class UDMParser(object):
         return valid
 
     def check_event_type(self):
-        """check event type."""
+        """Check event type."""
         try:
             all_keys = self.pairs.keys()
             if self.is_valid_type(self.pairs["metadata.event_type"], all_keys):
@@ -405,7 +421,8 @@ class UDMParser(object):
             else:
                 self.pairs["metadata.event_type"] = "GENERIC_EVENT"
         except Exception as e:
-            self.logger.warn(
+            err_msg = (
                 f"[{self.data_type}][{self.subtype}]: An error occurred while validating "
                 f"Event type for chronicle, Error: {e}. Field will be ignored."
             )
+            self.logger.warn(f"{self.log_prefix}: {err_msg}")

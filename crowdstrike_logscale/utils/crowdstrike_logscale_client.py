@@ -78,7 +78,7 @@ class CrowdStrikeLogScaleClient:
         for i in range(0, len(lst), chunk_size):
             yield lst[i : i + chunk_size]
 
-    def _post_data(self, payload):
+    def _post_data(self, payload, uid):
         """Post the given data to CrowdStrike LogScale workspace.
 
         :param body: The actual data being ingested
@@ -93,45 +93,75 @@ class CrowdStrikeLogScaleClient:
             "Authorization": f"Bearer {self.configuration.get('token')}",
             "Content-Type": "application/json",
         }
+        headers = _add_user_agent(headers)
+        self.logger.debug(
+            f"{self.log_prefix}: [{self.data_type}] [{self.subtype}] "
+            f"Initiating the ingestion of {len(payload)} logs in the batch of 500 to "
+            f"CrowdStrike LogScale. UUID: {uid}."
+        )
 
         count = 0
         if payload:
+            start = time.time()
             for chunk in self.chunks(payload):
+                chunk_size = len(chunk)
+                payload_str = ""
+                payload_list = [json.dumps({"event": single_event}) for single_event in chunk]
+                payload_str = "\n".join(payload_list)
+                batch_start = time.time()
+                self.logger.debug(
+                    f"{self.log_prefix}: [{self.data_type}] [{self.subtype}]"
+                    f" Ingesting {chunk_size} log(s) to {self.plugin_name}. "
+                    f"UUID: {uid}."
+                )
                 self._api_helper(
                     lambda: requests.post(
                         url=uri,
-                        headers=_add_user_agent(headers),
-                        data=json.dumps({"event": chunk}),
+                        headers=headers,
+                        data=payload_str,
                         proxies=self.proxy,
                     ),
-                    "ingesting data into CrowdStrike LogScale",
+                    (
+                        f" [{self.data_type}] [{self.subtype}] ingesting data "
+                        f"into {self.plugin_name} having UUID: {uid}."
+                    ),
                 )
-
-                count += len(chunk)
+                batch_end = time.time()
+                count += chunk_size
                 self.logger.debug(
-                    "{}: Successfully pushed {} record(s) to {} "
+                    "{}: [{}] [{}] Successfully pushed {} record(s) of size {} KB to {} "
                     "in current page. Total {} record(s) pushed so far "
-                    "in the current Push cycle.".format(
-                        self.log_prefix, len(chunk), PLATFORM_NAME, count
+                    "in the current Push cycle. Time taken to ingest {} "
+                    "record(s): {} seconds. UUID: {}.".format(
+                        self.log_prefix,
+                        self.data_type,
+                        self.subtype,
+                        chunk_size,
+                        round(len(json.dumps(chunk))/1024, 2),
+                        PLATFORM_NAME,
+                        count,
+                        chunk_size,
+                        round(batch_end - batch_start, 2),
+                        uid,
                     )
                 )
 
+            end = time.time()
             log_msg = (
                 "[{}] [{}] Successfully ingested {} log(s)"
-                " to {} server.".format(
+                " to {} server. Time taken to ingest {} record(s) is {} seconds.".format(
                     self.data_type,
                     self.subtype,
                     count,
                     self.plugin_name,
+                    count,
+                    round(end - start, 2),
                 )
             )
             self.logger.info(f"{self.log_prefix}: {log_msg}")
             return
         else:
-            err_msg = (
-                "Received empty transformed data hence "
-                "those record(s) were skipped"
-            )
+            err_msg = f"[{self.data_type}] [{self.subtype}] Received empty transformed data hence the record(s) were skipped. UUID: {uid}."
             self.logger.info(
                 "{}: {}".format(self.log_prefix, err_msg),
             )
@@ -177,7 +207,7 @@ class CrowdStrikeLogScaleClient:
         )
         raise CrowdStrikeLogScaleException(err_msg)
 
-    def push(self, data, data_type, subtype):
+    def push(self, data, data_type, subtype, uid):
         """Call method of post_data with appropriate parameters.
 
         :param data: The data to be ingested
@@ -187,8 +217,7 @@ class CrowdStrikeLogScaleClient:
         self.data_length = len(data)
         self.data_type = data_type
         self.subtype = subtype
-
-        self._post_data(data)
+        self._post_data(data, uid)
 
     def _api_helper(self, request, logger_msg, is_handle_error_required=True):
         """Helper function for api call."""
@@ -196,6 +225,15 @@ class CrowdStrikeLogScaleClient:
         try:
             for retry_counter in range(MAX_RETRY_COUNT):
                 response = request()
+                debug_log = (
+                    f"{self.log_prefix}: Received status "
+                    f"code {response.status_code} while {logger_msg}."
+                )
+                if "ingesting data" in logger_msg:
+                    debug_log += f" Response body: {response.text}"
+                self.logger.debug(
+                    debug_log
+                )
                 if response.status_code == 429 or (
                     response.status_code >= 500 and response.status_code < 600
                 ):

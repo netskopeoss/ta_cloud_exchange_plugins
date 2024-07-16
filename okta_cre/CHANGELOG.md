@@ -1,3 +1,7 @@
+# 1.1.1
+## Changed
+- Updated plugin to accommodate Okta's changes in Security Events Provider creation API.
+
 # 1.1.0
 ## Added
 - Added new action 'Push risk score'.

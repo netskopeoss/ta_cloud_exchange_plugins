@@ -32,6 +32,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 """Exception class for Azure Monitor plugin."""
 
+
 class FormatCEFError(Exception):
     """CEF Format Error class."""
 
@@ -110,17 +111,9 @@ class FieldNotFoundError(Exception):
         """Initialize."""
         self.message = message
 
-class MonitorAuthTokenException(Exception):
-    """Exception raised when Authentication Token cannot be generated.
 
-    Attributes:
-        message -- explanation of the error
-    """
-
-    def __init__(self, message):
-        """Initialize."""
-        self.message = message
 
 class MicrosoftAzureMonitorPluginException(Exception):
     """MicrosoftAzureMonitorPlugin custom exception class."""
+
     pass

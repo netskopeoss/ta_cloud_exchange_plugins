@@ -1,97 +1,101 @@
 {
-    "name": "Mimecast Plugin",
-    "id": "mimecast",
-    "version": "1.1.0",
-    "description": "This plugin is used to fetch File hashes and URL from Mimecast. This plugin can share Hash and URL type of IoCs to Mimecast. To access the plugin, you would need an API application on Mimecast and user credentials. Refer these Mimecast guides [here](https://integrations.mimecast.com/documentation/) for detailed steps.",
-    "patch_supported": true,
-    "push_supported": true,
-    "configuration": [
+  "name": "Mimecast Plugin",
+  "id": "mimecast",
+  "version": "1.2.0",
+  "description": "This plugin is used to fetch File hashes(SHA256 and MD5) and URLs from Mimecast. This plugin can share Hash(SHA256 and MD5) and URL type of Indicators to Mimecast. To access the plugin, you would need an API application on Mimecast and user credentials. Refer these Mimecast guides [here](https://integrations.mimecast.com/documentation/) for detailed steps.",
+  "patch_supported": true,
+  "push_supported": true,
+  "configuration": [
+    {
+      "label": "Base URL",
+      "key": "url",
+      "type": "text",
+      "default": "https://us-api.mimecast.com",
+      "mandatory": true,
+      "description": "Mimecast API Base URL including region."
+    },
+    {
+      "label": "Application ID",
+      "key": "app_id",
+      "type": "text",
+      "mandatory": true,
+      "description": "Mimecast API Application ID."
+    },
+    {
+      "label": "Application Key",
+      "key": "app_key",
+      "type": "password",
+      "mandatory": true,
+      "description": "Mimecast API Application Key."
+    },
+    {
+      "label": "Access Key",
+      "key": "access_key",
+      "type": "password",
+      "mandatory": true,
+      "description": "Mimecast Application Access key."
+    },
+    {
+      "label": "Secret Key",
+      "key": "secret_key",
+      "type": "password",
+      "mandatory": true,
+      "description": "Mimecast Application Secret key."
+    },
+    {
+      "label": "Indicator Feed Type",
+      "key": "feed_type",
+      "type": "multichoice",
+      "choices": [
         {
-            "label": "Base URL",
-            "key": "url",
-            "type": "text",
-            "default": "https://us-api.mimecast.com",
-            "mandatory": true,
-            "description": "Mimecast API base URL including region."
+          "key": "Malware Customer",
+          "value": "malware_customer"
         },
         {
-            "label": "Application ID",
-            "key": "app_id",
-            "type": "text",
-            "mandatory": true,
-            "description": "Mimecast API Application ID."
+          "key": "Malware Grid",
+          "value": "malware_grid"
         },
         {
-            "label": "Application Key",
-            "key": "app_key",
-            "type": "password",
-            "mandatory": true,
-            "description": "Mimecast API Application Key."
-        },
-        {
-            "label": "Access Key",
-            "key": "access_key",
-            "type": "password",
-            "mandatory": true,
-            "description": "Mimecast user's access key."
-        },
-        {
-            "label": "Secret Key",
-            "key": "secret_key",
-            "type": "password",
-            "mandatory": true,
-            "description": "Mimecast user's secret key."
-        },
-        {
-            "label": "Indicator Feed Type",
-            "key": "feed_type",
-            "type": "choice",
-            "choices": [
-                {
-                    "key": "Malware Customer",
-                    "value": "malware_customer"
-                },
-                {
-                    "key": "Malware Grid",
-                    "value": "malware_grid"
-                },
-                {
-                    "key": "Malsite",
-                    "value": "malsite"
-                }
-            ],
-            "mandatory": false,
-            "default": "malware_customer",
-            "description": "The scope of data to fetch, from the account, region grid and malsite."
-        },
-        {
-            "label": "Types of Malware to Pull",
-            "key": "indicator_type",
-            "type": "multichoice",
-            "choices": [
-                {
-                    "key": "MD5",
-                    "value": "MD5"
-                },
-                {
-                    "key": "SHA256",
-                    "value": "SHA256"
-                }
-            ],
-            "mandatory": false,
-            "default": [
-                "MD5",
-                "SHA256"
-            ],
-            "description": "Malware indicators of selected types will be extracted from Mimecast malware alerts and stored on CTE, in customer and grid."
-        },
-        {
-            "label": "Initial Range (in days)",
-            "key": "days",
-            "type": "number",
-            "mandatory": true,
-            "default": 7,
-            "description": "Number of days to pull the data for the initial run."
+          "key": "Malsite",
+          "value": "malsite"
         }
-    ]
+      ],
+      "mandatory": false,
+      "default": [
+        "malware_customer",
+        "malware_grid",
+        "malsite"
+      ],
+      "description": "The scope of data to fetch - 'Malware Customer' to pull data from the account, Malware Grid to pull the data form the region grid and Malsite to pull URLs from URL Protection."
+    },
+    {
+      "label": "Types of Malware to Pull (applicable when 'feed_type' is 'Malware Customer' or 'Malware Grid')",
+      "key": "indicator_type",
+      "type": "multichoice",
+      "choices": [
+        {
+          "key": "MD5",
+          "value": "MD5"
+        },
+        {
+          "key": "SHA256",
+          "value": "SHA256"
+        }
+      ],
+      "mandatory": false,
+      "default": [
+        "MD5",
+        "SHA256"
+      ],
+      "description": "Malware indicators of selected types will be extracted from Mimecast malware alerts and stored on CTE."
+    },
+    {
+      "label": "Initial Range (in days)",
+      "key": "days",
+      "type": "number",
+      "mandatory": true,
+      "default": 7,
+      "description": "Number of days to pull the data for the initial run."
+    }
+  ]
 }

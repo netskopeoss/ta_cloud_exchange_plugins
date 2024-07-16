@@ -115,13 +115,14 @@ Each call to ``parse()`` returns a dict has this form::
 
 """
 import base64
+import http.client
 import json
 import logging
 import re
 
-from .compat import ETree, XMLParseError, six
-from .eventstream import EventStream, NoInitialResponseError
-from .utils import (
+from ..botocore.compat import ETree, XMLParseError
+from ..botocore.eventstream import EventStream, NoInitialResponseError
+from ..botocore.utils import (
     is_json_value_header,
     lowercase_dict,
     merge_dicts,
@@ -236,8 +237,8 @@ class ResponseParser:
             always be present.
 
         """
-        LOG.debug("Response headers: %s", response["headers"])
-        LOG.debug("Response body:\n%s", response["body"])
+        LOG.debug("Response headers: %r", response["headers"])
+        LOG.debug("Response body:\n%r", response["body"])
         if response["status_code"] >= 301:
             if self._is_generic_error_response(response):
                 parsed = self._do_generic_error_parse(response)
@@ -306,7 +307,7 @@ class ResponseParser:
         return {
             "Error": {
                 "Code": str(response["status_code"]),
-                "Message": six.moves.http_client.responses.get(
+                "Message": http.client.responses.get(
                     response["status_code"], ""
                 ),
             },
@@ -352,13 +353,15 @@ class ResponseParser:
 
     def _has_unknown_tagged_union_member(self, shape, value):
         if shape.is_tagged_union:
-            if len(value) != 1:
+            cleaned_value = value.copy()
+            cleaned_value.pop("__type", None)
+            if len(cleaned_value) != 1:
                 error_msg = (
                     "Invalid service response: %s must have one and only "
                     "one member set."
                 )
                 raise ResponseParserError(error_msg % shape.name)
-            tag = self._get_first_key(value)
+            tag = self._get_first_key(cleaned_value)
             if tag not in shape.members:
                 msg = (
                     "Received a tagged union response with member "
@@ -683,6 +686,7 @@ class BaseJSONParser(ResponseParser):
     def _do_error_parse(self, response, shape):
         body = self._parse_body_as_json(response["body"])
         error = {"Error": {"Message": "", "Code": ""}, "ResponseMetadata": {}}
+        headers = response["headers"]
         # Error responses can have slightly different structures for json.
         # The basic structure is:
         #
@@ -697,6 +701,7 @@ class BaseJSONParser(ResponseParser):
         # if the message did not contain an error code
         # include the response status code
         response_code = response.get("status_code")
+
         code = body.get("__type", response_code and str(response_code))
         if code is not None:
             # code has a couple forms as well:
@@ -704,9 +709,28 @@ class BaseJSONParser(ResponseParser):
             # * "ResourceNotFoundException"
             if "#" in code:
                 code = code.rsplit("#", 1)[1]
+            if "x-amzn-query-error" in headers:
+                code = self._do_query_compatible_error_parse(
+                    code, headers, error
+                )
             error["Error"]["Code"] = code
         self._inject_response_metadata(error, response["headers"])
         return error
+
+    def _do_query_compatible_error_parse(self, code, headers, error):
+        """
+        Error response may contain an x-amzn-query-error header to translate
+        errors codes from former `query` services into `json`. We use this to
+        do our lookup in the errorfactory for modeled errors.
+        """
+        query_error = headers["x-amzn-query-error"]
+        query_error_components = query_error.split(";")
+
+        if len(query_error_components) == 2 and query_error_components[0]:
+            error["Error"]["QueryErrorCode"] = code
+            error["Error"]["Type"] = query_error_components[1]
+            return query_error_components[0]
+        return code
 
     def _inject_response_metadata(self, parsed, headers):
         if "x-amzn-requestid" in headers:
@@ -823,7 +847,6 @@ class EventStreamXMLParser(BaseEventStreamParser, BaseXMLResponseParser):
 
 
 class JSONParser(BaseJSONParser):
-
     EVENT_STREAM_PARSER_CLS = EventStreamJSONParser
 
     """Response parser for the "json" protocol."""
@@ -983,7 +1006,6 @@ class BaseRestParser(ResponseParser):
 
 
 class RestJSONParser(BaseRestParser, BaseJSONParser):
-
     EVENT_STREAM_PARSER_CLS = EventStreamJSONParser
 
     def _initial_body_parse(self, body_contents):
@@ -1014,7 +1036,6 @@ class RestJSONParser(BaseRestParser, BaseJSONParser):
 
 
 class RestXMLParser(BaseRestParser, BaseXMLResponseParser):
-
     EVENT_STREAM_PARSER_CLS = EventStreamXMLParser
 
     def _initial_body_parse(self, xml_string):
@@ -1053,7 +1074,7 @@ class RestXMLParser(BaseRestParser, BaseXMLResponseParser):
         return {
             "Error": {
                 "Code": str(response["status_code"]),
-                "Message": six.moves.http_client.responses.get(
+                "Message": http.client.responses.get(
                     response["status_code"], ""
                 ),
             },
@@ -1080,7 +1101,7 @@ class RestXMLParser(BaseRestParser, BaseXMLResponseParser):
             parsed.pop("HostId", "")
             return {"Error": parsed, "ResponseMetadata": metadata}
         elif "RequestId" in parsed:
-            # Other rest-xml serivces:
+            # Other rest-xml services:
             parsed["ResponseMetadata"] = {"RequestId": parsed.pop("RequestId")}
         default = {"Error": {"Message": "", "Code": ""}}
         merge_dicts(default, parsed)

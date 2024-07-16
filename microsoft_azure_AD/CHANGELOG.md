@@ -1,3 +1,9 @@
+# 1.2.1
+## Removed
+- Removed support for Dynamic groups.
+## Fixed
+- Fixed pagination bug while fetching groups.
+
 # 1.2.0
 ## Added
 - Added "New Group Type" configuration parameter in action configuration.

@@ -1615,6 +1615,7 @@ class CrowdStrikePlugin(PluginBase):
                 f"Updating {chunk_size} indicator(s) on {IOC_MANAGEMENT}"
             )
             try:
+                headers = self.reload_auth_token(headers)
                 response = self.crowdstrike_helper.api_helper(
                     url=push_endpoint,
                     method="PATCH",

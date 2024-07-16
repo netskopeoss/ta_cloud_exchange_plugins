@@ -16,19 +16,18 @@ import json
 import weakref
 
 from .. import botocore
-from . import auth
-from .awsrequest import create_request_object, prepare_request_dict
-from .compat import OrderedDict
-from .exceptions import (
+from ..botocore import auth as botocore_auth
+from ..botocore.awsrequest import create_request_object, prepare_request_dict
+from ..botocore.compat import OrderedDict
+from ..botocore.exceptions import (
     UnknownClientMethodError,
     UnknownSignatureVersionError,
     UnsupportedSignatureVersionError,
 )
-from .utils import datetime2timestamp, fix_s3_host
-
+from ..botocore.utils import ArnParser, datetime2timestamp
 
 # Keep these imported.  There's pre-existing code that uses them.
-# from botocore.utils import fix_s3_host  # noqa
+from ..botocore.utils import fix_s3_host  # noqa
 
 
 class RequestSigner:
@@ -74,11 +73,13 @@ class RequestSigner:
         signature_version,
         credentials,
         event_emitter,
+        auth_token=None,
     ):
         self._region_name = region_name
         self._signing_name = signing_name
         self._signature_version = signature_version
         self._credentials = credentials
+        self._auth_token = auth_token
         self._service_id = service_id
 
         # We need weakref to prevent leaking memory in Python 2.6 on Linux 2.6
@@ -175,6 +176,12 @@ class RequestSigner:
                 kwargs["region_name"] = signing_context["region"]
             if signing_context.get("signing_name"):
                 kwargs["signing_name"] = signing_context["signing_name"]
+            if signing_context.get("identity_cache") is not None:
+                self._resolve_identity_cache(
+                    kwargs,
+                    signing_context["identity_cache"],
+                    signing_context["cache_key"],
+                )
             try:
                 auth = self.get_auth_instance(**kwargs)
             except UnknownSignatureVersionError as e:
@@ -186,6 +193,10 @@ class RequestSigner:
                     raise e
 
             auth.add_auth(request)
+
+    def _resolve_identity_cache(self, kwargs, cache, cache_key):
+        kwargs["identity_cache"] = cache
+        kwargs["cache_key"] = cache_key
 
     def _choose_signer(self, operation_name, signing_type, context):
         """
@@ -203,7 +214,12 @@ class RequestSigner:
         }
         suffix = signing_type_suffix_map.get(signing_type, "")
 
-        signature_version = self._signature_version
+        # operation specific signing context takes precedent over client-level
+        # defaults
+        signature_version = context.get("auth_type") or self._signature_version
+        signing = context.get("signing", {})
+        signing_name = signing.get("signing_name", self._signing_name)
+        region_name = signing.get("region", self._region_name)
         if (
             signature_version is not botocore.UNSIGNED
             and not signature_version.endswith(suffix)
@@ -214,8 +230,8 @@ class RequestSigner:
             "choose-signer.{}.{}".format(
                 self._service_id.hyphenize(), operation_name
             ),
-            signing_name=self._signing_name,
-            region_name=self._region_name,
+            signing_name=signing_name,
+            region_name=region_name,
             signature_version=signature_version,
             context=context,
         )
@@ -250,24 +266,39 @@ class RequestSigner:
         :type signature_version: string
         :param signature_version: Signature name like ``v4``.
 
-        :rtype: :py:class:`~botocore.auth.BaseSigner`
+        :rtype: :py:class:`~auth.BaseSigner`
         :return: Auth instance to sign a request.
         """
         if signature_version is None:
             signature_version = self._signature_version
 
-        cls = botocore.auth.AUTH_TYPE_MAPS.get(signature_version)
+        cls = botocore_auth.AUTH_TYPE_MAPS.get(signature_version)
         if cls is None:
             raise UnknownSignatureVersionError(
                 signature_version=signature_version
             )
+
+        if cls.REQUIRES_TOKEN is True:
+            frozen_token = None
+            if self._auth_token is not None:
+                frozen_token = self._auth_token.get_frozen_token()
+            auth = cls(frozen_token)
+            return auth
+
+        credentials = self._credentials
+        if getattr(cls, "REQUIRES_IDENTITY_CACHE", None) is True:
+            cache = kwargs["identity_cache"]
+            key = kwargs["cache_key"]
+            credentials = cache.get_credentials(key)
+            del kwargs["cache_key"]
+
         # If there's no credentials provided (i.e credentials is None),
         # then we'll pass a value of "None" over to the auth classes,
         # which already handle the cases where no credentials have
         # been provided.
         frozen_credentials = None
-        if self._credentials is not None:
-            frozen_credentials = self._credentials.get_frozen_credentials()
+        if credentials is not None:
+            frozen_credentials = credentials.get_frozen_credentials()
         kwargs["credentials"] = frozen_credentials
         if cls.REQUIRES_REGION:
             if self._region_name is None:
@@ -578,7 +609,7 @@ class S3PostPresigner:
         # Create an expiration date for the policy
         datetime_now = datetime.datetime.utcnow()
         expire_date = datetime_now + datetime.timedelta(seconds=expires_in)
-        policy["expiration"] = expire_date.strftime(botocore.auth.ISO8601)
+        policy["expiration"] = expire_date.strftime(auth.ISO8601)
 
         # Append all of the conditions that the user supplied.
         policy["conditions"] = []
@@ -635,7 +666,6 @@ def generate_presigned_url(
     }
 
     request_signer = self._request_signer
-    serializer = self._serializer
 
     try:
         operation_name = self._PY_TO_OP_NAME[client_method]
@@ -643,20 +673,35 @@ def generate_presigned_url(
         raise UnknownClientMethodError(method_name=client_method)
 
     operation_model = self.meta.service_model.operation_model(operation_name)
+    params = self._emit_api_params(
+        api_params=params,
+        operation_model=operation_model,
+        context=context,
+    )
+    bucket_is_arn = ArnParser.is_arn(params.get("Bucket", ""))
+    (
+        endpoint_url,
+        additional_headers,
+        properties,
+    ) = self._resolve_endpoint_ruleset(
+        operation_model,
+        params,
+        context,
+        ignore_signing_region=(not bucket_is_arn),
+    )
 
-    params = self._emit_api_params(params, operation_model, context)
-
-    # Create a request dict based on the params to serialize.
-    request_dict = serializer.serialize_to_request(params, operation_model)
+    request_dict = self._convert_to_request_dict(
+        api_params=params,
+        operation_model=operation_model,
+        endpoint_url=endpoint_url,
+        context=context,
+        headers=additional_headers,
+        set_user_agent_header=False,
+    )
 
     # Switch out the http method if user specified it.
     if http_method is not None:
         request_dict["method"] = http_method
-
-    # Prepare the request dict by including the client's endpoint url.
-    prepare_request_dict(
-        request_dict, endpoint_url=self.meta.endpoint_url, context=context
-    )
 
     # Generate the presigned url.
     return request_signer.generate_presigned_url(
@@ -749,26 +794,40 @@ def generate_presigned_post(
     if conditions is None:
         conditions = []
 
+    context = {
+        "is_presign_request": True,
+        "use_global_endpoint": _should_use_global_endpoint(self),
+    }
+
     post_presigner = S3PostPresigner(self._request_signer)
-    serializer = self._serializer
 
     # We choose the CreateBucket operation model because its url gets
     # serialized to what a presign post requires.
     operation_model = self.meta.service_model.operation_model("CreateBucket")
-
-    # Create a request dict based on the params to serialize.
-    request_dict = serializer.serialize_to_request(
-        {"Bucket": bucket}, operation_model
+    params = self._emit_api_params(
+        api_params={"Bucket": bucket},
+        operation_model=operation_model,
+        context=context,
+    )
+    bucket_is_arn = ArnParser.is_arn(params.get("Bucket", ""))
+    (
+        endpoint_url,
+        additional_headers,
+        properties,
+    ) = self._resolve_endpoint_ruleset(
+        operation_model,
+        params,
+        context,
+        ignore_signing_region=(not bucket_is_arn),
     )
 
-    # Prepare the request dict by including the client's endpoint url.
-    prepare_request_dict(
-        request_dict,
-        endpoint_url=self.meta.endpoint_url,
-        context={
-            "is_presign_request": True,
-            "use_global_endpoint": _should_use_global_endpoint(self),
-        },
+    request_dict = self._convert_to_request_dict(
+        api_params=params,
+        operation_model=operation_model,
+        endpoint_url=endpoint_url,
+        context=context,
+        headers=additional_headers,
+        set_user_agent_header=False,
     )
 
     # Append that the bucket name to the list of conditions.
@@ -803,5 +862,7 @@ def _should_use_global_endpoint(client):
             s3_config.get("us_east_1_regional_endpoint") == "regional"
             and client.meta.config.region_name == "us-east-1"
         ):
+            return False
+        if s3_config.get("addressing_style") == "virtual":
             return False
     return True

@@ -26,9 +26,9 @@ import warnings
 from io import BytesIO
 
 from .. import botocore
-from . import auth
-from . import utils
-from .compat import (
+from ..botocore import auth
+from ..botocore import utils
+from ..botocore.compat import (
     ETree,
     OrderedDict,
     XMLParseError,
@@ -41,35 +41,40 @@ from .compat import (
     urlsplit,
     urlunsplit,
 )
-from .docs.utils import (
+from ..botocore.docs.utils import (
     AppendParamDocumentation,
     AutoPopulatedParam,
     HideParamFromOperations,
 )
-from .exceptions import (
+from ..botocore.endpoint_provider import VALID_HOST_LABEL_RE
+from ..botocore.exceptions import (
     AliasConflictParameterError,
     ParamValidationError,
     UnsupportedTLSVersionWarning,
 )
-from .signers import (
+from ..botocore.regions import EndpointResolverBuiltins
+from ..botocore.signers import (
     add_generate_db_auth_token,
     add_generate_presigned_post,
     add_generate_presigned_url,
 )
-from .utils import (
+from ..botocore.utils import (
     SAFE_CHARS,
+    ArnParser,
+    conditionally_calculate_checksum,
     conditionally_calculate_md5,
     percent_encode,
     switch_host_with_param,
 )
 
 # Keep these imported.  There's pre-existing code that uses them.
-from . import retryhandler  # noqa
-from . import translate  # noqa
-from .compat import MD5_AVAILABLE  # noqa
-from .exceptions import MissingServiceIdError  # noqa
-from .utils import hyphenize_service_id  # noqa
-from .utils import is_global_accesspoint  # noqa
+from ..botocore import retryhandler  # noqa
+from ..botocore import translate  # noqa
+from ..botocore.compat import MD5_AVAILABLE  # noqa
+from ..botocore.exceptions import MissingServiceIdError  # noqa
+from ..botocore.utils import hyphenize_service_id  # noqa
+from ..botocore.utils import is_global_accesspoint  # noqa
+from ..botocore.utils import SERVICE_NAME_ALIASES  # noqa
 
 
 logger = logging.getLogger(__name__)
@@ -91,9 +96,10 @@ _OUTPOST_ARN = (
     r"[a-zA-Z0-9\-]{1,63}[/:]accesspoint[/:][a-zA-Z0-9\-]{1,63}$"
 )
 VALID_S3_ARN = re.compile("|".join([_ACCESSPOINT_ARN, _OUTPOST_ARN]))
+# signing names used for the services s3 and s3-control, for example in
+# botocore/data/s3/2006-03-01/endpoints-rule-set-1.json
+S3_SIGNING_NAMES = ("s3", "s3-outposts", "s3-object-lambda", "s3express")
 VERSION_ID_SUFFIX = re.compile(r"\?versionId=[^\s]+$")
-
-SERVICE_NAME_ALIASES = {"runtime.sagemaker": "sagemaker-runtime"}
 
 
 def handle_service_name_alias(service_name, **kwargs):
@@ -194,7 +200,13 @@ def set_operation_specific_signer(context, signing_name, **kwargs):
     if auth_type == "none":
         return botocore.UNSIGNED
 
+    if auth_type == "bearer":
+        return "bearer"
+
     if auth_type.startswith("v4"):
+        if auth_type == "v4-s3express":
+            return auth_type
+
         if auth_type == "v4a":
             # If sigv4a is chosen, we must add additional signing config for
             # global signature.
@@ -212,8 +224,9 @@ def set_operation_specific_signer(context, signing_name, **kwargs):
         if auth_type == "v4-unsigned-body":
             context["payload_signing_enabled"] = False
 
-        # S3 has customized signers "s3v4" and "s3v4a"
-        if signing_name == "s3":
+        # Signing names used by s3 and s3-control use customized signers "s3v4"
+        # and "s3v4a".
+        if signing_name in S3_SIGNING_NAMES:
             signature_version = f"s3{signature_version}"
 
         return signature_version
@@ -830,7 +843,7 @@ def _decode_list_object(top_level_keys, nested_keys, parsed, context):
             if key in parsed:
                 parsed[key] = unquote_str(parsed[key])
         # URL decode nested keys from the response if present.
-        for (top_key, child_key) in nested_keys:
+        for top_key, child_key in nested_keys:
             if top_key in parsed:
                 for member in parsed[top_key]:
                     member[child_key] = unquote_str(member[child_key])
@@ -1017,6 +1030,129 @@ def add_retry_headers(request, **kwargs):
     headers["amz-sdk-request"] = "; ".join(sdk_request_headers)
 
 
+def remove_bucket_from_url_paths_from_model(params, model, context, **kwargs):
+    """Strips leading `{Bucket}/` from any operations that have it.
+
+    The original value is retained in a separate "authPath" field. This is
+    used in the HmacV1Auth signer. See HmacV1Auth.canonical_resource in
+    botocore/auth.py for details.
+
+    This change is applied to the operation model during the first time the
+    operation is invoked and then stays in effect for the lifetime of the
+    client object.
+
+    When the ruleset based endpoint resolver is in effect, both the endpoint
+    ruleset AND the service model place the bucket name in the final URL.
+    The result is an invalid URL. This handler modifies the operation model to
+    no longer place the bucket name. Previous versions of botocore fixed the
+    URL after the fact when necessary. Since the introduction of ruleset based
+    endpoint resolution, the problem exists in ALL URLs that contain a bucket
+    name and can therefore be addressed before the URL gets assembled.
+    """
+    req_uri = model.http["requestUri"]
+    bucket_path = "/{Bucket}"
+    if req_uri.startswith(bucket_path):
+        model.http["requestUri"] = req_uri[len(bucket_path) :]
+        # Strip query off the requestUri before using as authPath. The
+        # HmacV1Auth signer will append query params to the authPath during
+        # signing.
+        req_uri = req_uri.split("?")[0]
+        # If the request URI is ONLY a bucket, the auth_path must be
+        # terminated with a '/' character to generate a signature that the
+        # server will accept.
+        needs_slash = req_uri == bucket_path
+        model.http["authPath"] = f"{req_uri}/" if needs_slash else req_uri
+
+
+def remove_accid_host_prefix_from_model(params, model, context, **kwargs):
+    """Removes the `{AccountId}.` prefix from the operation model.
+
+    This change is applied to the operation model during the first time the
+    operation is invoked and then stays in effect for the lifetime of the
+    client object.
+
+    When the ruleset based endpoint resolver is in effect, both the endpoint
+    ruleset AND the service model place the {AccountId}. prefix in the URL.
+    The result is an invalid endpoint. This handler modifies the operation
+    model to remove the `endpoint.hostPrefix` field while leaving the
+    `RequiresAccountId` static context parameter in place.
+    """
+    has_ctx_param = any(
+        ctx_param.name == "RequiresAccountId" and ctx_param.value is True
+        for ctx_param in model.static_context_parameters
+    )
+    if (
+        model.endpoint is not None
+        and model.endpoint.get("hostPrefix") == "{AccountId}."
+        and has_ctx_param
+    ):
+        del model.endpoint["hostPrefix"]
+
+
+def remove_arn_from_signing_path(request, **kwargs):
+    auth_path = request.auth_path
+    if isinstance(auth_path, str) and auth_path.startswith("/arn%3A"):
+        auth_path_parts = auth_path.split("/")
+        if len(auth_path_parts) > 1 and ArnParser.is_arn(
+            unquote(auth_path_parts[1])
+        ):
+            request.auth_path = "/".join(["", *auth_path_parts[2:]])
+
+
+def customize_endpoint_resolver_builtins(
+    builtins, model, params, context, **kwargs
+):
+    """Modify builtin parameter values for endpoint resolver
+
+    Modifies the builtins dict in place. Changes are in effect for one call.
+    The corresponding event is emitted only if at least one builtin parameter
+    value is required for endpoint resolution for the operation.
+    """
+    bucket_name = params.get("Bucket")
+    bucket_is_arn = bucket_name is not None and ArnParser.is_arn(bucket_name)
+    # In some situations the host will return AuthorizationHeaderMalformed
+    # when the signing region of a sigv4 request is not the bucket's
+    # region (which is likely unknown by the user of GetBucketLocation).
+    # Avoid this by always using path-style addressing.
+    if model.name == "GetBucketLocation":
+        builtins[EndpointResolverBuiltins.AWS_S3_FORCE_PATH_STYLE] = True
+    # All situations where the bucket name is an ARN are not compatible
+    # with path style addressing.
+    elif bucket_is_arn:
+        builtins[EndpointResolverBuiltins.AWS_S3_FORCE_PATH_STYLE] = False
+
+    # Bucket names that are invalid host labels require path-style addressing.
+    # If path-style addressing was specifically requested, the default builtin
+    # value is already set.
+    path_style_required = (
+        bucket_name is not None and not VALID_HOST_LABEL_RE.match(bucket_name)
+    )
+    path_style_requested = builtins[
+        EndpointResolverBuiltins.AWS_S3_FORCE_PATH_STYLE
+    ]
+
+    # Path-style addressing is incompatible with the global endpoint for
+    # presigned URLs. If the bucket name is an ARN, the ARN's region should be
+    # used in the endpoint.
+    if (
+        context.get("use_global_endpoint")
+        and not path_style_required
+        and not path_style_requested
+        and not bucket_is_arn
+        and not utils.is_s3express_bucket(bucket_name)
+    ):
+        builtins[EndpointResolverBuiltins.AWS_REGION] = "aws-global"
+        builtins[EndpointResolverBuiltins.AWS_S3_USE_GLOBAL_ENDPOINT] = True
+
+
+def remove_content_type_header_for_presigning(request, **kwargs):
+    if (
+        request.context.get("is_presign_request") is True
+        and "Content-Type" in request.headers
+    ):
+        del request.headers["Content-Type"]
+
+
 # This is a list of (event_name, handler).
 # When a Session is created, everything in this list will be
 # automatically registered with that Session.
@@ -1047,6 +1183,7 @@ BUILTIN_HANDLERS = [
     ("after-call.s3.GetBucketLocation", parse_get_bucket_location),
     ("before-parameter-build", generate_idempotent_uuid),
     ("before-parameter-build.s3", validate_bucket_name),
+    ("before-parameter-build.s3", remove_bucket_from_url_paths_from_model),
     (
         "before-parameter-build.s3.ListObjects",
         set_list_objects_encoding_type_url,
@@ -1067,15 +1204,18 @@ BUILTIN_HANDLERS = [
         "before-parameter-build.s3.CreateMultipartUpload",
         validate_ascii_metadata,
     ),
+    ("before-parameter-build.s3-control", remove_accid_host_prefix_from_model),
     ("docs.*.s3.CopyObject.complete-section", document_copy_source_form),
     ("docs.*.s3.UploadPartCopy.complete-section", document_copy_source_form),
+    ("before-endpoint-resolution.s3", customize_endpoint_resolver_builtins),
     ("before-call", add_recursion_detection_header),
     ("before-call.s3", add_expect_header),
     ("before-call.glacier", add_glacier_version),
     ("before-call.apigateway", add_accept_header),
-    ("before-call.s3.PutObject", conditionally_calculate_md5),
+    ("before-call.s3.PutObject", conditionally_calculate_checksum),
     ("before-call.s3.UploadPart", conditionally_calculate_md5),
     ("before-call.s3.DeleteObjects", escape_xml_payload),
+    ("before-call.s3.DeleteObjects", conditionally_calculate_checksum),
     ("before-call.s3.PutBucketLifecycleConfiguration", escape_xml_payload),
     ("before-call.glacier.UploadArchive", add_glacier_checksums),
     ("before-call.glacier.UploadMultipartPart", add_glacier_checksums),
@@ -1108,6 +1248,7 @@ BUILTIN_HANDLERS = [
     ("before-parameter-build.s3.UploadPart", sse_md5),
     ("before-parameter-build.s3.UploadPartCopy", sse_md5),
     ("before-parameter-build.s3.UploadPartCopy", copy_source_sse_md5),
+    ("before-parameter-build.s3.CompleteMultipartUpload", sse_md5),
     ("before-parameter-build.s3.SelectObjectContent", sse_md5),
     ("before-parameter-build.ec2.RunInstances", base64_encode_user_data),
     (
@@ -1116,6 +1257,11 @@ BUILTIN_HANDLERS = [
     ),
     ("before-parameter-build.route53", fix_route53_ids),
     ("before-parameter-build.glacier", inject_account_id),
+    ("before-sign.s3", remove_arn_from_signing_path),
+    (
+        "before-sign.polly.SynthesizeSpeech",
+        remove_content_type_header_for_presigning,
+    ),
     ("after-call.s3.ListObjects", decode_list_object),
     ("after-call.s3.ListObjectsV2", decode_list_object_v2),
     ("after-call.s3.ListObjectVersions", decode_list_object_versions),
@@ -1265,15 +1411,6 @@ BUILTIN_HANDLERS = [
     (
         "docs.*.docdb.CreateDBCluster.complete-section",
         AutoPopulatedParam("PreSignedUrl").document_auto_populated_param,
-    ),
-    ###########
-    # SMS Voice
-    ###########
-    (
-        "docs.title.sms-voice",
-        DeprecatedServiceDocumenter(
-            "pinpoint-sms-voice"
-        ).inject_deprecation_notice,
     ),
     ("before-call", inject_api_version_header_if_needed),
 ]

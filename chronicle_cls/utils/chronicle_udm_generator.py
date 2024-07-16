@@ -30,10 +30,11 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
 
-"""Chronicle Plugin."""
+"""CLS Google Chronicle Plugin UDM Generator."""
 
 
 import collections
+import traceback
 
 from .chronicle_parser import UDMParser
 
@@ -48,9 +49,10 @@ from netskope.integrations.cls.utils.converter import *
 class UDMGenerator(object):
     """UDM Generator class."""
 
-    def __init__(self, mapping, udm_version, logger):
+    def __init__(self, mapping, udm_version, logger, log_prefix):
         """Init method."""
         self.logger = logger
+        self.log_prefix = log_prefix
         self.udm_version = udm_version  # Version of UDM being used
         self.mapping = mapping  # Mapping file content
         self.extension = collections.namedtuple(
@@ -82,7 +84,7 @@ class UDMGenerator(object):
             mapping = self.mapping["taxonomy"]
 
             for data_type, data_mapping in mapping.items():
-                if data_type == "json":			
+                if data_type == "json":
                     continue
                 for subtype, subtype_mapping in data_mapping.items():
                     for key, value in subtype_mapping.items():
@@ -97,10 +99,13 @@ class UDMGenerator(object):
                             )
             return field_converters
         except Exception as err:
+            err_msg = (
+                "Error occurred while parsing CEF transformation field. "
+                f"Error: {str(err)}"
+            )
             self.logger.error(
-                "Error occurred while parsing CEF transformation field. Error: {}".format(
-                    str(err)
-                )
+                message=f"{self.log_prefix}: {err_msg}",
+                details=str(traceback.format_exc())
             )
             raise
 
@@ -118,7 +123,7 @@ class UDMGenerator(object):
             mapping = self.mapping["taxonomy"]
 
             for data_type, data_mapping in mapping.items():
-                if data_type == "json":			
+                if data_type == "json":
                     continue
                 for subtype, subtype_mapping in data_mapping.items():
                     for key, value in subtype_mapping.items():
@@ -133,10 +138,13 @@ class UDMGenerator(object):
                             )
             return field_sanitizers
         except Exception as err:
+            err_msg = (
+                "Error occurred while parsing CEF transformation field. "
+                f"Error: {str(err)}"
+            )
             self.logger.error(
-                "Error occurred while parsing CEF transformation field. Error: {}".format(
-                    str(err)
-                )
+                message=f"{self.log_prefix}: {err_msg}",
+                details=str(traceback.format_exc())
             )
             raise
 
@@ -167,11 +175,14 @@ class UDMGenerator(object):
         """
         for configured_header in list(headers.keys()):
             if configured_header not in possible_headers:
+                err_msg = (
+                    f'[{data_type}][{subtype}]: Found invalid header '
+                    'configured in chronicle mapping file: '
+                    f'"{configured_header}". Header field will be ignored.'
+                )
                 self.logger.error(
-                    '[{}][{}]: Found invalid header configured in chronicle mapping file: "{}". Header '
-                    "field will be ignored.".format(
-                        data_type, subtype, configured_header
-                    )
+                    message=f"{self.log_prefix}: {err_msg}",
+                    details=str(traceback.format_exc())
                 )
 
     def get_json_structure(self, udm_field_data, udm_field, value):
@@ -218,19 +229,26 @@ class UDMGenerator(object):
             try:
                 value = self.extension_converters[name].converter(value, name)
             except KeyError:
+                err_msg = (
+                    f'[{data_type}][{subtype}]: An error occurred while '
+                    f'generating UDM data for field: "{name}". Could not '
+                    'find the field in the "valid_extensions". '
+                    'Field will be ignored.'
+                )
                 self.logger.error(
-                    '[{}][{}]: An error occurred while generating UDM data for field: "{}". Could not '
-                    'find the field in the "valid_extensions". Field will be ignored.'.format(
-                        data_type, subtype, name
-                    )
+                    message=f"{self.log_prefix}: {err_msg}",
+                    details=str(traceback.format_exc())
                 )
                 continue
             except Exception as err:
+                err_msg = (
+                    f'[{data_type}][{subtype}]: An error occurred while '
+                    f'generating UDM data for field: "{name}". '
+                    f'Error: {str(err)}. Field will be ignored'
+                )
                 self.logger.error(
-                    '[{}][{}]: An error occurred while generating UDM data for field: "{}". Error: {}. '
-                    "Field will be ignored".format(
-                        data_type, subtype, name, str(err)
-                    )
+                    message=f"{self.log_prefix}: {err_msg}",
+                    details=str(traceback.format_exc())
                 )
                 continue
 
@@ -240,18 +258,25 @@ class UDMGenerator(object):
                     self.valid_extensions[name].key_name
                 ] = self.valid_extensions[name].sanitizer(value, name)
             except KeyError:
+                err_msg = (
+                    f'[{data_type}][{subtype}]: An error occurred while '
+                    f'generating UDM data for field: "{name}". Could not '
+                    'find the field in the "valid_extensions". '
+                    'Field will be ignored'
+                )
                 self.logger.error(
-                    '[{}][{}]: An error occurred while generating UDM data for field: "{}". Could not '
-                    'find the field in the "valid_extensions". Field will be ignored'.format(
-                        data_type, subtype, name
-                    )
+                    message=f"{self.log_prefix}: {err_msg}",
+                    details=str(traceback.format_exc())
                 )
             except Exception as err:
+                err_msg = (
+                    f'[{data_type}][{subtype}]: An error occurred while '
+                    f'generating UDM data for field: "{name}". '
+                    f'Error: {str(err)}. Field will be ignored.'
+                )
                 self.logger.error(
-                    '[{}][{}]: An error occurred while generating UDM data for field: "{}". Error: {}. '
-                    "Field will be ignored.".format(
-                        data_type, subtype, name, str(err)
-                    )
+                    message=f"{self.log_prefix}: {err_msg}",
+                    details=str(traceback.format_exc())
                 )
 
         possible_headers = [
@@ -280,26 +305,32 @@ class UDMGenerator(object):
                         header, headers
                     )
                 except Exception as err:
+                    err_msg = (
+                        f'[{data_type}][{subtype}]: An error occurred while'
+                        f'generating UDM data for header field: "{header}". '
+                        f'Error: {str(err)}. Field will be ignored'
+                    )
                     self.logger.error(
-                        '[{}][{}]: An error occurred while generating UDM data for header field: "{}". Error: {}. '
-                        "Field will be ignored".format(
-                            data_type, subtype, header, str(err)
-                        )
+                        message=f"{self.log_prefix}: {err_msg}",
+                        details=str(traceback.format_exc())
                     )
 
         all_pairs = {**header_pairs, **extension_pairs}
 
         try:
             udm_generator = UDMParser(
-                data, self.logger, all_pairs, data_type, subtype
+                data, self.logger, self.log_prefix, all_pairs, data_type, subtype
             )
             all_pairs = udm_generator.parse_data()
-        except Exception as e:
+        except Exception as err:
+            err_msg = (
+                f'[{data_type}][{subtype}]: An error occurred while '
+                f'generating UDM data for header field: "{header}". '
+                f'Error: {str(err)}. Fields will be ignored'
+            )
             self.logger.error(
-                '[{}][{}]: An error occurred while generating UDM data for header field: "{}". Error: {}. '
-                "Fields will be ignored".format(
-                    data_type, subtype, header, str(err)
-                )
+                message=f"{self.log_prefix}: {err_msg}",
+                details=str(traceback.format_exc())
             )
 
         udm_data = self.json_converter(all_pairs)

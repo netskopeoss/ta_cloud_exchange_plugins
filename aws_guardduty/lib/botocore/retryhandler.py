@@ -17,7 +17,7 @@ import logging
 import random
 from binascii import crc32
 
-from .exceptions import (
+from botocore.exceptions import (
     ChecksumError,
     ConnectionClosedError,
     ConnectionError,
@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 # to get more specific exceptions from requests we can update
 # this mapping with more specific exceptions.
 EXCEPTION_MAP = {
-    "GENERAL_CONNECTION_ERROR": [
+    'GENERAL_CONNECTION_ERROR': [
         ConnectionError,
         ConnectionClosedError,
         ReadTimeoutError,
@@ -53,7 +53,7 @@ def delay_exponential(base, growth_factor, attempts):
     raised.
 
     """
-    if base == "rand":
+    if base == 'rand':
         base = random.random()
     elif base <= 0:
         raise ValueError(
@@ -90,11 +90,11 @@ def create_retry_action_from_config(config, operation_name=None):
     # actions, but right now, we assume this comes from the
     # default section, which means that delay functions apply
     # for every policy in the retry config (per service).
-    delay_config = config["__default__"]["delay"]
-    if delay_config["type"] == "exponential":
+    delay_config = config['__default__']['delay']
+    if delay_config['type'] == 'exponential':
         return create_exponential_delay_function(
-            base=delay_config["base"],
-            growth_factor=delay_config["growth_factor"],
+            base=delay_config['base'],
+            growth_factor=delay_config['growth_factor'],
         )
 
 
@@ -102,9 +102,9 @@ def create_checker_from_retry_config(config, operation_name=None):
     checkers = []
     max_attempts = None
     retryable_exceptions = []
-    if "__default__" in config:
-        policies = config["__default__"].get("policies", [])
-        max_attempts = config["__default__"]["max_attempts"]
+    if '__default__' in config:
+        policies = config['__default__'].get('policies', [])
+        max_attempts = config['__default__']['max_attempts']
         for key in policies:
             current_config = policies[key]
             checkers.append(_create_single_checker(current_config))
@@ -112,7 +112,7 @@ def create_checker_from_retry_config(config, operation_name=None):
             if retry_exception is not None:
                 retryable_exceptions.extend(retry_exception)
     if operation_name is not None and config.get(operation_name) is not None:
-        operation_policies = config[operation_name]["policies"]
+        operation_policies = config[operation_name]['policies']
         for key in operation_policies:
             checkers.append(_create_single_checker(operation_policies[key]))
             retry_exception = _extract_retryable_exception(
@@ -133,26 +133,26 @@ def create_checker_from_retry_config(config, operation_name=None):
 
 
 def _create_single_checker(config):
-    if "response" in config["applies_when"]:
+    if 'response' in config['applies_when']:
         return _create_single_response_checker(
-            config["applies_when"]["response"]
+            config['applies_when']['response']
         )
-    elif "socket_errors" in config["applies_when"]:
+    elif 'socket_errors' in config['applies_when']:
         return ExceptionRaiser()
 
 
 def _create_single_response_checker(response):
-    if "service_error_code" in response:
+    if 'service_error_code' in response:
         checker = ServiceErrorCodeChecker(
-            status_code=response["http_status_code"],
-            error_code=response["service_error_code"],
+            status_code=response['http_status_code'],
+            error_code=response['service_error_code'],
         )
-    elif "http_status_code" in response:
+    elif 'http_status_code' in response:
         checker = HTTPStatusCodeChecker(
-            status_code=response["http_status_code"]
+            status_code=response['http_status_code']
         )
-    elif "crc32body" in response:
-        checker = CRC32Checker(header=response["crc32body"])
+    elif 'crc32body' in response:
+        checker = CRC32Checker(header=response['crc32body'])
     else:
         # TODO: send a signal.
         raise ValueError("Unknown retry policy")
@@ -160,12 +160,12 @@ def _create_single_response_checker(response):
 
 
 def _extract_retryable_exception(config):
-    applies_when = config["applies_when"]
-    if "crc32body" in applies_when.get("response", {}):
+    applies_when = config['applies_when']
+    if 'crc32body' in applies_when.get('response', {}):
         return [ChecksumError]
-    elif "socket_errors" in applies_when:
+    elif 'socket_errors' in applies_when:
         exceptions = []
-        for name in applies_when["socket_errors"]:
+        for name in applies_when['socket_errors']:
             exceptions.extend(EXCEPTION_MAP[name])
         return exceptions
 
@@ -196,13 +196,13 @@ class RetryHandler:
 
         """
         checker_kwargs = {
-            "attempt_number": attempts,
-            "response": response,
-            "caught_exception": caught_exception,
+            'attempt_number': attempts,
+            'response': response,
+            'caught_exception': caught_exception,
         }
         if isinstance(self._checker, MaxAttemptsDecorator):
-            retries_context = kwargs["request_dict"]["context"].get("retries")
-            checker_kwargs.update({"retries_context": retries_context})
+            retries_context = kwargs['request_dict']['context'].get('retries')
+            checker_kwargs.update({'retries_context': retries_context})
 
         if self._checker(**checker_kwargs):
             result = self._action(attempts=attempts)
@@ -277,8 +277,8 @@ class MaxAttemptsDecorator(BaseChecker):
         self, attempt_number, response, caught_exception, retries_context
     ):
         if retries_context:
-            retries_context["max"] = max(
-                retries_context.get("max", 0), self._max_attempts
+            retries_context['max'] = max(
+                retries_context.get('max', 0), self._max_attempts
             )
 
         should_retry = self._should_retry(
@@ -287,9 +287,9 @@ class MaxAttemptsDecorator(BaseChecker):
         if should_retry:
             if attempt_number >= self._max_attempts:
                 # explicitly set MaxAttemptsReached
-                if response is not None and "ResponseMetadata" in response[1]:
-                    response[1]["ResponseMetadata"][
-                        "MaxAttemptsReached"
+                if response is not None and 'ResponseMetadata' in response[1]:
+                    response[1]['ResponseMetadata'][
+                        'MaxAttemptsReached'
                     ] = True
                 logger.debug(
                     "Reached the maximum number of retry attempts: %s",
@@ -316,7 +316,7 @@ class MaxAttemptsDecorator(BaseChecker):
                 return True
         else:
             # If we've exceeded the max attempts we just let the exception
-            # propogate if one has occurred.
+            # propagate if one has occurred.
             return self._checker(attempt_number, response, caught_exception)
 
 
@@ -342,7 +342,7 @@ class ServiceErrorCodeChecker(BaseChecker):
 
     def _check_response(self, attempt_number, response):
         if response[0].status_code == self._status_code:
-            actual_error_code = response[1].get("Error", {}).get("Code")
+            actual_error_code = response[1].get('Error', {}).get('Code')
             if actual_error_code == self._error_code:
                 logger.debug(
                     "retry needed: matching HTTP status and error code seen: "
@@ -392,7 +392,7 @@ class CRC32Checker(BaseChecker):
                     actual_crc32,
                 )
                 raise ChecksumError(
-                    checksum_type="crc32",
+                    checksum_type='crc32',
                     expected_checksum=int(expected_crc),
                     actual_checksum=actual_crc32,
                 )
@@ -412,5 +412,5 @@ class ExceptionRaiser(BaseChecker):
         # and retry, but something needs to come along and actually raise the
         # caught_exception.  That's what this class is being used for.  If
         # the MaxAttemptsDecorator is not interested in retrying the exception
-        # then this exception just propogates out past the retry code.
+        # then this exception just propagates out past the retry code.
         raise caught_exception

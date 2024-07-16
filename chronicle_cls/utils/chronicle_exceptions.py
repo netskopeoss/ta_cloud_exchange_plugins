@@ -30,7 +30,7 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
 
-"""Exception class for chronicle syslog plugin."""
+"""Exception class for CLS Google Chronicle Plugin."""
 
 
 class FormatUDMError(Exception):
@@ -110,3 +110,9 @@ class FieldNotFoundError(Exception):
     def __init__(self, message):
         """Initialize."""
         self.message = message
+
+
+class GoogleChroniclePluginException(Exception):
+    """GoogleChroniclePlugin custom exception class."""
+
+    pass

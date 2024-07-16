@@ -18,8 +18,8 @@ from itertools import tee
 
 import jmespath
 
-from .exceptions import PaginationError
-from .utils import merge_dicts, set_value_from_jmespath
+from ..botocore.exceptions import PaginationError
+from ..botocore.utils import merge_dicts, set_value_from_jmespath
 
 log = logging.getLogger(__name__)
 
@@ -185,7 +185,7 @@ class PaginatorModel:
 
 
 class PageIterator:
-    """An iterable object to pagiante API results.
+    """An iterable object to paginate API results.
     Please note it is NOT a python iterator.
     Use ``iter`` to wrap this as a generator.
     """

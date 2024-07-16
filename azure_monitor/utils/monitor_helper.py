@@ -28,11 +28,11 @@ SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
 CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-"""
 
-"""Azure Monitor Plugin Helper."""
+Azure Monitor Plugin Helper."""
 
 
+import sys
 from jsonschema import validate
 
 from .monitor_exceptions import (
@@ -64,9 +64,7 @@ def validate_header_extension_subdict(instance):
         and "default_value" in instance
         and (not instance["mapping_field"] and not instance["default_value"])
     ):
-        raise JsonSchemaValidationError(
-            'Both "mapping" and "default" can not be empty'
-        )
+        raise JsonSchemaValidationError('Both "mapping" and "default" can not be empty')
 
     # If only one is there and it is empty, that's not valid
     if (
@@ -98,7 +96,7 @@ def validate_header(instance):
     properties_schema = {
         "default_value": {"type": "string"},
         "mapping_field": {"type": "string"},
-        "transformation": {"type": "string"}
+        "transformation": {"type": "string"},
     }
 
     one_of_sub_schema = [
@@ -199,15 +197,9 @@ def get_monitor_mappings(mappings, data_type):
     # Validate the headers of each mapped subtype
     for subtype, subtype_map in data_type_specific_mapping.items():
         subtype_header = subtype_map["header"]
-        # print(f"Subtype Header:{subtype_header}")
         try:
             validate_header(subtype_header)
-            # print(validate_header(subtype_header))
         except JsonSchemaValidationError as err:
-            print(
-                'Error occurred while validating azure monitor header for type "{}". '
-                "Error: {}".format(subtype, err)
-            )
             raise MappingValidationError(
                 'Error occurred while validating azure monitor header for type "{}". '
                 "Error: {}".format(subtype, err)
@@ -218,12 +210,7 @@ def get_monitor_mappings(mappings, data_type):
         subtype_extension = subtype_map["extension"]
         try:
             validate_extension(subtype_extension)
-            # print(validate_extension(subtype_extension))
         except JsonSchemaValidationError as err:
-            print(
-                'Error occurred while validating azure monitor extension for type "{}". '
-                "Error: {}".format(subtype, err)
-            )
             raise MappingValidationError(
                 'Error occurred while validating azure monitor extension for type "{}". '
                 "Error: {}".format(subtype, err)
@@ -233,12 +220,7 @@ def get_monitor_mappings(mappings, data_type):
         for cef_field, ext_dict in subtype_extension.items():
             try:
                 validate_extension_field(ext_dict)
-                # print(validate_extension_field(ext_dict))
             except JsonSchemaValidationError as err:
-                print(
-                    'Error occurred while validating azure monitor extension field "{}" for '
-                    'type "{}". Error: {}'.format(cef_field, subtype, err)
-                )
                 raise MappingValidationError(
                     'Error occurred while validating azure monitor extension field "{}" for '
                     'type "{}". Error: {}'.format(cef_field, subtype, err)
@@ -258,3 +240,33 @@ def extract_subtypes(mappings, data_type):
     """
     taxonomy = mappings["taxonomy"][data_type]
     return [subtype for subtype in taxonomy]
+
+
+def split_into_size(data_list):
+    """
+    Split a list into parts, each approximately with a target size in MB.
+
+    Parameters:
+    - data_list: The list of data to be split.
+
+    Returns:
+    A list of parts, each with a total size approximately equal to the target size.
+    """
+    result = []
+    current_part = []
+    current_size_mb = 0
+
+    for item in data_list:
+        item_size_mb = sys.getsizeof(f"{item}") / (1024 * 1024)  # Convert bytes to MB
+        if current_size_mb + item_size_mb <= 1:
+            current_part.append(item)
+            current_size_mb += item_size_mb
+        else:
+            result.append(current_part)
+            current_part = [item]
+            current_size_mb = item_size_mb
+
+    if current_part:
+        result.append(current_part)
+
+    return result

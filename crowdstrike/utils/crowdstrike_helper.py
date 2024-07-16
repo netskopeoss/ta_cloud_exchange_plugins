@@ -98,16 +98,14 @@ class CrowdStrikePluginHelper(object):
         """
         if headers and "User-Agent" in headers:
             return headers
-
         headers = add_user_agent(headers)
-        ce_added_agent = headers.get("User-Agent", "netskope-ce")
         user_agent = "{}-{}-{}/{}".format(
-            ce_added_agent,
+            headers.get("User-Agent", "netskope-ce"),
             MODULE_NAME.lower(),
             self.plugin_name.lower().replace(" ", "-"),
             self.plugin_version,
         )
-        headers.update({"User-Agent": user_agent})
+        headers["User-Agent"] = user_agent
         return headers
 
     def api_helper(
@@ -150,6 +148,7 @@ class CrowdStrikePluginHelper(object):
             Response|Response JSON: Returns response json if
             is_handle_error_required is True otherwise returns Response object.
         """
+        headers = self._add_user_agent(headers)
         try:
             headers = self._add_user_agent(headers)
 

@@ -30,7 +30,11 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
 
-"""Chronicle Plugin constants."""
+"""CLS Google Chronicle Plugin constants."""
+
+MODULE_NAME = "CLS"
+PLUGIN_NAME = "Google Chronicle"
+PLUGIN_VERSION = "2.1.0"
 
 DEFAULT_URL = {
    "usa": "https://malachiteingestion-pa.googleapis.com",

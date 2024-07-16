@@ -13,18 +13,14 @@
 
 import copy
 import os
+
 from ..botocore import session
 from ..botocore.client import Config
 from ..botocore.exceptions import DataNotFoundError, UnknownServiceError
 
-# import botocore.session
-# from botocore.client import Config
-# from botocore.exceptions import DataNotFoundError, UnknownServiceError
-
 from .. import boto3
 from ..boto3 import utils
-
-from .exceptions import ResourceNotExistsError, UnknownAPIVersionError
+from ..boto3.exceptions import ResourceNotExistsError, UnknownAPIVersionError
 
 from .resources.factory import ResourceFactory
 
@@ -42,7 +38,7 @@ class Session:
     :param aws_session_token: AWS temporary session token
     :type region_name: string
     :param region_name: Default region when creating new connections
-    :type botocore_session: botocore.session.Session
+    :type botocore_session: session.Session
     :param botocore_session: Use this Botocore session instead of creating
                              a new default one.
     :type profile_name: string
@@ -463,11 +459,11 @@ class Session:
 
         # Create a ServiceContext object to serve as a reference to
         # important read-only information about the general service.
-        service_context = boto3.utils.ServiceContext(
+        service_context = utils.ServiceContext(
             service_name=service_name,
             service_model=service_model,
             resource_json_definitions=resource_model["resources"],
-            service_waiter_model=boto3.utils.LazyLoadedWaiterModel(
+            service_waiter_model=utils.LazyLoadedWaiterModel(
                 self._session, service_name, api_version
             ),
         )
@@ -482,54 +478,47 @@ class Session:
         return cls(client=client)
 
     def _register_default_handlers(self):
-
         # S3 customizations
         self._session.register(
             "creating-client-class.s3",
-            boto3.utils.lazy_call(
-                "boto3.s3.inject.inject_s3_transfer_methods"
-            ),
+            utils.lazy_call("boto3.s3.inject.inject_s3_transfer_methods"),
         )
         self._session.register(
             "creating-resource-class.s3.Bucket",
-            boto3.utils.lazy_call("boto3.s3.inject.inject_bucket_methods"),
+            utils.lazy_call("boto3.s3.inject.inject_bucket_methods"),
         )
         self._session.register(
             "creating-resource-class.s3.Object",
-            boto3.utils.lazy_call("boto3.s3.inject.inject_object_methods"),
+            utils.lazy_call("boto3.s3.inject.inject_object_methods"),
         )
         self._session.register(
             "creating-resource-class.s3.ObjectSummary",
-            boto3.utils.lazy_call(
-                "boto3.s3.inject.inject_object_summary_methods"
-            ),
+            utils.lazy_call("boto3.s3.inject.inject_object_summary_methods"),
         )
 
         # DynamoDb customizations
         self._session.register(
             "creating-resource-class.dynamodb",
-            boto3.utils.lazy_call(
+            utils.lazy_call(
                 "boto3.dynamodb.transform.register_high_level_interface"
             ),
             unique_id="high-level-dynamodb",
         )
         self._session.register(
             "creating-resource-class.dynamodb.Table",
-            boto3.utils.lazy_call(
-                "boto3.dynamodb.table.register_table_methods"
-            ),
+            utils.lazy_call("boto3.dynamodb.table.register_table_methods"),
             unique_id="high-level-dynamodb-table",
         )
 
         # EC2 Customizations
         self._session.register(
             "creating-resource-class.ec2.ServiceResource",
-            boto3.utils.lazy_call("boto3.ec2.createtags.inject_create_tags"),
+            utils.lazy_call("boto3.ec2.createtags.inject_create_tags"),
         )
 
         self._session.register(
             "creating-resource-class.ec2.Instance",
-            boto3.utils.lazy_call(
+            utils.lazy_call(
                 "boto3.ec2.deletetags.inject_delete_tags",
                 event_emitter=self.events,
             ),

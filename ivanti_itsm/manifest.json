@@ -1,0 +1,56 @@
+{
+  "name": "Ivanti",
+  "description": "This plugin is used to create incidents on the Ivanti platform. It also supports updating incidents and syncing their status.",
+  "id": "ivanti_itsm",
+  "pulling_supported": false,
+  "receiving_supported": true,
+  "version": "1.0.0",
+  "configuration": [
+    {
+      "label": "Authentication",
+      "name": "auth",
+      "type": "step",
+      "fields": [
+        {
+          "label": "Ivanti Tenant URL",
+          "key": "tenant_url",
+          "type": "text",
+          "default": "",
+          "mandatory": true,
+          "description": "Ivanti Tenant URL. e.g. https://<your-domain>.trysaasit.net"
+        },
+        {
+          "label": "Authentication Method",
+          "key": "authentication_method",
+          "type": "choice",
+          "choices": [
+            {
+              "key": "Basic Authentication (Username-Password)",
+              "value": "basic_auth"
+            },
+            {
+              "key": "API Key Authentication",
+              "value": "api_key_auth"
+            }
+          ],
+          "default": "basic_auth",
+          "mandatory": true,
+          "description": "Select the Authentication Method used to perform the API call to Ivanti platform."
+        },
+        {
+          "label": "Employee Record ID(RecID)",
+          "key": "employee_rec_id",
+          "type": "text",
+          "default": "",
+          "mandatory": true,
+          "description": "Record ID of user using which the incidents should be created on Ivanti. e.g. 0D3E753E3330432BA7C451DF8E6DA3E5"
+        }
+      ]
+    },
+    {
+      "label": "Configuration parameter",
+      "name": "params",
+      "type": "dynamic_step"
+    }
+  ]
+}

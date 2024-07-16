@@ -30,9 +30,10 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
 
-"""Chronicle CLient."""
+"""CLS Google Chronicle Plugin Client."""
 
 
+import traceback
 import requests
 import json
 
@@ -45,14 +46,18 @@ from .chronicle_constants import (
     DEFAULT_URL,
 )
 
+from .chronicle_exceptions import GoogleChroniclePluginException
+
 
 class ChronicleClient:
     """Chronicle Client."""
 
-    def __init__(self, configuration: dict, logger):
+    def __init__(self, configuration: dict, logger, log_prefix, plugin_name):
         """Initialize."""
         self.configuration = configuration
         self.logger = logger
+        self.log_prefix = log_prefix
+        self.plugin_name = plugin_name
         self.create_session()
 
     def create_session(self):
@@ -68,16 +73,17 @@ class ChronicleClient:
         except Exception:
             raise
 
-    def ingest(self, transformed_data):
+    def ingest(self, transformed_data, headers, is_validate=False):
         """Call the API for data Ingestion.
 
         :transformed_data : The transformed data to be ingested.
         """
         try:
             if self.configuration.get("region", "") == "custom":
-                BASE_URL = self.configuration.get("custom_region", "")               
-            else:   
+                BASE_URL = self.configuration.get("custom_region", "")
+            else:
                 BASE_URL = DEFAULT_URL[self.configuration.get("region", "usa")]
+
             url = f"{BASE_URL}/v2/udmevents:batchCreate"
             payload = {
                 "customer_id": self.configuration["customer_id"].strip(),
@@ -87,11 +93,14 @@ class ChronicleClient:
             response = self.http_session.request(
                 "POST",
                 url,
+                headers=headers,
                 json=payload,
             )
-            
             response = response.json()
-            
+
+            if is_validate and response == {}:
+                return True
+
             if response == {}:
                 return
 
@@ -108,10 +117,39 @@ class ChronicleClient:
             )
 
         except requests.exceptions.HTTPError as err:
-            raise Exception("HTTP error occurred: {}.".format(err))
+            err_msg = "HTTP Error occurred while ingesting data."
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg} Error: {err}.",
+                details=str(traceback.format_exc()),
+            )
+            raise GoogleChroniclePluginException(err_msg)
         except requests.exceptions.ConnectionError as err:
-            raise Exception("Connection error occurred: {}.".format(err))
+            err_msg = (
+                f"Unable to establish connection with {self.plugin_name} "
+                "while ingesting data. "
+                "Check Region or Custom URL provided in configuration parameter."
+            )
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg} Error: {err}.",
+                details=str(traceback.format_exc()),
+            )
+            raise GoogleChroniclePluginException(err_msg)
         except requests.exceptions.Timeout as err:
-            raise Exception("Request timed out: {}.".format(err))
-        except Exception:
+            err_msg = "Request timed out while ingesting data."
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg} Error: {err}.",
+                details=str(traceback.format_exc()),
+            )
+            raise GoogleChroniclePluginException(err_msg)
+        except GoogleChroniclePluginException:
             raise
+        except Exception as err:
+            err_msg = (
+                "Unexpected error occurred while requesting to "
+                f"{self.plugin_name} server while ingesting data. Error: {err}"
+            )
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg}",
+                details=str(traceback.format_exc()),
+            )
+            raise GoogleChroniclePluginException(err_msg)

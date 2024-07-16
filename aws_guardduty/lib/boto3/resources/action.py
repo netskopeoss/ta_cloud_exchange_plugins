@@ -15,8 +15,8 @@ import logging
 
 from ...botocore import xform_name
 
-from ..docs.docstring import ActionDocstring
-from ..utils import inject_attribute
+from ...boto3.docs.docstring import ActionDocstring
+from ...boto3.utils import inject_attribute
 
 from .model import Action
 from .params import create_request_parameters

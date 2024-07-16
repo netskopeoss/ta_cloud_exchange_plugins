@@ -1,3 +1,13 @@
+# 2.1.0
+## Changed
+-  Removed support of extraction of domain from URLs in push mechanism.
+## Added
+- Added support to bifurcate the URL by types (Domain, IPv4, IPv6) starting from CE v5.0.1.
+
+# 2.0.2
+## Fixed
+- Bug Fixes.
+
 # 2.0.1
 ## Fixed
 - Bug Fixes.

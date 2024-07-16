@@ -1,8 +1,8 @@
 {
   "name": "CrowdStrike",
   "id": "crowdstrike",
-  "version": "2.0.1",
-  "description": "This plugin fetches Threat IoCs (Hashes, Domains, IPv4, IPv6) from **CrowdStrike's Endpoint detections** and **IOC management**. This plugin supports sharing the Threat IoCs to **CrowdStrike's IOC management** page and can perform Isolate/Remediate for hosts. Only file hash IoCs activate prevention; Domain, IPv4, IPv6 don't trigger prevention in CrowdStrike.\n\n**Sharing URL information from Netskope CE to CrowdStrike is not recommended, as CrowdStrike currently only supports ingesting SHA256, MD5, Domain, IPv4, and IPv6.**\n\nTo access the plugin, you would need the API credentials. Refer the Netskope [documentation](https://docs.netskope.com/en/netskope-help/integrations-439794/netskope-cloud-exchange/threat-exchange-module/configure-3rd-party-threat-exchange-plugins/crowdstrike-plugin-for-threat-exchange/) for more details.",
+  "version": "2.1.0",
+  "description": "This plugin fetches Threat IoCs of type Hash (MD5 and SHA256), Domains, IPv4, IPv6 from **CrowdStrike's Endpoint detections** and **IOC management** page. This plugin supports sharing the Threat IoCs to **CrowdStrike's IOC management** page and can perform Isolate/Remediate actions for hosts. Only file hash IOCs activate prevention; Domain, IPv4, IPv6 don't trigger prevention in CrowdStrike.\n\n**Sharing URL information from Netskope CE to CrowdStrike is not recommended, as CrowdStrike currently only supports ingesting SHA256, MD5, Domain, IPv4, and IPv6.**\n\nTo access the plugin, you would need the API credentials. Refer the Netskope [documentation](https://docs.netskope.com/en/netskope-help/integrations-439794/netskope-cloud-exchange/threat-exchange-module/configure-3rd-party-threat-exchange-plugins/crowdstrike-plugin-for-threat-exchange/) for more details.",
   "patch_supported": true,
   "configuration": [
     {
@@ -141,8 +141,8 @@
       "key": "source",
       "type": "text",
       "mandatory": false,
-      "default": "Netskope - Cloud Threat Exchange",
-      "description": "The origin of this Threat IoC. This field can be utilized to trace the origin of the IoC on the CrowdStrike Custom IOC. Limited to 200 characters."
+      "default": "",
+      "description": "This field indicates the origin of the Threat IoC on the CrowdStrike Custom IOC. If left blank, it defaults to Netskope - Cloud Threat Exchange. Otherwise, specify a value that will be displayed as Netskope - Cloud Threat Exchange | <IOC Source Value>. Limited to 200 characters."
     }
   ]
 }

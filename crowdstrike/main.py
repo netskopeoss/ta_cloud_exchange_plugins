@@ -32,13 +32,12 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 CTE CrowdStrike Plugin's main file which contains the implementation of all the
 plugin's methods.
 """
+
 import datetime
-import json
-import os
+import ipaddress
 import re
 import traceback
-import ipaddress
-from typing import Dict, List, Tuple
+from typing import Dict, Generator, List, Tuple, Union
 
 from netskope.integrations.cte.models import (
     Indicator,
@@ -60,30 +59,33 @@ from pydantic import ValidationError
 
 from .utils.crowdstrike_constants import (
     BASE_URLS,
+    BIFURCATE_INDICATOR_TYPES,
+    CASE_INSENSITIVE_IOC_TYPES,
+    CROWDSTRIKE_TO_INTERNAL_TYPE,
     DATE_FORMAT,
     DATE_FORMAT_FOR_IOCS,
     DEFAULT_BATCH_SIZE,
-    CROWDSTRIKE_TO_INTERNAL_TYPE,
+    DEFAULT_NETSKOPE_TAG,
     ENDPOINT_DETECTION,
-    ISOLATE_REMEDIATE_BATCH_SIZE,
+    ENDPOINT_DETECTION_DETAILS_BATCH_SIZE,
     INTERNAL_TYPES_TO_CROWDSTRIKE,
     IOC_MANAGEMENT,
     IOC_MANAGEMENT_INDICATORS_LIMIT,
     IOC_MANAGEMENT_PULL_PAGE_LIMIT,
-    MAX_LIMIT_FOR_HOSTS,
-    MODULE_NAME,
-    DEFAULT_NETSKOPE_TAG,
-    NON_CROWDSTRIKE_DISCOVERED,
-    MAX_INDICATOR_THRESHOLD,
     IOC_MANAGEMENT_SEVERITY_MAPPING,
     IOC_SOURCE_PAGES,
+    ISOLATE_REMEDIATE_BATCH_SIZE,
+    MAX_INDICATOR_THRESHOLD,
+    MAX_LIMIT_FOR_HOSTS,
+    MODULE_NAME,
+    NON_CROWDSTRIKE_DISCOVERED,
     PAGE_SIZE,
     PLATFORM_NAME,
     PLUGIN_NAME,
     PLUGIN_VERSION,
     THREAT_MAPPING,
     THREAT_TYPES,
-    ENDPOINT_DETECTION_DETAILS_BATCH_SIZE,
+    PREFIX_IOC_SOURCE_TAG,
 )
 from .utils.crowdstrike_helper import (
     CrowdstrikePluginException,
@@ -120,24 +122,22 @@ class CrowdStrikePlugin(PluginBase):
             log_prefix=self.log_prefix,
             plugin_name=self.plugin_name,
             plugin_version=self.plugin_version,
+            ssl_validation=self.ssl_validation,
+            proxy=self.proxy,
         )
+        self.total_indicators = 0
 
-    def _get_plugin_info(self) -> Tuple:
+    def _get_plugin_info(self) -> Tuple[str, str]:
         """Get plugin name and version from manifest.
 
         Returns:
             tuple: Tuple of plugin's name and version fetched from manifest.
         """
         try:
-            file_path = os.path.join(
-                str(os.path.dirname(os.path.abspath(__file__))),
-                "manifest.json",
-            )
-            with open(file_path, "r") as manifest:
-                manifest_json = json.load(manifest)
-                plugin_name = manifest_json.get("name", PLUGIN_NAME)
-                plugin_version = manifest_json.get("version", PLUGIN_VERSION)
-                return (plugin_name, plugin_version)
+            manifest_json = CrowdStrikePlugin.metadata
+            plugin_name = manifest_json.get("name", PLUGIN_NAME)
+            plugin_version = manifest_json.get("version", PLUGIN_VERSION)
+            return plugin_name, plugin_version
         except Exception as exp:
             self.logger.error(
                 message=(
@@ -146,22 +146,7 @@ class CrowdStrikePlugin(PluginBase):
                 ),
                 details=str(traceback.format_exc()),
             )
-        return (PLUGIN_NAME, PLUGIN_VERSION)
-
-    def _get_credentials(self, configuration: Dict) -> Tuple:
-        """Get API Credentials.
-
-        Args:
-            configuration (Dict): Configuration dictionary.
-
-        Returns:
-            Tuple: Tuple containing Base URL, Client ID and Client Secret.
-        """
-        return (
-            configuration.get("base_url", "").strip(),
-            configuration.get("client_id", "").strip(),
-            configuration.get("client_secret"),
-        )
+        return PLUGIN_NAME, PLUGIN_VERSION
 
     def get_severity_from_int(self, severity: int):
         """Get severity from score.
@@ -172,7 +157,7 @@ class CrowdStrikePlugin(PluginBase):
         High (70-89)
         Critical (90-100)
         """
-        if type(severity) is not int or severity == 0:
+        if not isinstance(severity, int) or severity == 0:
             return SeverityType.UNKNOWN
         if 10 <= severity <= 39:
             return SeverityType.LOW
@@ -191,26 +176,34 @@ class CrowdStrikePlugin(PluginBase):
             indicators (indicators): Indicators received from business rule.
             action_dict (Dict): Action parameter dictionary.
         """
-        source = self.configuration.get("source", "").strip()
+        source = (
+            PREFIX_IOC_SOURCE_TAG
+            + " | "
+            + self.configuration.get("source", "").strip()
+        )
         action_params = action_dict.get("parameters", {})
         action = action_params.get("action", "").strip()
         platforms = action_params.get("platforms", ["windows", "mac", "linux"])
 
-        unique_domains, unique_ipv4, unique_ipv6 = (
-            set(),
-            set(),
-            set(),
-        )  # Set to track the unique domains.
-        skipped_count = 0
-        duplicate_address = 0
         generated_payload = {}
-        invalid_url = 0
+        skipped_count = 0
         total_ioc_count = 0
+        action_skip_count = 0
 
         # Iterate on generator received from business rule.
         for indicator in indicators:
-            ioc_type = indicator.type
             total_ioc_count += 1
+            if indicator.type in BIFURCATE_INDICATOR_TYPES and action in [
+                "allow",
+                "prevent_no_ui",
+                "prevent",
+            ]:
+                # Skipping indicators having types
+                # (Domain, URL, FQDN, IPv4 & IPv6) as above actions are
+                # not supported for such types.
+                action_skip_count += 1
+                continue
+
             tags = indicator.tags
             expiration = indicator.expiresAt.strftime(DATE_FORMAT)
             tags.append(DEFAULT_NETSKOPE_TAG)
@@ -223,75 +216,62 @@ class CrowdStrikePlugin(PluginBase):
                 "applied_globally": True,
                 "severity": indicator.severity,
                 "tags": tags,
-                "type": INTERNAL_TYPES_TO_CROWDSTRIKE[indicator.type],
+                "type": INTERNAL_TYPES_TO_CROWDSTRIKE.get(indicator.type),
                 "description": indicator.comments,
                 "expiration": expiration,
             }
-
+            ioc_value = indicator.value
+            if indicator.type in CASE_INSENSITIVE_IOC_TYPES:
+                ioc_value = ioc_value.lower()
             # If URL is there then extract host and validate it.
-            if ioc_type == IndicatorType.URL:
-                url_value = indicator.value
+            if indicator.type in BIFURCATE_INDICATOR_TYPES:
                 try:
-                    host = self._extract_host(url_value)
-                    # If host is a valid domain then
-                    if self._validate_domain(host):
-                        if host in unique_domains:
-                            duplicate_address += 1
-                            skipped_count += 1
-                        else:
-                            unique_domains.add(host)
-                            ioc_payload.update(
-                                {"value": host, "type": "domain"}
-                            )
-                            generated_payload.update({host: ioc_payload})
-                    elif self._is_valid_ipv4(host):
-                        if host in unique_ipv4:
-                            duplicate_address += 1
-                            skipped_count += 1
-                        else:
-                            unique_ipv4.add(host)
-                            ioc_payload.update({"value": host, "type": "ipv4"})
-                            generated_payload.update({host: ioc_payload})
+                    if self._validate_domain(ioc_value):
+                        ioc_type = "domain"
+                    elif self._is_valid_ipv4(ioc_value):
+                        ioc_type = "ipv4"
+                    elif self._is_valid_ipv6(ioc_value):
+                        ioc_type = "ipv6"
+                    elif self._is_valid_fqdn(ioc_value):
+                        ioc_type = "domain"
                     else:
-                        # Extract an ipv6 address and validate it.
-                        ipv6_address = self._extract_ipv6_from_url(url_value)
-                        if self._is_valid_ipv6(ipv6_address):
-                            if ipv6_address in unique_ipv6:
-                                duplicate_address += 1
-                                skipped_count += 1
-                            else:
-                                unique_ipv6.add(host)
-                                ioc_payload.update(
-                                    {"value": ipv6_address, "type": "ipv6"}
-                                )
-                                generated_payload.update(
-                                    {ipv6_address: ioc_payload}
-                                )
-                        else:
-                            invalid_url += 1
-                            skipped_count += 1
+                        skipped_count += 1
+                        continue
 
+                    ioc_payload.update(
+                        {
+                            "value": ioc_value,
+                            "type": ioc_type,
+                        }
+                    )
+                    generated_payload.update({ioc_value: ioc_payload})
                 except Exception:
                     skipped_count += 1
                     continue
             else:
                 # Store SHA256 and MD5 directly.
-                ioc_payload["value"] = indicator.value
-                generated_payload.update({indicator.value: ioc_payload})
+                ioc_payload["value"] = ioc_value
+                generated_payload.update({ioc_value: ioc_payload})
 
         if skipped_count > 0:
             self.logger.info(
                 f"{self.log_prefix}: {skipped_count} indicator(s) will "
-                f"not shared or updated on {IOC_MANAGEMENT}. In case of"
-                f" URL(s), {invalid_url} URL(s) have invalid "
-                f"Domain,IPv4 or IPv6 and {duplicate_address} "
-                "URL(s) have duplicate address in them."
+                f"not shared or updated on {IOC_MANAGEMENT}, because "
+                "they might have invalid domain, ipv4 or ipv6 value in it."
             )
+
+        if action_skip_count > 0:
+            err_msg = (
+                f"Skipped sharing of {action_skip_count} indicator(s) "
+                f"to {IOC_MANAGEMENT} as the {action} action "
+                "is only applicable to hashes i.e. SHA256 and MD5."
+            )
+            self.logger.info(f"{self.log_prefix}: {err_msg}")
 
         self.logger.info(
             f"{self.log_prefix}: Successfully filtered "
-            f"{len(generated_payload)} indicators from {total_ioc_count}"
-            f" total indicators received from business rule."
+            f"{len(generated_payload)} indicators out of {total_ioc_count}, "
+            f"received from the business rule."
         )
         return generated_payload
 
@@ -307,10 +287,9 @@ class CrowdStrikePlugin(PluginBase):
         Returns:
             Tuple: List of indicators to share, List of indicators to update
         """
-        action_skip_count = 0
         base_url = self.configuration.get("base_url", "").strip()
         query_endpoint = f"{base_url}/iocs/combined/indicator/v1"  # noqa
-        self.logger.info(
+        self.logger.debug(
             f"{self.log_prefix}: Verifying existence of indicator(s) on "
             f"{IOC_MANAGEMENT}."
         )
@@ -329,10 +308,8 @@ class CrowdStrikePlugin(PluginBase):
             self.logger.debug(
                 f"{self.log_prefix}: Performing API call with {chunk_size}"
                 f" indicator(s) to {IOC_MANAGEMENT} for verifying "
-                f"existence of indicator(s) using endpoint "
-                f'GET "{query_endpoint}".'
+                f"existence of indicator(s)."
             )
-            headers = self.reload_auth_token(headers)
             resp_json = self.crowdstrike_helper.api_helper(
                 url=query_endpoint,
                 method="GET",
@@ -343,6 +320,7 @@ class CrowdStrikePlugin(PluginBase):
                     "Verifying the existence of indicator(s)"
                     f" within {IOC_MANAGEMENT}"
                 ),
+                configuration=self.configuration,
             )
 
             resources = resp_json.get("resources", [])
@@ -356,35 +334,17 @@ class CrowdStrikePlugin(PluginBase):
                     indicators[value]["id"] = tmp_dict[value]
                     update_payload.append(indicators[value])
                     page_update_count += 1
-
-                elif indicators[value]["type"] == "domain" and action in [
-                    "allow",
-                    "prevent_no_ui",
-                    "prevent",
-                ]:
-                    action_skip_count += 1
                 else:
                     page_push_count += 1
                     push_payload.append(indicators[value])
 
             self.logger.info(
-                f"{self.log_prefix}: {page_update_count} indicator(s)"
-                f" already exists on {IOC_MANAGEMENT} which will be "
-                f"updated remaining {page_push_count} indicator(s) "
-                f"are new which will be shared out of {chunk_size} "
-                f"indicator(s). Total {len(push_payload)} indicator(s)"
-                f" were fetched for sharing and {len(update_payload)} "
-                f"indicator(s) for update out of {total_verification_count}"
-                " indicator(s)."
+                f"{self.log_prefix}: Total {len(push_payload)} indicator(s) "
+                f"will be shared and {len(update_payload)} will be updated "
+                f"out of {total_verification_count} since they are already "
+                f"present on the {IOC_MANAGEMENT}."
             )
 
-        if action_skip_count > 0:
-            err_msg = (
-                f"Skipped sharing of {action_skip_count} indicator(s) "
-                f"to {IOC_MANAGEMENT} as the {action} action "
-                "is only applicable to hashes i.e. Sha256 and MD5."
-            )
-            self.logger.info(f"{self.log_prefix}: {err_msg}")
         self.logger.info(
             f"{self.log_prefix}: Total {len(push_payload)} indicator(s) will "
             f"be shared and {len(update_payload)} indicator(s) will be updated"
@@ -417,7 +377,7 @@ class CrowdStrikePlugin(PluginBase):
             f"{self.log_prefix}: Pulling the details for {len(detection_ids)} "
             f"detections in the batch of "
             f"{ENDPOINT_DETECTION_DETAILS_BATCH_SIZE} from "
-            f'{ENDPOINT_DETECTION} using endpoint POST "{indicator_endpoint}".'
+            f"{ENDPOINT_DETECTION}."
         )
         page_ioc_counts = {
             "sha256": 0,
@@ -432,20 +392,18 @@ class CrowdStrikePlugin(PluginBase):
             detection_ids, ENDPOINT_DETECTION_DETAILS_BATCH_SIZE
         ):
             json_payload = {"ids": list(ioc_chunks)}
-            headers = self.reload_auth_token(headers)
 
             resp_json = self.crowdstrike_helper.api_helper(
                 url=indicator_endpoint,
                 method="POST",
                 headers=headers,
                 json=json_payload,
-                verify=self.ssl_validation,
-                proxies=self.proxy,
                 logger_msg=(
-                    "while fetching details from detection"
-                    f" id(s) from {ENDPOINT_DETECTION}."
+                    "fetching details from detection"
+                    f" id(s) from {ENDPOINT_DETECTION}"
                 ),
                 is_handle_error_required=True,
+                configuration=self.configuration,
             )
 
             indicators_json_list = resp_json.get("resources", [])
@@ -513,7 +471,7 @@ class CrowdStrikePlugin(PluginBase):
                                 )
 
                                 indicator_list.append(indicator)
-                                for threat_type in page_ioc_counts.keys():
+                                for threat_type in page_ioc_counts:
                                     if ioc_type in THREAT_MAPPING.get(
                                         threat_type
                                     ):
@@ -592,24 +550,21 @@ class CrowdStrikePlugin(PluginBase):
         base_url = self.configuration.get("base_url", "").strip()
         indicator_endpoint = f"{base_url}/detects/entities/summaries/GET/v1"
         self.logger.debug(
-            f'{self.log_prefix}: Performing API call to get the last_behavior"'
-            f' timestamp for the detection id "{detection_id}" using endpoint'
-            f' POST "{indicator_endpoint}"'
+            f"{self.log_prefix}: Performing API call to get the last_behavior"
+            f' timestamp for the detection id "{detection_id}".'
         )
         json_payload = {"ids": [detection_id]}
-        headers = self.reload_auth_token(headers)
         resp_json = self.crowdstrike_helper.api_helper(
             url=indicator_endpoint,
             method="POST",
             json=json_payload,
             headers=headers,
-            verify=self.ssl_validation,
-            proxies=self.proxy,
             is_handle_error_required=True,
             logger_msg=(
-                "while fetching details from detection"
-                f" id(s) from {ENDPOINT_DETECTION}."
+                "fetching details from detection"
+                f" id(s) from {ENDPOINT_DETECTION}"
             ),
+            configuration=self.configuration,
         )
         resources_list = resp_json.get("resources", [])
         if resources_list:
@@ -623,42 +578,34 @@ class CrowdStrikePlugin(PluginBase):
             return last_behavior
 
     def _pull_iocs_from_endpoint_detections(
-        self, threat_data_type, endpoint_detection_checkpoint, storage
-    ) -> List[str]:
+        self,
+        threat_data_type: List,
+        initial_check_point: str,
+        storage: Dict,
+    ) -> Union[Generator[Indicator, bool, None], Dict]:
         """Get a list of Detection IDs from the Endpoint detection.
 
         Args:
-            threat_data_type (string): Type of threat data to pull.
-            headers (dict): Header dict object containing OAUTH2 access token.
+            - threat_data_type (string): Type of threat data to pull.
+            - initial_check_point (string): A string representation of datetime
+            object of the Endpoint Detection.
+            - storage (Dict): A mutable copy of self.storage dictionary.
         Returns:
-            List: List of detection ids.
+            - Generator[Indicator, bool, None]: A Generator of Indicator
+            objects representing the retrieved indicators.
+            - Dict: A dictionary containing the checkpoint details.
         """
-        self.logger.info(
-            f"{self.log_prefix}: Pulling indicators"
-            f" from {ENDPOINT_DETECTION}."
+        self.logger.debug(
+            f"{self.log_prefix}: Pulling indicators from {ENDPOINT_DETECTION}"
+            f" using checkpoint {initial_check_point}."
         )
-        base_url, client_id, client_secret = self._get_credentials(
-            self.configuration
+        (base_url, client_id, client_secret) = (
+            self.crowdstrike_helper.get_credentials(self.configuration)
         )
-        auth_json = self.get_auth_json(client_id, client_secret, base_url)
-        auth_token = auth_json.get("access_token")
-        if not auth_token:
-            err_msg = f"Invalid auth token received from {PLATFORM_NAME}."
-            self.logger.error(
-                message=f"{self.log_prefix}: {err_msg}",
-                details=str(auth_json),
-            )
-            raise CrowdstrikePluginException(err_msg)
-
-        headers = {"Authorization": f"Bearer {auth_token}"}
+        headers = self.crowdstrike_helper.get_auth_header(
+            client_id, client_secret, base_url
+        )
         query_endpoint = f"{base_url}/detects/queries/detects/v1"
-        indicator_details_endpoint = (
-            f"{base_url}/detects/entities/summaries/GET/v1"
-        )
-
-        endpoint_detection_checkpoint = endpoint_detection_checkpoint.strftime(
-            DATE_FORMAT
-        )
 
         threat_types_to_pull = []
         for threat_type in threat_data_type:
@@ -666,10 +613,9 @@ class CrowdStrikePlugin(PluginBase):
 
         self.logger.debug(
             f"{self.log_prefix}: Indicators of type(s) "
-            f"{threat_types_to_pull} will be pulled from {ENDPOINT_DETECTION}."
-            f" Detection ids will be pulled using endpoint GET "
-            f'"{query_endpoint}" and details for the detections will be '
-            f'pulled using POST "{indicator_details_endpoint}".'
+            f"{', '.join(threat_types_to_pull)} will be pulled from "
+            f"{ENDPOINT_DETECTION}. Detection ids will be pulled and details "
+            f"for the detections will be pulled."
         )
         ioc_type_counts = {
             "sha256": 0,
@@ -678,17 +624,21 @@ class CrowdStrikePlugin(PluginBase):
             "ipv4": 0,
             "ipv6": 0,
         }
-        skip_count = 0
-        page_count = 0
-        detection_ids, indicator_list = [], []
-        threshold_break = False
+        skip_count, page_count = 0, 0
+        total_detection_ids = 0
         checkpoint, offset = None, 0
-        while True:
+        indicators = []
+        next_page = True
+        while next_page:
             page_count += 1
-            time_filter = (
-                checkpoint if checkpoint else endpoint_detection_checkpoint
+            # use the behavior timestamp of last detection id as checkpoint.
+            # Or use the provided detection endpoint checkpoints from args.
+            time_filter = checkpoint if checkpoint else initial_check_point
+            ioc_source_filter = (
+                f"behaviors.ioc_source:!*'{PREFIX_IOC_SOURCE_TAG}*'"
             )
-            filter_query = f"last_behavior:>='{time_filter}'+behaviors.ioc_type:{threat_types_to_pull}"  # noqa
+            ioc_type_filter = f"behaviors.ioc_type:{threat_types_to_pull}"
+            filter_query = f"last_behavior:>='{time_filter}'+{ioc_type_filter}+{ioc_source_filter}"  # noqa
             query_params = {
                 "limit": PAGE_SIZE,
                 "filter": filter_query,
@@ -696,28 +646,24 @@ class CrowdStrikePlugin(PluginBase):
             }
 
             self.logger.debug(
-                f"{self.log_prefix}: Pulling detection id(s) of threat type(s)"
-                f" {threat_types_to_pull} from {ENDPOINT_DETECTION}."
-                f" API Parameters: {query_params}"
+                f"{self.log_prefix}: Pulling detection id(s) of threat "
+                f"type(s) {', '.join(threat_types_to_pull)} from "
+                f"{ENDPOINT_DETECTION}."
             )
 
-            headers = self.reload_auth_token(headers)
             resp_json = self.crowdstrike_helper.api_helper(
                 url=query_endpoint,
                 method="GET",
                 params=query_params,
-                verify=self.ssl_validation,
-                proxies=self.proxy,
                 headers=headers,
                 is_handle_error_required=True,
-                logger_msg=f"pulling detection ids from {PLATFORM_NAME}.",
+                logger_msg=f"pulling detection ids from {PLATFORM_NAME}",
+                configuration=self.configuration,
             )
             current_detection_ids = resp_json.get("resources", [])
-            detection_ids.extend(current_detection_ids)
-            # detection_counter += len(current_detection_ids)
+            total_detection_ids += len(current_detection_ids)
             offset += PAGE_SIZE
 
-            current_extracted_indicators = []
             current_page_ioc_counts = {
                 "sha256": 0,
                 "md5": 0,
@@ -727,7 +673,7 @@ class CrowdStrikePlugin(PluginBase):
             }
             if current_detection_ids:
                 (
-                    current_extracted_indicators,
+                    indicators,
                     current_page_ioc_counts,
                     ioc_type_counts,
                     current_page_skip_count,
@@ -738,8 +684,7 @@ class CrowdStrikePlugin(PluginBase):
                     headers=headers,
                 )
                 skip_count += current_page_skip_count
-
-                indicator_list.extend(current_extracted_indicators)
+                self.total_indicators += len(indicators)
 
             self.logger.debug(
                 f"{self.log_prefix}: Pull stat: SHA256:"
@@ -752,20 +697,17 @@ class CrowdStrikePlugin(PluginBase):
             )
             self.logger.info(
                 f"{self.log_prefix}: Successfully fetched "
-                f"{len(current_extracted_indicators)} indicator(s) "
-                f"in page {page_count}. Total indicator(s) "
-                f"fetched - {sum(ioc_type_counts.values())}."
+                f"{sum(current_page_ioc_counts.values())} indicator(s) in "
+                f"the page {page_count} from {ENDPOINT_DETECTION}. Total "
+                f" indicator(s) fetched - {sum(ioc_type_counts.values())}."
             )
-            if len(indicator_list) >= MAX_INDICATOR_THRESHOLD:
-                last_indicator_checkpoint = indicator_list[-1].lastSeen
-                last_indicator_checkpoint = (
-                    last_indicator_checkpoint
-                    if last_indicator_checkpoint
-                    else datetime.datetime.now()
-                )
-                storage["checkpoints"][
-                    "endpoint_detection_checkpoint"
-                ] = last_indicator_checkpoint
+
+            last_indicator_checkpoint = datetime.datetime.now()
+            if (
+                self.total_indicators >= MAX_INDICATOR_THRESHOLD
+                and not hasattr(self, "sub_checkpoint")
+            ):
+                last_indicator_checkpoint = indicators[-1].lastSeen
                 self.logger.debug(
                     f"{self.log_prefix}: Maximum limit for"
                     f" {MAX_INDICATOR_THRESHOLD} indicators "
@@ -774,47 +716,60 @@ class CrowdStrikePlugin(PluginBase):
                     " hence storing checkpoint "
                     f"{last_indicator_checkpoint} for next sync interval."
                 )
-                threshold_break = True
-                break
+                next_page = False
+
+            if self.last_run_at:
+                last_indicator_checkpoint = self.last_run_at
+            elif indicators:
+                if indicators[-1].lastSeen is not None:
+                    last_indicator_checkpoint = indicators[-1].lastSeen
+
+            # Update the checkpoint of detection endpoint in the storage.
+            storage["checkpoints"][
+                "endpoint_detection_checkpoint"
+            ] = last_indicator_checkpoint
 
             if len(current_detection_ids) < PAGE_SIZE:
-                break
+                next_page = False
             else:
                 last_record_id = current_detection_ids[-1]
                 checkpoint = self._get_checkpoint(
                     detection_id=last_record_id, headers=headers
                 )
 
-        if skip_count > 0:
-            self.logger.info(
-                f"{self.log_prefix}: Skipped {skip_count} record(s) as "
-                "IoC value might be empty string or the IoC type does not "
-                'match the "Type of Threat data to pull" '
-                "configuration parameter."
-            )
+            if not next_page:
+                if skip_count > 0:
+                    self.logger.info(
+                        f"{self.log_prefix}: Skipped {skip_count} record(s) "
+                        "as IoC value might be empty string or the IoC type "
+                        'does not match the "Type of Threat data to pull" '
+                        "configuration parameter."
+                    )
 
-        total_iocs = sum(ioc_type_counts.values())
+                self.logger.debug(
+                    f"{self.log_prefix}: Successfully fetched "
+                    f"{sum(ioc_type_counts.values())} indicator(s) for "
+                    f"{total_detection_ids} detection id(s) from "
+                    f"{ENDPOINT_DETECTION}. Total "
+                    f"{ioc_type_counts['sha256']} SHA256, "
+                    f"{ioc_type_counts['md5']} MD5, "
+                    f"{ioc_type_counts['domain']} Domain(s), "
+                    f"{ioc_type_counts['ipv4']} IPv4 and "
+                    f"{ioc_type_counts['ipv6']} IPv6 indicator(s) "
+                    "were fetched."
+                )
 
-        self.logger.info(
-            f"{self.log_prefix}: Successfully fetched {total_iocs} "
-            f"indicator(s) for {len(detection_ids)} detection id(s)"
-            f" from {ENDPOINT_DETECTION}. Total "
-            f"{ioc_type_counts['sha256']} SHA256, {ioc_type_counts['md5']}"
-            f" MD5, {ioc_type_counts['domain']} Domain(s),"
-            f"{ioc_type_counts['ipv4']} IPv4 and {ioc_type_counts['ipv6']}"
-            " IPv6 indicator(s) were fetched."
-        )
-        if not threshold_break:
-            checkpoint_value = datetime.datetime.now()
-            if self.last_run_at:
-                checkpoint_value = self.last_run_at
-            elif indicator_list:
-                if indicator_list[-1].lastSeen is not None:
-                    checkpoint_value = indicator_list[-1].lastSeen
-            storage["checkpoints"][
-                "endpoint_detection_checkpoint"
-            ] = checkpoint_value
-        return indicator_list
+                self.logger.info(
+                    f"{self.log_prefix}: Successfully fetched "
+                    f"{sum(ioc_type_counts.values())} indicator(s) for "
+                    f"{total_detection_ids} detection id(s) from "
+                    f"{ENDPOINT_DETECTION}."
+                )
+
+            if hasattr(self, "sub_checkpoint"):
+                yield indicators, storage.get("checkpoints")
+            else:
+                yield indicators
 
     def _extract_ioc_management_iocs(
         self,
@@ -897,88 +852,79 @@ class CrowdStrikePlugin(PluginBase):
     def _pull_iocs_from_ioc_management(
         self,
         threat_data_type: List,
-        ioc_management_checkpoint,
-        fetched_ioc_count: int,
+        initial_check_point: str,
         storage: Dict,
-    ) -> List:
+    ) -> Union[Generator[Indicator, bool, None], Dict]:
         """Pull indicators from IOC Management Page.
 
         Args:
-            threat_data_type (List): Threat types selected in configuration.
-
+            - threat_data_type (string): Type of threat data to pull.
+            - initial_check_point (string): A string representation of datetime
+            object of the IOC Management checkpoint.
+            - storage (Dict): A mutable copy of self.storage dictionary.
         Returns:
-            List: List of indicators.
+            - Generator[Indicator, bool, None]: A Generator of Indicator
+            objects representing the retrieved indicators.
+            - Dict: A dictionary containing the checkpoint details.
         """
-        self.logger.info(
-            f"{self.log_prefix}: Pulling indicators from {IOC_MANAGEMENT}."
+        self.logger.debug(
+            f"{self.log_prefix}: Pulling indicators from {IOC_MANAGEMENT}"
+            f" using checkpoint {initial_check_point}."
         )
-        base_url, client_id, client_secret = self._get_credentials(
-            self.configuration
+        (base_url, client_id, client_secret) = (
+            self.crowdstrike_helper.get_credentials(self.configuration)
         )
         page_count = 0
-        ioc_management_checkpoint = ioc_management_checkpoint.strftime(
-            DATE_FORMAT
-        )
         base_url = self.configuration.get("base_url", "")
         query_endpoint = f"{base_url}/iocs/combined/indicator/v1"
-        auth_json = self.get_auth_json(client_id, client_secret, base_url)
-        auth_token = auth_json.get("access_token")
-        if not auth_token:
-            err_msg = f"Invalid auth token received from {PLATFORM_NAME}."
-            self.logger.error(
-                message=f"{self.log_prefix}: {err_msg}",
-                details=str(auth_json),
-            )
-            raise CrowdstrikePluginException(err_msg)
-        headers = {"Authorization": f"Bearer {auth_token}"}
+        headers = self.crowdstrike_helper.get_auth_header(
+            client_id, client_secret, base_url
+        )
 
         query_params = {
             "limit": IOC_MANAGEMENT_PULL_PAGE_LIMIT,
-            "filter": f"type: {threat_data_type}+modified_on:>='{ioc_management_checkpoint}'+tags:!'{DEFAULT_NETSKOPE_TAG}'",  # noqa
+            "filter": f"type: {threat_data_type}+modified_on:>='{initial_check_point}'+tags:!'{DEFAULT_NETSKOPE_TAG}'",  # noqa
         }
-        indicators = []
         skipped_tags = set()
         ioc_counts = {"sha256": 0, "md5": 0, "domain": 0, "ipv4": 0, "ipv6": 0}
-        threshold_break = False
         self.logger.debug(
-            f"{self.log_prefix}: Indicator(s) of types {threat_data_type} "
-            f"will be pulled from {IOC_MANAGEMENT} using "
-            f'endpoint GET "{query_endpoint}"'
+            f"{self.log_prefix}: Indicator(s) of types "
+            f"{', '.join(threat_data_type)} will be pulled from "
+            f"{IOC_MANAGEMENT}."
         )
-        while True:
+        next_page = True
+        while next_page:
             page_count += 1
-            headers = self.reload_auth_token(headers)
-            self.logger.debug(
-                f"{self.log_prefix}: Pulling indicators from {IOC_MANAGEMENT}."
-                f" API Parameters: {query_params}"
-            )
             resp_json = self.crowdstrike_helper.api_helper(
                 url=query_endpoint,
                 method="GET",
                 headers=headers,
                 params=query_params,
-                verify=self.ssl_validation,
-                proxies=self.proxy,
                 is_handle_error_required=True,
-                logger_msg=f"while pulling indicators from {IOC_MANAGEMENT}",
+                logger_msg=(
+                    f"pulling indicators from {IOC_MANAGEMENT} for "
+                    f"page {page_count}"
+                ),
+                configuration=self.configuration,
             )
             meta = resp_json.get("meta")
             after = meta.get("pagination", {}).get("after")
             query_params["after"] = after
             resources = resp_json.get("resources", [])
-            # Add the total count of indicators fetched so far from IOC
-            # Management as well as Endpoint Detection.
-            total_iocs_fetched = sum(ioc_counts.values()) + fetched_ioc_count
+
             (
-                current_page_iocs,
+                indicators,
                 current_page_ioc_counts,
                 skipped_tags,
             ) = self._extract_ioc_management_iocs(
                 resources,
-                total_iocs_fetched,
+                self.total_indicators,
                 skipped_tags,
             )
-            indicators.extend(current_page_iocs)
+            # Add the total count of indicators fetched so far from IOC
+            # Management as well as Endpoint Detection.
+            self.total_indicators += len(indicators)
+
             # Add current page IOC counts to total IOC Counts.
             for ioc_type, count in current_page_ioc_counts.items():
                 ioc_counts[ioc_type] += count
@@ -995,23 +941,16 @@ class CrowdStrikePlugin(PluginBase):
             self.logger.info(
                 f"{self.log_prefix}: Successfully fetched "
                 f"{sum(current_page_ioc_counts.values())} indicator(s) "
-                f"in page {page_count}. Total indicator(s) "
-                f"fetched - {sum(ioc_counts.values())}."
+                f"in page {page_count} from {IOC_MANAGEMENT}. Total "
+                f"indicator(s) fetched - {sum(ioc_counts.values())}."
             )
 
+            last_indicator_checkpoint = datetime.datetime.now()
             if (
-                sum(ioc_counts.values()) + fetched_ioc_count
-                >= MAX_INDICATOR_THRESHOLD
+                self.total_indicators >= MAX_INDICATOR_THRESHOLD
+                and not hasattr(self, "sub_checkpoint")
             ):
                 last_indicator_checkpoint = indicators[-1].lastSeen
-                last_indicator_checkpoint = (
-                    last_indicator_checkpoint
-                    if last_indicator_checkpoint
-                    else datetime.datetime.now()
-                )
-                storage["checkpoints"][
-                    "ioc_management_checkpoint"
-                ] = last_indicator_checkpoint
                 self.logger.debug(
                     f"{self.log_prefix}: Maximum limit for"
                     f" {MAX_INDICATOR_THRESHOLD} indicators reached while "
@@ -1019,39 +958,48 @@ class CrowdStrikePlugin(PluginBase):
                     f"sync interval hence storing checkpoint "
                     f"{last_indicator_checkpoint} for next sync interval."
                 )
-                threshold_break = True
-                break
-            if not after or (len(resources) < IOC_MANAGEMENT_PULL_PAGE_LIMIT):
-                break
+                next_page = False
 
-        if skipped_tags:
-            self.logger.info(
-                (
-                    f"{self.log_prefix}: Skipped following tags(s) because "
-                    "they were longer than expected size or due to some other "
-                    "exceptions that occurred while creation of "
-                    f"them: {list(skipped_tags)}"
-                )
-            )
-
-        self.logger.info(
-            f"{self.log_prefix}: Successfully fetched "
-            f"{sum(ioc_counts.values())} indicator(s) from {IOC_MANAGEMENT}."
-            f" Total {ioc_counts['sha256']} SHA256, {ioc_counts['md5']}"
-            f" MD5, {ioc_counts['domain']} Domain, {ioc_counts['ipv4']} IPv4"
-            f" and {ioc_counts['ipv6']} IPv6 indicator(s) were fetched."
-        )
-        if not threshold_break:
-            checkpoint_value = datetime.datetime.now()
             if self.last_run_at:
-                checkpoint_value = self.last_run_at
+                last_indicator_checkpoint = self.last_run_at
             elif indicators:
                 if indicators[-1].lastSeen is not None:
-                    checkpoint_value = indicators[-1].lastSeen
+                    last_indicator_checkpoint = indicators[-1].lastSeen
             storage["checkpoints"][
                 "ioc_management_checkpoint"
-            ] = checkpoint_value
-        return indicators
+            ] = last_indicator_checkpoint
+
+            if not after or (len(resources) < IOC_MANAGEMENT_PULL_PAGE_LIMIT):
+                next_page = False
+
+            if not next_page:
+                if skipped_tags:
+                    self.logger.info(
+                        f"{self.log_prefix}: Skipped following tags(s) "
+                        "because they were longer than expected size or due "
+                        "to some other exceptions that occurred while "
+                        f"creation of them: {list(skipped_tags)}"
+                    )
+
+                self.logger.debug(
+                    f"{self.log_prefix}: Successfully fetched "
+                    f"{sum(ioc_counts.values())} indicator(s) from "
+                    f"{IOC_MANAGEMENT}. Total {ioc_counts['sha256']} SHA256, "
+                    f"{ioc_counts['md5']} MD5, {ioc_counts['domain']} Domain,"
+                    f" {ioc_counts['ipv4']} IPv4 and {ioc_counts['ipv6']} "
+                    "IPv6 indicator(s) were fetched."
+                )
+
+                self.logger.info(
+                    f"{self.log_prefix}: Successfully fetched "
+                    f"{sum(ioc_counts.values())} indicator(s) from "
+                    f"{IOC_MANAGEMENT} in total {page_count} pages."
+                )
+
+            if hasattr(self, "sub_checkpoint"):
+                yield indicators, storage.get("checkpoints", {})
+            else:
+                yield indicators
 
     def pull(self) -> List[Indicator]:
         """Pull the Threat IoCs from CrowdStrike platform.
@@ -1063,77 +1011,60 @@ class CrowdStrikePlugin(PluginBase):
         is_pull_required = self.configuration.get(
             "is_pull_required", ""
         ).strip()
-        threat_data_type = self.configuration.get("threat_data_type")
-        indicator_source_page = self.configuration.get("indicator_source_page")
         endpoint_detection_checkpoint = None
         ioc_management_checkpoint = None
         storage = self.storage if self.storage is not None else {}
 
-        if storage.get("checkpoints", {}):
+        sub_checkpoint = getattr(self, "sub_checkpoint", None)
+        if sub_checkpoint:
+            endpoint_detection_checkpoint = sub_checkpoint.get(
+                "endpoint_detection_checkpoint"
+            )
+            ioc_management_checkpoint = sub_checkpoint.get(
+                "ioc_management_checkpoint"
+            )
+        elif storage.get("checkpoints", {}):
             endpoint_detection_checkpoint = storage.get("checkpoints", {}).get(
                 "endpoint_detection_checkpoint"
             )
             ioc_management_checkpoint = storage.get("checkpoints", {}).get(
                 "ioc_management_checkpoint"
             )
-        else:
-            if self.last_run_at:
-                endpoint_detection_checkpoint = self.last_run_at
-                ioc_management_checkpoint = self.last_run_at
-            else:
-                endpoint_detection_checkpoint = (
-                    datetime.datetime.now()
-                    - datetime.timedelta(days=self.configuration.get("days"))
-                )
-                ioc_management_checkpoint = (
-                    datetime.datetime.now()
-                    - datetime.timedelta(days=self.configuration.get("days"))
-                )
-            storage.update(
-                {
-                    "checkpoints": {
-                        "endpoint_detection_checkpoint": endpoint_detection_checkpoint,  # noqa
-                        "ioc_management_checkpoint": ioc_management_checkpoint,
-                    }
-                }
+        elif self.last_run_at:
+            endpoint_detection_checkpoint = self.last_run_at
+            ioc_management_checkpoint = self.last_run_at
+
+        if not endpoint_detection_checkpoint or not ioc_management_checkpoint:
+            endpoint_detection_checkpoint = (
+                datetime.datetime.now()
+                - datetime.timedelta(days=self.configuration.get("days"))
+            )
+            ioc_management_checkpoint = (
+                datetime.datetime.now()
+                - datetime.timedelta(days=self.configuration.get("days"))
             )
 
+        storage.update(
+            {
+                "checkpoints": {
+                    "endpoint_detection_checkpoint": endpoint_detection_checkpoint,  # noqa
+                    "ioc_management_checkpoint": ioc_management_checkpoint,
+                }
+            }
+        )
+
         if is_pull_required == "Yes":
-            endpoint_detection_iocs = []
-            ioc_management_iocs = []
-            if "endpoint_detections" in indicator_source_page:
-                endpoint_detection_iocs.extend(
-                    self._pull_iocs_from_endpoint_detections(
-                        threat_data_type,
-                        endpoint_detection_checkpoint,
-                        storage,
-                    )
-                )
-                self.logger.debug(
-                    f"{self.log_prefix}: Successfully fetched "
-                    f" {len(endpoint_detection_iocs)} indicator(s) "
-                    f"from {ENDPOINT_DETECTION}. Storage: {storage}"
-                )
-            if (
-                "ioc_management" in indicator_source_page
-                and len(endpoint_detection_iocs) < MAX_INDICATOR_THRESHOLD
-            ):
-                ioc_management_iocs.extend(
-                    self._pull_iocs_from_ioc_management(
-                        threat_data_type,
-                        ioc_management_checkpoint,
-                        len(endpoint_detection_iocs),
-                        storage,
-                    )
-                )
-                self.logger.debug(
-                    f"{self.log_prefix}: Successfully fetched "
-                    f" {len(ioc_management_iocs)} indicator(s) from "
-                    f"{IOC_MANAGEMENT}. Storage: {storage}"
-                )
+            if hasattr(self, "sub_checkpoint"):
 
-            return endpoint_detection_iocs + ioc_management_iocs
+                def wrapper(self):
+                    yield from self._pull(storage)
 
+                return wrapper(self)
+            else:
+                indicators = []
+                for batch in self._pull(storage):
+                    indicators.extend(batch)
+                return indicators
         else:
             self.logger.info(
                 f"{self.log_prefix}: Polling is disabled in configuration "
@@ -1141,6 +1072,33 @@ class CrowdStrikePlugin(PluginBase):
                 f"{PLATFORM_NAME}."
             )
             return []
+
+    def _pull(self, storage):
+        threat_data_type = self.configuration.get("threat_data_type")
+        indicator_source_page = self.configuration.get("indicator_source_page")
+
+        pull_ioc_methods = {}
+        if "endpoint_detections" in indicator_source_page:
+            pull_ioc_methods[self._pull_iocs_from_endpoint_detections] = (
+                storage.get("checkpoints", {})
+                .get("endpoint_detection_checkpoint")
+                .strftime(DATE_FORMAT)
+            )
+
+        if "ioc_management" in indicator_source_page:
+            pull_ioc_methods[self._pull_iocs_from_ioc_management] = (
+                storage.get("checkpoints", {})
+                .get("ioc_management_checkpoint")
+                .strftime(DATE_FORMAT)
+            )
+
+        for pull_method, check_point in pull_ioc_methods.items():
+            if self.total_indicators < MAX_INDICATOR_THRESHOLD:
+                yield from pull_method(
+                    threat_data_type=threat_data_type,
+                    initial_check_point=check_point,
+                    storage=storage,
+                )
 
     def _get_total_iocs_on_ioc_management(self, headers: Dict) -> int:
         """Check the count of indicators present on CrowdStrike IOC Management.
@@ -1155,7 +1113,7 @@ class CrowdStrikePlugin(PluginBase):
         query_endpoint = f"{base_url}/iocs/combined/indicator/v1"  # noqa
         self.logger.debug(
             f"{self.log_prefix}: Verifying the count of indicators within "
-            f'{IOC_MANAGEMENT} using endpoint GET "{query_endpoint}".'
+            f"{IOC_MANAGEMENT}."
         )
 
         resp_json = self.crowdstrike_helper.api_helper(
@@ -1166,6 +1124,7 @@ class CrowdStrikePlugin(PluginBase):
             logger_msg=(
                 f"checking the count of indicator(s) within {IOC_MANAGEMENT}"
             ),
+            configuration=self.configuration,
         )
         ioc_count = (
             resp_json.get("meta", {})
@@ -1209,6 +1168,24 @@ class CrowdStrikePlugin(PluginBase):
         except Exception:
             return False
 
+    def _is_valid_fqdn(self, fqdn: str) -> bool:
+        """Validate FQDN (Absolute domain).
+
+        Args:
+            - fqdn (str): FQDN to validate.
+
+        Returns:
+            - bool: True if valid else False.
+        """
+        if re.match(
+            r"^(?!.{255}|.{253}[^.])([a-z0-9](?:[-a-z-0-9]{0,61}[a-z0-9])?\.)*[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?[.]?$",  # noqa
+            fqdn,
+            re.IGNORECASE,
+        ):
+            return True
+        else:
+            return False
+
     def _filter_iocs_and_fetch_host_ids(
         self, indicators: List, headers: Dict, base_url: str
     ) -> List:
@@ -1226,93 +1203,75 @@ class CrowdStrikePlugin(PluginBase):
             f"{self.log_prefix}: Filtering indicators "
             "and fetching host ids for filtered indicators."
         )
-        counts = {"sha256": 0, "md5": 0, "domain": 0, "ipv4": 0, "ipv6": 0}
+        counts = {
+            "sha256": 0,
+            "md5": 0,
+            "domain": 0,
+            "ipv4": 0,
+            "ipv6": 0,
+            "fqdn": 0,
+        }
         host_ids = set()
         skip_count = 0
         ioc_count = 0
-        for indicator in indicators:
-            if indicator.type == IndicatorType.SHA256:
-                # If SHA256 is there then we can safely
-                # perform API cal using it.
-                sha256_host_ids = self._get_host_ids_from_indicator(
-                    base_url=base_url,
-                    headers=headers,
-                    ioc_type="sha256",
-                    ioc_value=indicator.value,
-                )
-                host_ids.update(sha256_host_ids)
-                counts["sha256"] += len(sha256_host_ids)
-                ioc_count += 1
 
+        for indicator in indicators:
+            ioc_type = None
+            if indicator.type == IndicatorType.SHA256:
+                ioc_type = "sha256"
             elif indicator.type == IndicatorType.MD5:
-                # If MD5 is there then we can safely
-                # perform API cal using it.
-                md5_host_ids = self._get_host_ids_from_indicator(
-                    base_url=base_url,
-                    headers=headers,
-                    ioc_type="md5",
-                    ioc_value=indicator.value,
-                )
-                host_ids.update(md5_host_ids)
-                counts["md5"] += len(md5_host_ids)
-                ioc_count += 1
-            elif indicator.type == IndicatorType.URL:
-                # If URL is there then extract the value host from it.
-                ioc_value = indicator.value
+                ioc_type = "md5"
+            elif indicator.type in BIFURCATE_INDICATOR_TYPES:
                 try:
-                    # Extract host.
-                    host = self._extract_host(ioc_value)
-                    # If host is a valid domain then
-                    if self._validate_domain(host):
-                        domain_host_ids = self._get_host_ids_from_indicator(
-                            base_url=base_url,
-                            headers=headers,
-                            ioc_type="domain",
-                            ioc_value=host,
-                        )
-                        host_ids.update(domain_host_ids)
-                        counts["domain"] += len(domain_host_ids)
-                        ioc_count += 1
-                    elif self._is_valid_ipv4(host):
-                        ipv4_host_ids = self._get_host_ids_from_indicator(
-                            base_url=base_url,
-                            headers=headers,
-                            ioc_type="ipv4",
-                            ioc_value=host,
-                        )
-                        host_ids.update(ipv4_host_ids)
-                        counts["ipv4"] += len(ipv4_host_ids)
-                        ioc_count += 1
+                    if self._validate_domain(indicator.value):
+                        ioc_type = "domain"
+                    elif self._is_valid_ipv4(indicator.value):
+                        ioc_type = "ipv4"
+                    elif self._is_valid_ipv6(indicator.value):
+                        ioc_type = "ipv6"
+                    elif self._is_valid_fqdn(indicator.value):
+                        ioc_type = "domain"
                     else:
-                        ipv6_address = self._extract_ipv6_from_url(ioc_value)
-                        if self._is_valid_ipv6(ipv6_address):
-                            ipv6_host_ids = self._get_host_ids_from_indicator(
-                                base_url=base_url,
-                                headers=headers,
-                                ioc_type="ipv6",
-                                ioc_value=ipv6_address,
-                            )
-                            host_ids.update(ipv6_host_ids)
-                            counts["ipv6"] += len(ipv6_host_ids)
-                            ioc_count += 1
-                        else:
-                            skip_count += 1
+                        skip_count += 1
+                        continue
                 except Exception:
                     skip_count += 1
-                    pass
+                    continue
             else:
                 skip_count += 1
+                continue
+
+            current_host_ids = self._get_host_ids_from_indicator(
+                base_url=base_url,
+                headers=headers,
+                ioc_type=ioc_type,
+                ioc_value=indicator.value,
+            )
+            if len(current_host_ids) > 0:
+                host_ids.update(current_host_ids)
+                counts[ioc_type] += len(current_host_ids)
+                ioc_count += 1
+            else:
+                skip_count += 1
+
         if skip_count > 0:
             self.logger.info(
-                f"{self.log_prefix}: Skipped {skip_count} indicator(s) as "
-                "they might have invalid domain, ipv4 or ipv6 value in it."
+                f"{self.log_prefix}: Skipped {skip_count} indicators(s) as "
+                f"they might have invalid value in it or host id(s) are not "
+                f"present on {PLATFORM_NAME}."
             )
-        self.logger.info(
+
+        self.logger.debug(
             f"{self.log_prefix}: Successfully fetched {len(host_ids)} unique "
             f"host id(s) for {ioc_count} indicator(s). Total "
             f"{counts['sha256']} SHA256, {counts['md5']} MD5, "
-            f"{counts['domain']} Domain, {counts['ipv4']} IPv4 and "
-            f"{counts['ipv6']} IPv6 host id(s) fetched per indicator type."
+            f"{counts['domain']} Domain, {counts['ipv4']} IPv4 "
+            f"{counts['ipv6']} IPv6 and {counts['fqdn']} FQDN host id(s) "
+            "fetched per indicator type."
+        )
+        self.logger.info(
+            f"{self.log_prefix}: Successfully fetched {len(host_ids)} unique "
+            f"host id(s) for {ioc_count} indicator(s)."
         )
         return list(host_ids)
 
@@ -1332,29 +1291,14 @@ class CrowdStrikePlugin(PluginBase):
         Returns:
             int: Total
         """
-        base_url, client_id, client_secret = self._get_credentials(
-            self.configuration
+        (base_url, client_id, client_secret) = (
+            self.crowdstrike_helper.get_credentials(self.configuration)
         )
 
-        # Step-1 Fetch auth token.
-        auth_json = self.get_auth_json(
-            base_url=base_url,
-            client_id=client_id,
-            client_secret=client_secret,
+        # Step-1 Fetch access token.
+        headers = self.crowdstrike_helper.get_auth_header(
+            client_id, client_secret, base_url
         )
-        auth_token = auth_json.get("access_token")
-        if not auth_token:
-            err_msg = f"Invalid auth token received from {PLATFORM_NAME}."
-            self.logger.error(
-                message=f"{self.log_prefix}: {err_msg}",
-                details=str(auth_json),
-            )
-            raise CrowdstrikePluginException(err_msg)
-
-        headers = {
-            "Authorization": f"Bearer {auth_token}",
-            "Accept": "application/json",
-        }
 
         # Step-2 Filter indicators and fetch host ids.
         hosts = self._filter_iocs_and_fetch_host_ids(
@@ -1387,7 +1331,6 @@ class CrowdStrikePlugin(PluginBase):
         try:
             offset = ""
             while True:
-                headers = self.reload_auth_token(headers)
                 params = {
                     "type": ioc_type,
                     "value": ioc_value,
@@ -1399,10 +1342,9 @@ class CrowdStrikePlugin(PluginBase):
                     url=endpoint,
                     headers=headers,
                     params=params,
-                    verify=self.ssl_validation,
-                    proxies=self.proxy,
                     logger_msg=err_msg,
                     is_handle_error_required=False,
+                    configuration=self.configuration,
                 )
                 if response.status_code == 200:
                     resp_json = self.crowdstrike_helper.parse_response(
@@ -1463,7 +1405,6 @@ class CrowdStrikePlugin(PluginBase):
         # and lift_containment For hide_host and unhide_host
         # batch_size will be 100
         for host_batch in self.divide_in_chunks(host_ids, batch_size):
-            headers = self.reload_auth_token(headers)
             payload = {
                 "action_parameters": [{"name": action, "value": action}],
                 "ids": host_batch,
@@ -1471,8 +1412,7 @@ class CrowdStrikePlugin(PluginBase):
             params = {"action_name": action}
             self.logger.debug(
                 f'{self.log_prefix}: Performing "{action}" action'
-                f" on {len(host_batch)} host(s). Endpoint: POST "
-                f'"{endpoint}". API parameters: {params}'
+                f" on {len(host_batch)} host(s)."
             )
             response = self.crowdstrike_helper.api_helper(
                 method="POST",
@@ -1480,10 +1420,9 @@ class CrowdStrikePlugin(PluginBase):
                 headers=headers,
                 params=params,
                 json=payload,
-                verify=self.ssl_validation,
-                proxies=self.proxy,
                 is_handle_error_required=False,
                 logger_msg=f"executing {action} on hosts",
+                configuration=self.configuration,
             )
             if response.status_code == 202:
                 success += len(host_batch)
@@ -1555,27 +1494,16 @@ class CrowdStrikePlugin(PluginBase):
         if action_value == "action":
             target_action = action_dict.get("parameters", {}).get("action")
 
-            base_url, client_id, client_secret = self._get_credentials(
-                self.configuration
+            (base_url, client_id, client_secret) = (
+                self.crowdstrike_helper.get_credentials(self.configuration)
             )
             batch_size = int(
                 self.configuration.get("batch_size", DEFAULT_BATCH_SIZE)
             )
-            # Get Auth JSON.
-            auth_json = self.get_auth_json(
-                base_url=base_url,
-                client_id=client_id,
-                client_secret=client_secret,
+            # Prepare headers.
+            headers = self.crowdstrike_helper.get_auth_header(
+                client_id, client_secret, base_url
             )
-            auth_token = auth_json.get("access_token")
-            if not auth_token:
-                err_msg = f"Invalid auth token received from {PLATFORM_NAME}."
-                self.logger.error(
-                    message=f"{self.log_prefix}: {err_msg}",
-                    details=str(auth_json),
-                )
-                raise CrowdstrikePluginException(err_msg)
-            headers = {"Authorization": f"Bearer {auth_token}"}
             total_indicators = self._get_total_iocs_on_ioc_management(
                 headers=headers
             )
@@ -1650,59 +1578,6 @@ class CrowdStrikePlugin(PluginBase):
                 message=err_msg,
             )
 
-    def reload_auth_token(self, headers: Dict) -> Dict:
-        """Reload the OAUTH2 token after Expiry.
-
-        Args:
-            headers (Dict): Headers
-
-        Returns:
-            Dict: Dictionary containing auth token.
-        """
-        base_url, client_id, client_secret = self._get_credentials(
-            configuration=self.configuration
-        )
-        if self.storage is None:
-            # If storage is None then generate the auth token.
-            auth_json = self.get_auth_json(
-                client_id=client_id,
-                client_secret=client_secret,
-                base_url=base_url,
-            )
-            auth_token = auth_json.get("access_token")
-            if not auth_token:
-                err_msg = f"Invalid auth token received from {PLATFORM_NAME}."
-                self.logger.error(
-                    message=f"{self.log_prefix}: {err_msg}",
-                    details=str(auth_json),
-                )
-                raise CrowdstrikePluginException(err_msg)
-            headers.update({"Authorization": f"Bearer {auth_token}"})
-
-        elif self.storage.get("token_expiry") < (
-            datetime.datetime.now() + datetime.timedelta(seconds=5)
-        ):
-            # If token is expired then generate the new token.
-            self.logger.info(
-                f"{self.log_prefix}: OAUTH2 token expired generating"
-                " new token."
-            )
-            auth_json = self.get_auth_json(
-                client_id=client_id,
-                client_secret=client_secret,
-                base_url=base_url,
-            )
-            auth_token = auth_json.get("access_token")
-            if not auth_token:
-                err_msg = f"Invalid auth token received from {PLATFORM_NAME}."
-                self.logger.error(
-                    message=f"{self.log_prefix}: {err_msg}",
-                    details=str(auth_json),
-                )
-                raise CrowdstrikePluginException(err_msg)
-            headers.update({"Authorization": f"Bearer {auth_token}"})
-        return headers
-
     def divide_in_chunks(self, indicators, chunk_size):
         """Return Fixed size chunks from list."""
         for i in range(0, len(indicators), chunk_size):
@@ -1726,7 +1601,7 @@ class CrowdStrikePlugin(PluginBase):
         self.logger.debug(
             f"{self.log_prefix}: {len(payloads)} indicator(s) "
             f"will be updated on {IOC_MANAGEMENT} in the batch of "
-            f'{batch_size} using endpoint "PATCH {push_endpoint}".'
+            f"{batch_size}."
         )
         total_indicators_count = len(payloads)
         update_success, update_failed = 0, 0
@@ -1736,21 +1611,18 @@ class CrowdStrikePlugin(PluginBase):
                 "indicators": payload_list,
                 "comment": "Indicators updated from Netskope Cloud Exchange.",
             }
-            self.logger.debug(
-                f"{self.log_prefix}: Updating {chunk_size} indicator(s)"
-                f" on {IOC_MANAGEMENT}."
+            logger_msg = (
+                f"Updating {chunk_size} indicator(s) on {IOC_MANAGEMENT}"
             )
-            logger_msg = f"updating indicators to {IOC_MANAGEMENT}"
             try:
                 response = self.crowdstrike_helper.api_helper(
                     url=push_endpoint,
                     method="PATCH",
                     headers=headers,
                     json=json_body,
-                    verify=self.ssl_validation,
-                    proxies=self.proxy,
                     is_handle_error_required=False,
                     logger_msg=logger_msg,
+                    configuration=self.configuration,
                 )
                 if response.status_code in [200, 201]:
                     update_success += chunk_size
@@ -1768,7 +1640,7 @@ class CrowdStrikePlugin(PluginBase):
                     )
                     err_msg = (
                         f"Received exit code {response.status_code}, "
-                        f"while {logger_msg}."
+                        f"while {logger_msg}"
                     )
                     self.logger.error(
                         f"{self.log_prefix}: {err_msg}",
@@ -1827,9 +1699,8 @@ class CrowdStrikePlugin(PluginBase):
         base_url = self.configuration.get("base_url", "").strip()
         push_endpoint = f"{base_url}/iocs/entities/indicators/v1"
         self.logger.debug(
-            f"{self.log_prefix}: {len(payloads)} indicator(s) "
-            f"will be shared to {IOC_MANAGEMENT} in the batch of "
-            f'{batch_size} using endpoint POST "{push_endpoint}".'
+            f"{self.log_prefix}: {len(payloads)} indicator(s) will be shared "
+            f"to {IOC_MANAGEMENT} in the batch of {batch_size}."
         )
         total_indicators_count = len(payloads)
         push_success, push_failed = 0, 0
@@ -1840,29 +1711,25 @@ class CrowdStrikePlugin(PluginBase):
                 "comment": "Indicators shared from Netskope Cloud Exchange.",
                 "indicators": payload_list,
             }
-            self.logger.debug(
-                f"{self.log_prefix}: Sharing {chunk_size} indicator(s)"
-                f" with {IOC_MANAGEMENT}."
+            logger_msg = (
+                f"sharing {chunk_size} indicator(s) with {IOC_MANAGEMENT}"
             )
-            logger_msg = f"sharing indicators to {IOC_MANAGEMENT}"
             try:
                 response = self.crowdstrike_helper.api_helper(
                     url=push_endpoint,
                     method="POST",
                     headers=headers,
                     json=json_body,
-                    verify=self.ssl_validation,
-                    proxies=self.proxy,
                     is_handle_error_required=False,
                     logger_msg=logger_msg,
+                    configuration=self.configuration,
                 )
                 if response.status_code == 201:
                     push_success += chunk_size
                     self.logger.info(
                         f"{self.log_prefix}: Successfully shared "
                         f"{push_success} indicator(s) out of "
-                        f"{total_indicators_count} indicator(s) "
-                        f"on {IOC_MANAGEMENT}."
+                        f"{total_indicators_count} on {IOC_MANAGEMENT}."
                     )
 
                 elif response.status_code == 400:
@@ -1917,9 +1784,9 @@ class CrowdStrikePlugin(PluginBase):
                 push_failed += chunk_size
 
         log_msg = (
-            f"Successfully shared {push_success} indicator(s) and  "
-            f"{push_failed} indicator(s) failed to be shared "
-            f"with {IOC_MANAGEMENT}."
+            f"Successfully shared {push_success} indicator(s) with "
+            f"{IOC_MANAGEMENT}. {push_failed} indicator(s) "
+            "failed to be shared."
         )
         if is_limit_exceeded:
             log_msg = log_msg + (
@@ -1927,48 +1794,6 @@ class CrowdStrikePlugin(PluginBase):
                 "limit of 1 Million indicators is exceeded."
             )
         self.logger.info(f"{self.log_prefix}: {log_msg}")
-
-    def _extract_host(self, url):
-        """Extract host from URL.
-
-        Args:
-            url (st): URL value received form indicator object.
-        Raises:
-            ValueError: If not able to extract host.
-
-        Returns:
-            str: host/url
-        """
-        try:
-            host_regex = r"^(?:[a-zA-Z]*:\/\/)?([\w\-\.]+)(?:\/)?"
-            host = re.findall(host_regex, url).pop()
-            if host:
-                return host
-            else:
-                raise ValueError("Could not extract host name")
-        except Exception:
-            return url
-
-    def _extract_ipv6_from_url(self, url: str) -> str:
-        """Extract IPv6 addresses from a URL.
-
-        Args:
-            url (str): URL containing IPv6 addresses.
-
-        Returns:
-            str: IPv6 address found in the URL.
-        """
-        try:
-            ipv6_pattern = r"\[?([a-fA-F0-9:]+)\]"
-            ipv6_address = re.findall(ipv6_pattern, url).pop()
-            if ipv6_address:
-                return ipv6_address
-            else:
-                raise ValueError(
-                    f"Could not extract IPv6 address from URL {url}."
-                )
-        except Exception:
-            return url
 
     def _validate_domain(self, value: str) -> bool:
         """Validate domain name.
@@ -2142,18 +1967,19 @@ class CrowdStrikePlugin(PluginBase):
             return ValidationResult(success=False, message=err_msg)
 
         source = configuration.get("source", "").strip()
-        if not source:
-            err_msg = "IOC Source is a required configuration parameter."
-            self.logger.error(f"{self.log_prefix}: {err_msg}")
-            return ValidationResult(success=False, message=err_msg)
-
-        elif not isinstance(source, str) or len(source) > 200:
-            err_msg = (
-                "Invalid value provided in the IOC Source. "
-                "Size of source string should be less than 200 characters."
-            )
-            self.logger.error(f"{self.log_prefix}: {err_msg}")
-            return ValidationResult(success=False, message=err_msg)
+        prefixed_source = f"{PREFIX_IOC_SOURCE_TAG} | {source}"
+        if source:
+            if not isinstance(source, str):
+                err_msg = "Invalid value provided in the IOC Source."
+                self.logger.error(f"{self.log_prefix}: {err_msg}")
+                return ValidationResult(success=False, message=err_msg)
+            elif len(prefixed_source) > 200:
+                err_msg = (
+                    "Invalid value provided in the IOC Source. "
+                    "Size of source string should be less than 200 characters."
+                )
+                self.logger.error(f"{self.log_prefix}: {err_msg}")
+                return ValidationResult(success=False, message=err_msg)
 
         days = configuration.get("days")
         if days is None:
@@ -2189,8 +2015,8 @@ class CrowdStrikePlugin(PluginBase):
             self.logger.debug(
                 f"{self.log_prefix}: Validating auth credentials."
             )
-            base_url, client_id, client_secret = self._get_credentials(
-                configuration
+            (base_url, client_id, client_secret) = (
+                self.crowdstrike_helper.get_credentials(configuration)
             )
             ioc_source_page = configuration.get(
                 "indicator_source_page", IOC_SOURCE_PAGES
@@ -2198,21 +2024,11 @@ class CrowdStrikePlugin(PluginBase):
             is_pull_required = configuration.get(
                 "is_pull_required", ""
             ).strip()
-            # Fetch Auth token
-            auth_json = self.get_auth_json(client_id, client_secret, base_url)
-            self.logger.debug(
-                f"{self.log_prefix}: Successfully validated auth"
-                " credentials."
+
+            # Prepare headers.
+            headers = self.crowdstrike_helper.get_auth_header(
+                client_id, client_secret, base_url, is_validation=True
             )
-            auth_token = auth_json.get("access_token")
-            if not auth_token:
-                err_msg = f"Invalid auth token received from {PLATFORM_NAME}."
-                self.logger.error(
-                    message=f"{self.log_prefix}: {err_msg}",
-                    details=str(auth_json),
-                )
-                raise CrowdstrikePluginException(err_msg)
-            headers = {"Authorization": f"Bearer {auth_token}"}
 
             if is_pull_required == "Yes":
                 validation_result = self._validate_permission(
@@ -2263,12 +2079,13 @@ class CrowdStrikePlugin(PluginBase):
                 url=query_endpoint,
                 method="GET",
                 headers=headers,
-                verify=self.ssl_validation,
-                proxies=self.proxy,
                 logger_msg=(
                     f"verifying the connectivity with {ENDPOINT_DETECTION}"
                 ),
                 is_handle_error_required=False,
+                is_validation=True,
+                regenerate_auth_token=False,
+                configuration=self.configuration,
             )
             result = self._verify_permission_helper(response)
             if not result.success:
@@ -2280,12 +2097,11 @@ class CrowdStrikePlugin(PluginBase):
                 url=query_endpoint,
                 method="GET",
                 headers=headers,
-                verify=self.ssl_validation,
-                proxies=self.proxy,
                 logger_msg=(
                     f"verifying the connectivity with {IOC_MANAGEMENT}"
                 ),
                 is_handle_error_required=False,
+                configuration=self.configuration,
             )
             result = self._verify_permission_helper(response)
             if not result.success:
@@ -2328,100 +2144,6 @@ class CrowdStrikePlugin(PluginBase):
 
         self.crowdstrike_helper.handle_error(
             response, "validating the API permissions"
-        )
-
-    def get_auth_json(
-        self, client_id: str, client_secret: str, base_url: str
-    ) -> Dict:
-        """Get the OAUTH2 Json object with access token from CrowdStrike
-        platform.
-
-        Args:
-            client_id (str): Client ID required to generate OAUTH2 token.
-            client_secret (str): Client Secret required to generate OAUTH2
-            token.
-            base_url (str): Base URL of crowdstrike.
-        Returns:
-            json: JSON response data in case of Success.
-        """
-        auth_endpoint = f"{base_url}/oauth2/token"
-        self.logger.debug(
-            f"{self.log_prefix}: Fetching auth token from {PLATFORM_NAME}"
-            f' using endpoint "{auth_endpoint}".'
-        )
-        auth_params = {
-            "grant_type": "client_credentials",
-            "client_id": client_id,
-            "client_secret": client_secret,
-        }
-        response = self.crowdstrike_helper.api_helper(
-            url=auth_endpoint,
-            method="POST",
-            proxies=self.proxy,
-            data=auth_params,
-            is_handle_error_required=False,
-            logger_msg=f"getting auth token from {self.plugin_name}",
-        )
-        if response.status_code == 201:
-            resp_json = self.crowdstrike_helper.parse_response(response)
-            if self.storage is not None:
-                self.storage[
-                    "token_expiry"
-                ] = datetime.datetime.now() + datetime.timedelta(
-                    seconds=int(resp_json.get("expires_in", 1799))
-                )
-            self.logger.debug(
-                f"{self.log_prefix}: Successfully fetched auth token."
-            )
-            return resp_json
-        elif response.status_code == 400:
-            resp_json = self.crowdstrike_helper.parse_response(response)
-            api_errors = resp_json.get(
-                "errors", "No error details received from API response."
-            )
-            err_msg = (
-                f"Received exit code {response.status_code}, Invalid request. "
-                "Verify the Base URL, Client ID and Client Secret provided in"
-                " configuration parameters."
-            )
-            self.logger.error(
-                message=f"{self.log_prefix}: {err_msg}",
-                details=str(api_errors),
-            )
-            raise CrowdstrikePluginException(err_msg)
-        elif response.status_code == 401:
-            resp_json = self.crowdstrike_helper.parse_response(response)
-            api_errors = resp_json.get(
-                "errors", "No error details received from API response."
-            )
-            err_msg = (
-                f"Received exit code {response.status_code}, Unauthorized."
-                " Verify the Client ID and Client Secret provided in"
-                " configuration parameters."
-            )
-            self.logger.error(
-                message=f"{self.log_prefix}: {err_msg}",
-                details=str(api_errors),
-            )
-            raise CrowdstrikePluginException(err_msg)
-        elif response.status_code == 403:
-            resp_json = self.crowdstrike_helper.parse_response(response)
-            api_errors = resp_json.get(
-                "errors", "No error details received from API response."
-            )
-            err_msg = (
-                f"Received exit code {response.status_code}, Forbidden. "
-                "Verify the Client ID, Client Secret and API Scopes "
-                "provided to them."
-            )
-            self.logger.error(
-                message=f"{self.log_prefix}: {err_msg}",
-                details=str(api_errors),
-            )
-            raise CrowdstrikePluginException(err_msg)
-
-        return self.crowdstrike_helper.handle_error(
-            response, f"getting auth token from {self.plugin_name}"
         )
 
     def get_actions(self):

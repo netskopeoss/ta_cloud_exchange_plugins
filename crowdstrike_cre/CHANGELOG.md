@@ -1,3 +1,7 @@
+# 1.3.1
+## Changed
+- Updated approach for removal of existing files on host in Put RTR script.
+
 # 1.3.0
 ## Changed
 - Updated the path for Put RTR Script action.

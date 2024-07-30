@@ -23,37 +23,85 @@ CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
-
 """Mimecast URE Plugin."""
 
-from typing import List, Dict, Optional
-
-import requests
-import re
+import json
 import base64
 import hashlib
 import hmac
+import re
 import uuid
-
 from datetime import datetime
-
-from requests.models import HTTPError
-
-from netskope.common.utils import add_user_agent
-
-from netskope.integrations.cre.plugin_base import PluginBase, ValidationResult
+from typing import List, Dict, Optional
+import traceback
+from urllib.parse import urlparse
 from netskope.integrations.cre.models import (
     Record,
     RecordType,
     ActionWithoutParams,
     Action,
 )
+from netskope.integrations.cre.plugin_base import PluginBase, ValidationResult
 
-PLUGIN_NAME = "Mimecast URE Plugin"
+from .utils.helper import MimecastUREPluginHelper, MimecastUREException
+from .utils.constants import (
+    MODULE_NAME,
+    PLATFORM_NAME,
+    PLUGIN_VERSION,
+    MAX_USER_SCORE,
+    MIN_USER_SCORE,
+    MIMECAST_SCORE_MAPPING,
+    MAX_PAGE_SIZE,
+)
 
 
-class MimecastPlugin(PluginBase):
+class MimecastUREPlugin(PluginBase):
     """Mimecast plugin implementation."""
+
+    def __init__(
+        self,
+        name,
+        *args,
+        **kwargs,
+    ):
+        """Init method.
+
+        Args:
+            name (str): Configuration name.
+        """
+        super().__init__(
+            name,
+            *args,
+            **kwargs,
+        )
+        self.plugin_name, self.plugin_version = self._get_plugin_info()
+        self.log_prefix = f"{MODULE_NAME} {self.plugin_name} [{name}]"
+        self.mimecast_ure_helper = MimecastUREPluginHelper(
+            logger=self.logger,
+            log_prefix=self.log_prefix,
+            plugin_name=self.plugin_name,
+            plugin_version=self.plugin_version,
+        )
+
+    def _get_plugin_info(self) -> tuple:
+        """Get plugin name and version from metadata.
+
+        Returns:
+            tuple: Tuple of plugin's name and version fetched from metadata.
+        """
+        try:
+            metadata_json = MimecastUREPlugin.metadata
+            plugin_name = metadata_json.get("name", PLATFORM_NAME)
+            plugin_version = metadata_json.get("version", PLUGIN_VERSION)
+            return (plugin_name, plugin_version)
+        except Exception as exp:
+            err = f"{self.log_prefix}: Error occurred while getting plugin details. "
+            f"Error: {exp}"
+            self.logger.error(
+                message=err,
+                details=str(traceback.format_exc()),
+            )
+            raise MimecastUREException(err)
 
     def _parse_errors(self, failures):
         """Parse the error message from Mimecast response."""
@@ -78,25 +126,21 @@ class MimecastPlugin(PluginBase):
                 return group
         return None
 
-    def _get_auth_headers(
-        self, configuration: dict, endpoint: str
-    ) -> (str, dict):
+    def _get_auth_headers(self, configuration: dict, endpoint: str) -> (str, dict):
         """Generate Mimecast authentication headers."""
-        request_url = f"{configuration.get('url').strip('/')}{endpoint}"
+        request_url = f"{configuration.get('url').strip().strip('/')}{endpoint}"
         request_id = str(uuid.uuid4())
-        request_datetime = (
-            f"{datetime.utcnow().strftime('%a, %d %b %Y %H:%M:%S')} UTC"
-        )
+        request_datetime = f"{datetime.utcnow().strftime('%a, %d %b %Y %H:%M:%S')} UTC"
 
         # Create the HMAC SA1 of the Base64 decoded secret key for the Authorization header
         hmac_sha1 = hmac.new(
-            base64.b64decode(configuration.get("secret_key").strip()),
+            base64.b64decode(configuration.get("secret_key")),
             ":".join(
                 [
                     request_datetime,
                     request_id,
                     endpoint,
-                    configuration.get("app_key").strip(),
+                    configuration.get("app_key"),
                 ]
             ).encode("utf-8"),
             digestmod=hashlib.sha1,
@@ -107,7 +151,7 @@ class MimecastPlugin(PluginBase):
 
         # Create request headers
         headers = {
-            "Authorization": f"MC {configuration.get('access_key').strip()}:"
+            "Authorization": f"MC {configuration.get('access_key')}:"
             f"{sig.decode('utf-8')}",
             "x-mc-app-id": configuration.get("app_id").strip(),
             "x-mc-date": request_datetime,
@@ -116,18 +160,19 @@ class MimecastPlugin(PluginBase):
         }
         return request_url, headers
 
-    def _get_all_groups(self, configuration: Dict) -> List:
+    def _get_all_groups(self, configuration: Dict, is_validation=False) -> List:
         """Get list of all the groups.
 
         Args:
             configuration (Dict): Configuration parameters.
+            is_validation (bool): Whether calling from validate method
 
         Returns:
             List: List of all the groups.
         """
         all_groups = []
         endpoint = "/api/directory/find-groups"
-        pageSize = 100
+        pageSize = MAX_PAGE_SIZE
         nextPageToken = ""
         request_url, headers = self._get_auth_headers(configuration, endpoint)
         body = {
@@ -138,24 +183,35 @@ class MimecastPlugin(PluginBase):
                 }
             }
         }
-        while True:
-            groups = requests.post(
-                url=request_url,
-                headers=add_user_agent(headers),
-                data=str(body),
-                proxies=self.proxy,
+        try:
+            while True:
+                groups = self.mimecast_ure_helper.api_helper(
+                    url=request_url,
+                    method="POST",
+                    headers=headers,
+                    proxies=self.proxy,
+                    verify=self.ssl_validation,
+                    data=json.dumps(body),
+                    logger_msg=f"fetching all groups",
+                    is_handle_error_required=True,
+                    is_validation=is_validation,
+                )
+                all_groups += groups.get("data", [{}])[0].get("folders", {})
+                nextPage = groups.get("meta", {}).get("pagination", {}).get("next", "")
+                if nextPage:
+                    body["meta"]["pagination"]["pageToken"] = nextPage
+                else:
+                    break
+            return all_groups
+        except MimecastUREException:
+            raise
+        except Exception as e:
+            err_msg = "An error occurred while retrieving existing group details."
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg} Error: {e}",
+                details=str(traceback.format_exc()),
             )
-            groups.raise_for_status()
-            groups = groups.json()
-            all_groups += groups.get("data", {})[0].get("folders", {})
-            nextPage = (
-                groups.get("meta", {}).get("pagination", {}).get("next", "")
-            )
-            if nextPage:
-                body["meta"]["pagination"]["pageToken"] = nextPage
-            else:
-                break
-        return all_groups
+            raise MimecastUREException(err_msg)
 
     def _create_group(self, configuration: Dict, name: str):
         """Create a new group with name.
@@ -170,27 +226,45 @@ class MimecastPlugin(PluginBase):
         endpoint = "/api/directory/create-group"
         body = {"data": [{"description": name}]}
         request_url, headers = self._get_auth_headers(configuration, endpoint)
-        response = requests.post(
-            url=request_url,
-            headers=add_user_agent(headers),
-            data=str(body),
-            proxies=self.proxy,
-        )
-        if response.status_code == 200:
-            failures = response.json().get("fail", [])
+        logger_msg = f"Creating group with name {name}"
+        self.logger.debug(f"{self.log_prefix}: {logger_msg}.")
+        err_msg = f"An error occurred while creating group with name {name}."
+        try:
+            response = self.mimecast_ure_helper.api_helper(
+                url=request_url,
+                method="POST",
+                headers=headers,
+                proxies=self.proxy,
+                verify=self.ssl_validation,
+                data=json.dumps(body),
+                logger_msg=logger_msg,
+                is_handle_error_required=True,
+            )
+            failures = response.get("fail", [])
             if failures:
                 error = ", ".join(self._parse_errors(failures))
-                raise HTTPError(error)
-        response.raise_for_status()
-        return response.json()
+                self.logger.error(f"{self.log_prefix}: {err_msg} Error: {error}")
+                raise MimecastUREException(error)
+            return response
+        except MimecastUREException:
+            raise
+        except Exception as e:
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg} Error: {e}",
+                details=str(traceback.format_exc()),
+            )
+            raise MimecastUREException(err_msg)
 
-    def _add_to_group(self, configuration: Dict, user_id: str, group_id: str):
+    def _add_to_group(
+        self, configuration: Dict, user_id: str, group_id: str, group_name: str
+    ):
         """Add specified user to the specified group.
 
         Args:
             configuration (Dict): Configuration parameters.
             user_id (str): User ID of the user.
             group_id (str): Group IF of the group.
+            group_name (str): Name of Group.
 
         Returns:
             HTTPError: If the group doesn't exist on Mimecast.
@@ -198,30 +272,44 @@ class MimecastPlugin(PluginBase):
         endpoint = "/api/directory/add-group-member"
         body = {"data": [{"emailAddress": user_id, "id": group_id}]}
         request_url, headers = self._get_auth_headers(configuration, endpoint)
-        response = requests.post(
-            url=request_url, headers=add_user_agent(headers), data=str(body)
+        logger_msg = f"Adding user {user_id} to group {group_name}"
+        self.logger.debug(f"{self.log_prefix}: {logger_msg}.")
+        err_msg = (
+            f"An error occurred while adding {user_id} to group with name {group_name}."
         )
-        if response.status_code == 200:
-            failures = response.json().get("fail", [])
+        try:
+            response = self.mimecast_ure_helper.api_helper(
+                url=request_url,
+                method="POST",
+                headers=headers,
+                proxies=self.proxy,
+                data=json.dumps(body),
+                verify=self.ssl_validation,
+                logger_msg=logger_msg,
+                is_handle_error_required=True,
+            )
+            failures = response.get("fail", [])
             if failures:
-                for failure in failures:
-                    for error in failure.get("errors", []):
-                        if (
-                            error["code"]
-                            != "err_folder_group_member_already_exists"
-                        ):
-                            raise HTTPError(error["message"])
-        response.raise_for_status()
+                error = ", ".join(self._parse_errors(failures))
+                self.logger.error(f"{self.log_prefix}: {err_msg} Error: {error}")
+                raise MimecastUREException(error)
+        except MimecastUREException:
+            raise
+        except Exception as e:
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg}. Error: {e}",
+                details=str(traceback.format_exc()),
+            )
+            raise MimecastUREException(err_msg)
 
-    def _remove_from_group(
-        self, configuration: Dict, user_id: str, group_id: str
-    ):
+    def _remove_from_group(self, configuration: Dict, user_id: str, group_id: str):
         """Remove specified user from the specified group.
 
         Args:
             configuration (Dict): Configuration parameters.
             user_id (str): User ID of the user.
             group_id (str): Group ID of the group.
+            group_name (str): Name of the Group name.
 
         Raises:
             HTTPError: If the group does not exist on Mimecast.
@@ -229,37 +317,45 @@ class MimecastPlugin(PluginBase):
         endpoint = "/api/directory/remove-group-member"
         body = {"data": [{"emailAddress": user_id, "id": group_id}]}
         request_url, headers = self._get_auth_headers(configuration, endpoint)
-        response = requests.post(
-            url=request_url, headers=add_user_agent(headers), data=str(body)
-        )
-        if response.status_code == 200:
-            failures = response.json().get("fail", [])
+        logger_msg = f"Removing {user_id} from the group"
+        self.logger.debug(f"{self.log_prefix}: {logger_msg}.")
+        err_msg = f"An error occurred while removing {user_id} from group."
+        try:
+            response = self.mimecast_ure_helper.api_helper(
+                url=request_url,
+                method="POST",
+                headers=headers,
+                proxies=self.proxy,
+                data=json.dumps(body),
+                verify=self.ssl_validation,
+                logger_msg=logger_msg,
+                is_handle_error_required=True,
+            )
+            failures = response.get("fail", [])
             if failures:
-                for failure in failures:
-                    for error in failure.get("errors", []):
-                        if (
-                            error["code"]
-                            != "err_folder_email_address_not_found"
-                        ):
-                            raise HTTPError(error["message"])
-        response.raise_for_status()
+                error = ", ".join(self._parse_errors(failures))
+                self.logger.error(f"{self.log_prefix}: {err_msg} Error: {error}")
+                raise MimecastUREException(err_msg)
+        except MimecastUREException:
+            raise
+        except Exception as e:
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg} Error: {e}",
+                details=str(traceback.format_exc()),
+            )
+            raise MimecastUREException(err_msg)
 
-    def _get_all_users(self, action: bool) -> List:
+    def _get_all_users(self) -> List:
         """Get list of all the users.
-
-        Args:
-            action (Boolean): Whether this method is called from execute_action or not
 
         Returns:
             List: List of all the users.
         """
-        rec = []
+        records = []
         endpoint = "/api/awareness-training/company/get-safe-score-details"
-        pageSize = 100
+        pageSize = MAX_PAGE_SIZE
         nextPageToken = ""
-        request_url, headers = self._get_auth_headers(
-            self.configuration, endpoint
-        )
+        request_url, headers = self._get_auth_headers(self.configuration, endpoint)
         body = {
             "meta": {
                 "pagination": {
@@ -268,33 +364,48 @@ class MimecastPlugin(PluginBase):
                 }
             }
         }
+        err_msg = "An error occurred while fetching users."
+        logger_msg = "fetching user details"
+        page_count = 1
         while True:
-            response = requests.post(
-                url=request_url,
-                headers=add_user_agent(headers),
-                data=str(body),
-                proxies=self.proxy,
-            )
-            response = self.handle_error(response, action)
-            failures = response.get("fail", [])
-            if failures:
-                error = ", ".join(self._parse_errors(failures))
+            try:
+                response = self.mimecast_ure_helper.api_helper(
+                    url=request_url,
+                    method="POST",
+                    headers=headers,
+                    proxies=self.proxy,
+                    verify=self.ssl_validation,
+                    data=json.dumps(body),
+                    logger_msg=logger_msg,
+                    is_handle_error_required=True,
+                )
+                failures = response.get("fail", [])
+                if failures:
+                    error = ", ".join(self._parse_errors(failures))
+                    self.logger.error(f"{self.log_prefix}: {err_msg} Error: {error}")
+                    raise MimecastUREException(error)
+                fetch_records = response.get("data", [])
+                records += fetch_records
+                self.logger.info(
+                    f"{self.log_prefix}: Successfully pulled {len(fetch_records)} users from page {page_count}. Total users pulled {len(records)}."
+                )
+                nextPage = (
+                    response.get("meta", {}).get("pagination", {}).get("next", "")
+                )
+                if nextPage:
+                    body["meta"]["pagination"]["pageToken"] = nextPage
+                    page_count += 1
+                else:
+                    break
+            except MimecastUREException:
+                raise
+            except Exception as e:
                 self.logger.error(
-                    f"{PLUGIN_NAME}: Unable to fetch users, Error: {error}"
+                    message=f"{self.log_prefix}: {err_msg} Error: {e}",
+                    details=str(traceback.format_exc()),
                 )
-                raise HTTPError(
-                    f"{PLUGIN_NAME}: Unable to fetch users, Error: {error}"
-                )
-            records = response.get("data", [])
-            rec += records
-            nextPage = (
-                response.get("meta", {}).get("pagination", {}).get("next", "")
-            )
-            if nextPage:
-                body["meta"]["pagination"]["pageToken"] = nextPage
-            else:
-                break
-        return rec
+                raise MimecastUREException(err_msg)
+        return records
 
     def _find_user_by_email(self, users: List, email: str) -> Optional[Dict]:
         """Find user from list by email.
@@ -306,9 +417,10 @@ class MimecastPlugin(PluginBase):
         Returns:
             Optional[Dict]: user dictionary if found, None otherwise.
         """
-        for user in users:
-            if user.get("emailAddress") == email:
-                return user
+        if users:
+            for user in users:
+                if user.get("emailAddress", "") == email:
+                    return user
         return None
 
     def fetch_records(self) -> List[Record]:
@@ -317,20 +429,31 @@ class MimecastPlugin(PluginBase):
         Returns:
             List[Record]: List of records to be stored on the platform.
         """
-        rec = []
-        records = self._get_all_users(False)
-        self.logger.info(f"{PLUGIN_NAME}: Processing users.")
-        for record in records:
-            rec.append(
-                Record(
-                    uid=record["emailAddress"],
-                    type=RecordType.USER,
-                    score=None,
+        records = []
+        try:
+            fetched_records = self._get_all_users()
+            if fetched_records:
+                self.logger.debug(
+                    f"{self.log_prefix}: Processing {len(fetched_records)} records."
                 )
+                for record in fetched_records:
+                    records.append(
+                        Record(
+                            uid=record["emailAddress"],
+                            type=RecordType.USER,
+                            score=None,
+                        )
+                    )
+            return records
+        except Exception as e:
+            err_msg = "An error occurred while fetching records."
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg} Error: {e}",
+                details=str(traceback.format_exc()),
             )
-        return rec
+            raise MimecastUREException(err_msg)
 
-    def fetch_scores(self, res):
+    def fetch_scores(self, records):
         """Fetch user scores."""
         # A 800 - 1000
         # B 600 - 799
@@ -339,52 +462,32 @@ class MimecastPlugin(PluginBase):
         # F 1 - 199
         scored_users = []
         score_users = {}
-        users = self._get_all_users(False)
-        for user in users:
-            for record in res:
-                if user["emailAddress"] in record.uid:
+        users = self._get_all_users()
+        unique_records = {record.uid for record in records}
+        if users:
+            for user in users:
+                if user["emailAddress"] in unique_records:
                     score_users[user["emailAddress"]] = user["risk"]
         if score_users:
-            minvalue = 1
-            maxvalue = 1000
             for key, value in score_users.items():
-                if value == "A":
-                    score = 800
-                    scored_users.append(
-                        Record(uid=key, type=RecordType.USER, score=score)
+                scored_users.append(
+                    Record(
+                        uid=key,
+                        type=RecordType.USER,
+                        score=MIMECAST_SCORE_MAPPING[value],
                     )
-                elif value == "B":
-                    score = 600
-                    scored_users.append(
-                        Record(uid=key, type=RecordType.USER, score=score)
-                    )
-                elif value == "C":
-                    score = 400
-                    scored_users.append(
-                        Record(uid=key, type=RecordType.USER, score=score)
-                    )
-                elif value == "D":
-                    score = 200
-                    scored_users.append(
-                        Record(uid=key, type=RecordType.USER, score=score)
-                    )
-                elif value == "F":
-                    score = 1
-                    scored_users.append(
-                        Record(uid=key, type=RecordType.USER, score=score)
-                    )
+                )
             self.logger.info(
-                f"{PLUGIN_NAME}: processing scores and normalizing for min value {minvalue} and "
-                f"max value {maxvalue}."
+                f"{self.log_prefix}: Successfully fetched scores for {len(scored_users)} users."
             )
         return scored_users
 
     def get_actions(self) -> list[ActionWithoutParams]:
         """Get Available actions."""
         return [
-            ActionWithoutParams(label="Add to group", value="add"),
-            ActionWithoutParams(label="Remove from group", value="remove"),
-            ActionWithoutParams(label="No actions", value="generate"),
+            ActionWithoutParams(label="Add to Group", value="add"),
+            ActionWithoutParams(label="Remove from Group", value="remove"),
+            ActionWithoutParams(label="No Action", value="generate"),
         ]
 
     def get_action_fields(self, action: Action) -> List:
@@ -392,29 +495,26 @@ class MimecastPlugin(PluginBase):
         if action.value == "generate":
             return []
         groups = self._get_all_groups(self.configuration)
-        groups = sorted(groups, key=lambda g: g.get("description").lower())
+        groups = sorted(groups, key=lambda g: g.get("description", "").lower())
         if action.value == "add":
             return [
                 {
                     "label": "Group",
                     "key": "group",
                     "type": "choice",
-                    "choices": [{"key": "Create new group", "value": "create"}]
-                    + [
-                        {"key": g["description"], "value": g["id"]}
-                        for g in groups
-                    ],
+                    "choices": [{"key": "Create New Group", "value": "create"}]
+                    + [{"key": g["description"], "value": g["id"]} for g in groups],
                     "default": "create",
                     "mandatory": True,
-                    "description": "Select a group to add the user to. ",
+                    "description": "Select an existing group from the available options or opt to create a new group by selecting 'Create New Group' for adding users into it.",
                 },
                 {
-                    "label": "Group Name",
+                    "label": "New Group Name",
                     "key": "name",
                     "type": "text",
                     "default": "A_Cloud_Exchange",
                     "mandatory": False,
-                    "description": "Create a Mimecast group with given name if it does not exits.",
+                    "description": "Add a new group name if you have opted for the 'Create New Group' actions from the above section on Group.",
                 },
             ]
         elif action.value == "remove":
@@ -424,10 +524,9 @@ class MimecastPlugin(PluginBase):
                     "key": "group",
                     "type": "choice",
                     "choices": [
-                        {"key": g["description"], "value": g["id"]}
-                        for g in groups
+                        {"key": g["description"], "value": g["id"]} for g in groups
                     ],
-                    "default": groups[0]["id"],
+                    "default": groups[0]["id"] if len(groups) > 0 else "",
                     "mandatory": True,
                     "description": "Select a group to remove the user from.",
                 }
@@ -436,65 +535,83 @@ class MimecastPlugin(PluginBase):
     def execute_action(self, record: Record, action: Action):
         """Execute action on the user."""
         user = record.uid
-        users = self._get_all_users(True)
+        users = self._get_all_users()
         match = self._find_user_by_email(users, user)
+        self.logger.debug(
+            f"{self.log_prefix}: Performing '{action.label}' action on user '{user}'."
+        )
         if match is None:
-            self.logger.warn(
-                f"{PLUGIN_NAME}: User with email {user} not found on Mimecast."
+            self.logger.info(
+                f"{self.log_prefix}: The user with email address {user} was not found on {self.plugin_name}. Hence action {action.label} will be skipped."
             )
             return
         if action.value == "generate":
-            pass
+            self.logger.info(
+                f"{self.log_prefix}: Successfully performed action '{action.label}' on {user}"
+            )
         if action.value == "add":
-            group_id = action.parameters.get("group")
+            group_id = action.parameters.get("group", "")
+            group_name = action.parameters.get("name", "").strip()
             if group_id == "create":
                 groups = self._get_all_groups(self.configuration)
-                group_name = action.parameters.get("name").strip()
                 match_group = self._find_group_by_name(groups, group_name)
                 if match_group is None:
                     group = self._create_group(self.configuration, group_name)
-                    group_id = group.get("data", {})[0].get("id", "")
+                    group_id = group.get("data", [{}])[0].get("id", "")
                 else:
                     group_id = match_group["id"]
             self._add_to_group(
-                self.configuration, match["emailAddress"], group_id
+                self.configuration, match["emailAddress"], group_id, group_name
+            )
+            self.logger.info(
+                f"{self.log_prefix}: Successfully performed action '{action.label}' on user with email {user}."
             )
         elif action.value == "remove":
+            group_id = action.parameters.get("group", "")
             self._remove_from_group(
                 self.configuration,
                 match["emailAddress"],
-                action.parameters.get("group"),
+                group_id,
             )
             self.logger.info(
-                f"{PLUGIN_NAME}: Removed {user} from group with ID {action.parameters.get('group')}."
+                f"{self.log_prefix}: Successfully performed action '{action.label}' on user with email {user}."
             )
 
     def validate_action(self, action: Action) -> ValidationResult:
         """Validate Mimecast action configuration."""
-        if action.value not in ["add", "remove", "generate"]:
-            return ValidationResult(
-                success=False, message="Unsupported action provided."
+        try:
+            if action.value not in ["add", "remove", "generate"]:
+                return ValidationResult(
+                    success=False, message="Unsupported action provided."
+                )
+            if action.value == "generate":
+                return ValidationResult(success=True, message="Validation successful.")
+            groups = self._get_all_groups(self.configuration, is_validation=True)
+            if action.parameters.get("group", "") != "create" and not any(
+                map(lambda g: g["id"] == action.parameters.get("group", ""), groups)
+            ):
+                err_msg = "Invalid Group ID Provided."
+                self.logger.error(f"{self.log_prefix}: {err_msg}")
+                return ValidationResult(success=False, message=err_msg)
+            if (
+                action.value == "add"
+                and action.parameters.get("group", "") == "create"
+                and len(action.parameters.get("name", "").strip()) == 0
+            ):
+                err_msg = "Group Name can not be empty"
+                self.logger.error(f"{self.log_prefix}: {err_msg}")
+                return ValidationResult(success=False, message=err_msg)
+            return ValidationResult(success=True, message="Validation successful.")
+        except Exception as e:
+            err_msg = "Error occurred while validating actions."
+            self.logger.error(
+                f"{self.log_prefix}: {err_msg} Error: {e}",
+                details=str(traceback.format_exc()),
             )
-        if action.value == "generate":
             return ValidationResult(
-                success=True, message="Validation successful."
+                success=False,
+                message=f"{err_msg} Check logs for more details.",
             )
-        groups = self._get_all_groups(self.configuration)
-        if action.parameters.get("group") != "create" and not any(
-            map(lambda g: g["id"] == action.parameters.get("group"), groups)
-        ):
-            return ValidationResult(
-                success=False, message="Invalid group ID provided."
-            )
-        if (
-            action.value == "add"
-            and action.parameters.get("group") == "create"
-            and len(action.parameters.get("name", "").strip()) == 0
-        ):
-            return ValidationResult(
-                success=False, message="Group Name can not be empty."
-            )
-        return ValidationResult(success=True, message="Validation successful.")
 
     def _validate_credentials(
         self, configuration: dict
@@ -504,225 +621,148 @@ class MimecastPlugin(PluginBase):
             url, headers = self._get_auth_headers(
                 configuration, "/api/account/get-account"
             )
-            response = requests.post(
-                url,
-                json={"data": []},
-                headers=add_user_agent(headers),
+            response = self.mimecast_ure_helper.api_helper(
+                url=url,
+                method="POST",
+                headers=headers,
                 proxies=self.proxy,
                 verify=self.ssl_validation,
+                logger_msg="validating the credentials",
+                is_handle_error_required=True,
+                is_validation=True,
             )
-
-            if response.status_code == 200:
-                failures = response.json().get("fail", [])
-                if not failures:
-                    return ValidationResult(
-                        success=True, message="Validation successful."
-                    ), response.json().get("data", [{}])[0].get("packages", [])
-                return (
-                    ValidationResult(
-                        success=False,
-                        message=", ".join(self._parse_errors(failures)),
+            failures = response.get("fail", [])
+            if not failures:
+                return ValidationResult(
+                    success=True,
+                    message=(
+                        "Validation successful for {} {} Plugin.".format(
+                            MODULE_NAME, self.plugin_name
+                        )
                     ),
-                    None,
-                )
-
-            elif response.status_code == 401:
-                return (
-                    ValidationResult(
-                        success=False,
-                        message="Incorrect access key or secret key or application key provided.",
-                    ),
-                    None,
-                )
-            else:
-                return (
-                    ValidationResult(
-                        success=False,
-                        message=(
-                            f"An HTTP error occurred while validating configuration "
-                            f"parameters. Status code {response.status_code}."
-                        ),
-                    ),
-                    None,
-                )
-        except requests.ConnectionError as ex:
-            self.logger.error(f"{PLUGIN_NAME}: {repr(ex)}")
+                ), response.get("data", [{}])[0].get("packages", [])
             return (
                 ValidationResult(
                     success=False,
-                    message="Incorrect Mimecast base URL provided.",
+                    message="{}: Validation error occurred. Error: {}".format(
+                        self.log_prefix, ", ".join(self._parse_errors(failures))
+                    ),
                 ),
                 None,
             )
-        except Exception as ex:
-            self.logger.error(f"{PLUGIN_NAME}: {repr(ex)}")
-            return (
-                ValidationResult(
-                    success=False,
-                    message="Error occurred while validating configuration parameters. Check logs for more detail.",
-                ),
-                None,
+        except MimecastUREException:
+            raise
+        except Exception:
+            err_msg = "Validation error occurred while validating credentials."
+            return ValidationResult(
+                success=False,
+                message=f"{err_msg} Check logs for more details.",
             )
+
+    def _validate_url(self, url: str) -> bool:
+        """Validate the URL using parsing.
+
+        Args:
+            url (str): Given URL.
+
+        Returns:
+            bool: True or False { Valid or not Valid URL }.
+        """
+        parsed_url = urlparse(url)
+        return parsed_url.scheme and parsed_url.netloc
 
     def validate(self, configuration: Dict):
         """Validate Mimecast configuration."""
-
-        if (
-            "url" not in configuration
-            or not configuration["url"].strip()
-            or type(configuration["url"]) != str
-        ):
+        base_url = configuration.get("url", "").strip().strip("/")
+        if not base_url:
+            err_msg = "Base URL is a required configuration parameter."
             self.logger.error(
-                f"{PLUGIN_NAME}: Mimecast base URL must be a valid non-empty string."
+                f"{self.log_prefix}: Validation error occurred. {err_msg}"
             )
-            return ValidationResult(
-                success=False,
-                message="Mimecast base URL must be a valid non-empty string.",
-            )
-
-        if (
-            "app_id" not in configuration
-            or not configuration["app_id"].strip()
-            or type(configuration["app_id"]) != str
-        ):
+            return ValidationResult(success=False, message=err_msg)
+        elif not (isinstance(base_url, str) and self._validate_url(base_url)):
+            err_msg = "Invalid Base URL provided in the configuration parameters."
             self.logger.error(
-                f"{PLUGIN_NAME}: Application ID must be a valid non-empty string."
+                f"{self.log_prefix}: Validation error occurred. {err_msg}"
             )
-            return ValidationResult(
-                success=False,
-                message="Application ID must be a valid non-empty string.",
-            )
-
-        if (
-            "app_key" not in configuration
-            or not configuration["app_key"].strip()
-            or type(configuration["app_key"]) != str
-        ):
+            return ValidationResult(success=False, message=err_msg)
+        # Validate Application ID.
+        app_id = configuration.get("app_id", "").strip()
+        if not app_id:
+            err_msg = "Application ID is a required configuration parameter."
             self.logger.error(
-                f"{PLUGIN_NAME}: Application Key must be a valid non-empty string."
+                f"{self.log_prefix}: Validation error occurred. {err_msg}"
             )
-            return ValidationResult(
-                success=False,
-                message="Application Key must be a valid non-empty string.",
-            )
-
-        if (
-            "access_key" not in configuration
-            or not configuration["access_key"].strip()
-            or type(configuration["access_key"]) != str
-        ):
+            return ValidationResult(success=False, message=err_msg)
+        elif not (isinstance(app_id, str)):
+            err_msg = "Invalid Application ID provided in the configuration parameters."
             self.logger.error(
-                f"{PLUGIN_NAME}: Access Key must be a valid non-empty string."
+                f"{self.log_prefix}: Validation error occurred. {err_msg}"
             )
-            return ValidationResult(
-                success=False,
-                message="Access Key must be a valid non-empty string.",
-            )
+            return ValidationResult(success=False, message=err_msg)
 
-        if (
-            "secret_key" not in configuration
-            or not configuration["secret_key"].strip()
-            or type(configuration["secret_key"]) != str
-            or
-            # Base 64 check
-            not re.match(
-                r"^([A-Za-z0-9+/]{4})*([A-Za-z0-9+/]{3}=|[A-Za-z0-9+/]{2}==)?$",
-                configuration["secret_key"],
-            )
-        ):
+        # Validate Application Key.
+        app_key = configuration.get("app_key", "")
+        if not app_key:
+            err_msg = "Application Key is a required configuration parameter."
             self.logger.error(
-                f"{PLUGIN_NAME}: Access Secret must be a valid non-empty string."
+                f"{self.log_prefix}: Validation error occurred. {err_msg}"
             )
-            return ValidationResult(
-                success=False,
-                message="Access Secret must be a valid non-empty string.",
+            return ValidationResult(success=False, message=err_msg)
+        elif not (isinstance(app_key, str)):
+            err_msg = (
+                "Invalid Application Key provided in the configuration parameters."
             )
+            self.logger.error(
+                f"{self.log_prefix}: Validation error occurred. {err_msg}"
+            )
+            return ValidationResult(success=False, message=err_msg)
+        # Validate Access Key.
+        access_key = configuration.get("access_key", "")
+        if not access_key:
+            err_msg = "Access Key is a required configuration parameter."
+            self.logger.error(
+                f"{self.log_prefix}: Validation error occurred. {err_msg}"
+            )
+            return ValidationResult(success=False, message=err_msg)
+        elif not (isinstance(access_key, str)):
+            err_msg = "Invalid Access Key provided in the configuration parameters."
+            self.logger.error(
+                f"{self.log_prefix}: Validation error occurred. {err_msg}"
+            )
+            return ValidationResult(success=False, message=err_msg)
+        # Validate Secret Key.
+        secret_key = configuration.get("secret_key", "")
+        if not secret_key:
+            err_msg = "Secret Key is a required configuration parameter."
+            self.logger.error(
+                f"{self.log_prefix}: Validation error occurred. {err_msg}"
+            )
+            return ValidationResult(success=False, message=err_msg)
+        elif not (isinstance(secret_key, str)) or not re.match(
+            r"^([A-Za-z0-9+/]{4})*([A-Za-z0-9+/]{3}=|[A-Za-z0-9+/]{2}==)?$", secret_key
+        ):
+            err_msg = "Invalid Secret Key provided in the configuration parameters."
+            self.logger.error(
+                f"{self.log_prefix}: Validation error occurred. {err_msg}"
+            )
+            return ValidationResult(success=False, message=err_msg)
         validation_result, packages = self._validate_credentials(configuration)
 
         if not validation_result.success:
             return validation_result
 
         if "Awareness Training [1078]" not in packages:
-            self.logger.error(
-                f"{PLUGIN_NAME}: 'Awareness Training' package is not enabled in "
+            err_msg = (
+                "Awareness Training' package is not enabled in "
                 "configured account and hence fetching score is not possible."
+            )
+            self.logger.error(
+                f"{self.log_prefix}: Validation error occurred. {err_msg}"
             )
             return ValidationResult(
                 success=False,
-                message="'Awareness Training' package is not enabled in "
-                "configured account and hence fetching score is not possible.",
+                message=err_msg,
             )
 
         return validation_result
-
-    def handle_error(self, resp, action):
-        """Handle the different HTTP response code.
-
-        Args:
-            resp (requests.models.Response): Response object returned from API call.
-            action (bool): Whether this method is called from execute_action or not.
-        Returns:
-            dict: Returns the dictionary of response JSON when the response code is 200.
-        Raises:
-            HTTPError: When the response code is not 200.
-        """
-        if action:
-            resp.raise_for_status()
-            return resp.json()
-        else:
-            if resp.status_code == 200 or resp.status_code == 201:
-                try:
-                    return resp.json()
-                except ValueError:
-                    self.notifier.error(
-                        f"{PLUGIN_NAME}: "
-                        "Exception occurred while parsing JSON response."
-                    )
-                    self.logger.error(
-                        f"{PLUGIN_NAME}: "
-                        "Exception occurred while parsing JSON response."
-                    )
-            elif resp.status_code == 401:
-                self.notifier.error(
-                    f"{PLUGIN_NAME}: "
-                    "Received exit code 401, Authentication Error"
-                )
-                self.logger.error(
-                    f"{PLUGIN_NAME}: "
-                    "Received exit code 401, Authentication Error"
-                )
-            elif resp.status_code == 403:
-                self.notifier.error(
-                    f"{PLUGIN_NAME}: Received exit code 403, Forbidden User"
-                )
-                self.logger.error(
-                    f"{PLUGIN_NAME}: Received exit code 403, Forbidden User"
-                )
-            elif resp.status_code >= 400 and resp.status_code < 500:
-                self.notifier.error(
-                    f"{PLUGIN_NAME}: "
-                    f"Received exit code {resp.status_code}, HTTP client Error"
-                )
-                self.logger.error(
-                    f"{PLUGIN_NAME}: "
-                    f"Received exit code {resp.status_code}, HTTP client Error"
-                )
-            elif resp.status_code >= 500 and resp.status_code < 600:
-                self.notifier.error(
-                    f"{PLUGIN_NAME}: "
-                    f"Received exit code {resp.status_code}, HTTP server Error"
-                )
-                self.logger.error(
-                    f"{PLUGIN_NAME}: "
-                    f"Received exit code {resp.status_code}, HTTP server Error"
-                )
-            else:
-                self.notifier.error(
-                    f"{PLUGIN_NAME}: "
-                    f"Received exit code {resp.status_code}, HTTP Error"
-                )
-                self.logger.error(
-                    f"{PLUGIN_NAME}: "
-                    f"Received exit code {resp.status_code}, HTTP Error"
-                )
-            resp.raise_for_status()

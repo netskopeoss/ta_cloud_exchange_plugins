@@ -1,3 +1,7 @@
+# 1.0.3
+## Updated
+- Updated the user agent string.
+
 # 1.0.2
 ## Changed
 - Changed module name from CRE to URE.

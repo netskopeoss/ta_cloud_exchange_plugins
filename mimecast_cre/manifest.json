@@ -1,8 +1,8 @@
 {
   "name": "Mimecast",
   "id": "mimecast",
-  "version": "1.0.2",
-  "description": "Fetch user risk score from Mimecast portal and perform actions on users. \n\n URE score calculation => Grade A: 800, Grade B: 600, Grade C: 400, Grade D: 200, Grade F: 1.",
+  "version": "1.0.3",
+  "description": "This plugin is used to fetch user risk score from Mimecast platform. This plugin supports performing actions such as Add to Group, Remove from Group and No Action.\n\n URE score grading scheme: Grade A: 800, Grade B: 600, Grade C: 400, Grade D: 200, Grade F: 1.",
   "type": [
     "user"
   ],
@@ -14,35 +14,35 @@
       "type": "text",
       "default": "https://us-api.mimecast.com",
       "mandatory": true,
-      "description": "Mimecast API base URL including region."
+      "description": "The Mimecast API Instance URL, which includes the region information."
     },
     {
       "label": "Application ID",
       "key": "app_id",
       "type": "text",
       "mandatory": true,
-      "description": "Mimecast API Application ID."
+      "description": "Mimecast API Application ID. To generate the Application ID, go to Services > API Applications."
     },
     {
       "label": "Application Key",
       "key": "app_key",
       "type": "password",
       "mandatory": true,
-      "description": "Mimecast API Application Key."
+      "description": "Mimecast API Application Key. To generate the Application Key, go to Services > API Applications."
     },
     {
       "label": "Access Key",
       "key": "access_key",
       "type": "password",
       "mandatory": true,
-      "description": "Mimecast user's access key."
+      "description": "Mimecast API Access Key. To obtain the Access Key, go to Services > API Applications."
     },
     {
       "label": "Secret Key",
       "key": "secret_key",
       "type": "password",
       "mandatory": true,
-      "description": "Mimecast user's secret key."
+      "description": "Mimecast API Secret Key. To obtain the Secret Key, go to Services > API Applications."
     }
   ]
 }

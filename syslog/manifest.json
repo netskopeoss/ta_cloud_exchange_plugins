@@ -1,7 +1,7 @@
 {
   "name": "Syslog",
   "id": "syslog",
-  "version": "3.2.0",
+  "version": "3.2.1",
   "mapping": "Syslog Default Mappings",
   "types": [
     "alerts",
@@ -9,7 +9,7 @@
     "webtx",
     "logs"
   ],
-  "description": "This plugin is used to ingest data to SIEM platform. To access the plugin, you would need the credentials of SIEM platform .",
+  "description": "This plugin supports ingestion of Alerts (Compromised Credential, Policy, Malsite, Malware, DLP, Security Assessment, Quarantine, Remediation, UBA, Watchlist, CTEP), Events (Page, Application, Audit, Infrastructure, Network, Incident), WebTx and Logs (Debug, Information, Error, Warning). The data will be ingested in SIEM platform. This plugin supports ingestion in CEF and JSON format.",
   "configuration": [
     {
       "label": "Syslog Server",

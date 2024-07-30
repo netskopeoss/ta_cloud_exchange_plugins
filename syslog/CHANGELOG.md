@@ -1,3 +1,7 @@
+# 3.2.1
+## Added
+- Added support for JA3 fields in WebTX and Application events.
+
 # 3.2.0
 ## Added
 - Added the RFC fields prefix in the JSON formatted data.
@@ -5,7 +9,7 @@
 
 # 3.1.0
 ## Added
-- Added support for webtx JSON format to send specific fields to SIEM platform
+- Added support for WebTX JSON format to send specific fields to SIEM platform
 
 # 3.0.0
 ## Added
@@ -41,7 +45,7 @@
 
 # 1.1.1
 ## Added
-- Updated webTx mappings.
+- Updated WebTX mappings.
 
 # 1.1.0
 ## Added

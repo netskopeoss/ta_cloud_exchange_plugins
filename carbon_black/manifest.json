@@ -1,141 +1,142 @@
 {
-    "name": "Carbon Black",
-    "id": "carbon_black",
-    "version": "1.0.5",
-    "description": "The Carbon Black plugin fetches alerts with reputation \"Known Malware\" from Cloud NGAV and Cloud EDR. The alert data is processed and Indicators are reported to Netskope CTE. The plugin supports sharing Indicators to Carbon Black via the ThreatHunter API. The indicators shared with Carbon Black would be reported to a ThreatHunter Feed named \"CTE Threat Feed\". To access the plugin, you would need API credentials with RBAC permissions to READ \"org.alerts\" and CREATE \"threathunter.feeds\".",
-    "patch_supported": false,
-    "configuration": [
+  "name": "Carbon Black",
+  "id": "carbon_black",
+  "version": "1.1.0",
+  "description": "The Carbon Black plugin fetches IoCs of the type of SHA256 from Alerts page of Cloud NGAV and Cloud EDR. The plugin supports sharing Indicators of the type of URL (DNS, IPv4, and IPv6), SHA256, and MD5 to Carbon Black via the ThreatHunter API on the Watchlists->Reports page. To access the plugin, you would need API credentials with RBAC permissions to READ \"org.alerts\" and CREATE, READ and UPDATE \"org.feeds\".",
+  "patch_supported": false,
+  "push_supported": true,
+  "configuration": [
+    {
+      "label": "Management URL",
+      "key": "management_url",
+      "type": "text",
+      "default": "https://defense.conferdeploy.net",
+      "mandatory": true,
+      "description": "Carbon Black Management URL."
+    },
+    {
+      "label": "API ID",
+      "key": "api_id",
+      "type": "text",
+      "default": "",
+      "mandatory": true,
+      "description": "API ID in the Carbon Black Cloud Console under Settings > API ACCESS."
+    },
+    {
+      "label": "API Secret",
+      "key": "api_secret",
+      "type": "password",
+      "default": "",
+      "mandatory": true,
+      "description": "API Secret in the Carbon Black Cloud Console under Settings > API ACCESS."
+    },
+    {
+      "label": "Organization Key",
+      "key": "org_key",
+      "type": "text",
+      "default": "",
+      "mandatory": true,
+      "description": "Organization Key in the Carbon Black Cloud Console under Settings > API ACCESS."
+    },
+    {
+      "label": "Minimum Severity",
+      "key": "minimum_severity",
+      "type": "number",
+      "mandatory": true,
+      "default": 2,
+      "description": "Minimum severity criteria to fetch alerts from Carbon Black. Indicators with severity greater than or equal to the specified severity will be fetched."
+    },
+    {
+      "label": "Reputation",
+      "key": "reputation",
+      "type": "multichoice",
+      "choices": [
         {
-            "label": "Management URL",
-            "key": "management_url",
-            "type": "text",
-            "default": "https://defense.conferdeploy.net",
-            "mandatory": true,
-            "description": "Carbon Black Management URL."
+          "key": "ADAPTIVE_WHITE_LIST",
+          "value": "ADAPTIVE_WHITE_LIST"
         },
         {
-            "label": "API ID",
-            "key": "api_id",
-            "type": "text",
-            "default": "",
-            "mandatory": true,
-            "description": "Carbon Black API ID (previously Connector ID)."
+          "key": "COMPANY_BLACK_LIST",
+          "value": "COMPANY_BLACK_LIST"
         },
         {
-            "label": "API Secret",
-            "key": "api_secret",
-            "type": "password",
-            "default": "",
-            "mandatory": true,
-            "description": "Carbon Black API Secret (previously API Key)."
+          "key": "COMMON_WHITE_LIST",
+          "value": "COMMON_WHITE_LIST"
         },
         {
-            "label": "Organization Key",
-            "key": "org_key",
-            "type": "text",
-            "default": "",
-            "mandatory": true,
-            "description": "You can find your org_key in the Carbon Black Cloud Console under Settings > API Keys."
+          "key": "KNOWN_MALWARE",
+          "value": "KNOWN_MALWARE"
         },
         {
-            "label": "Minimum Severity",
-            "key": "minimum_severity",
-            "type": "number",
-            "mandatory": true,
-            "default": 2,
-            "description": "Minimum severity criteria to fetch alerts from Carbon Black."
+          "key": "NOT_LISTED",
+          "value": "NOT_LISTED"
         },
         {
-            "label": "Reputation",
-            "key": "reputation",
-            "type": "multichoice",
-            "choices": [
-                {
-                    "key": "ADAPTIVE_WHITE_LIST",
-                    "value": "ADAPTIVE_WHITE_LIST"
-                },
-                {
-                    "key": "COMPANY_BLACK_LIST",
-                    "value": "COMPANY_BLACK_LIST"
-                },
-                {
-                    "key": "COMMON_WHITE_LIST",
-                    "value": "COMMON_WHITE_LIST"
-                },
-                {
-                    "key": "KNOWN_MALWARE",
-                    "value": "KNOWN_MALWARE"
-                },
-                {
-                    "key": "NOT_LISTED",
-                    "value": "NOT_LISTED"
-                },
-                {
-                    "key": "PUP",
-                    "value": "PUP"
-                },
-                {
-                    "key": "SUSPECT_MALWARE",
-                    "value": "SUSPECT_MALWARE"
-                },
-                {
-                    "key": "TRUSTED_WHITE_LIST",
-                    "value": "TRUSTED_WHITE_LIST"
-                }
-            ],
-            "mandatory": true,
-            "default": [
-                "NOT_LISTED",
-                "PUP",
-                "SUSPECT_MALWARE",
-                "COMPANY_BLACK_LIST",
-                "KNOWN_MALWARE"
-            ],
-            "description": "Only indicator with matching reputation will saved."
+          "key": "PUP",
+          "value": "PUP"
         },
         {
-            "label": "Enable Tagging",
-            "key": "enable_tagging",
-            "type": "choice",
-            "choices": [
-                {
-                    "key": "Yes",
-                    "value": "yes"
-                },
-                {
-                    "key": "No",
-                    "value": "no"
-                }
-            ],
-            "default": "yes",
-            "mandatory": true,
-            "description": "Enable/Disable tagging functionality."
+          "key": "SUSPECT_MALWARE",
+          "value": "SUSPECT_MALWARE"
         },
         {
-            "label": "Enable Polling",
-            "key": "is_pull_required",
-            "type": "choice",
-            "choices": [
-                {
-                    "key": "Yes",
-                    "value": "Yes"
-                },
-                {
-                    "key": "No",
-                    "value": "No"
-                }
-            ],
-            "default": "Yes",
-            "mandatory": true,
-            "description": "Enable/Disable polling data from Carbon Black."
-        },
-        {
-            "label": "Initial Range (in days)",
-            "key": "days",
-            "type": "number",
-            "mandatory": true,
-            "default": 7,
-            "description": "Number of days to pull the data for the initial run."
+          "key": "TRUSTED_WHITE_LIST",
+          "value": "TRUSTED_WHITE_LIST"
         }
-    ]
+      ],
+      "mandatory": false,
+      "default": [
+        "NOT_LISTED",
+        "PUP",
+        "SUSPECT_MALWARE",
+        "COMPANY_BLACK_LIST",
+        "KNOWN_MALWARE"
+      ],
+      "description": "Only indicators with matching reputation will saved. If no specific value is chosen, indicators with all available reputation will be retrieved."
+    },
+    {
+      "label": "Enable Tagging",
+      "key": "enable_tagging",
+      "type": "choice",
+      "choices": [
+        {
+          "key": "Yes",
+          "value": "yes"
+        },
+        {
+          "key": "No",
+          "value": "no"
+        }
+      ],
+      "default": "yes",
+      "mandatory": true,
+      "description": "Enable/Disable tagging functionality."
+    },
+    {
+      "label": "Enable Polling",
+      "key": "is_pull_required",
+      "type": "choice",
+      "choices": [
+        {
+          "key": "Yes",
+          "value": "Yes"
+        },
+        {
+          "key": "No",
+          "value": "No"
+        }
+      ],
+      "default": "Yes",
+      "mandatory": true,
+      "description": "Enable/Disable polling data from Carbon Black."
+    },
+    {
+      "label": "Initial Range (in days)",
+      "key": "days",
+      "type": "number",
+      "mandatory": true,
+      "default": 7,
+      "description": "Number of days to pull the data for the initial run."
+    }
+  ]
 }

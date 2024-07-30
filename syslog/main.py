@@ -373,14 +373,17 @@ class SyslogPlugin(PluginBase):
                 if subtype_mapping == []:
                     transformed_data = []
                     for data in raw_data:
-                        result = "{} {} {}".format(
-                            time.strftime(
-                                "%b %d %H:%M:%S", time.localtime(time.time())
-                            ),
-                            log_source_identifier,
-                            json.dumps(data),
-                        )
-                        transformed_data.append(result)
+                        if data:                            
+                            result = "{} {} {}".format(
+                                time.strftime(
+                                    "%b %d %H:%M:%S", time.localtime(time.time())
+                                ),
+                                log_source_identifier,
+                                json.dumps(data),
+                            )
+                            transformed_data.append(result)
+                        else:
+                            count += 1
                     return transformed_data
             except Exception:
                 self.logger.error(

@@ -30,19 +30,24 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
 
-"""GCP Client."""
+"""Google Cloud SCC Plugin Client."""
 
 
+import json
 import time
-from google.auth.exceptions import TransportError
+import traceback
+from google.auth.exceptions import TransportError, MalformedError
 from google.oauth2 import service_account
-from google.auth.transport import requests
+from google.auth.transport import requests as gRequest
+import requests
 from .cscc_exceptions import (
     MaxRetriesExceededError,
+    CSCCPluginException
 )
 from .cscc_constants import (
     GCP_SCOPE,
     GET_PROJECT_NUMBER_URL,
+    GCP_URL
 )
 
 RETRY_COUNT = 2
@@ -52,19 +57,16 @@ RETRY_SLEEP_TIME = 60  # seconds
 class GCPClient:
     """Handles GCP authentication and ingests data into Google CSCC."""
 
-    def __init__(self, url, key_file, logger, proxy):
-        """Initialize GCP instance with required parameters.
-
-        :param url: url for making POST request on GCP API to ingest finding
-        :param key_file: Google service account file name
-        :param logger: Logger object for logging purpose
-        """
+    def __init__(self, configuration, logger, log_prefix, plugin_name, proxy):
+        """Initialize GCP instance with required parameters."""
         self.gcp_scope = GCP_SCOPE
-        self.gcp_post_url = url
-        self.key_file = key_file
         self.gcp_session = None
+        self.configuration = configuration
         self.logger = logger
+        self.log_prefix = log_prefix
+        self.plugin_name = plugin_name
         self.proxy = proxy
+        self.set_gcp_session()
 
     def set_gcp_session(self):
         """Set GCP authenticated session.
@@ -72,65 +74,72 @@ class GCPClient:
         :return session (object): GCP authenticated session object to make request
         """
         try:
-            creds = service_account.Credentials.from_service_account_info(
-                self.key_file
+            self.creds = service_account.Credentials.from_service_account_info(
+                json.loads(self.configuration["key_file"])
             )
-            scoped = creds.with_scopes(self.gcp_scope)
-            self.gcp_session = requests.AuthorizedSession(scoped)
+            scoped = self.creds.with_scopes(self.gcp_scope)
+            self.gcp_session = gRequest.AuthorizedSession(scoped)
             self.gcp_session.proxies = self.proxy
-        except Exception as err:
+        except MalformedError as err:
+            err_msg = (
+                f"Invalid Key File provided."
+            )
             self.logger.error(
-                "Could not create authenticated session object. Error:{}".format(
-                    err
-                )
+                message=f"{self.log_prefix}: {err_msg} Error: {str(err)}",
+                details=str(traceback.format_exc()),
+            )
+            raise CSCCPluginException(err_msg)
+        except Exception as err:
+            err_msg = (
+                f"Could not create authenticated session object."
+            )
+            self.logger.error(
+                message=(
+                    f"{self.log_prefix}: {err_msg}"
+                    f" Error: {str(err)}"
+                ),
+                details=str(traceback.format_exc())
             )
             raise err
 
-    def set_resource_name(self):
+    def set_resource_name(self, headers):
         """Help to get project number by using project id from Google service account file.
 
         :return Project number: Project number of given Google service account
         """
         try:
-            credentials = (
-                service_account.Credentials.from_service_account_info(
-                    self.key_file, scopes=GCP_SCOPE
-                )
-            )
-            self.set_gcp_session()
             res = self.gcp_session.get(
-                "{}/{}".format(GET_PROJECT_NUMBER_URL, credentials.project_id)
+                url=f"{GET_PROJECT_NUMBER_URL}/{self.creds.project_id}",
+                headers=headers
             )
-            res = res.json()
-            project_number = res.get("projectNumber")
+            response = self.parse_response(response=res)
+            project_number = response.get("projectNumber")
             if project_number:
                 return project_number
             else:
+                err_msg = f"Invalid response. Error: {response}"
                 self.logger.error(
-                    "Getting invalid response for project number. Error: {}".format(
-                        res
-                    )
+                    message=f"{self.log_prefix}: {err_msg}",
+                    details=str(res.text),
                 )
-                raise Exception("Invalid project number in response.")
+                raise CSCCPluginException(err_msg)
 
         except TransportError:
-            self.logger.error("Found invalid proxy configurations.")
-            raise
-        except Exception as e:
+            err_msg = f"Found invalid proxy configurations. Error: {response}"
             self.logger.error(
-                "Error occurred while getting project number. Error:{}".format(
-                    e
-                )
+                message=f"{self.log_prefix}: {err_msg}",
+                details=str(traceback.format_exc()),
             )
-            raise
-
-    def _check_for_retries(self, retry_count):
-        if retry_count + 1 == RETRY_COUNT:
-            raise MaxRetriesExceededError(
-                "Could not ingest data after {} retries".format(RETRY_COUNT)
+            raise CSCCPluginException(err_msg)
+        except Exception as e:
+            err_msg = f"Error occurred while getting project number. Error: {e}"
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg}",
+                details=str(traceback.format_exc()),
             )
+            raise CSCCPluginException(err_msg)
 
-    def ingest(self, fid, finding, data_type, subtype):
+    def ingest(self, fid, finding, headers, data_type, subtype):
         """Ingest finding(s) on google CSCC.
 
         :param subtype: The subtype of data type being ingested
@@ -140,50 +149,208 @@ class GCPClient:
         """
         param = {"findingId": fid}
         try:
+            org_id = self.configuration.get("organization_id", None)
+            src_id = self.configuration.get("source_id", None)
+            gcp_post_url = "{}/{}/sources/{}/findings".format(
+                GCP_URL, org_id, src_id
+            )
             for retry_count in range(RETRY_COUNT):
                 res = self.gcp_session.post(
-                    self.gcp_post_url, params=param, json=finding
+                    gcp_post_url,
+                    params=param,
+                    json=finding,
+                    headers=headers
                 )
 
                 if res.status_code == 200:
                     break
-                # elif res.status_code in [401, 403, 404]:
+
                 elif res.status_code == 429 or res.status_code >= 500:
-                    self._check_for_retries(retry_count)
+                    remaining_retries = RETRY_COUNT - retry_count - 1
                     self.logger.error(
-                        "Could not ingest data to GCP. Retrying again in {} seconds".format(
-                            RETRY_SLEEP_TIME
-                        )
-                    )
-                    self.logger.error(
-                        "[{}][{}]: Error occurred in ingestion. Error: "
-                        "{}".format(data_type, subtype, res.text)
+                        message=(
+                            f"{self.log_prefix}: [{data_type}][{subtype}] Could not ingest data "
+                            f"to {self.plugin_name}. Retrying again in {RETRY_SLEEP_TIME} seconds."
+                            f" {remaining_retries} retries remaining."
+                        ),
+                        details=str(traceback.format_exc()),
                     )
                     time.sleep(RETRY_SLEEP_TIME)
+                    continue
                 else:
                     if res.status_code != 400:
                         self.logger.error(
-                            "[{}][{}]: Error occurred in ingestion, exiting from script. Status code: {}."
-                            " Error: {}".format(
-                                data_type, subtype, res.status_code, res.text
-                            )
+                            message=(
+                                f"{self.log_prefix}: [{data_type}][{subtype}] Error occurred in ingestion, "
+                                f"exiting from script. Status code: {res.status_code}. Error: {res.text}"
+                            ),
+                            details=str(traceback.format_exc()),
                         )
                     else:
-                        self.logger.error(
-                            "[{}][{}]: Error occurred in ingestion, the record will be skipped. Status "
-                            "code: {}. Error: {}".format(
-                                data_type, subtype, res.status_code, res.text
-                            )
+                        response = self.parse_response(response=res)
+                        status_code = response.get("error", {}).get("code", "unknown")
+                        message = response.get("error", {}).get("message", "unknown")
+                        status = response.get("error", {}).get("status", "unknown")
+
+                        if status in ["FAILED_PRECONDITION", "PERMISSION_DENIED"]:
+                            raise Exception(f"Invalid Customer ID provided. {message}")
+                        if status in ["INVALID_ARGUMENT"]:
+                            raise Exception(f"Invalid Finding event provided. {message}")
+                        raise Exception(
+                            f"status_code: {status_code}, message: {message}, status: {status}"
                         )
-                        break
+            if retry_count + 1 >= RETRY_COUNT:
+                raise MaxRetriesExceededError(
+                    f"Could not ingest data after {RETRY_COUNT} retries"
+                )
         except MaxRetriesExceededError as err:
-            raise err
-        except TransportError:
-            self.logger.error("Found invalid proxy configurations.")
+            raise CSCCPluginException(err)
+        except TransportError as err:
+            err_msg = (
+                "Found invalid proxy configurations for "
+                f"{self.plugin_name} server while ingesting data. Error: {err}"
+            )
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg}",
+                details=str(traceback.format_exc()),
+            )
+            raise CSCCPluginException(err_msg)
+        except requests.exceptions.HTTPError as err:
+            err_msg = "HTTP Error occurred while ingesting data."
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg} Error: {err}.",
+                details=str(traceback.format_exc()),
+            )
+            raise CSCCPluginException(err_msg)
+        except requests.exceptions.ConnectionError as err:
+            err_msg = (
+                f"Unable to establish connection with {self.plugin_name} "
+                "while ingesting data. "
+                "Check Organization ID or Source ID provided in configuration parameter."
+            )
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg} Error: {err}.",
+                details=str(traceback.format_exc()),
+            )
+            raise CSCCPluginException(err_msg)
+        except requests.exceptions.Timeout as err:
+            err_msg = "Request timed out while ingesting data."
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg} Error: {err}.",
+                details=str(traceback.format_exc()),
+            )
+            raise CSCCPluginException(err_msg)
+        except CSCCPluginException:
             raise
         except Exception as err:
-            self.logger.error(
-                "Could not ingest data on GCP. Ingestion "
-                "of the record will be skipped. Error:{}".format(err)
+            err_msg = (
+                "Error occurred while requesting to "
+                f"{self.plugin_name} server while ingesting data. Error: {err}"
             )
-            raise err
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg}",
+                details=str(traceback.format_exc()),
+            )
+            raise CSCCPluginException(err_msg)
+
+    def validate_credentials(self, headers):
+        """Validate credentials by making a GET request to the GCP findings API.
+
+        Parameters:
+            headers (dict): Headers to be sent with the request.
+
+        Returns:
+            bool: True if the credentials are valid, False otherwise.
+
+        Raises:
+            CSCCPluginException: If any error occurs during the API request or response parsing.
+        """
+        try:
+            org_id = self.configuration.get("organization_id", None)
+            src_id = self.configuration.get("source_id", None)
+            gcp_post_url = "{}/{}/sources/{}/findings".format(
+                GCP_URL, org_id, src_id
+            )
+            gcp_source_url = "{}/{}/sources/{}".format(
+                GCP_URL, org_id, src_id
+            )
+
+            source_res = self.gcp_session.get(
+                url=gcp_source_url,
+                headers=headers
+            )
+
+            if source_res.status_code != 200:
+                raise Exception("Invalid Source ID provided.")
+
+            res = self.gcp_session.get(
+                url=gcp_post_url,
+                params={"pageSize": 1},
+                headers=headers
+            )
+            response = self.parse_response(response=res, is_validation=True)
+
+            if res.status_code == 200 and "listFindingsResults" in response:
+                return True
+            elif res.status_code == 200 and "listFindingsResults" not in response:
+                return False
+
+            status_code = response.get("error", {}).get("code", "unknown")
+            message = response.get("error", {}).get("message", "unknown")
+            status = response.get("error", {}).get("status", "unknown")
+            raise Exception(
+                f"status_code: {status_code}, message: {message}, status: {status}"
+            )
+        except Exception as err:
+            err_msg = (
+                "Error occurred while requesting to "
+                f"{self.plugin_name}. Error: {err}"
+            )
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg}",
+                details=str(traceback.format_exc()),
+            )
+            error_message = (
+                "Verify provided configuration parameters "
+                "are correct with required permissions."
+            )
+            raise CSCCPluginException(error_message)
+
+    def parse_response(self, response: requests.models.Response, is_validation=False):
+        """Parse Response will return JSON from response object.
+
+        Args:
+            response (response): Response object.
+
+        Returns:
+            Any: Response Json.
+        """
+        try:
+            return response.json()
+        except json.JSONDecodeError as err:
+            err_msg = f"Invalid JSON response received from API. Error: {str(err)}"
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg}",
+                details=f"API response: {response.text}",
+            )
+            if is_validation:
+                err_msg = (
+                    "Verify provided Key File or Organization ID "
+                    "is correct with required permissions."
+                )
+            raise CSCCPluginException(err_msg)
+        except Exception as exp:
+            err_msg = (
+                "Unexpected error occurred while parsing"
+                f" json response. Error: {exp}"
+            )
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg}",
+                details=f"API Response: {response.text}",
+            )
+            if is_validation:
+                err_msg = (
+                    "Verify provided Key File or Organization ID "
+                    "is correct with required permissions."
+                )
+            raise CSCCPluginException(err_msg)

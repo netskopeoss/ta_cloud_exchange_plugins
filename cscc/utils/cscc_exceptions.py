@@ -30,7 +30,7 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
 
-"""CSCC Exception."""
+"""Google Cloud SCC Plugin Exception."""
 
 
 class Error(Exception):
@@ -56,3 +56,9 @@ class MaxRetriesExceededError(Error):
     def __init__(self, message):
         """Initialize."""
         self.message = message
+
+
+class CSCCPluginException(Exception):
+    """CSCCPlugin custom exception class."""
+
+    pass

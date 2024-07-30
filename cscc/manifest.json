@@ -1,37 +1,37 @@
 {
-    "name": "Google Cloud SCC ",
-    "id": "cscc",
-    "version": "2.0.0",
-    "mapping": "CSCC Default Mappings",
-    "types": [
-        "alerts",
-        "events"
-    ],
-    "description": "This plugin is used to ingest data to GCP. To access the plugin, you would need the credentials of GCP.",
-    "configuration": [
-        {
-            "label": "Organization ID",
-            "key": "organization_id",
-            "type": "text",
-            "default": "",
-            "mandatory": true,
-            "description": "Organization id of GCP in which data will be ingested."
-        },
-        {
-            "label": "Source ID",
-            "key": "source_id",
-            "type": "text",
-            "default": "",
-            "mandatory": true,
-            "description": "Souce id of GCP in which data will be ingested."
-        },
-        {
-            "label": "Key File",
-            "key": "key_file",
-            "type": "textarea",
-            "default": "",
-            "mandatory": true,
-            "description": "Key file of GCP."
-        }
-    ]
+  "name": "Google Cloud SCC",
+  "id": "cscc",
+  "version": "2.1.0",
+  "mapping": "CSCC Default Mappings",
+  "types": [
+    "alerts",
+    "events"
+  ],
+  "description": "This plugin is used to ingest alerts and events data to Google Cloud SCC. The plugin supports sharing of findings data. The plugin requires credentials for a GCP service account to function.",
+  "configuration": [
+    {
+      "label": "Organization ID",
+      "key": "organization_id",
+      "type": "text",
+      "default": "",
+      "mandatory": true,
+      "description": "Organization ID of GCP in which data will be ingested."
+    },
+    {
+      "label": "Source ID",
+      "key": "source_id",
+      "type": "text",
+      "default": "",
+      "mandatory": true,
+      "description": "Source ID of GCP in which data will be ingested."
+    },
+    {
+      "label": "Key File",
+      "key": "key_file",
+      "type": "textarea",
+      "default": "",
+      "mandatory": true,
+      "description": "Service Account Key file of GCP."
+    }
+  ]
 }

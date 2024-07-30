@@ -30,10 +30,11 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
 
-"""CSCC Helper."""
+"""Google Cloud SCC Plugin Helper."""
 
 
 import re
+import traceback
 from jsonschema import validate
 from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
 from .cscc_exceptions import (
@@ -49,7 +50,7 @@ class DataTypes(Enum):
     EVENT = "events"
 
 
-def handle_data(data, logger):
+def handle_data(data, logger, log_prefix):
     """Handle Unexpected values in data and transform it.
 
     :param logger: Logging object for logging purpose
@@ -73,10 +74,18 @@ def handle_data(data, logger):
 
             return data
         else:
-            logger.error("Could not parse data.")
+            err_msg = ("Could not parse data.")
+            logger.error(
+                message=(f"{log_prefix}: {err_msg}"),
+            )
             return None
     except Exception as err:
-        logger.error("Could not parse data \n{}. \nError:{}".format(data, err))
+        err_msg = (f"Could not parse current data. Error:{err}")
+        logger.error(
+            message=(f"{log_prefix}: {err_msg}"),
+            details=str(traceback.format_exc()),
+        )
+        raise err
 
 
 def get_data(data, variable):

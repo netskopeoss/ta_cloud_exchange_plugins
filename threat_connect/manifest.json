@@ -1,8 +1,8 @@
 {
   "name": "ThreatConnect",
   "id": "threat_connect",
-  "version": "1.1.1",
-  "description": "The ThreatConnect plugin fetches indicators of type File(MD5 and SHA256), URL, Host and Address(IPv4 and IPv6). The URL, Host and Address are stored as URL type in CE and File is distinguished as MD5 and SHA256. The Plugin also supports sharing indicators to ThreatConnect Platform.",
+  "version": "1.2.0",
+  "description": "The ThreatConnect plugin is used to pull IoCs of type File (MD5 and SHA256), URL, Host and Address (IPv4 and IPv6) from the Indicators under the Intelligence Requirements from ThreatConnect. This plugin also supports sharing File (MD5 and SHA256), URL, Host and Address (IPv4 and IPv6) to the ThreatConnect's Group under the Intelligence Requirements using the Add to Group action.",
   "patch_supported": true,
   "push_supported": true,
   "configuration": [
@@ -20,7 +20,7 @@
       "type": "text",
       "default": "",
       "mandatory": true,
-      "description": "ThreatConnect API Access ID."
+      "description": "ThreatConnect API User Access ID. Generate the Access ID from Settings > Org Settings > Membership > Create API User."
     },
     {
       "label": "Secret Key",
@@ -28,7 +28,7 @@
       "type": "password",
       "default": "",
       "mandatory": true,
-      "description": "ThreatConnect API Secret Key."
+      "description": "ThreatConnect API User Secret Key. Generate the Access ID from Settings > Org Settings > Membership > Create API User."
     },
     {
       "label": "Type of Threat Indicator",

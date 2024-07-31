@@ -1,3 +1,13 @@
+# 2.1.0
+## Fixed
+- Fixed performance issues.
+- Fixed parsing issue.
+
+## Added
+- Added support for CTEP, Remediation and Watchlist alerts.
+- Added support for Incident events.
+- Added support for Netskope's 1.17.2 integration on Elastic.
+
 # 2.0.1
 ## Added
 - Added Validation for Server Address.

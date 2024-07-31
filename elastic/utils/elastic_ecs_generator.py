@@ -28,13 +28,13 @@ SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
 CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+CLS Elastic plugin's ECS Generator class.
 """
-
-"""ECS Generator class."""
-
 
 import collections
 import datetime
+import traceback
 
 from .elastic_constants import (
     SEVERITY_MAP,
@@ -49,9 +49,10 @@ from netskope.integrations.cls.utils.converter import *
 class ECSGenerator(object):
     """ECS Generator class."""
 
-    def __init__(self, mapping, ecs_version, logger):
+    def __init__(self, mapping, ecs_version, logger, log_prefix):
         """Init method."""
         self.logger = logger
+        self.log_prefix = log_prefix
         self.ecs_version = ecs_version  # Version of ECS being used
         self.mapping = mapping  # Mapping file content
         self.extension = collections.namedtuple(
@@ -82,10 +83,11 @@ class ECSGenerator(object):
         def sanitize(t, debug_name):
             if not isinstance(t, datetime.datetime):
                 raise ECSTypeError(
-                    "{}: Expected datetime, got {}".format(debug_name, type(t))
+                    f"{self.log_prefix}: {debug_name}- Expected"
+                    f" datetime, got {type(t)}"
                 )
             else:
-                return t.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+                return t.strftime(r"%Y-%m-%dT%H:%M:%S.000Z")
 
         return sanitize
 
@@ -104,9 +106,8 @@ class ECSGenerator(object):
                 return datetime.datetime.fromtimestamp(val)
             except Exception as err:
                 raise ECSTypeError(
-                    "{}: Error occurred while converting to datetime: {}".format(
-                        debug_name, err
-                    )
+                    f"{self.log_prefix}: {debug_name} - Error "
+                    f"occurred while converting to datetime: {err}"
                 )
 
         return convert
@@ -128,7 +129,7 @@ class ECSGenerator(object):
             mapping = self.mapping["taxonomy"]
 
             for data_type, data_mapping in mapping.items():
-                if data_type == "json":		
+                if data_type == "json":
                     continue
                 for subtype, subtype_mapping in data_mapping.items():
                     for key, value in subtype_mapping.items():
@@ -144,9 +145,11 @@ class ECSGenerator(object):
             return field_converters
         except Exception as err:
             self.logger.error(
-                "Error occurred while parsing CEF transformation field. Error: {}".format(
-                    str(err)
-                )
+                message=(
+                    f"{self.log_prefix}: Error occurred while parsing "
+                    f"ECS transformation field. Error: {err}"
+                ),
+                details=str(traceback.format_exc()),
             )
             raise
 
@@ -167,7 +170,7 @@ class ECSGenerator(object):
             mapping = self.mapping["taxonomy"]
 
             for data_type, data_mapping in mapping.items():
-                if data_type == "json":		
+                if data_type == "json":
                     continue
                 for subtype, subtype_mapping in data_mapping.items():
                     for key, value in subtype_mapping.items():
@@ -183,9 +186,11 @@ class ECSGenerator(object):
             return field_sanitizers
         except Exception as err:
             self.logger.error(
-                "Error occurred while parsing CEF transformation field. Error: {}".format(
-                    str(err)
-                )
+                message=(
+                    f"{self.log_prefix}: Error occurred while parsing"
+                    f" ECS transformation field. Error: {err}"
+                ),
+                details=str(traceback.format_exc()),
             )
             raise
 
@@ -212,15 +217,16 @@ class ECSGenerator(object):
             possible_headers: Possible ECS headers
             headers: Configured headers
             data_type: Data type for which ECS event is being generated
-            subtype: Subtype of data type for which ECS event is being generated
+            subtype: Subtype of data type for which ECS event is being
+            generated
         """
         for configured_header in list(headers.keys()):
             if configured_header not in possible_headers:
                 self.logger.error(
-                    '[{}][{}]: Found invalid header configured in elastic mapping file: "{}". Header '
-                    "field will be ignored.".format(
-                        data_type, subtype, configured_header
-                    )
+                    f"{self.log_prefix}: [{data_type}][{subtype}] -"
+                    " Found invalid header configured in elastic"
+                    f' mapping file: "{configured_header}". Header '
+                    "field will be ignored."
                 )
 
     def get_json_structure(self, ecs_field_data, ecs_field, value):
@@ -272,26 +278,33 @@ class ECSGenerator(object):
         """
         extension_pairs = {}
         for name, value in extensions.items():
-            # First convert the incoming value from Netskope to appropriate data type
+            # First convert the incoming value from Netskope to appropriate
+            # data type
             try:
                 value = self.extension_converters[name].converter(value, name)
             except KeyError:
                 self.logger.error(
-                    '[{}][{}]: An error occurred while generating ECS data for field: "{}". Could not '
-                    'find the field in the "valid_extensions". Field will be ignored'.format(
-                        data_type, subtype, name
-                    )
+                    message=(
+                        f"{self.log_prefix}: [{data_type}][{subtype}] - An "
+                        f"error occurred while generating ECS data for field:"
+                        f' "{name}". Could not find the field in the  '
+                        '"valid_extensions". Field will be ignored'
+                    ),
+                    details=str(traceback.format_exc()),
                 )
                 continue
             except Exception as err:
                 self.logger.error(
-                    '[{}][{}]: An error occurred while generating ECS data for field: "{}". Error: {}. '
-                    "Field will be ignored".format(
-                        data_type, subtype, name, str(err)
-                    )
+                    message=(
+                        f"{self.log_prefix}: [{data_type}][{subtype}] - An "
+                        "error occurred while generating ECS data for field: "
+                        f'"{name}". Error: {err}. Field will be ignored.'
+                    ),
+                    details=str(traceback.format_exc()),
                 )
                 continue
-            # Validate and sanitise (if required) the incoming value from Netskope before mapping it ECS
+            # Validate and sanitize (if required) the incoming value from
+            # Netskope before mapping it ECS
             try:
                 current = self.valid_extensions[name].key_name
                 extension_pairs[current] = self.valid_extensions[
@@ -305,17 +318,22 @@ class ECSGenerator(object):
                     extension_pairs[current] = ""
             except KeyError:
                 self.logger.error(
-                    '[{}][{}]: An error occurred while generating ECS data for field: "{}". Could not '
-                    'find the field in the "valid_extensions". Field will be ignored'.format(
-                        data_type, subtype, name
-                    )
+                    message=(
+                        f"{self.log_prefix}: [{data_type}][{subtype}] - An "
+                        f"error occurred while generating ECS data for field: "
+                        f'"{name}". Could not find the field in the '
+                        '"valid_extensions". Field will be ignored.'
+                    ),
+                    details=str(traceback.format_exc()),
                 )
             except Exception as err:
                 self.logger.error(
-                    '[{}][{}]: An error occurred while generating ECS data for field: "{}". Error: {}. '
-                    "Field will be ignored".format(
-                        data_type, subtype, name, str(err)
-                    )
+                    message=(
+                        f"{self.log_prefix}: [{data_type}][{subtype}] - An "
+                        f"error occurred while generating ECS data for field: "
+                        f'"{name}". Error: {err}. Field will be ignored.'
+                    ),
+                    details=str(traceback.format_exc()),
                 )
 
         possible_headers = [
@@ -345,10 +363,13 @@ class ECSGenerator(object):
                     )
                 except Exception as err:
                     self.logger.error(
-                        '[{}][{}]: An error occurred while generating ECS data for header field: "{}". Error: {}. '
-                        "Field will be ignored".format(
-                            data_type, subtype, header, str(err)
-                        )
+                        message=(
+                            f"{self.log_prefix}: [{data_type}][{subtype}] - An"
+                            f" error occurred while generating ECS data for"
+                            f' header field: "{header}". Error: {err}. '
+                            "Field will be ignored."
+                        ),
+                        details=str(traceback.format_exc()),
                     )
 
         ecs_data = self.json_converter(header_pairs, extension_pairs)

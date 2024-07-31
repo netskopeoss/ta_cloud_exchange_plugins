@@ -1,1 +1,1 @@
-"""Elastic plugin."""
+"""CLS Elastic plugin."""

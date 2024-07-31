@@ -1,0 +1,33 @@
+{
+  "name": "VISO TRUST",
+  "id": "viso_trust_are",
+  "version": "1.0.0",
+  "description": "This plugin creates vendor relationships on VISO TRUST for the the applications present in the CE, it also attaches tags to the relationship based on the CCI Scores. Note this plugin does not support pulling applications or their scores from VISO TRUST.",
+  "patch_supported": true,
+  "configuration": [
+    {
+      "label": "VISO TRUST Base URL",
+      "key": "base_url",
+      "type": "text",
+      "mandatory": true,
+      "default": "",
+      "description": "Base URL for the VISO TRUST instance."
+    },
+    {
+      "label": "VISO TRUST Business Owner Email",
+      "key": "email",
+      "type": "text",
+      "mandatory": true,
+      "default": "",
+      "description": "VISO TRUST Business Owner email address associated with the instance."
+    },
+    {
+      "label": "VISO TRUST API Token",
+      "key": "token",
+      "type": "password",
+      "default": "",
+      "mandatory": true,
+      "description": "VISO TRUST API Token."
+    }
+  ]
+}

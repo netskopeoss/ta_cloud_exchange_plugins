@@ -1,53 +1,52 @@
 {
-    "name": "Cybereason",
-    "id": "cybereason_plugin",
-    "version": "1.0.2",
-    "description": "This plugin is used to fetch File hashes and URL from Cybereason's Custom IOC. This plugin can share the indicator Hash or URL to Cybereason's Custom IOC. To access the plugin, you would need the API credentials. Refer the Cybereason documentation [here](https://nest.cybereason.com/documentation/api-documentation/all-versions/set-reputation#setreputations) for more details.",
-    "push_supported": true,
-    "patch_supported": true,
-    "configuration": [
+  "name": "Cybereason",
+  "id": "cybereason_plugin",
+  "version": "1.1.0",
+  "description": "This plugin is used to fetch File hashes(MD5 and SHA256), and URLs(IPv4, IPv6, Domains) from the Cybereason's security-profile > reputations-list page. This plugin can also share the indicator Hash(MD5, SHA256), and URLs(IPv4, IPv6, Domains) to the Cybereason's security-profile > reputations-list page. To access the plugin, you would need the API credentials. Refer the Cybereason documentation [here](https://nest.cybereason.com/documentation/api-documentation/all-versions/set-reputation#setreputations) for more details.",
+  "push_supported": true,
+  "patch_supported": true,
+  "configuration": [
+    {
+      "label": "Base URL",
+      "key": "base_url",
+      "type": "text",
+      "default": "https://integration.cybereason.net:8443",
+      "mandatory": true,
+      "description": "The Base URL of the Cybereason console from which we want to fetch the data."
+    },
+    {
+      "label": "Username",
+      "key": "username",
+      "type": "text",
+      "default": "",
+      "mandatory": true,
+      "description": "Username used while login to the Cybereason platform."
+    },
+    {
+      "label": "Password",
+      "key": "password",
+      "type": "password",
+      "default": "",
+      "mandatory": true,
+      "description": "Password associate with the Cybereason account."
+    },
+    {
+      "label": "Enable Polling",
+      "key": "is_pull_required",
+      "type": "choice",
+      "choices": [
         {
-            "label": "Base URL",
-            "key": "base_url",
-            "type": "text",
-            "default": "https://integration.cybereason.net:8443",
-            "mandatory": true,
-            "description": "The URL of the Cybereason console from which we want to fetch the data."
+          "key": "Yes",
+          "value": "Yes"
         },
         {
-            "label": "Username",
-            "key": "username",
-            "type": "text",
-            "default": "",
-            "mandatory": true,
-            "description": "API Username."
-        },
-        {
-            "label": "Password",
-            "key": "password",
-            "type": "password",
-            "default": "",
-            "mandatory": true,
-            "description": "API Password."
-        },
-        {
-            "label": "Enable Polling",
-            "key": "is_pull_required",
-            "type": "choice",
-            "choices": [
-                {
-                    "key": "Yes",
-                    "value": "Yes"
-                },
-                {
-                    "key": "No",
-                    "value": "No"
-                }
-            ],
-            "default": "Yes",
-            "mandatory": true,
-            "description": "Enable/Disable polling data from Cybereason."
+          "key": "No",
+          "value": "No"
         }
-    ]
+      ],
+      "default": "Yes",
+      "mandatory": true,
+      "description": "Enable/Disable polling data from Cybereason."
+    }
+  ]
 }
-    

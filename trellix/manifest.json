@@ -1,0 +1,81 @@
+{
+  "name": "Trellix",
+  "id": "trellix",
+  "version": "1.0.0",
+  "description": "Trellix plugin fetches Threat IOCs (SHA256, Domain, IP Address and URLs) from Trellix EPO. The plugin does not support sharing indicators to Trellix EPO.",
+  "configuration": [
+    {
+      "label": "Base URL",
+      "key": "base_url",
+      "type": "text",
+      "default": "https://api.manage.trellix.com",
+      "mandatory": true,
+      "description": "Trellix Base URL. E.g., https://api.manage.trellix.com/"
+    },
+    {
+      "label": "API Key",
+      "key": "api_key",
+      "type": "password",
+      "mandatory": true,
+      "description": "Trellix API Key is available from the Trellix Developer Portal. 'Self Service > API Access Management.'"
+    },
+    {
+      "label": "Client ID",
+      "key": "client_id",
+      "type": "text",
+      "default": "",
+      "mandatory": true,
+      "description": "Client Id for your Trellix EPO account, can be generated from the Trellix Developer Portal. 'Self Service > API Access Management.'"
+    },
+    {
+      "label": "Client Secret",
+      "key": "client_secret",
+      "type": "password",
+      "mandatory": true,
+      "description": "Client secret for your Trellix EPO Account, can be generated from the Trellix Developer Portal. 'Self Service > API Access Management.'"
+    },
+    {
+      "label": "Type of Threat data to pull",
+      "key": "threat_types",
+      "type": "multichoice",
+      "choices": [
+        {
+          "key": "MD5",
+          "value": "md5"
+        },
+        {
+          "key": "SHA256",
+          "value": "sha256"
+        },
+        {
+          "key": "Domain",
+          "value": "domain"
+        },
+        {
+          "key": "URL",
+          "value": "url"
+        },
+        {
+          "key": "IP",
+          "value": "ip"
+        }
+      ],
+      "default": [
+        "md5",
+        "sha256",
+        "domain",
+        "url",
+        "ip"
+      ],
+      "description": "Type of Threat data to pull. Allowed values are MD5, SHA256, Domain, URL, IP."
+    },
+    {
+      "label": "Initial Range",
+      "key": "initial_range",
+      "type": "number",
+      "default": 7,
+      "mandatory": true,
+      "description": "Number of days to pull the data for the initial run."
+    }
+  ]
+}

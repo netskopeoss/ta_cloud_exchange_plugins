@@ -37,7 +37,9 @@ import traceback
 import time
 import sys
 import requests
+import re
 from netskope.common.utils import add_user_agent
+
 
 from .anomali_threatstream_constant import (
     DEFAULT_WAIT_TIME,
@@ -83,6 +85,23 @@ class AnomaliThreatstreamPluginHelper(object):
         self.plugin_version = plugin_version
         self.ssl_validation = ssl_validation
         self.proxy = proxy
+
+    def validate_comma_separated_values(self, value: str) -> bool:
+        """
+        Validate comma-separated values and return True if the format is correct, False otherwise.
+
+        Parameters:
+            value (str): A string containing comma-separated values.
+
+        Returns:
+            bool: True if the format is correct, False otherwise.
+        """
+        
+        pattern = re.compile(r"^(([0-9\s](,)?)*)+$")
+        if pattern.match(value) == None:
+            return False
+        else:
+            return True
 
     def _add_user_agent(self, headers) -> str:
         """Add User-Agent in the headers of any request.
@@ -220,7 +239,7 @@ class AnomaliThreatstreamPluginHelper(object):
             display_headers = {
                 k: v for k, v in headers.items() if k not in {"Authorization"}
             }
-            debuglog_msg = f"{self.log_prefix} : API Request for {logger_msg}. URL={url}, Headers={display_headers}"
+            debuglog_msg = f"{self.log_prefix}: API Request for {logger_msg}. URL={url}, Headers={display_headers}"
             if params:
                 debuglog_msg += f", params={params}"
 
@@ -236,7 +255,7 @@ class AnomaliThreatstreamPluginHelper(object):
                     proxies=self.proxy,
                 )
                 self.logger.debug(
-                    f"{self.log_prefix} : Received API Response while "
+                    f"{self.log_prefix}: Received API Response while "
                     f"{logger_msg}. Method={method}, "
                     f"Status Code={response.status_code}."
                 )

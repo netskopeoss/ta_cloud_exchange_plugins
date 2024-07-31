@@ -1,8 +1,8 @@
 {
   "name": "Anomali ThreatStream XDR",
   "id": "anomali_threatstream",
-  "version": "1.0.1",
-  "description": "The Anomali ThreatStream XDR plugin is designed to fetch the indicators of type URL(as URL, IP, Domain, IPv6), SHA256 and MD5 from the Observables and store them in Netskope CE. The plugin also supports pushing the indicators of type URL(as URL, IP, Domain, IPv6), SHA256 and MD5 to Observables on the Anomali ThreatStream XDR platform.",
+  "version": "1.2.0",
+  "description": "The Anomali ThreatStream XDR plugin is used to fetch the indicators of type URL, IP (IPv4), Domain, IPv6, SHA256 and MD5 from the Observables on Anomali ThreatStream (XDR). This plugin supports sharing MD5, SHA256, URL, Domain, IPv4 and IPv6 to Observables on the Anomali ThreatStream (XDR) platform using the Share Indicators action.",
   "patch_supported": true,
   "configuration": [
     {
@@ -152,6 +152,22 @@
       ],
       "mandatory": false,
       "description": "Only indicators with matching status will be fetched. If no specific value is chosen, indicators with all available status will be retrieved."
+    },
+    {
+      "label": "Tags",
+      "key": "tags",
+      "type": "text",
+      "default": "",
+      "mandatory": false,
+      "description": "Only indicators with matching Tags will be fetched. Add multiple Tags separated by commas."
+    },
+    {
+      "label": "Feed ID",
+      "key": "feed_id",
+      "type": "text",
+      "default": "",
+      "mandatory": false,
+      "description": "Only indicators with matching Feed ID will be fetched. Add one or more numeric Feed IDs, separated by commas."
     },
     {
       "label": "Enable Polling",

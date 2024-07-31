@@ -1,0 +1,56 @@
+{
+  "name": "HaloITSM",
+  "description": "This plugin is used to create tickets on the HaloITSM platform. Only supports ticket creation and ticket status syncing. Note: Updating tickets on HaloITSM platform is not supported.",
+  "id": "halo_itsm",
+  "version": "1.0.0",
+  "pulling_supported": false,
+  "receiving_supported": true,
+  "configuration": [
+    {
+      "label": "Authentication",
+      "name": "auth",
+      "type": "step",
+      "fields": [
+        {
+          "label": "Tenant Name",
+          "key": "tenantname",
+          "type": "text",
+          "default": "",
+          "mandatory": true,
+          "description": "Name of the tenant used to authorize HaloITSM Platform."
+        },
+        {
+          "label": "Authentication Method",
+          "key": "auth_method",
+          "type": "choice",
+          "choices": [
+            {
+              "key": "Username and Password",
+              "value": "password"
+            },
+            {
+              "key": "Client ID and Secret (Services)",
+              "value": "client_credentials"
+            }
+          ],
+          "default": "password",
+          "mandatory": true,
+          "description": "Select the option based on the authentication method selected on the HaloITSM instance. Note: we only support 'Username and Password' and 'Client ID and Secret (Services)' authentication methods."
+        },
+        {
+          "label": "Client ID",
+          "key": "client_id",
+          "type": "text",
+          "default": "",
+          "mandatory": true,
+          "description": "The Client ID associated with the HaloITSM platform Application."
+        }
+      ]
+    },
+    {
+      "label": "Configuration Parameters",
+      "name": "params",
+      "type": "dynamic_step"
+    }
+  ]
+}

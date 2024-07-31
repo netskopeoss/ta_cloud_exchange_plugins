@@ -30,8 +30,12 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
 
-"""CSCC constants."""
+"""Google Cloud SCC Plugin constants."""
 
+
+MODULE_NAME = "CLS"
+PLUGIN_NAME = "Google Cloud SCC"
+PLUGIN_VERSION = "2.1.0"
 
 GCP_SCOPE = ["https://www.googleapis.com/auth/cloud-platform"]
 GCP_URL = "https://securitycenter.googleapis.com/v1/organizations"

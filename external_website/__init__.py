@@ -1,1 +1,1 @@
-"""External Website URL Sources Plugin Package."""
+"""CTE Web Page IOC Scraper Plugin Package."""

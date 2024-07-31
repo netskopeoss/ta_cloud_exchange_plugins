@@ -1,18 +1,18 @@
 {
-  "name": "External Website",
+  "name": "Web Page IOC Scraper",
   "id": "external_website",
-  "version": "1.0.0",
-  "description": "This plugin is used to fetch data from any External Website and extract indicators of type URL (URL, Domains, IPv4), SHA256, and MD5. This plugin does not support sharing of Indicators.",
+  "version": "1.1.0",
+  "description": "This plugin is used to pull IOCs of type URL, Domain, IPv4, IPv6, MD5 and SHA256 from any public website. This plugin does not support sharing of IOCs or performing any actions.",
   "patch_supported": false,
   "push_supported": false,
   "configuration": [
     {
-      "label": "External Website URL",
+      "label": "Website URL",
       "key": "url",
       "type": "text",
       "mandatory": true,
       "default": "",
-      "description": "Add URL of External Website from where you want to pull data."
+      "description": "Add URL of public website from where you want to pull data."
     },
     {
       "label": "Type of Threat data to pull",
@@ -30,15 +30,30 @@
         {
           "key": "URL",
           "value": "url"
+        },
+        {
+          "key": "Domain",
+          "value": "domain"
+        },
+        {
+          "key": "IPv4",
+          "value": "ipv4"
+        },
+        {
+          "key": "IPv6",
+          "value": "ipv6"
         }
       ],
       "default": [
         "sha256",
         "md5",
-        "url"
+        "url",
+        "domain",
+        "ipv4",
+        "ipv6"
       ],
       "mandatory": true,
-      "description": "Type of Threat data to pull. Allowed values are SHA256, MD5, URL."
+      "description": "Type of Threat data to pull. Allowed values are SHA256, MD5, URL, Domain, IPv4, IPv6."
     }
   ]
 }

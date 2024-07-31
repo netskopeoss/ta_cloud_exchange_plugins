@@ -28,48 +28,95 @@ SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
 CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+CLS Elastic plugin client module.
 """
 
-"""Elastic CLient."""
-
-
 import socket
+import traceback
+from .elastic_exceptions import ElasticPluginException
 
 
 class ElasticClient:
-    """Elastic Client."""
+    """Elastic plugin client class."""
 
-    def __init__(self, configuration: dict, logger):
+    def __init__(self, configuration: dict, logger, log_prefix):
         """Initialize."""
         self.configuration = configuration
         self.logger = logger
+        self.log_prefix = log_prefix
 
-    def get_socket(self):
-        """To Get TCP socket."""
+    def get_socket(self, is_validation=False):
+        """To Get TCP socket.
+
+        Args:
+            is_validation (bool, optional): Is this request coming from
+            validate method? Defaults to False.
+        """
         try:
+            validation_msg = "Validation error occurred,"
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.sock.connect(
                 (
-                    self.configuration["server_address"],
-                    self.configuration["server_port"],
+                    self.configuration.get("server_address", "").strip(),
+                    self.configuration.get("server_port"),
                 )
             )
-        except Exception as e:
-            self.logger.error(f"Error while connection to server: {e}")
-            raise
+        except socket.gaierror as err:
+            err_msg = (
+                "Unable to establish connection with Elastic Server."
+                " Verify the Server Address provided in "
+                "configuration parameters."
+            )
+            if is_validation:
+                err_msg = validation_msg + " " + err_msg
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg} Error: {err}",
+                details=str(traceback.format_exc()),
+            )
+            raise ElasticPluginException(err_msg)
+        except socket.timeout as err:
+            err_msg = (
+                "Connection Timeout. Verify the Server Address, "
+                "Server Port and proxy configuration provided."
+            )
+            if is_validation:
+                err_msg = validation_msg + " " + err_msg
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg} Error: {err}.",
+                details=str(traceback.format_exc()),
+            )
+            raise ElasticPluginException(err_msg)
+
+        except (Exception, socket.error) as err:
+            err_msg = (
+                "Unable to establish connection with Elastic Server. "
+                "Verify the Server Address and Server Port provided in the "
+                "configuration parameters."
+            )
+            if is_validation:
+                err_msg = validation_msg + " " + err_msg
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg} Error: {err}",
+                details=str(traceback.format_exc()),
+            )
+            raise ElasticPluginException(err_msg)
 
     def push_data(self, data):
         """To Push the data to TCP server."""
         try:
-            self.sock.send(bytes(data, encoding="utf-8"))
-        except Exception:
-            raise
+            self.sock.sendall(bytes(data, encoding="utf-8"))
+        except Exception as exp:
+            raise ElasticPluginException(exp)
 
     def close(self):
         """To Close socket connection."""
         try:
             self.sock.close()
-        except Exception as e:
+        except Exception as err:
+            err_msg = "Error while closing socket connection."
             self.logger.error(
-                f"Elastic Plugin: Error while Closing socket connection: {e}"
+                message=f"{self.log_prefix}: {err_msg} Error: {err}",
+                details=str(traceback.format_exc()),
             )
+            raise ElasticPluginException(err)

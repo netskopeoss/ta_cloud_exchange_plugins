@@ -28,13 +28,13 @@ SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
 CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+Elastic plugin.
 """
 
-"""Elastic plugin."""
-
-
 import json
-from typing import List
+import traceback
+from typing import Dict, List, Tuple
 from jsonpath import jsonpath
 
 from netskope.common.utils import AlertsHelper
@@ -59,94 +59,180 @@ from .utils.elastic_exceptions import (
     MappingValidationError,
     EmptyExtensionError,
     FieldNotFoundError,
+    ElasticPluginException,
+)
+from .utils.elastic_constants import (
+    MODULE_NAME,
+    PLUGIN_NAME,
+    PLUGIN_VERSION,
+    PLATFORM_NAME,
+    BATCH_SIZE,
 )
 
 
 class ElasticPlugin(PluginBase):
     """The Elastic plugin implementation class."""
 
-    def test_server_connectivity(self, configuration):
-        """Tests whether the configured server is reachable or not."""
-        elastic_client = ElasticClient(configuration, self.logger)
+    def __init__(self, name, *args, **kwargs):
+        """Cynet plugin initializer
+        Args:
+           name (str): Plugin configuration name.
+        """
+        super().__init__(name, *args, **kwargs)
+        self.plugin_name, self.plugin_version = self._get_plugin_info()
+        self.log_prefix = f"{MODULE_NAME} {self.plugin_name}"
+
+        if name:
+            self.log_prefix = f"{self.log_prefix} [{name}]"
+
+    def _get_plugin_info(self) -> Tuple:
+        """Get plugin name and version from manifest.
+
+        Returns:
+            tuple: Tuple of plugin's name and version pulled from manifest.
+        """
+        try:
+            manifest_json = ElasticPlugin.metadata
+            plugin_name = manifest_json.get("name", PLUGIN_NAME)
+            plugin_version = manifest_json.get("version", PLUGIN_VERSION)
+            return plugin_name, plugin_version
+        except Exception as exp:
+            self.logger.error(
+                message=(
+                    f"{MODULE_NAME} {PLUGIN_NAME}: Error occurred while"
+                    f" getting plugin details. Error: {exp}"
+                ),
+                details=str(traceback.format_exc()),
+            )
+
+        return PLUGIN_NAME, PLUGIN_VERSION
+
+    def test_server_connectivity(self, configuration: Dict):
+        """Tests whether the configured server is reachable or not.
+
+        Args:
+            configuration (Dict): Configuration dictionary.
+        """
+        elastic_client = ElasticClient(
+            configuration, self.logger, self.log_prefix
+        )
         try:
             # Elastic Client
-            elastic_client.get_socket()
-        except Exception as e:
-            self.logger.error(
-                f"Elastic Plugin: Validation error occurred. "
-                f"While establishing connection with server: {e}."
+            elastic_client.get_socket(is_validation=True)
+        except ElasticPluginException:
+            raise
+        except Exception as err:
+            err_msg = (
+                "Unable to establish connection with Elastic Server. "
+                "Verify the Server Address and Server Port provided in the "
+                "configuration parameters."
             )
-            raise e
+            self.logger.error(
+                message=(
+                    f"{self.log_prefix}: Validation error occurred, {err_msg}"
+                    f"Error: {err}"
+                ),
+                details=str(traceback.format_exc()),
+            )
+            raise ElasticPluginException(err_msg)
         finally:
             elastic_client.close()
 
-    def validate(self, configuration: dict) -> ValidationResult:
-        """Validate the configuration parameters dict."""
-        ecs_validator = ElasticValidator(self.logger)
+    def validate(self, configuration: Dict) -> ValidationResult:
+        """Validate the configuration parameters dict.
 
-        if (
-            "server_address" not in configuration
-            or type(configuration["server_address"]) != str
-            or not configuration["server_address"].strip()
-        ):
-            self.logger.error(
-                "Elastic Plugin: Validation error occurred. Error: "
-                "Invalid Server Address found in the configuration parameters."
-            )
-            return ValidationResult(
-                success=False, message="Invalid Server Address provided."
-            )
+        Args:
+            configuration (Dict): Configuration parameters.
 
-        if (
-            "server_port" not in configuration
-            or not configuration["server_port"]
-            or not ecs_validator.validate_server_port(
-                configuration["server_port"]
+        Returns:
+            ValidationResult: Validation result with flag and message.
+        """
+        ecs_validator = ElasticValidator(self.logger, self.log_prefix)
+        validation_err_msg = f"{self.log_prefix}: Validation error occurred."
+        server_address = configuration.get("server_address", "").strip()
+
+        if not server_address:
+            err_msg = "Server Address is a required configuration parameter."
+            self.logger.error(f"{validation_err_msg} {err_msg}")
+            return ValidationResult(success=False, message=err_msg)
+        elif not isinstance(server_address, str):
+            err_msg = (
+                "Invalid Server Address provided in the "
+                "configuration parameters."
             )
-        ):
-            self.logger.error(
-                "Elastic Plugin: Validation error occurred. Error: "
-                "Invalid Server port found in the configuration parameters."
+            self.logger.error(f"{validation_err_msg} {err_msg}")
+            return ValidationResult(success=False, message=err_msg)
+
+        server_port = configuration.get("server_port")
+
+        if not server_port:
+            err_msg = "Server Port is a required configuration parameter."
+            self.logger.error(f"{self.log_prefix}: {err_msg}")
+            return ValidationResult(success=False, message=err_msg)
+        elif not isinstance(
+            server_port, int
+        ) or not ecs_validator.validate_server_port(server_port):
+            err_msg = (
+                "Invalid Server Port provided in the configuration"
+                " parameters. Server Port should be an integer in "
+                "range 0 to 65535."
             )
-            return ValidationResult(
-                success=False, message="Invalid Server port provided."
-            )
-        server_address = configuration["server_address"].strip()
+            self.logger.error(f"{validation_err_msg} {err_msg}")
+            return ValidationResult(success=False, message=err_msg)
+
         if server_address in ["127.0.0.1", "0.0.0.0"]:
-            self.logger.error(
-                "Elastic Plugin: Validation error occurred. Error: "
-                "Invalid Server Address found in the configuration parameters."
+            err_msg = (
+                "Invalid Server Address provided in configuration"
+                " parameters. If the elastic agent is deployed on the"
+                " same machine as Cloud Exchange, use IP address "
+                "of machine as the Server Address."
             )
+            self.logger.error(f"{validation_err_msg} {err_msg}")
             return ValidationResult(
                 success=False,
-                message="Invalid Server Address provided. If the elastic"
-                " agent is deployed on the same machine as CE,"
-                " use IP address of machine as the Server Address.",
+                message=err_msg,
             )
 
         mappings = self.mappings.get("jsonData", None)
         mappings = json.loads(mappings)
-        if type(mappings) != dict or not ecs_validator.validate_elastic_map(
-            mappings
-        ):
-            self.logger.error(
-                "Elastic Plugin: Validation error occurred. Error: "
-                "Invalid Elastic attribute mapping found in the configuration parameters."
+        if not isinstance(
+            mappings, dict
+        ) or not ecs_validator.validate_elastic_map(mappings):
+            err_msg = (
+                "Invalid attribute mapping found."
+                " Verify the mapping file provided in Basic configuration."
             )
+            self.logger.error(f"{validation_err_msg} {err_msg}")
             return ValidationResult(
                 success=False,
-                message="Invalid Elastic attribute mapping provided.",
+                message=err_msg,
             )
 
         try:
             self.test_server_connectivity(configuration)
-        except Exception:
+        except ElasticPluginException as exp:
             return ValidationResult(
                 success=False,
-                message="Error occurred while establishing connection with Server. "
-                "Make sure you have provided correct Server Address and Port.",
+                message=str(exp),
             )
-
+        except Exception as exp:
+            err_msg = (
+                "Unable to establish connection with Elastic "
+                "Server. Make sure you have provided correct "
+                "Server Address and Server Port."
+            )
+            self.logger.error(
+                message=f"{validation_err_msg} {err_msg} Error: {exp}",
+                details=str(traceback.format_exc()),
+            )
+            return ValidationResult(
+                success=False,
+                message=err_msg,
+            )
+        self.logger.info(
+            f"{self.log_prefix}: Successfully validated {PLUGIN_NAME}"
+            " configuration."
+        )
         return ValidationResult(success=True, message="Validation successful.")
 
     def push(self, transformed_data, data_type, subtype) -> PushResult:
@@ -155,27 +241,64 @@ class ElasticPlugin(PluginBase):
         Args:
             transformed_data (list): The transformed data to be ingested.
             data_type (str): The type of data to be ingested (alert/event)
-            subtype (str): The subtype of data to be ingested (DLP, anomaly etc. in case of alerts)
-
+            subtype (str): The subtype of data to be ingested (DLP,
+            anomaly etc. in case of alerts)
 
         Returns:
             PushResult: Result indicating ingesting outcome and message
         """
-        elastic_client = ElasticClient(self.configuration, self.logger)
+        successful_log_push_counter, skipped_logs = 0, 0
+        elastic_client = ElasticClient(
+            self.configuration, self.logger, self.log_prefix
+        )
         try:
             # Elastic Client
             elastic_client.get_socket()
+            for i in range(0, len(transformed_data), BATCH_SIZE):
+                try:
+                    batch = transformed_data[i : i + BATCH_SIZE]  # noqa
+                    payload = [
+                        json.dumps(event) + "\n" for event in batch if event
+                    ]
+                    payload = "".join(payload)
+                    elastic_client.push_data(payload)
+                    successful_log_push_counter += len(batch)
+                except Exception as err:
+                    self.logger.error(
+                        message=(
+                            f"{self.log_prefix}: Error while sending data to"
+                            f" {PLATFORM_NAME} server. Error: {err}"
+                        ),
+                        details=str(traceback.format_exc()),
+                    )
 
-            # Prepare data to push (String of events/alerts seperated by '\n'.
-            data = []
-            for json_data in transformed_data:
-                data.append(json.dumps(json_data))
+            skipped_logs = len(transformed_data) - successful_log_push_counter
 
-            final_data = "\n".join(data)
-            elastic_client.push_data(final_data)
-        except Exception as e:
-            self.logger.error(f"Error while pushing data: {e}")
-            raise
+            if skipped_logs > 0:
+                self.logger.debug(
+                    f"{self.log_prefix}: Unable to send"
+                    f" data for {skipped_logs} log(s) to {PLATFORM_NAME}"
+                    " server as there might be empty data in it"
+                    " or due to some other error occurred while ingesting."
+                    " Hence ingestion of these log(s) will be skipped."
+                )
+            log_msg = (
+                f"[{data_type}] [{subtype}] - "
+                f"Successfully ingested {successful_log_push_counter} log(s)"
+                f" to {PLATFORM_NAME} server."
+            )
+            self.logger.info(f"{self.log_prefix}: {log_msg}")
+            return PushResult(
+                success=True,
+                message=log_msg,
+            )
+        except Exception as err:
+            err_msg = "Error occurred during data ingestion."
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg} Error: {err}.",
+                details=str(traceback.format_exc()),
+            )
+            raise ElasticPluginException(err_msg)
         finally:
             elastic_client.close()
 
@@ -202,17 +325,19 @@ class ElasticPlugin(PluginBase):
             fetched value.
         """
         return (
-            data[field]
+            (data[field], True)
             if data[field] or isinstance(data[field], int)
-            else "null"
+            else (None, False)
         )
 
     def get_subtype_mapping(self, mappings, subtype):
-        """To Retrieve subtype mappings (mappings for subtypes of alerts/events) case insensitively.
+        """To Retrieve subtype mappings (mappings for subtypes of
+        alerts/events) case insensitively.
 
         Args:
             mappings: Mapping JSON from which subtypes are to be retrieved
-            subtype: Subtype (e.g. DLP for alerts) for which the mapping is to be fetched
+            subtype: Subtype (e.g. DLP for alerts) for which the mapping is
+            to be fetched
 
         Returns:
             Fetched mapping JSON object
@@ -224,7 +349,8 @@ class ElasticPlugin(PluginBase):
             return mappings[subtype.upper()]
 
     def get_headers(self, header_mappings, data, data_type, subtype):
-        """To Create a dictionary of ECS headers from given header mappings for given Netskope alert/event record.
+        """To Create a dictionary of ECS headers from given header mappings
+        for given Netskope alert/event record.
 
         Args:
             subtype: Subtype for which the headers are being transformed
@@ -236,17 +362,25 @@ class ElasticPlugin(PluginBase):
             header dict
         """
         headers = {}
-        helper = AlertsHelper()
-        tenant = helper.get_tenant_cls(self.source)
-        mapping_variables = {"$tenant_name": tenant.name}
+        mapping_variables = {}
+        if data_type != "webtx":
+            helper = AlertsHelper()
+            tenant = helper.get_tenant_cls(self.source)
+            mapping_variables = {"$tenant_name": tenant.name}
 
         missing_fields = []
+        mapped_field_flag = False
         # Iterate over mapped headers
         for ecs_header, header_mapping in header_mappings.items():
             try:
-                headers[ecs_header] = self.get_field_value_from_data(
+                field_value, mapped_field = self.get_field_value_from_data(
                     header_mapping, data, data_type, subtype, False
                 )
+                if field_value is not None:
+                    headers[ecs_header] = field_value
+
+                if mapped_field:
+                    mapped_field_flag = mapped_field
 
                 # Handle variable mappings
                 if (
@@ -259,7 +393,7 @@ class ElasticPlugin(PluginBase):
             except FieldNotFoundError as err:
                 missing_fields.append(str(err))
 
-        return headers
+        return headers, mapped_field_flag
 
     def get_extensions(self, extension_mappings, data, data_type, subtype):
         """Fetch extensions from given mappings.
@@ -275,33 +409,41 @@ class ElasticPlugin(PluginBase):
         """
         extension = {}
         missing_fields = []
+        mapped_field_flag = False
 
         # Iterate over mapped extensions
         for ecs_extension, extension_mapping in extension_mappings.items():
             try:
-                extension[ecs_extension] = self.get_field_value_from_data(
+
+                field_value, mapped_field = self.get_field_value_from_data(
                     extension_mapping,
                     data,
                     data_type,
                     subtype,
                     is_json_path="is_json_path" in extension_mapping,
                 )
+                if field_value is not None:
+                    extension[ecs_extension] = field_value
+                if mapped_field:
+                    mapped_field_flag = mapped_field
             except FieldNotFoundError as err:
                 missing_fields.append(str(err))
 
-        return extension
+        return extension, mapped_field_flag
 
     def get_field_value_from_data(
         self, extension_mapping, data, data_type, subtype, is_json_path=False
     ):
-        """To Fetch the value of extension based on "mapping" and "default" fields.
+        """To Fetch the value of extension based on "mapping" and "default"
+          fields.
 
         Args:
             extension_mapping: Dict containing "mapping" and "default" fields
             data: Data instance retrieved from Netskope
             subtype: Subtype for which the extension are being transformed
             data_type: Data type for which the headers are being transformed
-            is_json_path: Whether the mapped value is JSON path or direct field name
+            is_json_path: Whether the mapped value is JSON path or direct
+            field name
 
         Returns:
             Fetched values of extension
@@ -321,48 +463,69 @@ class ElasticPlugin(PluginBase):
            NP    |     NP     |        NP      |           - (Not possible)
         -----------------------------------------------------------------------
         """
+        mapped_field = False
         if (
             "mapping_field" in extension_mapping
             and extension_mapping["mapping_field"]
         ):
             if is_json_path:
-                # If mapping field specified by JSON path is present in data, map that field, else skip by raising
-                # exception:
+                # mapped_field will be returned as true only if the value
+                # returned is using the mapping_field and not default_value
                 value = self.get_mapping_value_from_json_path(
                     data, extension_mapping["mapping_field"]
                 )
                 if value:
-                    return ",".join([str(val) for val in value])
+                    mapped_field = True
+                    return ",".join([str(val) for val in value]), mapped_field
                 else:
                     raise FieldNotFoundError(
                         extension_mapping["mapping_field"]
                     )
             else:
-                # If mapping is present in data, map that field, else skip by raising exception
+                # If mapping is present in data, map that field, else skip by
+                # raising exception
                 if (
                     extension_mapping["mapping_field"] in data
                 ):  # case #1 and case #4
+                    if (
+                        extension_mapping.get("transformation") == "Time Stamp"
+                        and data[extension_mapping["mapping_field"]]
+                    ):
+                        try:
+                            mapped_field = True
+                            return (
+                                int(data[extension_mapping["mapping_field"]]),
+                                mapped_field,
+                            )
+                        except Exception:
+                            pass
                     return self.get_mapping_value_from_field(
                         data, extension_mapping["mapping_field"]
                     )
                 elif "default_value" in extension_mapping:
-                    # If mapped value is not found in response and default is mapped, map the default value (case #2)
-                    return extension_mapping["default_value"]
+                    # If mapped value is not found in response and default is \
+                    # mapped, map the default value (case #2)
+                    return extension_mapping["default_value"], mapped_field
                 else:  # case #6
                     raise FieldNotFoundError(
                         extension_mapping["mapping_field"]
                     )
         else:
-            # If mapping is not present, 'default_value' must be there because of validation (case #3 and case #5)
-            return extension_mapping["default_value"]
+            # If mapping is not present, 'default_value' must be there because
+            # of validation (case #3 and case #5)
+            return extension_mapping["default_value"], mapped_field
 
-    def map_json_data(self, mappings, data, data_type, subtype):
+    def map_json_data(self, mappings, data):
         """Filter the raw data and returns the filtered data.
 
-        :param mappings: List of fields to be pushed
-        :param data: Data to be mapped (retrieved from Netskope)
-        :param logger: Logger object for logging purpose
-        :return: Mapped data based on fields given in mapping file
+        Args:
+            mappings (Dict): List of fields to be pushed.
+            data: Data to be mapped (retrieved from Netskope).
+            data_type: Logger object for logging purpose.
+            subtype: Mapped data based on fields given in mapping file.
+
+        Returns:
+            mapped_dict (Dict): Mapped data.
         """
 
         if mappings == []:
@@ -376,12 +539,14 @@ class ElasticPlugin(PluginBase):
         return mapped_dict
 
     def transform(self, raw_data, data_type, subtype) -> List:
-        """Transform the raw netskope JSON data into target platform supported data formats.
+        """Transform the raw netskope JSON data into target platform supported
+          data formats.
 
         Args:
-            raw_data (list): The raw data to be tranformed.
+            raw_data (list): The raw data to be transformed.
             data_type (str): The type of data to be ingested (alert/event)
-            subtype (str): The subtype of data to be ingested (DLP, anomaly etc. in case of alerts)
+            subtype (str): The subtype of data to be ingested (DLP, anomaly
+              etc. in case of alerts)
 
         Raises:
             NotImplementedError: If the method is not implemented.
@@ -389,6 +554,8 @@ class ElasticPlugin(PluginBase):
         Returns:
             List: list of transformed data.
         """
+        count = 0
+        transformed_data = []
         if not self.configuration.get("transformData", True):
             if data_type not in ["alerts", "events"]:
                 return raw_data
@@ -398,18 +565,28 @@ class ElasticPlugin(PluginBase):
                     self.mappings, "json"
                 )
             except KeyError as err:
+                err_msg = "An error occurred while fetching the mappings."
                 self.logger.error(
-                    "Error in elastic mapping file. Error: {}".format(str(err))
+                    message=f"{self.log_prefix}: {err_msg} Error: {err}",
+                    details=str(traceback.format_exc()),
                 )
-                raise
+                raise ElasticPluginException(err_msg)
             except MappingValidationError as err:
-                self.logger.error(str(err))
+                err_msg = (
+                    "An error occurred while validating the mapping file."
+                )
+                self.logger.error(
+                    message=f"{self.log_prefix}: {err_msg} {err}",
+                    details=str(traceback.format_exc()),
+                )
                 raise
             except Exception as err:
                 self.logger.error(
-                    "An error occurred while mapping data using given json mappings. Error: {}".format(
-                        str(err)
-                    )
+                    message=(
+                        f"{self.log_prefix}: An error occurred while mapping "
+                        f"data using given json mappings. Error: {err}"
+                    ),
+                    details=str(traceback.format_exc()),
                 )
                 raise
 
@@ -419,23 +596,21 @@ class ElasticPlugin(PluginBase):
                 )
             except Exception:
                 self.logger.error(
-                    'Error occurred while retrieving mappings for datatype: "{}" (subtype "{}"). '
-                    "Transformation will be skipped.".format(
-                        data_type, subtype
-                    )
+                    message=(
+                        f"{self.log_prefix}: Error occurred while retrieving "
+                        f"mappings for datatype: {data_type} "
+                        f"(subtype: {subtype}) Transformation will be skipped."
+                    ),
+                    details=str(traceback.format_exc()),
                 )
                 raise
 
-            transformed_data = []
-
             for data in raw_data:
-                transformed_data.append(
-                    self.map_json_data(
-                        subtype_mapping, data, data_type, subtype
-                    )
-                )
-
-            return transformed_data
+                mapped_dict = self.map_json_data(subtype_mapping, data)
+                if mapped_dict:
+                    transformed_data.append(mapped_dict)
+                else:
+                    count += 1
 
         else:
             try:
@@ -444,86 +619,140 @@ class ElasticPlugin(PluginBase):
                 )
             except KeyError as err:
                 self.logger.error(
-                    "Error in elastic mapping file. Error: {}".format(str(err))
+                    message=(
+                        f"{self.log_prefix}: An error occurred while "
+                        f"fetching the mappings. Error: {err}"
+                    ),
+                    details=str(traceback.format_exc()),
                 )
                 raise
             except MappingValidationError as err:
-                self.logger.error(str(err))
+                self.logger.error(
+                    message=(
+                        f"{self.log_prefix}: An error occurred while"
+                        f" validating the mapping file. {err}"
+                    ),
+                    details=str(traceback.format_exc()),
+                )
                 raise
             except Exception as err:
                 self.logger.error(
-                    "An error occurred while mapping data using given json mappings. Error: {}".format(
-                        str(err)
-                    )
+                    message=(
+                        f"{self.log_prefix}: An error occurred while mapping "
+                        f"data using given json mappings. Error: {err}"
+                    ),
+                    details=str(traceback.format_exc()),
                 )
                 raise
 
-            transformed_data = []
             ecs_generator = ECSGenerator(
                 self.mappings,
                 ecs_version,
                 self.logger,
+                self.log_prefix,
             )
+
+            # First retrieve the mapping of subtype being transformed
+            try:
+                subtype_mapping = self.get_subtype_mapping(
+                    elastic_mappings[data_type], subtype
+                )
+            except KeyError:
+                self.logger.info(
+                    f"{self.log_prefix}: Unable to find the mapping for "
+                    f"[{data_type}] [{subtype}] in the mapping file, "
+                    "Transformation of current batch will be skipped."
+                )
+                return []
+            except Exception:
+                self.logger.error(
+                    message=(
+                        f"{self.log_prefix}: Error occurred while retrieving "
+                        f"mappings for subtype {subtype}. "
+                        "Transformation of current batch will be skipped."
+                    ),
+                    details=str(traceback.format_exc()),
+                )
+                return []
 
             for data in raw_data:
                 # First retrieve the mapping of subtype being transformed
-                try:
-                    subtype_mapping = self.get_subtype_mapping(
-                        elastic_mappings[data_type], subtype
-                    )
-                except Exception:
-                    self.logger.error(
-                        'Error occurred while retrieving mappings for subtype "{}". '
-                        "Transformation of current record will be skipped.".format(
-                            subtype
-                        )
-                    )
+                if not data:
+                    count += 1
                     continue
 
                 # Generating the ECS header
                 try:
-                    header = self.get_headers(
+                    header, mapped_flag_header = self.get_headers(
                         subtype_mapping["header"], data, data_type, subtype
                     )
                 except Exception as err:
                     self.logger.error(
-                        "[{}][{}]: Error occurred while creating ECS header: {}. Transformation of "
-                        "current record will be skipped.".format(
-                            data_type, subtype, str(err)
-                        )
+                        message=(
+                            f"{self.log_prefix}: [{data_type}][{subtype}] - "
+                            f"Error occurred while creating CEF header: {err}."
+                            " Transformation of current record will "
+                            "be skipped."
+                        ),
+                        details=str(traceback.format_exc()),
                     )
+                    count += 1
                     continue
 
                 try:
-                    extension = self.get_extensions(
+                    extension, mapped_flag_extension = self.get_extensions(
                         subtype_mapping["extension"], data, data_type, subtype
                     )
                 except Exception as err:
                     self.logger.error(
-                        "[{}][{}]: Error occurred while creating ECS extension: {}. Transformation of "
-                        "the current record will be skipped".format(
-                            data_type, subtype, str(err)
-                        )
+                        message=(
+                            f"{self.log_prefix}: [{data_type}][{subtype}] - "
+                            "Error occurred while creating CEF extension: "
+                            f"{err}. Transformation of the current record "
+                            "will be skipped."
+                        ),
+                        details=str(traceback.format_exc()),
                     )
+                    count += 1
                     continue
 
                 try:
-                    transformed_data.append(
-                        ecs_generator.get_ecs_event(
-                            header, extension, data_type, subtype
-                        )
+                    if not (mapped_flag_header or mapped_flag_extension):
+                        count += 1
+                        continue
+                    ecs_generated_event = ecs_generator.get_ecs_event(
+                        header, extension, data_type, subtype
                     )
-                    pass
+                    if ecs_generated_event:
+                        transformed_data.append(ecs_generated_event)
+
                 except EmptyExtensionError:
                     self.logger.error(
-                        "[{}][{}]: Got empty extension during transformation."
-                        "Transformation of current record will be skipped".format(
-                            data_type, subtype
-                        )
+                        message=(
+                            f"{self.log_prefix}: [{data_type}][{subtype}] - "
+                            "Got empty extension during transformation. "
+                            "Transformation of current record will be skipped."
+                        ),
+                        details=str(traceback.format_exc()),
                     )
+                    count += 1
                 except Exception as err:
                     self.logger.error(
-                        "[{}][{}]: An error occurred during transformation."
-                        " Error: {}".format(data_type, subtype, str(err))
+                        message=(
+                            f"{self.log_prefix}: [{data_type}][{subtype}] - An"
+                            f" error occurred during transformation. "
+                            f"Error: {err}"
+                        ),
+                        details=str(traceback.format_exc()),
                     )
-            return transformed_data
+                    count += 1
+
+        if count > 0:
+            self.logger.debug(
+                f"{self.log_prefix}: Plugin couldn't process "
+                f"{count} records because they either had no data or "
+                "contained invalid/missing fields according to the "
+                "configured mapping. Therefore, the transformation "
+                "and ingestion for those records were skipped."
+            )
+        return transformed_data

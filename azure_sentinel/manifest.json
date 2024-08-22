@@ -1,14 +1,14 @@
 {
   "name": "Microsoft Azure Sentinel",
   "id": "azure_sentinel",
-  "version": "3.0.0",
+  "version": "3.0.2",
   "mapping": "Azure Sentinel Default Mappings",
   "types": [
     "alerts",
     "events",
     "webtx"
   ],
-  "description": "This plugin is designed for ingesting Alerts, Events, and WebTx data into the Microsoft Azure Sentinel, it only supports the ingestion of JSON-formatted logs. You would need the Log Analytics Workspace on the Microsoft Azure platform to access the plugin.",
+  "description": "This plugin is designed for ingesting Alerts (DLP, Malware, Policy, Compromised Credential, Malsite, Quarantine, Remediation, Security Assessment, Watchlist, CTEP, UBA), Events (Page, Application, Audit, Infrastructure, Network, Incident) and WebTx data into the Microsoft Azure Sentinel, it only supports the ingestion of JSON-formatted logs. You would need the Log Analytics Workspace on the Microsoft Azure platform to access the plugin.",
   "configuration": [
     {
       "label": "Workspace ID",
@@ -16,7 +16,7 @@
       "type": "text",
       "default": "",
       "mandatory": true,
-      "description": "Unique identifier of your Microsoft Azure Sentinel Workspace."
+      "description": "Unique identifier of your Microsoft Azure Sentinel Workspace. To get the Workspace ID, navigate to Home > Log Analytics workspaces > click on the workspace > Settings > Agents > Log Analytics agent instructions."
     },
     {
       "label": "Primary Key",
@@ -24,7 +24,7 @@
       "type": "password",
       "default": "",
       "mandatory": true,
-      "description": "An authentication key for your Microsoft Azure Sentinel Workspace."
+      "description": "An authentication key for your Microsoft Azure Sentinel Workspace. To get the Primary Key, navigate to Home > Log Analytics workspaces > click on the workspace > Settings > Agents > Log Analytics agent instructions."
     },
     {
       "label": "Alerts Log Type Name",
@@ -32,7 +32,7 @@
       "type": "text",
       "default": "Netskope_Alerts",
       "mandatory": true,
-      "description": "Custom Log Type name for alerts. Based on this name, schema for alerts will be created in Log Analytics Workspace with suffix '_CL'. Note: The value “Netskope_Alerts“ or “Netskope_Alerts_CL” for this parameter matches the Netskope published playbooks in the Microsoft Azure marketplace."
+      "description": "Custom Log Type name for alerts. Based on this name, schema for alerts will be created in Log Analytics Workspace with suffix '_CL'. Note: The value “Netskope_Alerts“ or “Netskope_Alerts_CL” for this parameter matches the Netskope published playbooks in the Microsoft Azure marketplace. If not already present new Log Type with the given name will be created."
     },
     {
       "label": "Events Log Type Name",
@@ -40,7 +40,7 @@
       "type": "text",
       "default": "Netskope_Events",
       "mandatory": true,
-      "description": "Custom Log Type name for events. Based on this name, schema for events will be created in Log Analytics Workspace with suffix '_CL'. Note: The value “Netskope_Events“ or “Netskope_Events_CL” for this parameter matches the Netskope published playbooks in the Microsoft Azure marketplace."
+      "description": "Custom Log Type name for events. Based on this name, schema for events will be created in Log Analytics Workspace with suffix '_CL'. Note: The value “Netskope_Events“ or “Netskope_Events_CL” for this parameter matches the Netskope published playbooks in the Microsoft Azure marketplace. If not already present new Log Type with the given name will be created."
     },
     {
       "label": "WebTX Log Type Name",
@@ -48,7 +48,7 @@
       "type": "text",
       "default": "Netskope_WebTX",
       "mandatory": true,
-      "description": "Custom Log Type name for web transactions. Based on this name, schema for web transactions will be created in Log Analytics Workspace with suffix '_CL'. Note: The value “Netskope_WebTX“ or “Netskope_WebTX_CL” for this parameter matches the Netskope published playbooks in the Microsoft Azure marketplace."
+      "description": "Custom Log Type name for web transactions. Based on this name, schema for web transactions will be created in Log Analytics Workspace with suffix '_CL'. Note: The value “Netskope_WebTX“ or “Netskope_WebTX_CL” for this parameter matches the Netskope published playbooks in the Microsoft Azure marketplace. If not already present new Log Type with the given name will be created."
     }
   ]
 }

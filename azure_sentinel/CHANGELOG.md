@@ -1,3 +1,13 @@
+# 3.0.2
+## Updated
+- Updated the default timeout to 3 minutes.
+
+# 3.0.1
+## Updated
+- Updated the push mechanism for splitting data into batches.
+## Fixed
+- Bug Fixes.
+
 # 3.0.0
 ## Added
 - Added Support for the incident event type. To pull and ingest this event type update your CE version to 4.1.0.

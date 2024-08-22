@@ -88,10 +88,11 @@ def get_sentinel_mappings(mappings, data_type):
         try:
             validate_subtype(subtype_map)
         except JsonSchemaValidationError as err:
-            raise MappingValidationError(
+            err_msg = (
                 "Error occurred while validating Azure Sentinel mappings for "
                 'type "{}".Error: {}'.format(subtype, err)
             )
+            raise MappingValidationError(err_msg)
     return mappings
 
 
@@ -103,14 +104,17 @@ def split_into_size(data_list):
     - data_list: The list of data to be split.
 
     Returns:
-    A list of parts, each with a total size approximately equal to the target size.
+    A list of parts, each with a total size approximately
+    equal to the target size.
     """
     result = []
     current_part = []
     current_size_mb = 0
 
     for item in data_list:
-        item_size_mb = sys.getsizeof(json.dumps(item)) / (1024**2)  # Convert bytes to MB
+        item_size_mb = sys.getsizeof(json.dumps(item)) / (
+            1024**2
+        )  # Convert bytes to MB
         if current_size_mb + item_size_mb <= TARGET_SIZE_MB:
             current_part.append(item)
             current_size_mb += item_size_mb

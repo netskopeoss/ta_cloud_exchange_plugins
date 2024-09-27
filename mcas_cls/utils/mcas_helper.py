@@ -31,25 +31,22 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 MCAS Helper."""
 
-import requests
 import json
+
+import requests
 from jsonschema import validate
-
-from .mcas_exceptions import MappingValidationError, MCASPluginException
 from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
-
-from .mcas_constants import (
-    PLUGIN_VERSION,
-    PLATFORM_NAME,
-    MODULE_NAME,
-)
 from netskope.common.utils import add_user_agent
+
+from .mcas_constants import MODULE_NAME, PLATFORM_NAME, PLUGIN_VERSION
+from .mcas_exceptions import MappingValidationError, MCASPluginException
 
 
 def validate_extension(instance):
-    """Define JSON schema for validating mapped mcas extension fields.
+    """Define JSON schema for validating mapped syslog extension fields.
 
-    :param instance: JSON instance to be validated
+    Args:
+        instance: JSON instance to be validated
     """
     schema = {"type": "object", "minProperties": 0}
 
@@ -57,9 +54,11 @@ def validate_extension(instance):
 
 
 def validate_header_extension_subdict(instance):
-    """Validate sub dict of header and extension having fields "mapping" and "default".
+    """Validate sub dict of header and extension
+    having fields "mapping" and "default".
 
-    :param instance: The JSON instance to be validated
+    Args:
+        instance: JSON instance to be validated
     """
     # If both are empty
     if (
@@ -95,7 +94,8 @@ def validate_header_extension_subdict(instance):
 def validate_header(instance):
     """Define JSON schema for validating mapped mcas header fields.
 
-    :param instance: JSON instance to be validated
+    Args:
+        instance: JSON instance to be validated
     """
     properties_schema = {
         "default_value": {"type": "string"},
@@ -104,7 +104,8 @@ def validate_header(instance):
     }
 
     one_of_sub_schema = [
-        # both empty are not allowed. So schema will be: one of (one of (both), both)
+        # both empty are not allowed. So schema will be: one of (one of
+        # (both), both)
         {
             "oneOf": [
                 {"required": ["mapping_field"]},
@@ -141,7 +142,8 @@ def validate_header(instance):
 
     validate(instance=instance, schema=schema)
 
-    # After validating schema, validate the "mapping" and "default" fields for each header fields
+    # After validating schema, validate the "mapping" and "default" fields for
+    # each header fields
     for field in instance:
         validate_header_extension_subdict(instance[field])
 
@@ -149,7 +151,8 @@ def validate_header(instance):
 def validate_extension_field(instance):
     """Define JSON schema for validating each extension fields.
 
-    :param instance: JSON instance to be validated
+    Args:
+        instance: JSON instance to be validated
     """
     schema = {
         "type": "object",
@@ -161,7 +164,8 @@ def validate_extension_field(instance):
         },
         "minProperties": 0,
         "maxProperties": 4,
-        "oneOf": [  # both empty are not allowed. So schema will be: one of (one of (both), both)
+        "oneOf": [  # both empty are not allowed. So schema will be: one of
+            # (one of (both), both)
             {
                 "oneOf": [
                     {"required": ["mapping_field"]},
@@ -182,11 +186,16 @@ def validate_extension_field(instance):
 
 
 def get_mcas_mappings(mappings, data_type):
-    """Read the given mapping file and returns the dict of mappings to be applied to raw data.
+    """Read mapping json and return the dict of mappings
+    to be applied to raw_data.
 
-    :param data_type: Data type (alert/event) for which the mappings are to be fetched
-    :param mapping_file: Name of mapping file
-    :return: Read mappings
+    Args:
+        data_type (str): Data type (alert/event) for which
+        the mappings are to be fetched
+        mappings: Attribute mapping json string
+
+    Returns:
+        mapping delimiter, cef_version, syslog_mappings
     """
     if data_type in mappings["taxonomy"]:
         data_type_specific_mapping = mappings["taxonomy"][data_type]
@@ -205,8 +214,8 @@ def get_mcas_mappings(mappings, data_type):
                 validate_header(subtype_header)
             except JsonSchemaValidationError as err:
                 raise MappingValidationError(
-                    'Error occurred while validating mcas header for type "{}". '
-                    "Error: {}".format(subtype, err)
+                    'Error occurred while validating mcas header for type "{}"'
+                    ". Error: {}".format(subtype, err)
                 )
 
         # Validate the extension for each mapped subtype
@@ -216,8 +225,8 @@ def get_mcas_mappings(mappings, data_type):
                 validate_extension(subtype_extension)
             except JsonSchemaValidationError as err:
                 raise MappingValidationError(
-                    'Error occurred while validating mcas extension for type "{}". '
-                    "Error: {}".format(subtype, err)
+                    "Error occurred while validating mcas extension for type "
+                    '"{}". Error: {}'.format(subtype, err)
                 )
 
             # Validate each extension
@@ -226,19 +235,26 @@ def get_mcas_mappings(mappings, data_type):
                     validate_extension_field(ext_dict)
                 except JsonSchemaValidationError as err:
                     raise MappingValidationError(
-                        'Error occurred while validating mcas extension field "{}" for '
-                        'type "{}". Error: {}'.format(cef_field, subtype, err)
+                        "Error occurred while validating mcas extension field"
+                        ' "{}" for type "{}". Error: {}'.format(
+                            cef_field, subtype, err
+                        )
                     )
 
     return mappings["delimiter"], mappings["cef_version"], mappings["taxonomy"]
 
 
 def extract_subtypes(mappings, data_type):
-    """Extract subtypes of given data types. e.g: for data type "alert", possible subtypes are "dlp", "policy" etc.
+    """Extract subtypes of given data types. e.g: for data type "alert",
+        possible subtypes are "dlp", "policy" etc.
 
-    :param mapping_file: Path to JSON mapping file
-    :param data_type: data type for which subtypes are to be fetched
-    :return: extracted sub types
+    Args:
+        data_type (str): Data type (alert/event) for which
+        the mappings are to be fetched
+        mappings: Attribute mapping json string
+
+    Returns:
+        extracted sub types
     """
     taxonomy = mappings["taxonomy"].get(data_type, {})
     return [subtype for subtype in taxonomy]
@@ -250,6 +266,8 @@ def add_mcas_user_agent(headers=None) -> str:
     Returns:
         str: String containing the Client Name.
     """
+    if "User-Agent" in headers:
+        return headers
     headers = add_user_agent(headers)
     ce_added_agent = headers.get("User-Agent", "netskope-ce")
     user_agent = "{}-{}-{}-v{}".format(
@@ -274,14 +292,17 @@ def parse_response(self, response: requests.models.Response):
     try:
         return response.json()
     except json.JSONDecodeError as err:
-        err_msg = f"Invalid JSON response received from API. Error: {str(err)}"
+        err_msg = f"Invalid JSON response received from API. Error: {err}"
         self.logger.error(
             message=f"{self.log_prefix}: {err_msg}",
             details=f"API response: {response.text}",
         )
         raise MCASPluginException(err_msg)
     except Exception as exp:
-        err_msg = f"Unexpected error occurred while parsing json response. Error: {exp}"
+        err_msg = (
+            "Unexpected error occurred while parsing"
+            f" json response. Error: {exp}"
+        )
         self.logger.error(
             message=f"{self.log_prefix}: {err_msg}",
             details=f"API Response: {response.text}",

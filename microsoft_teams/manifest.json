@@ -1,10 +1,10 @@
 {
   "name": "Microsoft Teams",
-  "description": "Receive message notifications on Microsoft Teams.",
+  "description": "This plugin is used to send message notifications to the Microsoft Teams channel. It does not support updating messages or syncing status.",
   "id": "microsoft_teams",
   "pulling_supported": false,
   "receiving_supported": true,
-  "version": "1.0.1",
+  "version": "1.1.0",
   "configuration": [
     {
       "label": "Configuration Parameter",
@@ -12,12 +12,11 @@
       "type": "step",
       "fields": [
         {
-          "label": "Webhook URL",
-          "key": "url",
+          "label": "Workflow URL",
+          "key": "workflow_url",
           "type": "text",
-          "default": "",
           "mandatory": true,
-          "description": "Microsoft Teams Incoming Webhook URL to send data to your group."
+          "description": "Microsoft Teams Workflow URL to send messages to your channel."
         }
       ]
     }

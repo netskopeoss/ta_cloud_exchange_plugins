@@ -1,6 +1,10 @@
+# 2.1.1
+## Added
+- Added IOC source filter to prevent an IOC loop from endpoint detections.
+
 # 2.1.0
 ## Changed
--  Removed support of extraction of domain from URLs in push mechanism.
+- Removed support of extraction of domain from URLs in push mechanism.
 ## Added
 - Added support to bifurcate the URL by types (Domain, IPv4, IPv6) starting from CE v5.0.1.
 

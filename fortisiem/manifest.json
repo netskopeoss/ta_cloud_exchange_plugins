@@ -1,0 +1,69 @@
+{
+  "name": "FortiSIEM",
+  "id": "fortisiem",
+  "version": "1.0.0",
+  "mapping": "FortiSIEM Default Mappings",
+  "types": [
+    "alerts",
+    "events",
+    "webtx",
+    "logs"
+  ],
+  "description": "This plugin supports ingestion of Alerts (DLP, Malware, Policy, Compromised Credentials, Malsite, Quarantine, Remediation, Security Assessment, Watchlist, CTEP, UBA), Events (Page, Application, Audit, Infrastructure, Network, Incident, Endpoint), Webtx and Logs (Debug, Information, Error, Warning), it only supports the ingestion of JSON-formatted logs on FortiSIEM platform.",
+  "configuration": [
+    {
+      "label": "FortiSIEM Server",
+      "key": "fortisiem_server",
+      "type": "text",
+      "default": "",
+      "mandatory": true,
+      "description": "IP address/FQDN of FortiSIEM server in which data will be ingested."
+    },
+    {
+      "label": "FortiSIEM Protocol",
+      "key": "fortisiem_protocol",
+      "type": "choice",
+      "choices": [
+        {
+          "key": "TLS",
+          "value": "TLS"
+        },
+        {
+          "key": "UDP",
+          "value": "UDP"
+        },
+        {
+          "key": "TCP",
+          "value": "TCP"
+        }
+      ],
+      "default": "UDP",
+      "mandatory": true,
+      "description": "Protocol to be used while ingesting data."
+    },
+    {
+      "label": "FortiSIEM Port",
+      "key": "fortisiem_port",
+      "type": "number",
+      "default": "",
+      "mandatory": true,
+      "description": "FortiSIEM port to send the data to."
+    },
+    {
+      "label": "FortiSIEM Certificate",
+      "key": "fortisiem_certificate",
+      "type": "textarea",
+      "default": "",
+      "mandatory": false,
+      "description": "Certificate is required only for TLS protocol."
+    },
+    {
+      "label": "Log Source Identifier",
+      "key": "log_source_identifier",
+      "type": "text",
+      "default": "netskopece",
+      "mandatory": true,
+      "description": "This will be added as prefix to all the logs."
+    }
+  ]
+}

@@ -1,3 +1,9 @@
+# 2.1.1
+## Fixed
+- Fixed the parsing issue in CEF format.
+## Removed
+- Removed support for JSON logs.
+
 # 2.1.0
 ## Added
 - Added new authentication method.

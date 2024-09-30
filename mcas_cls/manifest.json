@@ -1,12 +1,12 @@
 {
   "name": "Microsoft Defender for Cloud Apps",
   "id": "mcas_cls",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "mapping": "Microsoft Defender for Cloud Apps Default Mappings",
   "types": [
     "events"
   ],
-  "description": "This plugin is used to ingest events data (Application and Page) to the Microsoft Defender for Cloud Apps platform. This plugin provides support for the ingestion of JSON and CEF formatted logs.",
+  "description": "This plugin ingests event logs (Application and Page) into the Governance log page of the Microsoft Defender for Cloud Apps platform. It supports the ingestion of CEF formatted logs.",
   "configuration": [
     {
       "label": "Portal URL",
@@ -40,7 +40,7 @@
       "type": "text",
       "default": "",
       "mandatory": false,
-      "description": "Tenant ID of your Azure application. It is required only if the 'OAuth 2.0 (Application context)' method is selected."
+      "description": "Tenant ID of your Azure application. The Tenant ID can be found from App registrations > App Name > Overview page. It is required only if the 'OAuth 2.0 (Application context)' method is selected."
     },
     {
       "label": "Client ID",
@@ -48,7 +48,7 @@
       "type": "text",
       "default": "",
       "mandatory": false,
-      "description": "Client ID of your Azure application. It is required only if the 'OAuth 2.0 (Application context)' method is selected."
+      "description": "Client ID of your Azure application. The Client ID can be found from App registrations > App Name > Overview page. It is required only if the 'OAuth 2.0 (Application context)' method is selected."
     },
     {
       "label": "Client Secret",
@@ -56,21 +56,21 @@
       "type": "password",
       "default": "",
       "mandatory": false,
-      "description": "Client Secret of your Azure application. It is required only if the 'OAuth 2.0 (Application context)' method is selected."
+      "description": "Client Secret of your Azure application. The Client Secret can be generated from App registrations > App Name > Certificates & secrets page. It is required only if the 'OAuth 2.0 (Application context)' method is selected."
     },
     {
       "label": "API Token",
       "key": "token",
       "type": "password",
       "mandatory": false,
-      "description": "Microsoft Defender for Cloud Apps portal's API token for authentication. It is required only if the 'Legacy Method (API Token)' method is selected."
+      "description": "API token for authentication in the Microsoft Defender for Cloud Apps portal. The API token can be generated from the Settings > Cloud Apps > API Tokens page. It is required only if the 'Legacy Method (API Token)' method is selected."
     },
     {
       "label": "Data Source",
       "key": "data_source",
       "type": "text",
       "mandatory": true,
-      "description": "The data source in which the traffic logs are to be uploaded from CLS."
+      "description": "The data source where traffic logs from CLS are to be uploaded. The data source can be found at Settings > Cloud Apps > Cloud Discovery > Automatic Log Upload."
     }
   ]
 }

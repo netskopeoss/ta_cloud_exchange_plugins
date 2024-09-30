@@ -31,11 +31,11 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 MCAS Validator."""
 
-
-import re
 import csv
 import io
+import re
 import traceback
+
 from jsonschema import validate
 from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
 
@@ -60,7 +60,9 @@ class MCASValidator(object):
             bool: True if the URL is valid, False otherwise.
         """
 
-        if portal_url.startswith("http://") or portal_url.startswith("https://"):
+        if portal_url.startswith("http://") or portal_url.startswith(
+            "https://"
+        ):
             return False
 
         if not re.match(
@@ -71,10 +73,15 @@ class MCASValidator(object):
         return True
 
     def validate_data_source(self, data_source):
-        """Validate Data Source. If not present, issues appropriate logs and exists docker.
+        """Validate Data Source. If not present, issues appropriate logs
+          and exists docker.
 
-        :param: data_source: the Data Source to be validated
-        :returns: Whether the provided value is valid or not. True in case of valid value, False otherwise
+        Args:
+            data_source: the Data Source to be validated
+
+        Returns:
+            Bool: Whether the provided value is valid or not. True in case
+                of valid value, False otherwise
         """
         if not data_source:
             return False
@@ -124,8 +131,11 @@ class MCASValidator(object):
     def validate_mapping_schema(self, mappings):
         """Read the given mapping file and validates its schema.
 
-        :param mapping_file: The mapping file from which the schema is to be validated
-        :return: True in case of valid schema, False otherwise
+        Args:
+            mappings: The mapping file from which the schema is to be validate
+
+        Returns:
+            Bool: True in case of valid schema, False otherwise
         """
         # Schema of mapping file
         schema = {
@@ -182,13 +192,20 @@ class MCASValidator(object):
             return True
 
     def validate_mcas_map(self, mappings):
-        """Validate field mappings file. If not present, issues appropriate logs and exists docker.
+        """Validate field mappings file. If not present, issues appropriate
+          logs and exists docker.
 
-        :param: mapping_file: the field mappings file to be validated
-        :returns: Whether the provided value is valid or not. True in case of valid value, False otherwise
+        Args:
+            mappings: the field mappings file to be validated
+
+        Returns:
+            Bool: Whether the provided value is valid or not. True in case of
+              valid value, False otherwise
         """
         if not mappings:
-            self.logger.error(f"{self.log_prefix}: Could not find mcas mappings.")
+            self.logger.error(
+                f"{self.log_prefix}: Could not find mcas mappings."
+            )
             return False
         try:
             if self.validate_mapping_schema(mappings):
@@ -196,8 +213,8 @@ class MCASValidator(object):
         except Exception as err:
             self.logger.error(
                 message=(
-                    f"{self.log_prefix}: An error occurred while validating the fields from the mapping file."
-                    f"Error: {err}"
+                    f"{self.log_prefix}: An error occurred while validating"
+                    f" the fields from the mapping file. Error: {err}"
                 ),
                 details=str(traceback.format_exc()),
             )
@@ -211,14 +228,18 @@ class MCASValidator(object):
             valid_extensions: the CSV string to be validated
 
         Returns:
-            Whether the provided value is valid or not. True in case of valid value, False otherwise
+            Whether the provided value is valid or not. True in case of valid
+              value, False otherwise
         """
         try:
-            csviter = csv.DictReader(io.StringIO(valid_extensions), strict=True)
+            csviter = csv.DictReader(
+                io.StringIO(valid_extensions), strict=True
+            )
             headers = next(csviter)
 
             if all(
-                header in headers for header in ["CEF Key Name", "Length", "Data Type"]
+                header in headers
+                for header in ["CEF Key Name", "Length", "Data Type"]
             ):
                 return True
         except Exception:

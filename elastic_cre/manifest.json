@@ -1,0 +1,66 @@
+{
+  "name": "Elastic",
+  "description": "This plugin is used to fetch users available at **Security > Explore > Users > All users** page and their respective risk scores available at **Security > Explore > Users > User risk** page from the configured Elastic instance. This plugin does not support performing any actions on users. \n\n CRE score calculation => | 100 - Elastic Risk Score | x 10.",
+  "id": "elastic_cre",
+  "minimum_version": "5.1.0",
+  "version": "1.0.0",
+  "configuration": [
+    {
+      "label": "Base URL",
+      "key": "base_url",
+      "type": "text",
+      "mandatory": true,
+      "description": "API Base URL of Elastic instance."
+    },
+    {
+      "label": "Authentication Method",
+      "key": "authentication_method",
+      "type": "choice",
+      "choices": [
+        {
+          "key": "Basic Authentication (Username-Password)",
+          "value": "basic_auth"
+        },
+        {
+          "key": "API Key Authentication",
+          "value": "api_key_auth"
+        }
+      ],
+      "default": "basic_auth",
+      "mandatory": true,
+      "description": "Select the Authentication Method, used to perform the API call to Elastic instance."
+    },
+    {
+      "label": "Username",
+      "key": "username",
+      "type": "text",
+      "default": "",
+      "mandatory": false,
+      "description": "Username for the Elastic instance. Required for 'Basic Authentication (Username-Password)' authentication type."
+    },
+    {
+      "label": "Password",
+      "key": "password",
+      "type": "password",
+      "default": "",
+      "mandatory": false,
+      "description": "Password for the Elastic instance. Required for 'Basic Authentication (Username-Password)' authentication type."
+    },
+    {
+      "label": "API Key",
+      "key": "api_key",
+      "type": "password",
+      "default": "",
+      "mandatory": false,
+      "description": "API Key generated from the Elastic instance. Required for 'API Key Authentication' authentication type. API Key can be generated from 'Management > Security > API keys' page."
+    },
+    {
+      "label": "Initial Range (in days)",
+      "key": "days",
+      "type": "number",
+      "mandatory": true,
+      "default": 7,
+      "description": "Number of days to pull users from for initial run."
+    }
+  ]
+}

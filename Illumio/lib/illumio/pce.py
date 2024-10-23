@@ -93,7 +93,7 @@ class PolicyComputeEngine:
         org_id: the PCE organization ID.
     """
     def __init__(self, url: str, port: str = '443', version: str = 'v2', org_id: str = '1',
-                    retry_count: int = 5, request_timeout: int = 30) -> None:
+                    retry_count: int = 5, request_timeout: int = 300) -> None:
         self._apis = {}
         self._encoder = IllumioEncoder()
         self._session = Session()
@@ -316,9 +316,7 @@ class PolicyComputeEngine:
             response.raise_for_status()
             location = response.headers['Location']
             retry_after = int(response.headers['Retry-After'])
-
             collection_href = self._async_poll(location, retry_after)
-
             response = self.get(collection_href)
             response.raise_for_status()
             return response

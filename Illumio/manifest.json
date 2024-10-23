@@ -1,10 +1,12 @@
 {
     "name": "Illumio",
     "id": "Illumio",
-    "version": "1.0.0",
-    "description": "Creates Threat Exchange IoCs from workloads on the Illumio PCE within a configured policy scope.",
+    "version": "1.1.0",
+    "module": "CTE",
+    "description": "This plugin is used to pull IOCs of the type URLs (IP Addresses and Hostname) from Workloads on the Illumio PCE based on the configured Label scope. This plugin does not support sharing of indicators to Illumio platform.",
     "patch_supported": false,
     "push_supported": false,
+    "fetch_retraction_info": true,
     "configuration": [
         {
             "label": "PCE URL",
@@ -12,7 +14,7 @@
             "type": "text",
             "default": "",
             "mandatory": true,
-            "description": "PCE FQDN with optional method prefix - e.g. https://my.pce.com"
+            "description": "Base URL of your Illumio Platform - e.g. https://my.pce.com"
         },
         {
             "label": "PCE Port Number",
@@ -20,15 +22,15 @@
             "type": "number",
             "default": 443,
             "mandatory": true,
-            "description": "PCE port number - use 443 for SaaS instances"
+            "description": "PCE port number - use 443 for SaaS instances."
         },
         {
             "label": "PCE Organization ID",
             "key": "org_id",
             "type": "number",
-            "mandatory": true,
             "default": 1,
-            "description": "Illumio PCE Organization ID"
+            "mandatory": true,
+            "description": "Illumio PCE Organization ID from My API Keys."
         },
         {
             "label": "API Authentication Username",
@@ -36,7 +38,7 @@
             "type": "text",
             "default": "",
             "mandatory": true,
-            "description": "API key username generated on the Illumio PCE"
+            "description": "API Authentication Username generated on the Illumio PCE from My API Keys."
         },
         {
             "label": "API Secret",
@@ -44,7 +46,7 @@
             "type": "password",
             "default": "",
             "mandatory": true,
-            "description": "API secret generated on the Illumio PCE"
+            "description": "API Secret generated on the Illumio PCE from My API Keys."
         },
         {
             "label": "Label Scope",
@@ -52,7 +54,7 @@
             "type": "text",
             "default": "",
             "mandatory": true,
-            "description": "One or more label key/value pairs that make up the policy scope for threat workloads. Must be of the format key1:value1,key2:value2,... For example: env:Quarantine,loc:Quarantine"
+            "description": "One or more label key/value pairs that make up the policy scope for threat workloads. Must be of the format key1:value1,key2:value2,... For example: env:Quarantine,loc:ca"
         },
         {
             "label": "Enable Tagging",
@@ -70,7 +72,7 @@
                 }
             ],
             "mandatory": false,
-            "description": "Whether or not to create tags for Threat IoCs based on their labels"
+            "description": "Whether or not to create tags for Threat IoCs based on their labels."
         }
     ]
 }

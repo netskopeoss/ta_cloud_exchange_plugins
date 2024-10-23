@@ -9,5 +9,4 @@ License:
     Apache2
 """
 # flake8: noqa
-from .config import *
 from .functions import *

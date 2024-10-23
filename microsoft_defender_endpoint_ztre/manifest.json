@@ -1,0 +1,76 @@
+{
+  "name": "Microsoft Defender for Endpoint",
+  "id": "microsoft_defender_endpoint_ztre",
+  "version": "1.0.0",
+  "module": "CRE",
+  "minimum_version": "5.1.0",
+  "description": "This plugin is used to fetch device data from **Assets > Devices** and users from **Assets > Devices > Select device > Overview > Logged on users** page of the Microsoft Defender for Endpoint platform. This plugin supports performing actions such as Isolate device, Undo isolation, Restrict app execution, Remove app restriction, Run antivirus scan, Offboard device and Collect investigation package actions on the devices and doesn't support any action on the users.\n\nNetskope normalization score calculation => RiskLevel Low: 875, RiskLevel Medium: 625, RiskLevel High: 375.\n\nFor RiskLevels 'None' and 'Informational' the normalization score value will be blank.",
+  "configuration": [
+    {
+      "label": "Base URL",
+      "key": "base_url",
+      "type": "choice",
+      "choices": [
+        {
+          "key": "api.security.microsoft.com",
+          "value": "https://api.security.microsoft.com"
+        },
+        {
+          "key": "us.api.security.microsoft.com",
+          "value": "https://us.api.security.microsoft.com"
+        },
+        {
+          "key": "eu.api.security.microsoft.com",
+          "value": "https://eu.api.security.microsoft.com"
+        },
+        {
+          "key": "uk.api.security.microsoft.com",
+          "value": "https://uk.api.security.microsoft.com"
+        },
+        {
+          "key": "au.api.security.microsoft.com",
+          "value": "https://au.api.security.microsoft.com"
+        },
+        {
+          "key": "swa.api.security.microsoft.com",
+          "value": "https://swa.api.security.microsoft.com"
+        },
+        {
+          "key": "api-gcc.securitycenter.microsoft.us",
+          "value": "https://api-gcc.securitycenter.microsoft.us"
+        },
+        {
+          "key": "api-gov.securitycenter.microsoft.us",
+          "value": "https://api-gov.securitycenter.microsoft.us"
+        }
+      ],
+      "default": "https://api.security.microsoft.com",
+      "mandatory": true,
+      "description": "Base URL for Defender for Endpoint."
+    },
+    {
+      "label": "Tenant ID",
+      "key": "tenant_id",
+      "type": "text",
+      "mandatory": true,
+      "default": "",
+      "description": "Tenant ID of Microsoft account."
+    },
+    {
+      "label": "Client (Application) ID",
+      "key": "client_id",
+      "type": "text",
+      "mandatory": true,
+      "default": "",
+      "description": "Client/Application ID of Microsoft Entra ID Application."
+    },
+    {
+      "label": "Client Secret",
+      "key": "client_secret",
+      "type": "password",
+      "mandatory": true,
+      "default": "",
+      "description": "Secret value of Microsoft Entra ID Application."
+    }
+  ]
+}

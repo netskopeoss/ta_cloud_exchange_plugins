@@ -1,0 +1,34 @@
+{
+  "name": "Jamf",
+  "id": "jamf_ztre",
+  "version": "1.0.0",
+  "module": "CRE",
+  "minimum_version": "5.1.0",
+  "description": "This plugin is used to fetch devices from the Jamf Security Cloud platform > Devices > Manage page. It also supports performing the Override Risk Level and Revert Risk Level action on devices.\n\nNetskope normalization score calculation: Risk Level Secure = 875, Risk Level Low = 875, Risk Level Medium = 625, Risk Level High = 375.\n\n**Note**: Scores are based on the median of Netskope’s risk score ranges, e.g., Low (751-1000) has a median of 875.",
+  "configuration": [
+    {
+      "label": "Base URL",
+      "key": "base_url",
+      "type": "text",
+      "default": "https://api.wandera.com",
+      "mandatory": true,
+      "description": "Base URL of Jamf instance. e.g. https://api.wandera.com"
+    },
+    {
+      "label": "Application ID",
+      "key": "application_id",
+      "type": "text",
+      "mandatory": true,
+      "default": "",
+      "description": "Application ID generated from the Jamf platform. Application ID can be generated from the 'Integrations > Risk API > Generate API Key'."
+    },
+    {
+      "label": "Application Secret",
+      "key": "application_secret",
+      "type": "password",
+      "mandatory": true,
+      "default": "",
+      "description": "Application Secret generated from the Jamf platform. Application Secret can be generated from the 'Integrations > Risk API > Generate API Key'."
+    }
+  ]
+}

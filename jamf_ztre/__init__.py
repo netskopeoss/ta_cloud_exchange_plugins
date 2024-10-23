@@ -1,0 +1,1 @@
+"""CRE Jamf Plugin."""

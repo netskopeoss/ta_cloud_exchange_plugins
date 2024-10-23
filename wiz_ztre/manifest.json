@@ -1,0 +1,40 @@
+{
+  "name": "Wiz",
+  "description": "This plugin is used to fetch applications from the Wiz platform. This plugin does not support sharing applications or pushing applications to Wiz.",
+  "id": "wiz_ztre",
+  "minimum_version": "5.1.0",
+  "version": "1.0.0",
+  "module": "CRE",
+  "configuration": [
+    {
+      "label": "Base URL",
+      "key": "base_url",
+      "type": "text",
+      "mandatory": true,
+      "description": "Base URL for Wiz platform. e.g. https://api.<region>.app.wiz.io"
+    },
+    {
+      "label": "Token URL",
+      "key": "token_url",
+      "type": "text",
+      "mandatory": true,
+      "description": "Token URL for Wiz platform to generate the auth token. e.g. https://auth.app.wiz.io"
+    },
+    {
+      "label": "Client ID",
+      "key": "client_id",
+      "type": "text",
+      "default": "",
+      "mandatory": true,
+      "description": "Client ID of Wiz platform."
+    },
+    {
+      "label": "Client Secret",
+      "key": "client_secret",
+      "type": "password",
+      "default": "",
+      "mandatory": true,
+      "description": "Client Secret of Wiz platform."
+    }
+  ]
+}

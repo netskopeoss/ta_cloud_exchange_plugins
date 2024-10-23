@@ -1,0 +1,26 @@
+{
+  "name": "Okta",
+  "description": "The Okta Plugin fetches Applications from the Okta platform (Applications page). This plugin also performs action on Okta users like - Add users to a group, Remove users from a group and Push risk score. The Push risk score enables action via group membership changes used in Okta Authentication Policies when Netskope identifies a risky user and to share risk signals with Okta Identity Threat Protection. \n Note: This plugin does not support fetching users or host from Okta.",
+  "id": "okta_ztre",
+  "minimum_version": "5.1.0",
+  "version": "1.0.0",
+  "module": "CRE",
+  "configuration": [
+    {
+      "label": "Okta Domain",
+      "key": "url",
+      "type": "text",
+      "default": "",
+      "mandatory": true,
+      "description": "Your Okta domain. e.g. https://<your-okta-domain>"
+    },
+    {
+      "label": "API Token",
+      "key": "api_token",
+      "type": "password",
+      "default": "",
+      "mandatory": true,
+      "description": "Your Okta API Token. API Token can be generated in Okta form Security > API > Tokens."
+    }
+  ]
+}

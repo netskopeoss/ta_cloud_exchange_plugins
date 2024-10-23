@@ -1,0 +1,52 @@
+{
+  "name": "Forescout",
+  "description": "The Forescout plugin fetches hosts and their risk information from All Hosts page of Forescout. It does not support any actions on Forescout.\n\nNetskope normalization score calculation for OT Security Risk Score and CYSIV Risk Score => ((Forescout Score - Min Forescout) / (Max Forescout - Min Forescout)) * (Max Netskope - Min Netskope) + Min Netskope",
+  "minimum_version": "5.1.0",
+  "id": "forescout_ztre",
+  "version": "1.0.0",
+  "module": "CRE",
+  "configuration": [
+    {
+      "label": "Base URL",
+      "key": "base_url",
+      "type": "text",
+      "default": "",
+      "mandatory": true,
+      "description": "Base URL of Forescout instance. e.g. https://<Instance IP>"
+    },
+    {
+      "label": "Username",
+      "key": "username",
+      "type": "text",
+      "default": "",
+      "mandatory": true,
+      "description": "Username of Forescout account. Username can be generated from the Settings > Web API > User Settings page."
+    },
+    {
+      "label": "Password",
+      "key": "password",
+      "type": "password",
+      "default": "",
+      "mandatory": true,
+      "description": "Password of Forescout account. Password can be generated from the Settings > Web API > User Settings page."
+    },
+    {
+      "label": "Netskope Normalization Field",
+      "key": "netskope_normalization_field",
+      "type": "choice",
+      "choices": [
+        {
+          "key": "CYSIV Risk Score",
+          "value": "cysiv_risk_score"
+        },
+        {
+          "key": "OT Security Risk Score",
+          "value": "otsm_details_security_risk"
+        }
+      ],
+      "default": "otsm_details_security_risk",
+      "mandatory": true,
+      "description": "Select the field to be used for normalization in the Netskope Score Range."
+    }
+  ]
+}

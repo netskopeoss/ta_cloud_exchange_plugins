@@ -28,10 +28,9 @@ SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
 CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+CLS Elastic plugin helper module.
 """
-
-"""Elastic Plugin Helper."""
-
 
 from jsonschema import validate
 
@@ -98,7 +97,7 @@ def validate_header(instance):
     properties_schema = {
         "default_value": {"type": "string"},
         "mapping_field": {"type": "string"},
-        "transformation": {"type": "string"}
+        "transformation": {"type": "string"},
     }
 
     one_of_sub_schema = [
@@ -154,7 +153,7 @@ def validate_extension_field(instance):
             "mapping_field": {"type": "string"},
             "default_value": {"type": "string"},
             "is_json_path": {"type": "boolean"},
-            "transformation": {"type": "string"}
+            "transformation": {"type": "string"},
         },
         "minProperties": 0,
         "maxProperties": 4,
@@ -200,8 +199,8 @@ def get_elastic_mappings(mappings, data_type):
             validate_header(subtype_header)
         except JsonSchemaValidationError as err:
             raise MappingValidationError(
-                'Error occurred while validating elastic header for type "{}". '
-                "Error: {}".format(subtype, err)
+                f"Error occurred while validating elastic header"
+                f' for type "{subtype}". Error: {err}'
             )
 
     # Validate the extension for each mapped subtype
@@ -211,8 +210,8 @@ def get_elastic_mappings(mappings, data_type):
             validate_extension(subtype_extension)
         except JsonSchemaValidationError as err:
             raise MappingValidationError(
-                'Error occurred while validating elastic extension for type "{}". '
-                "Error: {}".format(subtype, err)
+                "Error occurred while validating elastic extension for "
+                f'type "{subtype}". Error: {err}'
             )
 
         # Validate each extension
@@ -221,8 +220,8 @@ def get_elastic_mappings(mappings, data_type):
                 validate_extension_field(ext_dict)
             except JsonSchemaValidationError as err:
                 raise MappingValidationError(
-                    'Error occurred while validating elastic extension field "{}" for '
-                    'type "{}". Error: {}'.format(cef_field, subtype, err)
+                    "Error occurred while validating elastic extension "
+                    f'field "{cef_field}" for type "{subtype}". Error: {err}'
                 )
 
     return mappings["ecs_version"], mappings["taxonomy"]

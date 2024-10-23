@@ -30,9 +30,10 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
 
-"""CSCC Validator class."""
+"""Google Cloud SCC Plugin Validator class."""
 
 
+import traceback
 from jsonschema import validate
 from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
 
@@ -40,10 +41,11 @@ from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
 class CSCCValidator(object):
     """CSCC Validator class."""
 
-    def __init__(self, logger):
+    def __init__(self, logger, log_prefix):
         """Init method."""
         super().__init__()
         self.logger = logger
+        self.log_prefix = log_prefix
 
     def validate_mapping_schema(self, mappings):
         """Read the given mapping file and validates its schema.
@@ -69,7 +71,7 @@ class CSCCValidator(object):
                                     }
                                 }
                             }
-                        }               
+                        }
                     }
                 }
             },
@@ -80,8 +82,13 @@ class CSCCValidator(object):
             validate(instance=mappings, schema=schema)
             return True
         except JsonSchemaValidationError as err:
+            err_msg = (
+                "Validation error occurred. Error: "
+                "validating JSON schema: {}".format(err)
+            )
             self.logger.error(
-                "Error occurred while validating JSON schema: {}".format(err)
+                message=f"{self.log_prefix}: {err_msg}",
+                details=str(traceback.format_exc())
             )
         return False
 
@@ -95,10 +102,12 @@ class CSCCValidator(object):
             if self.validate_mapping_schema(mappings):
                 return True
         except Exception as err:
+            err_msg = (
+                "Validation error occurred. Error: {}".format(str(err))
+            )
             self.logger.error(
-                "CSCC Plugin: Validation error occurred. Error: {}".format(
-                    str(err)
-                )
+                message=f"{self.log_prefix}: {err_msg}",
+                details=str(traceback.format_exc())
             )
 
         return False

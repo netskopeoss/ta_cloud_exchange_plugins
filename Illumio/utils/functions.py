@@ -14,7 +14,6 @@ from .exceptions import IllumioPluginException
 from illumio.exceptions import IllumioApiException
 import traceback
 
-
 class IllumioPluginHelper(object):
     """IllumioHelper class.
 

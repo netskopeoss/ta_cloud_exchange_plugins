@@ -33,9 +33,8 @@ CLS Microsoft Azure Sentinel  Plugin.
 """
 
 import json
-import traceback
 import re
-from binascii import Error
+import traceback
 from typing import List
 
 from netskope.integrations.cls.plugin_base import PluginBase, ValidationResult
@@ -43,9 +42,9 @@ from netskope.integrations.cls.plugin_base import PluginBase, ValidationResult
 from .utils.sentinel_client import AzureSentinelClient
 from .utils.sentinel_constants import (
     ATTRIBUTE_DTYPE_MAP,
+    MODULE_NAME,
     PLUGIN_NAME,
     PLUGIN_VERSION,
-    MODULE_NAME,
     VALIDATION_ALPHANUM_PATTERN,
     VALIDATION_DIGITS_PATTERN,
 )
@@ -179,24 +178,19 @@ class AzureSentinelPlugin(PluginBase):
                 transformed_data,
                 data_type,
                 sub_type=subtype,
-                logger_msg=f"ingesting data into {self.plugin_name}",
+                logger_msg=f"ingesting data into {PLUGIN_NAME}",
             )
         except AzureSentinelException as err:
-            self.logger.error(
-                message=(
-                    f"{self.log_prefix}: Error occurred while ingesting [{data_type}]:[{subtype}]. Error: {err}"
-                ),
-                details=str(traceback.format_exc()),
-            )
             raise err
         except Exception as err:
+            err_msg = (
+                f"Error occurred while ingesting [{data_type}][{subtype}]."
+            )
             self.logger.error(
-                message=(
-                    f"{self.log_prefix}: Error occurred while ingesting [{data_type}]:[{subtype}]."
-                ),
+                message=f"{self.log_prefix}: {err_msg}",
                 details=str(traceback.format_exc()),
             )
-            raise err
+            raise AzureSentinelException(err)
 
     def transform(self, raw_data, data_type, subtype) -> List:
         """Transform Netskope data (alerts/events) into Azure Sentinel
@@ -220,6 +214,19 @@ class AzureSentinelPlugin(PluginBase):
             3. Fields which are not in Netskope response, but are present in
             mappings file will be ignored with logs.
         """
+        if self.configuration.get("transformData", True):
+            error_message = (
+                "Error occurred - this plugin only supports sharing of"
+                f' JSON formatted data to {PLUGIN_NAME}: "{data_type}"'
+                f' (subtype "{subtype}"). '
+                "Transformation will be skipped."
+            )
+            self.logger.error(
+                message=f"{self.log_prefix}: {error_message}",
+                details=traceback.format_exc(),
+            )
+            raise AzureSentinelException(error_message)
+
         skipped_logs = 0
         try:
             mappings = get_sentinel_mappings(self.mappings, data_type)
@@ -250,23 +257,21 @@ class AzureSentinelPlugin(PluginBase):
         transformed_data = []
         # First apply the filters based on the given mapping file
         subtype_mappings = self.get_subtype_mapping(mappings, subtype)
-        if not subtype_mappings and data_type != "webtx":
-            return raw_data
-
         for data in raw_data:
             try:
-                mapped_data = map_sentinel_data(subtype_mappings, data)
-                if data_type == "webtx" and not subtype_mappings:
+                if not subtype_mappings:
                     mapped_data = data
+                else:
+                    mapped_data = map_sentinel_data(subtype_mappings, data)
                 if mapped_data:
                     """
-                    Now we have filtered record as per the mapping file, so we
-                    can proceed with transformation and data normalization
-                    (like replacing characters other than letters, numbers
-                    and underscores etc.)
+                    Now we have filtered record as per the mapping file, so
+                    we can proceed with transformation and data
+                    normalization (like replacing characters other
+                    than letters, numbers and underscores etc.)
 
-                    First convert all the keys to lowercase, and all the keys
-                    should only contain letters, numbers and
+                    First convert all the keys to lowercase, and all the
+                    keys should only contain letters, numbers and
                     underscores(_).
                     """
                     transformed_record = {"tenant_name": self.source}
@@ -279,16 +284,18 @@ class AzureSentinelPlugin(PluginBase):
                         # Skip the field and issue a log
                         if val_size > 32:
                             self.logger.error(
-                                '{}: The size of the value for the key "{}" is'
-                                " {}KB which exceeds the maximum threshold "
-                                "allowed of 32KB. Field will be skipped.".format(
+                                "{}: The size of the value for the key"
+                                ' "{}" is {}KB which exceeds the maximum '
+                                "threshold allowed of 32KB. Field will"
+                                " be skipped.".format(
                                     self.log_prefix, key, val_size
                                 )
                             )
                             continue
 
-                        # Before normalization, first convert the data types
-                        # of ID and timestamps to corresponding strings
+                        # Before normalization, first convert the data
+                        # types of ID and timestamps to corresponding
+                        # strings
                         value = self._convert_dtype(key, value)
                         if value is None:
                             continue
@@ -315,9 +322,9 @@ class AzureSentinelPlugin(PluginBase):
                 )
                 skipped_logs += 1
         if skipped_logs > 0:
-            self.logger.debug(
-                "{}: [{}][{}] Plugin couldn't process {} records because they "
-                "either had no data or contained invalid/missing "
+            self.logger.info(
+                "{}: [{}][{}] Plugin couldn't process {} records because"
+                " they either had no data or contained invalid/missing "
                 "fields according to the configured JSON mapping. "
                 "Therefore, the transformation and ingestion for those "
                 "records were skipped.".format(
@@ -326,7 +333,9 @@ class AzureSentinelPlugin(PluginBase):
             )
         return transformed_data
 
-    def _validate_auth_credentials(self, configuration: dict) -> ValidationResult:
+    def _validate_auth_credentials(
+        self, configuration: dict
+    ) -> ValidationResult:
         """Validate Auth Credentials.
 
         :param configuration (dict): Configuration parameters dictionary.
@@ -350,17 +359,7 @@ class AzureSentinelPlugin(PluginBase):
                 logger_msg="validating credentials",
                 is_validation=True,
             )
-        except Error as error:
-            err_msg = "Invalid Primary Key provided in configuration parameter."
-            self.logger.error(
-                message=f"{self.validation_msg} {err_msg}", details=str(error)
-            )
-            return ValidationResult(success=False, message=err_msg)
         except AzureSentinelException as error:
-            self.logger.error(
-                message=(f"{self.validation_msg} {error}"),
-                details=str(traceback.format_exc()),
-            )
             return ValidationResult(
                 success=False,
                 message=str(error),
@@ -385,15 +384,31 @@ class AzureSentinelPlugin(PluginBase):
 
         :return ValidationResult: Validation Result.
         """
-        sentinel_validator = AzureSentinelValidator(self.logger, self.log_prefix)
+        sentinel_validator = AzureSentinelValidator(
+            self.logger, self.log_prefix
+        )
         self.validation_msg = f"{self.log_prefix}: Validation error occurred."
         workspace_id = configuration.get("workspace_id", "").strip()
+        if configuration.get("transformData", True):
+            err_msg = (
+                "This plugin only supports JSON formatted data - "
+                "Please disable the transformation toggle."
+            )
+            self.logger.error(
+                f"{self.log_prefix}: Validation error occurred. {err_msg}"
+            )
+            return ValidationResult(
+                success=False,
+                message=err_msg,
+            )
         if not workspace_id:
             err_msg = "Workspace ID is a required configuration parameter."
             self.logger.error(f"{self.validation_msg} {err_msg}")
             return ValidationResult(success=False, message=err_msg)
         elif not isinstance(workspace_id, str):
-            err_msg = "Invalid Workspace ID found in the configuration parameter."
+            err_msg = (
+                "Invalid Workspace ID found in the configuration parameter."
+            )
             self.logger.error(f"{self.validation_msg} {err_msg}")
             return ValidationResult(success=False, message=err_msg)
 
@@ -404,18 +419,25 @@ class AzureSentinelPlugin(PluginBase):
             return ValidationResult(success=False, message=err_msg)
 
         if not isinstance(primary_key, str):
-            err_msg = "Invalid Primary Key found in the configuration parameter."
+            err_msg = (
+                "Invalid Primary Key found in the configuration parameter."
+            )
             self.logger.error(f"{self.validation_msg} {err_msg}")
             return ValidationResult(success=False, message=err_msg)
 
-        alert_log_type_name = configuration.get("alerts_log_type_name", "").strip()
+        alert_log_type_name = configuration.get(
+            "alerts_log_type_name", ""
+        ).strip()
         if not alert_log_type_name:
-            err_msg = "Alerts Log Type Name is a required configuration parameter."
+            err_msg = (
+                "Alerts Log Type Name is a required configuration parameter."
+            )
             self.logger.error(f"{self.validation_msg} {err_msg}")
             return ValidationResult(success=False, message=err_msg)
         elif not isinstance(alert_log_type_name, str):
             err_msg = (
-                "Invalid Alerts Log Type Name found in the configuration parameter."
+                "Invalid Alerts Log Type Name found in the "
+                "configuration parameter."
             )
             self.logger.error(f"{self.validation_msg} {err_msg}")
             return ValidationResult(success=False, message=err_msg)
@@ -429,9 +451,9 @@ class AzureSentinelPlugin(PluginBase):
                 success=False,
                 message=err_msg,
             )
-        elif not re.match(VALIDATION_ALPHANUM_PATTERN, alert_log_type_name) or re.match(
-            VALIDATION_DIGITS_PATTERN, alert_log_type_name
-        ):
+        elif not re.match(
+            VALIDATION_ALPHANUM_PATTERN, alert_log_type_name
+        ) or re.match(VALIDATION_DIGITS_PATTERN, alert_log_type_name):
             err_msg = (
                 "Alerts Log Type Name should only contain letters, numbers and"
                 " underscores. Also it should contain atleast 1 alphabet."
@@ -442,21 +464,26 @@ class AzureSentinelPlugin(PluginBase):
                 message=err_msg,
             )
 
-        events_log_type_name = configuration.get("events_log_type_name", "").strip()
+        events_log_type_name = configuration.get(
+            "events_log_type_name", ""
+        ).strip()
         if not events_log_type_name:
-            err_msg = "Events Log Type Name is a required configuration parameter."
+            err_msg = (
+                "Events Log Type Name is a required configuration parameter."
+            )
             self.logger.error(f"{self.validation_msg} {err_msg}")
             return ValidationResult(success=False, message=err_msg)
         elif not isinstance(events_log_type_name, str):
             err_msg = (
-                "Invalid Events Log Type Name found in the configuration parameter."
+                "Invalid Events Log Type Name found in "
+                "the configuration parameter."
             )
             self.logger.error(f"{self.validation_msg} {err_msg}")
             return ValidationResult(success=False, message=err_msg)
         elif len(events_log_type_name) > 100:
             err_msg = (
-                "Value of Events Log Type Name should not exceed the length of"
-                " 100 characters."
+                "Value of Events Log Type Name should "
+                "not exceed the length of 100 characters."
             )
             self.logger.error(f"{self.validation_msg} {err_msg}")
             return ValidationResult(
@@ -476,14 +503,19 @@ class AzureSentinelPlugin(PluginBase):
                 message=err_msg,
             )
 
-        webtx_log_type_name = configuration.get("webtx_log_type_name", "").strip()
+        webtx_log_type_name = configuration.get(
+            "webtx_log_type_name", ""
+        ).strip()
         if not webtx_log_type_name:
-            err_msg = "WebTX Log Type Name is a required configuration parameter."
+            err_msg = (
+                "WebTX Log Type Name is a required configuration parameter."
+            )
             self.logger.error(f"{self.validation_msg} {err_msg}")
             return ValidationResult(success=False, message=err_msg)
         elif not isinstance(webtx_log_type_name, str):
             err_msg = (
-                "Invalid WebTX Log Type Name found in the configuration parameter."
+                "Invalid WebTX Log Type Name found in the "
+                "configuration parameter."
             )
             self.logger.error(f"{self.validation_msg} {err_msg}")
             return ValidationResult(success=False, message=err_msg)
@@ -497,9 +529,9 @@ class AzureSentinelPlugin(PluginBase):
                 success=False,
                 message=err_msg,
             )
-        elif not re.match(VALIDATION_ALPHANUM_PATTERN, webtx_log_type_name) or re.match(
-            VALIDATION_DIGITS_PATTERN, webtx_log_type_name
-        ):
+        elif not re.match(
+            VALIDATION_ALPHANUM_PATTERN, webtx_log_type_name
+        ) or re.match(VALIDATION_DIGITS_PATTERN, webtx_log_type_name):
             err_msg = (
                 "WebTX Log Type Name should only contain letters, numbers and"
                 " underscores. Also it should contain atleast 1 alphabet."
@@ -512,9 +544,9 @@ class AzureSentinelPlugin(PluginBase):
 
         mappings = self.mappings.get("jsonData", None)
         mappings = json.loads(mappings)
-        if not isinstance(mappings, dict) or not sentinel_validator.validate_mappings(
-            mappings
-        ):
+        if not isinstance(
+            mappings, dict
+        ) or not sentinel_validator.validate_mappings(mappings):
             err_msg = "Invalid azure sentinel attribute mapping provided."
             self.logger.error(f"{self.validation_msg} {err_msg}")
             return ValidationResult(

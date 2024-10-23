@@ -31,19 +31,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 CTE Anomali Threatstream plugin constants.
 """
-from netskope.integrations.cte.models import (
-    IndicatorType,
-    SeverityType,
-)
+from netskope.integrations.cte.models import SeverityType
 
-ANOMALI_TO_INTERNAL_TYPE = {
-    "md5": IndicatorType.MD5,
-    "sha256": IndicatorType.SHA256,
-    "url": IndicatorType.URL,
-    "domain": IndicatorType.URL,
-    "ip": IndicatorType.URL,
-    "ipv6": IndicatorType.URL,
-}
 
 SEVERITY_MAPPING = {
     "very-high": SeverityType.CRITICAL,
@@ -62,17 +51,24 @@ ANOMALI_SEVERITY_MAPPING = {
     SeverityType.UNKNOWN: "",
 }
 
-INDICATOR_TYPES = list(ANOMALI_TO_INTERNAL_TYPE.keys())
+INDICATOR_TYPES = ["md5", "sha256", "domain", "url", "ip", "ipv6"]
 ANOMALI_SEVERITY = ["very-high", "high", "medium", "low"]
 ANOMALI_STATUS = ["active", "inactive", "falsepos"]
 MODULE_NAME = "CTE"
 PLUGIN_NAME = "Anomali Threatstream XDR"
 PLATFORM_NAME = "Anomali Threatstream XDR"
-PLUGIN_VERSION = "1.0.1"
+PLUGIN_VERSION = "1.2.0"
 MAX_RETRIES = 4
 DEFAULT_WAIT_TIME = 60
 RETRY_SLEEP_TIME = 50
 MAX_PAGE_SIZE = 1000
 PAGE_LIMIT = 100
-DATE_FORMAT_FOR_IOCS = "%Y-%m-%dT%H:%M:%S.%f%z"
+DATE_FORMAT_FOR_IOCS = "%Y-%m-%dT%H:%M:%S.%f%Z"
 TARGET_SIZE_MB = 10
+BYTES_TO_MB = 1024.0 ** 2
+
+# Maximum number of Initial Range in Days.
+INTEGER_THRESHOLD = 4611686018427387904
+
+# Tag Name
+TAG_NAME = "netskope-ce"

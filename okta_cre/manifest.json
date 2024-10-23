@@ -1,10 +1,10 @@
 {
   "name": "Okta",
-  "description": "Okta Plugin performs action on Okta users like - Add users to a group, Remove users from a group and Push risk score. \n Note: It does not support fetching users or host from Okta.",
+  "description": "Okta Plugin performs action on Okta users like - Add users to a group, Remove users from a group and Push risk score. The Push risk score enables action via group membership changes used in Okta Authentication Policies when Netskope identifies a risky user and to share risk signals with Okta Identity Threat Protection. \n Note: This plugin does not support fetching users or host from Okta.",
   "id": "okta_cre",
   "type": [],
   "netskope": false,
-  "version": "1.1.1",
+  "version": "1.1.2",
   "configuration": [
     {
       "label": "Okta Domain",

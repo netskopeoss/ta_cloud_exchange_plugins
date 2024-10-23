@@ -62,7 +62,7 @@ from netskope.integrations.cre.models import (
 MAX_RETRY_COUNT = 4
 PLATFORM_NAME = "Okta"
 MODULE_NAME = "URE"
-PLUGIN_VERSION = "1.1.1"
+PLUGIN_VERSION = "1.1.2"
 EVENTS_PROVIDER = "Netskope Security Events Provider"
 
 
@@ -482,7 +482,7 @@ class OktaPlugin(PluginBase):
             Optional[Dict]: User dictionary if found, None otherwise.
         """
         for user in users:
-            if user.get("profile", {}).get("email", "") == email:
+            if user.get("profile", {}).get("email", "") == email or user.get("profile", {}).get("login", "") == email:
                 return user
         return None
 
@@ -578,7 +578,7 @@ class OktaPlugin(PluginBase):
                 f"{self.log_prefix}: "
                 f"Calculated current score level: '{current_score_level}', "
                 f"Calculated previous score level: '{previous_score_level}' "
-                "on the basis of Netskope-Okta mapping(see plugin guide for more details), "
+                "on the basis of Netskope-Okta mapping (see plugin guide for more details), "
                 f"for the user {user} and configuration {configuration}."
             )
             header = {"kid": kid, "alg": "RS256", "typ": "secevent+jwt"}

@@ -33,102 +33,309 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """Cybereason Plugin implementation to push and pull the data from Cybereason Platform."""
 
 
-import re
+import os
+import csv
 import json
-from typing import Dict, List
-
+import math
+import tempfile
 import requests
-
-from netskope.integrations.cte.plugin_base import PluginBase, ValidationResult, PushResult
-from netskope.integrations.cte.models import Indicator, IndicatorType
-from netskope.integrations.cte.models.business_rule import Action, ActionWithoutParams
+import traceback
+from datetime import datetime
+from typing import List, Tuple, Dict
+from pydantic import ValidationError
+from urllib.parse import urlparse
+from netskope.integrations.cte.plugin_base import (
+    PluginBase,
+    ValidationResult,
+    PushResult,
+)
+from netskope.integrations.cte.models.business_rule import (
+    ActionWithoutParams,
+    Action,
+)
+from netskope.integrations.cte.models import (
+    Indicator,
+    IndicatorType,
+)
+from .utils.cybereason_helper import (
+    CybereasonPluginHelper,
+    CybereasonPluginException,
+)
 from netskope.common.utils import add_user_agent
-
-Cybereason_TO_INTERNAL_TYPE = {
-    "hash_md5": IndicatorType.MD5,
-    "hash_sha256": IndicatorType.SHA256,
-    "domain": IndicatorType.URL,
-    "sha256": IndicatorType.SHA256,
-    "md5": IndicatorType.MD5,
-    "ipv4": IndicatorType.URL,
-}
-
-INTERNAL_TYPES_TO_Cybereason = {
-    IndicatorType.MD5: "md5",
-    IndicatorType.SHA256: "sha256",
-    IndicatorType.URL: "domain",
-}
+from .utils.cybereason_constants import (
+    MODULE_NAME,
+    PLUGIN_NAME,
+    PLUGIN_VERSION,
+    PLATFORM_NAME,
+    IOC_DESCRIPTION,
+    DATE_FORMAT_FOR_IOCS,
+    INTERNAL_TYPES_TO_CYBEREASON,
+)
 
 
 class CybereasonPlugin(PluginBase):
     """CybereasonPlugin class having concrete implementation for pulling and pushing threat information."""
 
-    def handle_error(self, resp):
-        """Handle the different HTTP response code.
+    def __init__(
+        self,
+        name,
+        *args,
+        **kwargs,
+    ):
+        """Initialize Plugin class."""
+        super().__init__(
+            name,
+            *args,
+            **kwargs,
+        )
+        self.plugin_name, self.plugin_version = self._get_plugin_info()
+        self.log_prefix = f"{MODULE_NAME} {self.plugin_name}"
+        if name:
+            self.log_prefix = f"{self.log_prefix} [{name}]"
+        self.cybereason_helper = CybereasonPluginHelper(
+            logger=self.logger,
+            log_prefix=self.log_prefix,
+            plugin_name=self.plugin_name,
+            plugin_version=self.plugin_version,
+            ssl_validation=self.ssl_validation,
+            proxy=self.proxy,
+        )
+
+    def _get_plugin_info(self) -> Tuple:
+        """Get plugin name and version from manifest.
+
+        Returns:
+            tuple: Tuple of plugin's name and version fetched from manifest.
+        """
+        try:
+            manifest_json = CybereasonPlugin.metadata
+            plugin_name = manifest_json.get("name", PLUGIN_NAME)
+            plugin_version = manifest_json.get("version", PLUGIN_VERSION)
+            return plugin_name, plugin_version
+        except Exception as exp:
+            err_msg = f"Error occurred while getting plugin details. Error"
+            self.logger.error(
+                message=(
+                    f"{self.log_prefix}: {err_msg}:{exp}."
+                ),
+                details=str(traceback.format_exc()),
+            )
+        return PLUGIN_NAME, PLUGIN_VERSION
+
+    def _get_credentials(self, configuration: Dict):
+        """Get API Credentials.
 
         Args:
-            resp (requests.models.Response): Response object returned from API call.
-        Returns:
-            dict: Returns the dictionary of response JSON when the response code is 200.
-        Raises:
-            HTTPError: When the response code is not 200.
-        """
-        if resp.status_code == 200 or resp.status_code == 201:
-            try:
-                return resp.json()
-            except ValueError:
-                self.logger.warn(
-                    "Plugin:Cybereason-, "
-                    "Exception occurred while parsing JSON response."
-                )
-                return resp
-        elif resp.status_code == 401:
-            self.notifier.error(
-                "Plugin:Cybereason-, "
-                "Received exit code 401, Authentication Error"
-            )
-            self.logger.error(
-                "Plugin:Cybereason-, "
-                "Received exit code 401, Authentication Error"
-            )
-        elif resp.status_code == 403:
-            self.notifier.error(
-                "Plugin:Cybereason-, "
-                "Received exit code 403, Forbidden User"
-            )
-            self.logger.error(
-                "Plugin:Cybereason-, "
-                "Received exit code 403, Forbidden User"
-            )
-        elif resp.status_code >= 400 and resp.status_code < 500:
-            self.notifier.error(
-                f"Plugin:Cybereason-, "
-                f"Received exit code {resp.status_code}, HTTP client Error"
-            )
-            self.logger.error(
-                f"Plugin:Cybereason-, "
-                f"Received exit code {resp.status_code}, HTTP client Error"
-            )
-        elif resp.status_code >= 500 and resp.status_code < 600:
-            self.notifier.error(
-                f"Plugin:Cybereason-, "
-                f"Received exit code {resp.status_code}, HTTP server Error"
-            )
-            self.logger.error(
-                f"Plugin:Cybereason-, "
-                f"Received exit code {resp.status_code}, HTTP server Error"
-            )
-        else:
-            self.notifier.error(
-                f"Plugin:Cybereason-, "
-                f"Received exit code {resp.status_code}, HTTP Error"
-            )
-            self.logger.error(
-                f"Plugin:Cybereason-, "
-                f"Received exit code {resp.status_code}, HTTP Error"
-            )
-        resp.raise_for_status()
+            configuration (Dict): Configuration dictionary.
 
+        Returns:
+            Tuple: Tuple containing Base URL, API Username, API Password and is_pull_required.
+        """
+        return (
+            configuration.get("base_url", "").strip().strip("/"),
+            configuration.get("username", "").strip(),
+            configuration.get("password", ""),
+            configuration.get("is_pull_required").strip(),
+        )
+
+    def get_headers(self) -> Dict:
+        """Get headers required for the API call."""
+        return self.cybereason_helper._add_user_agent(
+            {
+                "Content-Type": "application/json",
+            }
+        )
+
+    def validate(self, configuration) -> ValidationResult:
+        """Validate the Plugin configuration parameters.
+
+        Args:
+            data (dict): Dict object having all the Plugin configuration parameters.
+        Returns:
+            cte.plugin_base.ValidateResult: ValidateResult object with success flag and message.
+        """
+        validation_err_msg = f"{self.log_prefix}: Validation error occurred."
+
+        (base_url, username, password, is_pull_required) = (
+            self._get_credentials(configuration)
+        )
+        if not base_url:
+            err_msg = "Base URL is a required configuration parameter."
+            self.logger.error(f"{validation_err_msg} {err_msg}")
+            return ValidationResult(
+                success=False,
+                message=err_msg,
+            )
+        elif not isinstance(base_url, str):
+            err_msg = "Invalid Base URL, Type of Base URL should be String."
+            self.logger.error(f"{validation_err_msg} {err_msg}")
+            return ValidationResult(
+                success=False,
+                message=err_msg,
+            )
+        elif not self._validate_url(base_url):
+            err_msg = (
+                "Invalid Base URL provided in the configuration parameter."
+            )
+            self.logger.error(
+                f"{validation_err_msg} {err_msg}"
+            )
+            return ValidationResult(success=False, message=err_msg)
+
+        if not username:
+            err_msg = "Username is a required configuration parameter."
+            self.logger.error(f"{validation_err_msg} {err_msg}")
+            return ValidationResult(
+                success=False,
+                message=err_msg,
+            )
+        elif not isinstance(username, str):
+            err_msg = "Invalid Username provided."
+            self.logger.error(f"{validation_err_msg} {err_msg}")
+            return ValidationResult(
+                success=False,
+                message=err_msg,
+            )
+        if not password:
+            err_msg = "Password is a required configuration parameter."
+            self.logger.error(f"{validation_err_msg} {err_msg}")
+            return ValidationResult(
+                success=False,
+                message=err_msg,
+            )
+        elif not isinstance(password, str):
+            err_msg = (
+                "Invalid Password provided, Type of Password should be String."
+            )
+            self.logger.error(f"{validation_err_msg} {err_msg}")
+            return ValidationResult(
+                success=False,
+                message=err_msg,
+            )
+
+        if not is_pull_required:
+            err_msg = "Enable Polling is a required configuration parameter."
+            self.logger.error(f"{validation_err_msg} {err_msg}")
+            return ValidationResult(
+                success=False,
+                message=err_msg,
+            )
+        elif is_pull_required not in ["Yes", "No"]:
+            err_msg = (
+                "Invalid value provided in Enable Polling configuration"
+                " parameter. Allowed values are Yes and No."
+            )
+            self.logger.error(f"{validation_err_msg} {err_msg}")
+            return ValidationResult(
+                success=False,
+                message=err_msg,
+            )
+
+        return self.validate_auth_params(configuration, validation_err_msg)
+
+    def _validate_url(self, url: str) -> bool:
+        """Validate the URL using parsing.
+
+        Args:
+            url (str): Given URL.
+
+        Returns:
+            bool: True or False { Valid or not Valid URL }.
+        """
+        parsed = urlparse(url)
+        return (
+            parsed.scheme.strip() != ""
+            and parsed.netloc.strip() != ""
+            and (parsed.path.strip() == "/" or parsed.path.strip() == "")
+        )
+        
+    def validate_auth_params(
+        self, configuration, validation_err_msg
+    ) -> ValidationResult:
+        """Validate the authentication params with Cybereason platform.
+
+        Args:
+            username (str): API Username required to login to Cybereason console.
+            password (str): API Password required to login to Cybereason console.
+            base_url (str): Base url of Cybereason console.
+        Returns:
+            ValidationResult: ValidationResult object having validation results after making
+            an API call.
+        """
+
+        (base_url, username, password, is_pull_required) = (
+            self._get_credentials(configuration)
+        )
+        
+        try:
+            session = self.get_session(username, password, base_url)
+
+            if not session.cookies.get_dict().get("JSESSIONID"):
+                err_msg = "Error in validating Credentials"
+                self.logger.error(f"{validation_err_msg} {err_msg}.")
+                return ValidationResult(
+                    success=False,
+                    message=(
+                        f"Validation Error, {err_msg}. "
+                        "Please use the correct credentials."
+                    ),
+                )
+            indicator_endpoint = (
+                f"{base_url}/rest/classification/reputations/list"
+            )
+            headers = self.get_headers()
+            json_payload = {
+                "page": 0,
+                "size": 1,
+                "filter": {"includeExpired": False},
+            }
+            ioc_resp = self.cybereason_helper.api_helper(
+                logger_msg="Validating Authentication parameters",
+                method="POST",
+                url=indicator_endpoint,
+                headers=headers,
+                data=json.dumps(json_payload),
+                session=session,
+                is_validation=True,
+            )
+
+            if ioc_resp.get("outcome", "") == "success":
+                self.logger.debug(
+                    f"{self.log_prefix}: Successfully Validated Authentication parameters."
+                )
+                msg = "Validation successful"
+                return ValidationResult(
+                    success=True,
+                    message=msg,
+                )
+            else:
+                err_msg = "Validation Error, Error in validating Credentials. Please verify the API Username and API Password."
+                self.logger.error(f"{self.log_prefix}: {err_msg}")
+                return ValidationResult(
+                    success=False,
+                    message=(err_msg),
+                )
+        except CybereasonPluginException as err:
+            return ValidationResult(
+                success=False,
+                message=(str(err)),
+            )
+        except Exception as err:
+            err_msg = "Validation Error, Error in validating Credentials. Please verify the API Username and API Password."
+            self.logger.error(
+                f"{self.log_prefix}: {err_msg} " 
+                f"Error: {err}"
+            )
+            return ValidationResult(
+                success=False,
+                message=(err_msg),
+            )
+
+    def format_time(self, time_in_milliseconds):
+        seconds = time_in_milliseconds / 1000
+        formatted_time = datetime.fromtimestamp(seconds).strftime("%Y-%m-%dT%H:%M:%SZ")
+        return formatted_time
+    
     def get_indicators(self, session, headers):
         """Get detailed information by Detection IDs.
 
@@ -137,74 +344,218 @@ class CybereasonPlugin(PluginBase):
         Returns:
             List[cte.models.Indicators]: List of indicator objects received from the Cybereason platform.
         """
-        # Indicator endpoint, this will return detailed information about Indicator.
-        indicator_endpoint = f"{self.configuration['base_url']}/rest/classification/download"
 
-        indicator_list = []
-        ioc_resp = session.request(
-            "GET",
-            indicator_endpoint,
-            headers=add_user_agent(headers),
-            verify=self.ssl_validation,
-            proxies=self.proxy
+        (base_url, _, _, _) = self._get_credentials(self.configuration)
+        indicator_endpoint = f"{base_url}/rest/classification/reputations/list"
+        headers = self.get_headers()
+
+        sub_checkpoint = getattr(self, "sub_checkpoint", None)
+        if sub_checkpoint:
+            checkpoint = sub_checkpoint.get("checkpoint")
+        else:
+            checkpoint = self._get_cybereason_last_seen()
+
+        self.logger.info(
+            f"{self.log_prefix}: Pulling indicators from {PLATFORM_NAME}"
+            f" platform using checkpoint {checkpoint}."
         )
+        
+        indicator_checkpoint = checkpoint
 
-        if ioc_resp.status_code == 200 or ioc_resp.status_code == 201:
-            lines = ioc_resp.content.splitlines()
-            skipped_count, removed_count = 0, 0
-            for row in lines:
-                indicator, skipped, removed = self.prepare_indicator_from_row(row)
-                if indicator:
-                    indicator_list.append(indicator)
-                elif skipped:
-                    skipped_count += 1
-                elif removed:
-                    removed_count += 1
-            if skipped_count > 0:
-                self.logger.info(f"Plugin:Cybereason- Skipping {skipped_count} unsupported/unrecognized IoC(s).")
-            if removed_count > 0:
-                self.logger.info(f"Plugin:Cybereason- {removed_count} reputation(s) to be removed, skipping.")
-        else:
-            self.handle_error(ioc_resp)
-        return indicator_list
+        next_page = True
+        page_count = 0
+        total_indicators = 0
+        indicator_fetched_till_now = 0
+        batch_size = 50000
+        max_pages = 0
+        try:
+            while next_page:
 
-    def prepare_indicator_from_row(self, row):
-        """Prepare indicator object from row indicator."""
-        indicator = None
-        skipped, removed = False, False
-        new_row = str(row, 'utf-8')
-        ioc_elements = new_row.split(",")
-        if len(ioc_elements) >= 5:
-            if ioc_elements[1].lower() == "blacklist" and ioc_elements[4].lower() == "false":
-                # Add the blacklisted and which is not suppose to be removed IoC to Netskope
-                ioc_type = self.get_indicator_type(ioc_elements[0])
-                if ioc_type:
-                    indicator = Indicator(
-                        value=ioc_elements[0],
-                        type=ioc_type,
-                        comments="" if str(ioc_elements[3]).lower().strip() == "null" else ioc_elements[3]
+                resp_json = self.cybereason_helper.api_helper(
+                    logger_msg=f"Pulling data for page {page_count+1}",
+                    url=indicator_endpoint,
+                    method="POST",
+                    data=json.dumps(
+                        {
+                            "page": page_count,
+                            "size": batch_size,
+                            "filter": {"includeExpired": False},
+                        }
+                    ),
+                    headers=headers,
+                    session=session,
+                )
+                if resp_json.get("outcome") == "success":
+                    data = {}
+                    indicators_json_list = []
+                    data = resp_json.get("data", {})
+                    if data and (not isinstance(data, str)):
+                        indicators_json_list = data.get("reputations", [])
+                        total_indicators = data.get("total", 0)
+                        max_pages = math.ceil(total_indicators / batch_size)
+                    else: 
+                        err_msg = str(resp_json.get("data")) if resp_json.get("data") else f"Not able to fetch data from {PLATFORM_NAME}."
+                        raise CybereasonPluginException(err_msg)
+                else:     
+                    err_msg = str(resp_json.get("data")) if resp_json.get("data") else f"Not able to fetch data from {PLATFORM_NAME}."
+                    raise CybereasonPluginException(err_msg)
+                
+                indicator_list = []
+                indicators_per_page = {
+                    "total": 0,
+                    "skipped": 0,
+                    "ipv4": 0,
+                    "ipv6": 0,
+                    "md5": 0,
+                    "sha256": 0,
+                    "domain": 0,
+                }
+
+                for indicator in indicators_json_list:
+                    indicator_checkpoint = indicator.get(
+                        "lastUpdated",
+                        str(datetime.now().strftime(DATE_FORMAT_FOR_IOCS)),
                     )
-                else:
-                    skipped = True
-            if ioc_elements[4].lower() == "true":
-                removed = True
-        else:
-            self.logger.error("Plugin:Cybereason- Could not split Reputation: {}".format(new_row))
-        return indicator, skipped, removed
 
+                    if indicator.get("maliciousType", "") == "blacklist":
+                        ioc_type, ioc_category = self.get_indicator_type(
+                            indicator.get("lookupKeyType")
+                        )
+                        indicator_comment = str(indicator.get("comment"))
+                        if (
+                            ioc_type
+                            and IOC_DESCRIPTION.lower()
+                            not in indicator_comment
+                        ):
+                            try:
+                                firstseen_timestamp = indicator.get("firstSeen")
+                                firstseen = (
+                                    self.format_time(firstseen_timestamp) 
+                                    if firstseen_timestamp 
+                                    else None
+                                )
+                                    
+                                lastseen_timestamp = indicator.get("lastUpdated")
+                                lastseen = (
+                                    self.format_time(lastseen_timestamp) 
+                                    if lastseen_timestamp 
+                                    else None
+                                )
+                                indicator_value = indicator.get("key")
+                                indicator_list.append(
+                                    Indicator(
+                                        value=indicator_value,
+                                        type=ioc_type,
+                                        comments=(
+                                            ""
+                                            if str(indicator.get("comment"))
+                                            .lower()
+                                            .strip()
+                                            == "null"
+                                            else str(indicator.get("comment"))
+                                        ),
+                                        firstSeen=firstseen,
+                                        lastSeen=lastseen,
+                                    )
+                                )
+                                if ioc_category:
+                                    indicators_per_page[ioc_category] += 1
+                            except ValidationError:
+                                indicators_per_page["skipped"] += 1
+                        else:
+                            indicators_per_page["skipped"] += 1
+                        indicators_per_page["total"] += 1
+
+                    else:
+                        indicators_per_page["skipped"] += 1
+
+                indicator_fetched_till_now += len(indicator_list)
+                count_per_page_msg = (
+                    "Successfully fetched {total} indicator(s) and skipped "
+                    "{skipped} indicator(s) in page {page}. Pull Stats: "
+                    "SHA256={SHA256}, Domain={domain}, md5={md5}, ipv4={ipv4}, ipv6={ipv6},"
+                    " Total indicator(s) fetched: {indicator_fetched_till_now}".format(
+                        total=len(indicator_list),
+                        skipped=indicators_per_page["skipped"],
+                        page=page_count + 1,
+                        SHA256=indicators_per_page["sha256"],
+                        domain=indicators_per_page["domain"],
+                        md5=indicators_per_page["md5"],
+                        ipv4=indicators_per_page["ipv4"],
+                        ipv6=indicators_per_page["ipv6"],
+                        indicator_fetched_till_now=indicator_fetched_till_now,
+                    )
+                )
+
+                indicators_per_page_count = len(indicator_list)
+                self.logger.info(
+                    f"{self.log_prefix}: Fetched {indicators_per_page_count} indicators in page {page_count+1}"
+                    f", Total indicators fetched till now {indicator_fetched_till_now}."
+                )
+                self.logger.debug(f"{self.log_prefix}: {count_per_page_msg}.")
+                page_count += 1
+                if page_count >= max_pages:
+                    next_page = False
+
+                if hasattr(self, "sub_checkpoint"):
+                    yield indicator_list, {"checkpoint": indicator_checkpoint}
+                else:
+                    yield indicator_list
+
+        except CybereasonPluginException as err:
+            self.logger.error(
+                message=(
+                    f"{self.log_prefix}: Error Occurred while pulling "
+                    f"indicators from {PLATFORM_NAME}. Error: {err}."
+                ),
+                details=traceback.format_exc(),
+            )
+            raise CybereasonPluginException(str(err))
+        except Exception as exp:
+            err_msg = f"Error occurred while pulling indicators from {PLATFORM_NAME}."
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg} Error: {exp}.",
+                details=traceback.format_exc(),
+            )
+            raise CybereasonPluginException(err_msg)
+        
     def get_indicator_type(self, ioc_key):
         """Get indicator type from given IOC key."""
         ioc_type = None
-        if re.match(r"^((?=[a-z0-9-]{1,63}\.)(xn--)?[a-z0-9]+(-[a-z0-9]+)*\.)+[a-z]{2,63}$", ioc_key):
+        ioc_category = None
+        if ioc_key == "DOMAIN":
             # URL
             ioc_type = IndicatorType.URL
-        elif re.match(r"^[A-Fa-f0-9]{32}$", ioc_key):
+            ioc_category = "domain"
+        elif ioc_key == "IPV4":
+            # URL
+            ioc_type = IndicatorType.URL
+            ioc_category = "ipv4"
+        elif ioc_key == "IPV6":
+            # URL
+            ioc_type = IndicatorType.URL
+            ioc_category = "ipv6"
+        elif ioc_key == "FILE_HASH_MD5":
             # MD5
             ioc_type = IndicatorType.MD5
-        elif re.match(r"^[A-Fa-f0-9]{64}$", ioc_key):
+            ioc_category = "md5"
+        elif ioc_key == "FILE_HASH_SHA256":
             # SHA256
             ioc_type = IndicatorType.SHA256
-        return ioc_type
+            ioc_category = "sha256"
+        return ioc_type, ioc_category
+
+    def _get_cybereason_last_seen(self) -> str:
+        """Get Cybereason LastSeen Or DateChanged parameter.
+        Returns:
+            LastSeen/DateChanged (str):
+                A datetime object as string representation.
+        """
+        if not self.last_run_at:
+            start_time = datetime.now()
+        else:
+            start_time = self.last_run_at
+        return start_time.strftime(DATE_FORMAT_FOR_IOCS)
 
     def pull(self):
         """Pull the Threat information from Cybereason platform.
@@ -212,62 +563,61 @@ class CybereasonPlugin(PluginBase):
         Returns:
             List[cte.models.Indicators]: List of indicator objects received from the Cybereason platform.
         """
-        # Let's trip the spaces from the OAUTH2 secrets.
-        self.configuration['username'] = self.configuration['username'].replace(" ", "")
-        self.configuration['password'] = self.configuration['password'].replace(" ", "")
-        config = self.configuration
-        if config["is_pull_required"] == "Yes":
-            self.logger.info("Plugin:Cybereason- Polling is enabled.")
-            try:
-                session = self.get_session(
-                    self.configuration.get('username'),
-                    self.configuration.get('password'),
-                    self.configuration.get('base_url')
+        (base_url, username, password, is_pull_required) = (
+            self._get_credentials(self.configuration)
+        )
+        try:
+            if is_pull_required == "No":
+                self.logger.info(
+                    f"{self.log_prefix}: Polling is disabled in configuration "
+                    "parameter hence skipping pulling of indicators from "
+                    f"{PLATFORM_NAME}."
                 )
+                return []
 
-                headers = {"Content-Type": "application/json"}
-
-                if session.cookies.get_dict().get("JSESSIONID") is None:
-                    self.notifier.error(
-                        "Plugin:Cybereason- Unable to establish session with the Cybereason console."
-                    )
-                else:
-                    return self.get_indicators(session, headers)
-
-            except requests.exceptions.ProxyError:
-                self.notifier.error(
-                    "Plugin:Cybereason- Invalid proxy configuration."
-                )
-                self.logger.error(
-                    "Plugin:Cybereason- Invalid proxy configuration."
-                )
-                raise requests.HTTPError(
-                    "Plugin:Cybereason- Invalid proxy configuration."
-                )
-            except requests.exceptions.ConnectionError:
-                self.notifier.error(
-                    "Plugin:Cybereason- Unable to establish connection with Cybereason platform. "
-                    "Proxy server or Cybereason API is not reachable."
-                )
-                self.logger.error(
-                    "Plugin:Cybereason- Unable to establish connection with Cybereason platform. "
-                    "Proxy server or Cybereason API is not reachable."
-                )
-                raise requests.HTTPError(
-                    "Plugin:Cybereason- Unable to establish connection with Cybereason platform. "
-                    "Proxy server or Cybereason API is not reachable."
-                )
-            except requests.exceptions.RequestException as e:
-                self.logger.error(
-                    "Plugin:Cybereason- "
-                    "Exception occurred while making an API call to Cybereason platform"
-                )
-                raise e
-        else:
-            self.logger.info(
-                "Plugin:Cybereason- Polling is disabled, skipping."
+            session = self.get_session(
+                username,
+                password,
+                base_url,
             )
-            return []
+
+            headers = self.get_headers()
+
+            if not session.cookies.get_dict().get("JSESSIONID"):
+                err_msg = f"Unable to establish session with the {PLATFORM_NAME} console."
+                self.logger.error(f"{self.log_prefix}: {err_msg}")
+            else:
+                if hasattr(self, "sub_checkpoint"):
+
+                    def wrapper(self):
+                        yield from self.get_indicators(session, headers)
+
+                    return wrapper(self)
+
+                else:
+                    indicators = []
+                    for batch in self.get_indicators(session, headers):
+                        indicators.extend(batch)
+
+                    total_counts_msg = (
+                        f"Successfully fetched {len(indicators)} indicator(s) "
+                        f"from {PLATFORM_NAME}."
+                    )
+                    self.logger.info(f"{self.log_prefix}: {total_counts_msg}")
+                    return indicators
+
+        except CybereasonPluginException as err:
+            raise err
+        except Exception as exp:
+            err_msg = "Error occurred while pulling indicator(s)."
+            self.logger.error(
+                message=(
+                    f"{self.log_prefix}: {err_msg}"
+                    f" indicators. Error: {exp}"
+                ),
+                details=str(traceback.format_exc()),
+            )
+            raise CybereasonPluginException(str(err_msg))
 
     def push(self, indicators: List[Indicator], action_dict: Dict):
         """Push the Indicator list to Cybereason.
@@ -277,71 +627,87 @@ class CybereasonPlugin(PluginBase):
         Returns:
             cte.plugin_base.PushResult: PushResult object with success flag and Push result message.
         """
-        self.logger.info(
-            "Plugin:Cybereason- Executing push method"
+
+        (base_url, username, password, _) = self._get_credentials(
+            self.configuration
         )
-        try:
-            session = self.get_session(
-                self.configuration.get('username'),
-                self.configuration.get('password'),
-                self.configuration.get('base_url')
-            )
-            headers = {"Content-Type": "application/json"}
+        session = self.get_session(
+            username,
+            password,
+            base_url,
+        )
+        total_push_count = 0
+        batch_count = 0
+        total_skip_count = 0
+        if not session.cookies.get_dict().get("JSESSIONID"):
+            err_msg = "Error: Unable to establish session with the Cybereason console."
+            self.logger.error(f"{self.log_prefix: {err_msg}}")
+            raise CybereasonPluginException(err_msg)
+        else:
+            try:
+                with tempfile.TemporaryDirectory() as temp_dir:
 
-            if session.cookies.get_dict().get("JSESSIONID") is None:
-                self.notifier.error(
-                    "Plugin:Cybereason-: Error: Unable to establish session with the Cybereason console."
-                )
-            else:
-                payload_list = self.prepare_payload(indicators)
+                    csv_file = tempfile.NamedTemporaryFile(
+                        suffix=".csv", dir=temp_dir, delete=False
+                    ).name
+                    indicators_list = list(indicators)
+                    for chunk in self.divide_in_chunks(indicators_list, 1000):
+                        batch_count += 1
+                        indicator_count = self.prepare_payload(
+                            chunk, csv_file
+                        )
 
-                self.push_indicators_to_cybereason(session, headers, payload_list[0])
-                self.logger.info(
-                    "Plugin:Cybereason- "
-                    f"Successfully Pushed {payload_list[1]} Indicators to Cybereason"
+                        response = self.push_indicators_to_cybereason(
+                            session, csv_file
+                        )
+
+                        if response:
+                            outcome = response.get("outcome")
+                            data = response.get("data")
+                            if outcome == "success" and data:
+                                total_push_count += indicator_count
+                                msg = f"For Batch {batch_count}, Pushed {indicator_count} Indicators to {PLATFORM_NAME}."
+                                self.logger.info(f"{self.log_prefix}: {msg}")
+                            else:
+                                total_skip_count += indicator_count
+                                self.logger.error(f"{self.log_prefix}: Batch {batch_count} with {indicator_count} Indicators is not pushed , Error: {str(response)}")
+                        else:
+                            total_skip_count += indicator_count
+                            self.logger.error(f"{self.log_prefix}: Batch {batch_count} with {indicator_count} Indicators is not pushed due to some unexpected error.")
+
+                    msg = f"Successfully Pushed {total_push_count} indicators to Cybereason. Skipped sharing {total_skip_count} indicator(s)."
+                    self.logger.info(f"{self.log_prefix}: {msg}")
+                    return PushResult(
+                        success=True,
+                        message=msg,
+                    )
+            except CybereasonPluginException as exp:
+                err_msg = "Error occurred while sharing indicator(s)."
+                self.logger.error(
+                    message=f"{self.log_prefix}: {err_msg} Error: {exp}",
+                    details=str(traceback.format_exc()),
                 )
                 return PushResult(
-                    success=True,
-                    message=f"Successfully Pushed {payload_list[1]} Indicators to Cybereason"
+                    success=False,
+                    message=err_msg,
+                )                
+            except Exception as exp:
+                err_msg = "Error occurred while sharing indicator(s)."
+                self.logger.error(
+                    message=f"{self.log_prefix}: {err_msg} Error: {exp}",
+                    details=str(traceback.format_exc()),
                 )
-        except requests.exceptions.ProxyError:
-            self.notifier.error(
-                "Plugin:Cybereason- Invalid proxy configuration."
-            )
-            self.logger.error(
-                "Plugin:Cybereason- Invalid proxy configuration."
-            )
-            return PushResult(
-                success=False,
-                message=("Failed to push indicators to Cybereason "
-                         "Invalid proxy configuration")
-            )
-        except requests.exceptions.ConnectionError:
-            self.notifier.error(
-                "Plugin:Cybereason- Unable to establish connection with Cybereason platform. "
-                "Proxy server or Cybereason API is not reachable."
-            )
-            self.logger.error(
-                "Plugin:Cybereason- Unable to establish connection with Cybereason platform. "
-                "Proxy server or Cybereason API is not reachable."
-            )
-            return PushResult(
-                success=False,
-                message=("Failed to push indicators to Cybereason "
-                         "Unable to establish connection with Cybereason platform.")
-            )
-        except requests.exceptions.RequestException as e:
-            self.logger.error(
-                "Plugin:Cybereason- "
-                "Exception occurred while making an API call to Cybereason platform"
-            )
-            return PushResult(
-                success=False,
-                message=("Exception occurred while making an API call to Cybereason platform "
-                         f"Error :{repr(e)}")
-            )
+                return PushResult(
+                    success=False,
+                    message=err_msg,
+                )
 
-    def push_indicators_to_cybereason(self, session, headers, json_payload):
+    def divide_in_chunks(self, indicators, chunk_size):
+            """Divide the json payload into chunks of size less than 1MB."""
+            for i in range(0, len(indicators), chunk_size):
+                yield indicators[i : i + chunk_size]
+                
+    def push_indicators_to_cybereason(self, session, csv_file):
         """Push the indicator to the Cybereason endpoint.
 
         Args:
@@ -351,46 +717,71 @@ class CybereasonPlugin(PluginBase):
         Returns:
             dict: JSON response dict received after successfull Push.
         """
-        push_endpoint = f"{self.configuration['base_url']}/rest/classification/update"
+        (base_url, _, _, _) = self._get_credentials(self.configuration)
+        push_endpoint = f"{base_url}/rest/classification/upload"
         try:
-            post_resp = session.request(
-                "POST",
-                push_endpoint,
-                headers=add_user_agent(headers),
-                data=json_payload,
-                verify=self.ssl_validation,
-                proxies=self.proxy
+            post_resp = self.cybereason_helper.api_helper(
+                logger_msg=f"Pushing indicators to {PLATFORM_NAME}",
+                method="POST",
+                url=push_endpoint,
+                session=session,
+                files=[
+                    (
+                        "classification_file",
+                        (
+                            os.path.basename(csv_file),
+                            open(csv_file, "rb"),
+                            "text/csv",
+                        ),
+                    )
+                ],
             )
-        except requests.exceptions.RequestException as e:
-            self.notifier.error(
-                "Plugin:Cybereason- "
-                f"Exception occurred while making an API call to Cybereason platform {repr(e)}"
-            )
-            self.logger.error(
-                "Plugin:Cybereason- "
-                f"Exception occurred while making an API call to Cybereason platform {repr(e)}"
-            )
-            return {}
-        json_resp = self.handle_error(post_resp)
-        outcome = json_resp.get('outcome')
+            outcome = post_resp.get("outcome")
 
-        if outcome == 'failed':
-            err_msg = json_resp.get('data', '')
-            self.notifier.error(
-                "Plugin:Cybereason- Unable to Push Indicators,"
-                f"Error: {err_msg}"
-            )
-            self.logger.error(
-                "Plugin:Cybereason- Unable to Push Indicators,"
-                f"Error: {err_msg}"
-            )
-            raise requests.HTTPError(
-                f"Plugin:Cybereason- Unable to Push Indicators,"
-                f"Error: {err_msg}"
-            )
-        return json_resp
+            if outcome == "failed":
+                err_msg = post_resp.get("data", "")
+                self.logger.error(
+                    f"{PLATFORM_NAME} Unable to Push Indicators,"
+                    f"Error: {err_msg}."
+                )
+                error_message = post_resp
 
-    def prepare_payload(self, indicators):
+                if "data" in error_message:
+                    with open(csv_file, "r") as csv_file:
+                        for line_number, error_code in error_message[
+                            "data"
+                        ].items():
+
+                            # Find the corresponding line in the CSV file
+                            csv_file.seek(0)
+                            reader = csv.reader(csv_file)
+                            line_count = 0
+                            for row in reader:
+                                line_count += 1
+                                if line_count == int(line_number):
+                                    self.logger.error(
+                                        message=f"{self.log_prefix}: Error occurred while sharing indicator(s). Error Code: {error_code}.",
+                                        details=f"Payload details: {row}.",
+                                    )
+                                    break
+
+                raise CybereasonPluginException(
+                    f"{PLUGIN_NAME} Unable to Push Indicators, "
+                    f"Error: {err_msg}."
+                )
+            return post_resp
+        except CybereasonPluginException:
+            pass
+        except Exception as exp:
+            err_msg = "Error occurred while sharing indicator(s)."
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg} Error: {exp}",
+                details=str(traceback.format_exc()),
+            )
+            raise CybereasonPluginException(str(exp))
+
+
+    def prepare_payload(self, indicators, csv_file):
         """Prepare the JSON payload for Push.
 
         Args:
@@ -398,205 +789,90 @@ class CybereasonPlugin(PluginBase):
         Returns:
             List[dict]: List of python dict object of JSON reputation model as per Cybereason API.
         """
-        payload_list = []
-        for indicator in indicators:
-            if (
-                f"{INTERNAL_TYPES_TO_Cybereason[indicator.type]}:{indicator.value}"
-                and (re.match(r"^[A-Fa-f0-9]{64}$", indicator.value))
-            ):
-                self.logger.info("Cybereason skipping SHA256 indicator")
-            else:
-                payload_list.append(indicator.value)
+        indicator_headers = [
+            "key",
+            "reputation",
+            "prevent execution",
+            "comment",
+            "remove",
+        ]
+        
+        indicator_types = {
+            "skipped":0,
+            "domain":0,
+            "md5":0,
+            "sha256":0,
+        }
 
-        custom_reputation = "blacklist"
-        payload = json.dumps(
-            [{"keys": payload_list, "maliciousType": custom_reputation, "prevent": False, "remove": False}]
-        )
-        return [payload, len(payload_list)]
-
-    def validate(self, data):
-        """Validate the Plugin configuration parameters.
-
-        Args:
-            data (dict): Dict object having all the Plugin configuration parameters.
-        Returns:
-            cte.plugin_base.ValidateResult: ValidateResult object with success flag and message.
-        """
-        self.logger.info(
-            "Plugin:Cybereason- Executing validate method for Cybereason plugin"
-        )
-        if "base_url" not in data:
-            self.logger.error(
-                "Plugin:Cybereason- Validation error occurred "
-                "Error: Type of Base URL should be non-empty string."
-            )
-            return ValidationResult(
-                success=False,
-                message="Invalid Base URL provided.",
-            )
-
-        if (
-            "username" not in data
-            or not data["username"]
-            or type(data["username"]) != str
-        ):
-            self.logger.error(
-                "Plugin:Cybereason- Validation error occurred"
-                "Error: Type of Username should be non-empty string."
-            )
-            return ValidationResult(
-                success=False, message="Invalid Username provided.",
-            )
-
-        if (
-            "password" not in data
-            or not data["password"]
-            or type(data["password"]) != str
-        ):
-            self.logger.error(
-                "Plugin:Cybereason- Validation error occurred"
-                "Error: Type of Password should be non-empty string."
-            )
-            return ValidationResult(
-                success=False, message="Invalid Password provided.",
-            )
-
-        if "is_pull_required" not in data or data["is_pull_required"] not in [
-            "Yes",
-            "No",
-        ]:
-            self.logger.error(
-                "Plugin:Cybereason- Validation error occurred "
-                "Error: Type of Pulling configured should be non-empty string."
-            )
-            return ValidationResult(
-                success=False,
-                message="Invalid value for 'Enable Polling' provided. Allowed values are 'Yes', or 'No'.",
-            )
-
-        return self.validate_auth_params(data["username"], data["password"], data["base_url"])
-
-    def validate_auth_params(self, username, password, base_url):
-        """Validate the authentication params with Cybereason platform.
-
-        Args:
-            username (str): Username required to login to Cybereason console.
-            password (str): Password required to login to Cybereason console.
-            base_url (str): Base url of Cybereason console.
-        Returns:
-            ValidationResult: ValidationResult object having validation results after making
-            an API call.
-        """
+        indicator_count = 0
         try:
-            session = self.get_session(username, password, base_url)
-            if session.cookies.get_dict().get("JSESSIONID") is None:
-                self.logger.error(
-                    "Plugin:Cybereason- Validation Error, "
-                    "Error in validating Credentials"
-                )
-                return ValidationResult(
-                    success=False,
-                    message=(
-                        "Validation Error, Error in validating Credentials. "
-                        "Please use the correct credentials."
+            with open(csv_file, "w", newline="") as csvfile:
+                writer = csv.DictWriter(csvfile, fieldnames=indicator_headers)
+                writer.writeheader()
+                for indicator in indicators:
+                    filtered_row = {
+                        "remove": "false",
+                        "prevent execution": "false",
+                        "reputation": "blacklist",
+                    }
+
+                    filtered_row["key"] = str(indicator.value)
+                    filtered_row["comment"] = (
+                        str(indicator.comments) + IOC_DESCRIPTION
                     )
-                )
-            indicator_endpoint = (
-                f"{base_url}/rest/classification/reputations/list"
-            )
-            ioc_resp = session.request(
-                "POST",
-                indicator_endpoint,
-                headers={"Content-Type": "application/json"},
-                json={"page": 0, "size": 1, "filter": {"includeExpired": False}},
-                verify=self.ssl_validation,
-                proxies=self.proxy
-            )
-            try:
-                if ioc_resp.json().get("outcome", "") == "success":
-                    return ValidationResult(
-                        success=True,
-                        message="Validation successful for Cybereason Plugin"
-                    )
-                else:
-                    self.logger.error(
-                        "Plugin:Cybereason- Validation Error, "
-                        "Error in validating Credentials. "
-                        "Please verify the Username and Password."
-                    )
-                    return ValidationResult(
-                        success=False,
-                        message=(
-                            "Validation Error, Error in validating Credentials. "
-                            "Please verify the Username and Password."
-                        )
-                    )
-            except Exception as err:
-                self.logger.error(
-                    "Plugin:Cybereason- Validation Error, "
-                    "Error in validating Credentials. "
-                    "Please verify the Username and Password."
-                    f"Error: {err}"
-                )
-                return ValidationResult(
-                    success=False,
-                    message=(
-                        "Validation Error, Error in validating Credentials. "
-                        "Please verify the Username and Password."
-                    )
-                )
-        except requests.exceptions.ProxyError:
+                    writer.writerow(filtered_row)
+                    indicator_types[INTERNAL_TYPES_TO_CYBEREASON.get(str(indicator.type), "skipped")]+=1
+                    indicator_count += 1
+                    
+        except Exception as err:
+            err_msg = "Error occurred while sharing indicator(s)."
             self.logger.error(
-                "Plugin:Cybereason- Validation Error, "
-                "Invalid proxy configuration."
+                message=f"{self.log_prefix}: {err_msg} Error: {err}",
+                details=str(traceback.format_exc()),
             )
-            return ValidationResult(
-                success=False,
-                message="Validation Error, Invalid proxy configuration."
+            raise CybereasonPluginException(str(err))
+        
+        log_msg = (
+            "Successfully created payload for {total}"
+            " indicator(s) and skipped {skipped} indicator(s) for sharing in which {md5} "
+            " MD5 indicator(s). {sha256} SHA256, {domain} "
+            "URL(s), will be shared. ".format(
+                total=indicator_count,
+                skipped=indicator_types["skipped"],
+                md5=indicator_types["md5"],
+                sha256=indicator_types["sha256"],
+                domain=indicator_types["domain"],
             )
-        except requests.exceptions.ConnectionError:
-            self.logger.error(
-                "Plugin:Cybereason- Validation Error, "
-                "Unable to establish connection with Cybereason Platform API"
-            )
-            return ValidationResult(
-                success=False,
-                message="Validation Error, Unable to establish connection with Cybereason Platform API"
-            )
-        except requests.HTTPError as err:
-            self.logger.error(
-                f"Plugin:Cybereason- Validation Error, "
-                f"Error in validating Credentials {repr(err)}"
-            )
-            return ValidationResult(
-                success=False,
-                message=f"Validation Error, Error in validating Credentials {repr(err)}"
-            )
+        )
+        self.logger.info(f"{self.log_prefix}: {log_msg}")
+        
+        return indicator_count
 
     def get_session(self, username, password, base_url):
         """Get the session object after authentication from Cybereason platform.
 
         Args:
-            username (str): Username required to login to Cybereason console.
-            password (str): Password required to login to Cybereason console.
+            username (str): API Username required to login to Cybereason console.
+            password (str): API Password required to login to Cybereason console.
             base_url (str): Base url of Cybereason console.
         Returns:
             session: session object in case of Success.
         """
-        username = username.replace(" ", "")
-        password = password.replace(" ", "")
         auth_endpoint = f"{base_url}/login.html"
         session = requests.Session()
         auth_params = {
-            'username': username,
-            'password': password,
+            "username": username,
+            "password": password,
         }
-        session.post(
-            auth_endpoint,
+        
+        self.cybereason_helper.api_helper(
+            logger_msg=f"Getting session object after authentication from {PLATFORM_NAME}",
+            method="POST",
+            url=auth_endpoint,
             data=auth_params,
-            verify=self.ssl_validation,
-            proxies=self.proxy,
-            headers=add_user_agent()
+            session=session,
+            headers=add_user_agent(),
+            get_session=True,
         )
         return session
 
@@ -618,3 +894,5 @@ class CybereasonPlugin(PluginBase):
     def get_action_fields(self, action: Action):
         """Get fields required for an action."""
         return []
+
+

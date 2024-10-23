@@ -1,0 +1,1 @@
+"""CLS AWS SQS Plugin."""

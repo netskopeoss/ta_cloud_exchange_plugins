@@ -30,86 +30,188 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
 
-"""CSCC Plugin."""
+"""Google Cloud SCC Plugin."""
 
 
-import json
-import uuid
-import re
 import datetime
+import json
+import re
+import traceback
+import uuid
+
+from netskope.common.utils import add_user_agent
 from netskope.integrations.cls.plugin_base import PluginBase, ValidationResult
+
 from .utils.cscc_constants import (
-    GCP_URL,
-    RESOURCE_NAME_URL,
+    MODULE_NAME,
+    PLUGIN_NAME,
+    PLUGIN_VERSION,
+    RESOURCE_NAME_URL
 )
+from .utils.cscc_exceptions import CSCCPluginException
 from .utils.cscc_helper import (
-    get_cscc_mappings,
-    map_cscc_data,
-    handle_data,
-    get_external_url,
     DataTypes,
+    get_cscc_mappings,
+    get_external_url,
+    handle_data,
+    map_cscc_data
 )
-from .utils.cscc_exceptions import (
-    MaxRetriesExceededError,
-)
-from .utils.gcp_client import GCPClient
 from .utils.cscc_validator import CSCCValidator
+from .utils.gcp_client import GCPClient
 
 
 class CSCCPlugin(PluginBase):
     """The CSCC plugin implementation class."""
 
-    def create_gcp_client(self):
-        """Create GCP client."""
-        self.resource_name = None
-        org_id = self.configuration.get("organization_id", None)
-        src_id = self.configuration.get("source_id", None)
-        self.gcp_post_url = "{}/{}/sources/{}/findings".format(
-            GCP_URL, org_id, src_id
-        )
-        key_file = self.configuration.get("key_file", """{}""")
-        key_file = json.loads(key_file)
+    def __init__(
+        self,
+        name,
+        *args,
+        **kwargs,
+    ):
+        """Init method.
 
-        self.gcp_client = GCPClient(
-            self.gcp_post_url, key_file, self.logger, self.proxy
+        Args:
+            name (str): Configuration name.
+        """
+        super().__init__(
+            name,
+            *args,
+            **kwargs,
         )
-        if key_file != {}:
-            self.resource_name = self.gcp_client.set_resource_name()
+        self.plugin_name, self.plugin_version = self._get_plugin_info()
+        self.log_prefix = f"{MODULE_NAME} {self.plugin_name} [{name}]"
+
+    def _get_plugin_info(self) -> tuple:
+        """Get plugin name and version from metadata.
+
+        Returns:
+            tuple: Tuple of plugin's name and version fetched from metadata.
+        """
+        try:
+            metadata_json = CSCCPlugin.metadata
+            plugin_name = metadata_json.get("name", PLUGIN_NAME)
+            plugin_version = metadata_json.get("version", PLUGIN_VERSION)
+            return plugin_name, plugin_version
+        except Exception as exp:
+            self.logger.error(
+                message=(
+                    f"{MODULE_NAME} {PLUGIN_NAME}: Error occurred while"
+                    f" getting plugin details. Error: {exp}"
+                ),
+                details=str(traceback.format_exc()),
+            )
+        return PLUGIN_NAME, PLUGIN_VERSION
+
+    def _add_user_agent(self, headers={}) -> str:
+        """Add User-Agent in the headers of any request.
+
+        Returns:
+            str: String containing the User-Agent.
+        """
+        headers = add_user_agent(headers)
+        ce_added_agent = headers.get("User-Agent", "netskope-ce")
+        user_agent = "{}-{}-{}-v{}".format(
+            ce_added_agent,
+            MODULE_NAME.lower(),
+            self.plugin_name.replace(" ", "-").lower(),
+            self.plugin_version,
+        )
+        headers.update({"User-Agent": user_agent})
+        return headers
 
     def push(self, transformed_data, data_type, subtype):
-        """Transform and ingests the given data chunks to GCP by creating a authenticated session with GCP.
+        """Tngests the transformed_data to GCP by creating a authenticated session with GCP.
 
-        :param data_type: The type of data being pushed. Current possible values: alerts and events
-        :param transformed_data: Transformed data to be ingested to GCP in chunks of 1
-        :param subtype: The subtype of data being pushed. E.g. subtypes of alert is "dlp", "policy" etc.
+        Args:
+            transformed_data (list): The transformed data to be ingested.
+            data_type (str): The type of data to be ingested (alert/event)
+            subtype (str): The subtype of data to be ingested \
+            (DLP, anomaly etc. in case of alerts)
+
         """
-        self.create_gcp_client()
-
-        self.gcp_client.set_gcp_session()
         try:
+            gcp_client = GCPClient(
+                self.configuration,
+                self.logger,
+                self.log_prefix,
+                self.plugin_name,
+                self.proxy
+            )
+            headers = self._add_user_agent()
+
+            skipped_count = 0
+            total_count = 0
+            log_msg = (
+                f"[{data_type}]:[{subtype}] Ingesting {len(transformed_data)} data "
+                f"to {self.plugin_name}."
+            )
+            self.logger.info(f"{self.log_prefix}: {log_msg}")
             # Ingest the given data
             for data in transformed_data:
-                self.gcp_client.ingest(
-                    data["fid"], data["finding"], data_type, subtype
+                try:
+                    gcp_client.ingest(
+                        fid=data["fid"],
+                        finding=data["finding"],
+                        headers=headers,
+                        data_type=data_type,
+                        subtype=subtype
+                    )
+                    total_count += 1
+                except Exception as err:
+                    self.logger.error(
+                        message=(
+                            f"{self.log_prefix}: [{data_type}]:[{subtype}] "
+                            f"Error occurred while ingesting data. Error: {err}"
+                        ),
+                        details=str(traceback.format_exc()),
+                    )
+                    skipped_count += 1
+                    continue
+            if skipped_count > 0:
+                self.logger.info(
+                    f"{self.log_prefix}: Skipped {skipped_count} records "
+                    "due to some unexpected error occurred."
                 )
-        except MaxRetriesExceededError as err:
-            self.logger.error(f"Error while pushing data: {err}")
+
+            log_msg = (
+                f"[{data_type}]:[{subtype}] Successfully ingested "
+                f"{total_count} {data_type} to {self.plugin_name}."
+            )
+            self.logger.info(f"{self.log_prefix}: {log_msg}")
+        except CSCCPluginException as err:
+            self.logger.error(
+                message=(
+                    f"{self.log_prefix}: Error occurred while ingesting "
+                    f"[{data_type}]:[{subtype}]. Error: {err}"
+                ),
+                details=str(traceback.format_exc()),
+            )
             raise err
-
-    @staticmethod
-    def chunk_size():
-        """Get chunk_size would be 1 in this case.
-
-        :return: data chunk size
-        """
-        return 1
+        except Exception as err:
+            err_msg = (
+                f"Error occurred while ingesting "
+                f"[{data_type}]:[{subtype}] data to {PLUGIN_NAME}."
+            )
+            self.logger.error(
+                message=(
+                    f"{self.log_prefix}: {err_msg}"
+                    f" Error: {str(err)}"
+                ),
+                details=str(traceback.format_exc())
+            )
+            raise err
 
     def get_subtype_mapping(self, mappings, subtype):
         """Retrieve subtype mappings (mappings for subtypes of alerts/events) case insensitively.
 
-        :param mappings: Mapping JSON from which subtypes are to be retrieved
-        :param subtype: Subtype (e.g. DLP for alerts) for which the mapping is to be fetched
-        :return: Fetched mapping JSON object
+        Args:
+            mappings: Mapping JSON from which subtypes are to be retrieved
+            subtype: Subtype (e.g. DLP for alerts) for which the mapping is
+            to be fetched
+
+        Returns:
+            Fetched mapping JSON object
         """
         mappings = {k.lower(): v for k, v in mappings.items()}
         if subtype.lower() in mappings:
@@ -120,8 +222,11 @@ class CSCCPlugin(PluginBase):
     def _normalize_key(self, key, transform_map):
         """Normalize the given key by removing any special characters.
 
-        :param key: The key string to be normalized
-        :return: normalized key
+        Args:
+            key: The key string to be normalized
+
+        Returns:
+            normalized key
         """
         # Check if it contains characters other than alphanumeric and underscores
         if not re.match(r"^[a-zA-Z0-9_]+$", key):
@@ -133,7 +238,8 @@ class CSCCPlugin(PluginBase):
     def _get_category(self, data, data_type, subtype):
         """Fetch the alert/event category from the Netskope data.
 
-        :return: category of alert/event
+        Returns:
+            category of alert/event
         """
         return (
             subtype.lower()
@@ -142,13 +248,16 @@ class CSCCPlugin(PluginBase):
         )
 
     def transform(self, raw_data, data_type, subtype):
-        """Transform a Netskope alerts into a Google Cloud Security Command Center Finding.
+        """Transform a Netskope alerts/incident into a Google Cloud Security Command Center Finding.
 
-        :param data_type: Type of data to be transformed: Currently alerts and events
-        :param raw_data: Raw data retrieved from Netskope which is supposed to be transformed
-        :param subtype: The subtype of data being transformed
+        Args:
+            raw_data (list): Raw data retrieved from Netskope which is supposed to be transformed
+            data_type (str): Type of data to be transformed: Currently alerts and events
+            subtype (str): The subtype of data being transformed
+            (DLP, anomaly etc. in case of alerts)
 
-        :return List of tuples containing the GCP SCC Finding ID and the Finding document (transformed data into
+        Returns:
+            List: List of tuples containing the GCP SCC Finding ID and the Finding document (transformed data into
                 required format)
         """
         """
@@ -160,13 +269,42 @@ class CSCCPlugin(PluginBase):
             3. If file is in valid format, but contains no fields, only the mandatory fields will be ingested.
             4. Fields which are not in Netskope response, but are present in mappings file will be ignored with logs.
         """
-        self.create_gcp_client()
+        skip_count = 0
+        try:
+            gcp_client = GCPClient(
+                self.configuration,
+                self.logger,
+                self.log_prefix,
+                self.plugin_name,
+                self.proxy
+            )
+            headers = self._add_user_agent()
+            resource_name = gcp_client.set_resource_name(headers=headers)
+        except CSCCPluginException as err:
+            self.logger.error(
+                message=(
+                    f"{self.log_prefix}: Error occurred while getting "
+                    f"project number. Error: {err}"
+                ),
+                details=str(traceback.format_exc()),
+            )
+            raise err
+        except Exception as err:
+            self.logger.error(
+                message=(
+                    f"{self.log_prefix}: Error occurred while getting "
+                    f"project number. Error: {err}"
+                ),
+                details=str(traceback.format_exc())
+            )
+            raise err
 
         try:
             mappings = get_cscc_mappings(self.mappings, data_type)
         except Exception as err:
             self.logger.error(
-                f"An error occurred while mapping data using given json mapping.Error: {str(err)}"
+                message=f"An error occurred while mapping data using given json mapping. Error: {str(err)}",
+                details=str(traceback.format_exc())
             )
             raise
 
@@ -179,9 +317,23 @@ class CSCCPlugin(PluginBase):
                 subtype_mappings = self.get_subtype_mapping(mappings, subtype)
                 # If subtype mappings are provided, use only those fields, otherwise map all the fields
                 if subtype_mappings:
-                    data = map_cscc_data(
-                        subtype_mappings, data, self.logger, data_type, subtype
-                    )
+                    try:
+                        data = map_cscc_data(
+                            subtype_mappings, data, self.logger, data_type, subtype
+                        )
+                    except Exception as err:
+                        err_msg = (
+                            f"[{data_type}][{subtype}]: An error occurred "
+                            f"while filtering data. Error: {str(err)}."
+                            " Transformation of the current record will be skipped."
+                        )
+                        self.logger.error(
+                            message=(
+                                f"{self.log_prefix}: {err_msg}"
+                            ),
+                            details=str(traceback.format_exc()),
+                        )
+                        skip_count += 1
 
                 # Add tenant name to raw data
                 data["tenant_name"] = self.source
@@ -197,7 +349,8 @@ class CSCCPlugin(PluginBase):
                     )
                     date = str(date).replace(" ", "T") + "Z"
 
-                # Normalize the data keys in order to make data keys only contain the letters, numbers and underscores
+                # Normalize the data keys in order to make data keys
+                # only contain the letters, numbers and underscores
                 normalized_data = {}
                 for key, value in data.items():
                     # Now check if it contains characters other than alphanumeric and underscores
@@ -205,21 +358,52 @@ class CSCCPlugin(PluginBase):
                     normalized_data[key] = value
                 data = normalized_data
 
-                data = handle_data(data, self.logger)
+                try:
+                    data = handle_data(data, self.logger, self.log_prefix)
+                except Exception as err:
+                    err_msg = (
+                        f"[{data_type}][{subtype}]: Error occurred while "
+                        f"handling unexpected values in data: {str(err)}."
+                        " Transformation of the current record will be skipped."
+                    )
+                    self.logger.error(
+                        message=(
+                            f"{self.log_prefix}: {err_msg}"
+                        ),
+                        details=str(traceback.format_exc()),
+                    )
+                    skip_count += 1
+
                 external_url = ""
                 if "url" in data:
-                    external_url = get_external_url(data)
+                    try:
+                        external_url = get_external_url(data)
+                    except Exception as err:
+                        err_msg = (
+                            f"[{data_type}][{subtype}]: Error occurred while "
+                            f"retrieving external URL: {str(err)}."
+                            f" Transformation of the current record will be skipped."
+                        )
+                        self.logger.error(
+                            message=(
+                                f"{self.log_prefix}: {err_msg}"
+                            ),
+                            details=str(traceback.format_exc()),
+                        )
+                        skip_count += 1
+
                 finding = {
                     "name": "{}/findings/{}".format(
                         self.configuration["source_id"], fid
                     ),
                     "parent": str(self.configuration["source_id"]),
                     "resourceName": "{}/{}".format(
-                        RESOURCE_NAME_URL, self.resource_name
+                        RESOURCE_NAME_URL, resource_name
                     ),
                     "state": "ACTIVE",
                     "externalUri": external_url,
-                    # Because of incorrect response from Netskope API, category needs to be handled separately for alert
+                    # Because of incorrect response from Netskope API,
+                    # category needs to be handled separately for alert
                     # and events otherwise this can be handled by just "subtype"
                     "category": self._get_category(data, data_type, subtype),
                     "sourceProperties": data,
@@ -230,11 +414,27 @@ class CSCCPlugin(PluginBase):
                 transformed_data["finding"] = finding
                 transformed_data_list.append(transformed_data)
             except Exception as err:
-                self.logger.error(
-                    "Could not transform data \n{}.\n Error:{}".format(
-                        data, err
-                    )
+                err_msg = (
+                    f"[{data_type}][{subtype}]: An error occurred "
+                    f"during transformation. Error: {str(err)}."
                 )
+                self.logger.error(
+                    message=(
+                        f"{self.log_prefix}: {err_msg}"
+                    ),
+                    details=str(traceback.format_exc()),
+                )
+                skip_count += 1
+        if skip_count > 0:
+            self.logger.debug(
+                "{}: [{}][{}] Plugin couldn't process {} records because they "
+                "either had no data or contained invalid/missing "
+                "fields according to the configured JSON mapping. "
+                "Therefore, the transformation and ingestion for those "
+                "records were skipped.".format(
+                    self.log_prefix, data_type, subtype, skip_count
+                )
+            )
 
         return transformed_data_list
 
@@ -247,84 +447,134 @@ class CSCCPlugin(PluginBase):
         Returns:
             ValidationResult: class that contains the success status of the configurations
         """
-        cscc_validator = CSCCValidator(self.logger)
+        cscc_validator = CSCCValidator(self.logger, self.log_prefix)
+        validation_msg = f"{self.log_prefix}: Validation error occurred."
 
-        if (
-            "organization_id" not in configuration
-            or type(configuration["organization_id"]) != str
-            or not configuration["organization_id"].strip()
-        ):
-            self.logger.error(
-                "CSCC Plugin: Validation error occurred. Error: "
-                "Invalid organization_id found in the configuration parameter"
+        # validating transformData is disabled
+        transformData = configuration.get("transformData", False)
+        if transformData:
+            error_message = (
+                "This plugin only supports sending JSON formatted data to Google Cloud SCC. "
+                "Please disable 'Transformation Toggle' from basic information."
             )
+            self.logger.error(f"{validation_msg} {error_message}")
             return ValidationResult(
-                success=False, message="Invalid organization id provided."
+                success=False, message=error_message
             )
 
-        if (
-            "source_id" not in configuration
-            or type(configuration["source_id"]) != str
-            or not configuration["source_id"].strip()
-        ):
-            self.logger.error(
-                "CSCC Plugin: Validation error occurred. Error: "
-                "Invalid source id found in the configuration parameter."
+        # validate organization id
+        organization_id = configuration.get("organization_id", "").strip()
+        if not organization_id:
+            error_message = (
+                "Organization ID is a required configuration parameter."
             )
+            self.logger.error(f"{validation_msg} {error_message}")
             return ValidationResult(
-                success=False, message="Invalid source id provided"
+                success=False, message=error_message
             )
-
-        if (
-            "key_file" not in configuration
-            or type(configuration["key_file"]) != str
-            or not configuration["key_file"].strip()
-        ):
-            self.logger.error(
-                "CSCC Plugin: Validation error occurred. Error: "
-                "Invalid key file found in configuration parameter."
-            )
+        elif not isinstance(organization_id, str):
+            error_message = "Invalid Organization ID provided."
+            self.logger.error(f"{validation_msg} {error_message}")
             return ValidationResult(
-                success=False, message="Invalid key file provided"
+                success=False, message=error_message
             )
 
+        # validate source id
+        source_id = configuration.get("source_id", "").strip()
+        if not source_id:
+            error_message = (
+                "Source ID is a required configuration parameter."
+            )
+            self.logger.error(f"{validation_msg} {error_message}")
+            return ValidationResult(
+                success=False, message=error_message
+            )
+        elif not isinstance(source_id, str):
+            error_message = "Invalid Source ID provided."
+            self.logger.error(f"{validation_msg} {error_message}")
+            return ValidationResult(
+                success=False, message=error_message
+            )
+
+        # validate service account key
+        key_file = configuration.get("key_file", "").strip()
+        if not key_file:
+            error_message = (
+                "Key File is a required configuration parameter."
+            )
+            self.logger.error(f"{validation_msg} {error_message}")
+            return ValidationResult(
+                success=False, message=error_message
+            )
+        elif not isinstance(key_file, str):
+            error_message = "Invalid Key File provided."
+            self.logger.error(f"{validation_msg} {error_message}")
+            return ValidationResult(
+                success=False, message=error_message
+            )
+
+        # validating mapping file
         mappings = self.mappings.get("jsonData", None)
-        mappings = json.loads(mappings)
-        if type(mappings) != dict or not cscc_validator.validate_cscc_map(
-            mappings
-        ):
-            self.logger.error(
-                "CSCC Plugin: Validation Error occurred. Error: "
-                "Invalid cscc mapping attribute found in configuration"
-            )
+        try:
+            mappings = json.loads(mappings)
+        except json.decoder.JSONDecodeError as err:
+            error_message = f"Invalid CSCC attribute mapping provided. {str(err)}"
+            self.logger.error(f"{validation_msg} {error_message}")
             return ValidationResult(
                 success=False,
-                message="Invalid cscc attribute mapping provided",
+                message=error_message,
+            )
+
+        if not isinstance(mappings, dict) or not cscc_validator.validate_cscc_map(
+            mappings
+        ):
+            error_message = "Invalid CSCC attribute mapping provided."
+            self.logger.error(f"{validation_msg} {error_message}")
+            return ValidationResult(
+                success=False,
+                message=error_message,
             )
 
         try:
-            org_id = configuration.get("organization_id", None)
-            src_id = configuration.get("source_id", None)
-            gcp_post_url = "{}/{}/sources/{}/findings".format(
-                GCP_URL, org_id, src_id
-            )
-            key_file = configuration.get("key_file", """{}""")
-            key_file = json.loads(key_file)
-
             gcp_client = GCPClient(
-                gcp_post_url, key_file, self.logger, self.proxy
+                configuration,
+                self.logger,
+                self.log_prefix,
+                self.plugin_name,
+                self.proxy
             )
+            headers = self._add_user_agent()
 
-            gcp_client.set_gcp_session()
-        except Exception as e:
+            result = gcp_client.validate_credentials(headers=headers)
+            if not result:
+                error_message = "Invalid Organization ID or Source ID."
+                self.logger.error(f"{validation_msg} {error_message}")
+                return ValidationResult(
+                    success=False,
+                    message=error_message,
+                )
+        except CSCCPluginException as err:
             self.logger.error(
-                f"CSCC Plugin: Validation Error occurred. Error: "
-                f"Connection to GCP is not established. {e}"
+                message=(
+                    f"{validation_msg} Error: {str(err)}"
+                ),
+                details=str(traceback.format_exc())
             )
             return ValidationResult(
                 success=False,
-                message="Connection to GCP is not established. "
-                "Make sure you have provided correct Key file.",
+                message=str(err),
+            )
+        except Exception as err:
+            error_message = f"Error occurred while validating credentials. {str(err)}"
+            self.logger.error(
+                message=(
+                    f"{validation_msg} {error_message}"
+                ),
+                details=str(traceback.format_exc())
+            )
+            return ValidationResult(
+                success=False,
+                message=f"{error_message} Check logs for more details.",
             )
 
         return ValidationResult(success=True, message="Validation successful")

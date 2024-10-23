@@ -56,7 +56,8 @@ class CEFValueError(FormatCEFError, ValueError):
 
 
 class CEFTypeError(FormatCEFError, TypeError):
-    """Exception raised for data type mismatch between mapped value and CEF fields.
+    """Exception raised for data type mismatch between mapped value and CEF
+      fields.
 
     :attribute: message -- explanation of the error
     """
@@ -95,7 +96,8 @@ class FieldNotFoundError(Error):
 
 
 class MaxRetriesExceededError(Error):
-    """Exception raised when maximum number of retries exceeded while pulling data from Netskope."""
+    """Exception raised when maximum number of retries exceeded while pulling
+    data from Netskope."""
 
     def __init__(self, message):
         """Initialize."""

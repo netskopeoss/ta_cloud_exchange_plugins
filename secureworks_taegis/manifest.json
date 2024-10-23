@@ -1,0 +1,89 @@
+{
+  "name": "Secureworks Taegis",
+  "id": "secureworks_taegis",
+  "version": "1.0.0",
+  "description": "This plugin is used to pull IOCs of type Domain and IP Address from Secureworks Taegis platform. This plugin does not support sharing of Indicators or performing any actions.\n\nRefer the Secureworks [documentation](https://docs.ctpx.secureworks.com/apis/api_authenticate/#part-1-create-client-credentials) to create client credentials.",
+  "patch_supported": false,
+  "push_supported": false,
+  "configuration": [
+    {
+      "label": "Base URL",
+      "key": "base_url",
+      "type": "choice",
+      "choices": [
+        {
+          "key": "US1 (api.ctpx.secureworks.com)",
+          "value": "https://api.ctpx.secureworks.com"
+        },
+        {
+          "key": "US2 (api.delta.taegis.secureworks.com)",
+          "value": "https://api.delta.taegis.secureworks.com"
+        },
+        {
+          "key": "US3 (api.foxtrot.taegis.secureworks.com)",
+          "value": "https://api.foxtrot.taegis.secureworks.com"
+        },
+        {
+          "key": "EU (api.echo.taegis.secureworks.com)",
+          "value": "https://api.echo.taegis.secureworks.com"
+        }
+      ],
+      "default": "https://api.ctpx.secureworks.com",
+      "mandatory": true,
+      "description": "Base URL of Secureworks Taegis instance."
+    },
+    {
+      "label": "Client ID",
+      "key": "client_id",
+      "type": "text",
+      "mandatory": true,
+      "description": "Client ID generated from the Secureworks Taegis platform. Refer documentation mentioned in the plugin description."
+    },
+    {
+      "label": "Client Secret",
+      "key": "client_secret",
+      "type": "password",
+      "mandatory": true,
+      "description": "Client Secret generated from the Secureworks Taegis platform. Refer documentation mentioned in the plugin description."
+    },
+    {
+      "label": "Type of Threat data to pull",
+      "key": "threat_data_type",
+      "type": "multichoice",
+      "choices": [
+        {
+          "key": "Domain",
+          "value": "domain"
+        },
+        {
+          "key": "IP Address",
+          "value": "ip"
+        }
+      ],
+      "default": [
+        "domain",
+        "ip"
+      ],
+      "mandatory": true,
+      "description": "Type of Threat data to pull. Allowed values are Domain and IP Address."
+    },
+    {
+      "label": "Enable Tagging",
+      "key": "enable_tagging",
+      "type": "choice",
+      "choices": [
+        {
+          "key": "Yes",
+          "value": "yes"
+        },
+        {
+          "key": "No",
+          "value": "no"
+        }
+      ],
+      "default": "yes",
+      "mandatory": false,
+      "description": "Enable/Disable tagging functionality."
+    }
+  ]
+}

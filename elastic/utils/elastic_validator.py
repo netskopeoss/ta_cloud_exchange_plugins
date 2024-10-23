@@ -28,13 +28,13 @@ SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
 CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+Elastic Validator.
 """
-
-"""Elastic Validator."""
-
 
 import io
 import csv
+import traceback
 from jsonschema import validate
 from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
 
@@ -42,10 +42,11 @@ from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
 class ElasticValidator(object):
     """Elastic validator class."""
 
-    def __init__(self, logger):
+    def __init__(self, logger, log_prefix):
         """Initialize."""
         super().__init__()
         self.logger = logger
+        self.log_prefix = log_prefix
 
     def validate_server_port(self, server_port):
         """Validate server port.
@@ -54,7 +55,8 @@ class ElasticValidator(object):
             server_port: the server port to be validated
 
         Returns:
-            Whether the provided value is valid or not. True in case of valid value, False otherwise
+            Whether the provided value is valid or not. True in case of valid
+              value, False otherwise
         """
         if server_port or server_port == 0:
             try:
@@ -62,7 +64,7 @@ class ElasticValidator(object):
                 if not (0 <= elastic_port <= 65535):
                     return False
                 return True
-            except ValueError:
+            except Exception:
                 return False
         else:
             return False
@@ -105,7 +107,7 @@ class ElasticValidator(object):
                         ".*": {
                             "type": "array",
                         }
-                    }
+                    },
                 },
             },
         }
@@ -142,8 +144,12 @@ class ElasticValidator(object):
             validate(instance=mappings, schema=schema)
         except JsonSchemaValidationError as err:
             self.logger.error(
-                "Elastic Plugin: Validation error occurred. Error: "
-                "validating JSON schema: {}".format(err)
+                message=(
+                    f"{self.log_prefix}: Validation error "
+                    f"occurred while validating JSON "
+                    f"schema. Error: {err}"
+                ),
+                details=str(traceback.format_exc()),
             )
             return False
 
@@ -157,9 +163,13 @@ class ElasticValidator(object):
                         self.validate_taxonomy(subtype_taxonomy)
                     except JsonSchemaValidationError as err:
                         self.logger.error(
-                            "Elastic Plugin: Validation error occurred. Error: "
-                            'while validating JSON schema for type "{}" and subtype "{}": '
-                            "{}".format(data_type, subtype, err)
+                            message=(
+                                f"{self.log_prefix}: Validation error occurred"
+                                " while validating JSON schema for "
+                                f'type "{data_type}" and subtype "{subtype}. '
+                                f"Error: {err}"
+                            ),
+                            details=str(traceback.format_exc()),
                         )
                         return False
             return True
@@ -171,7 +181,8 @@ class ElasticValidator(object):
             mappings: the JSON string to be validated
 
         Returns:
-            Whether the provided value is valid or not. True in case of valid value, False otherwise
+            Whether the provided value is valid or not. True in case of valid
+            value, False otherwise
         """
         if mappings is None:
             return False
@@ -180,9 +191,11 @@ class ElasticValidator(object):
                 return True
         except Exception as err:
             self.logger.error(
-                "Elastic Plugin: Validation error occurred. Error: {}".format(
-                    str(err)
-                )
+                message=(
+                    f"{self.log_prefix}: Validation "
+                    f"error occurred. Error: {err}"
+                ),
+                details=str(traceback.format_exc()),
             )
 
         return False
@@ -194,7 +207,8 @@ class ElasticValidator(object):
             valid_extensions: the CSV string to be validated
 
         Returns:
-            Whether the provided value is valid or not. True in case of valid value, False otherwise
+            Whether the provided value is valid or not. True in case of valid
+            value, False otherwise
         """
         try:
             csviter = csv.DictReader(

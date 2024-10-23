@@ -444,7 +444,6 @@ class IllumioPlugin(PluginBase):
                 skipped_tags.add(label_tag)
 
         return list(created_tags), list(skipped_tags)
-
     def _validate_url(self, url: str) -> bool:
         """Validate the given URL."""
         parsed = urlparse(url.strip())

@@ -29,13 +29,15 @@ CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-External Website Plugin providing implementation for pull and validate
-methods from PluginBase."""
-import json
-import os
+CTE Web Page IOC Scraper Plugin.
+"""
 import re
 import traceback
-from typing import Tuple, List
+from ipaddress import IPv4Address, IPv6Address, ip_address
+from typing import Dict, List
+
+from urllib.parse import urlparse
+from pydantic import ValidationError
 
 from netskope.integrations.cte.models import Indicator, IndicatorType
 
@@ -44,24 +46,21 @@ from netskope.integrations.cte.plugin_base import (
     ValidationResult,
 )
 
-from urllib.parse import urlparse
-from pydantic import ValidationError
-
 from .utils.externalwebsite_constants import (
     MODULE_NAME,
-    PLUGIN_NAME,
+    PLATFORM_NAME,
     PLUGIN_VERSION,
     THREAT_TYPES,
 )
 
 from .utils.externalwebsite_helper import (
-    ExternalWebsitePluginException,
-    ExternalWebsitePluginHelper,
+    WebPageIOCScraperPluginException,
+    WebPageIOCScraperPluginHelper
 )
 
 
-class ExternalWebsitePlugin(PluginBase):
-    """External Website Plugin class template implementation."""
+class WebPageIOCScraperPlugin(PluginBase):
+    """Web Page IOC Scraper Plugin class template implementation."""
 
     def __init__(
         self,
@@ -79,74 +78,117 @@ class ExternalWebsitePlugin(PluginBase):
         self.log_prefix = f"{MODULE_NAME} {self.plugin_name}"
         if name:
             self.log_prefix = f"{self.log_prefix} [{name}]"
-        self.externalwebsite_helper = ExternalWebsitePluginHelper(
+        self.web_page_ioc_scraper_helper = WebPageIOCScraperPluginHelper(
             logger=self.logger,
             log_prefix=self.log_prefix,
             plugin_name=self.plugin_name,
             plugin_version=self.plugin_version
         )
 
-    def _get_plugin_info(self) -> Tuple:
-        """Get plugin name and version from manifest.
+    def _get_plugin_info(self) -> tuple:
+        """Get plugin name and version from metadata.
 
         Returns:
-            tuple: Tuple of plugin's name and version fetched from manifest.
+            tuple: Tuple of plugin's name and version fetched from metadata.
         """
         try:
-            file_path = os.path.join(
-                str(os.path.dirname(os.path.abspath(__file__))),
-                "manifest.json",
-            )
-            with open(file_path, "r") as manifest:
-                manifest_json = json.load(manifest)
-                plugin_name = manifest_json.get("name", PLUGIN_NAME)
-                plugin_version = manifest_json.get("version", PLUGIN_VERSION)
-                return (plugin_name, plugin_version)
+            metadata_json = WebPageIOCScraperPlugin.metadata
+            plugin_name = metadata_json.get("name", PLATFORM_NAME)
+            plugin_version = metadata_json.get("version", PLUGIN_VERSION)
+            return (plugin_name, plugin_version)
         except Exception as exp:
             self.logger.error(
                 message=(
-                    f"{MODULE_NAME} {PLUGIN_NAME}: Error occurred while"
-                    f" getting plugin details. Error: {exp}"
+                    "{} {}: Error occurred while"
+                    " getting plugin details. Error: {}".format(
+                        MODULE_NAME, PLATFORM_NAME, exp
+                    )
                 ),
-                details=str(traceback.format_exc()),
+                details=traceback.format_exc(),
             )
-        return (PLUGIN_NAME, PLUGIN_VERSION)
+        return (PLATFORM_NAME, PLUGIN_VERSION)
 
-    def pull(self):
-        """Pull indicators from External Website Plugin."""
+    def _get_indicator_types(self, threat_types: List) -> Dict:
+        """Return a mapping of Indicator Types, Based on the threat types to \
+        pull configuration parameter And, Depending on Neskope CE Version.
 
-        url = self.configuration['url'].strip()
-        indicator_type = self.configuration["type"]
+        Args:
+            - threat_types: A list of threat types to pull.
+        Returns:
+            - Dictionary mapping of Indicator Types to Netskope CE Supported
+            Indicator Types.
+        """
+        indicator_types = {}
+
+        if "md5" in threat_types:
+            indicator_types["md5"] = IndicatorType.MD5
+
+        if "sha256" in threat_types:
+            indicator_types["sha256"] = IndicatorType.SHA256
+
+        if "url" in threat_types:
+            indicator_types["url"] = IndicatorType.URL
+
+        if "domain" in threat_types:
+            indicator_types["domain"] = getattr(
+                IndicatorType, "DOMAIN", IndicatorType.URL
+            )
+
+        if "ipv4" in threat_types:
+            indicator_types["ipv4"] = getattr(
+                IndicatorType, "IPV4", IndicatorType.URL
+            )
+
+        if "ipv6" in threat_types:
+            indicator_types["ipv6"] = getattr(
+                IndicatorType, "IPV6", IndicatorType.URL
+            )
+        return indicator_types
+
+    def pull(self) -> List[Indicator]:
+        """Pull indicators from Web Page IOC Scraper Plugin."""
+        url = self.configuration['url'].strip().strip("/")
+
         try:
-            self.logger.info(f"{self.log_prefix}: Pulling indicators.")
-            response = self.externalwebsite_helper.api_helper(
+            indicator_types = self._get_indicator_types(
+                threat_types=self.configuration.get("type", "")
+            )
+            self.logger.info(f"{self.log_prefix}: Pulling IOC(s) from {url}.")
+            response = self.web_page_ioc_scraper_helper.api_helper(
                 url=url,
                 method="GET",
                 verify=self.ssl_validation,
                 proxies=self.proxy,
-                logger_msg="pulling indicators"
+                logger_msg="pulling IOC(s)"
             )
-            indicators, skipped_count = self.extract_indicators(
-                response, indicator_type
+            indicators, skipped_count, indicator_type_count = self.extract_indicators(
+                response, indicator_types
             )
 
+            pull_stats = ", ".join(
+                [f"{str(val)} {key.upper()}" for key, val in indicator_type_count.items()]
+            )
+            self.logger.debug(
+                f"Pull Stat: {pull_stats} indicator(s) were fetched. "
+            )
             self.logger.info(
                 f"{self.log_prefix}: Successfully fetched "
-                f"{len(indicators)} indicator(s)."
+                f"{sum(indicator_type_count.values())} IOC(s) "
+                f"from '{url}'."
             )
             if skipped_count > 0:
                 self.logger.info(
                     f"{self.log_prefix}: Skipped {skipped_count} record(s) as "
-                    "IoC value might be empty string or the IoC type does not "
+                    "IOC value might be empty string or the IOC type does not "
                     'match the "Type of Threat data to pull" '
                     "configuration parameter."
                 )
             return indicators
 
-        except ExternalWebsitePluginException as exp:
+        except WebPageIOCScraperPluginException as exp:
             err_msg = "Error occurred while pulling indicators."
             self.logger.error(
-                message=(f"{self.log_prefix}: {err_msg}"),
+                message=(f"{self.log_prefix}: {err_msg} Error: {str(exp)}"),
                 details=str(traceback.format_exc()),
             )
             raise exp
@@ -154,50 +196,123 @@ class ExternalWebsitePlugin(PluginBase):
             err_msg = "Error occurred while pulling indicators."
             self.logger.error(
                 message=(
-                    f"{self.log_prefix}: {err_msg} Error: {exp}"
+                    f"{self.log_prefix}: {err_msg} Error: {str(exp)}"
                 ),
                 details=str(traceback.format_exc()),
             )
             raise exp
 
-    def extract_indicators(self, response, indicator_type) -> List[dict]:
+    def extract_indicators(self, response, indicator_types: Dict) -> List[dict]:
+        """
+        Extract indicators from a given response based on the specified indicator types.
+
+        Args:
+            response (str): The response from which to extract indicators.
+            indicator_types (Dict): A dictionary mapping indicator types to \
+                                    their corresponding values.
+
+        Returns:
+            Tuple[List[dict], int]: A tuple containing a list of extracted \
+                                    indicators and the number of skipped indicators.
+        """
         indicators = []
         skipped_count = 0
-        if "sha256" in indicator_type:
-            sha256_list = re.findall(r"\b[a-fA-F0-9]{64}\b", response)
+        indicator_type_count = {
+            indicator_type: 0 for indicator_type in indicator_types
+        }
+
+        if "sha256" in indicator_types:
+            sha256_regex = r"\b[a-fA-F0-9]{64}\b"
+            sha256_list = re.findall(sha256_regex, response)
             for sha256 in sha256_list:
                 try:
                     indicators.append(
-                        Indicator(value=sha256, type=IndicatorType.SHA256)
+                        Indicator(value=sha256, type=indicator_types["sha256"])
                     )
+                    indicator_type_count["sha256"] += 1
                 except ValidationError:
                     skipped_count += 1
-
-        if "url" in indicator_type:
-            url_ipv4_regex = r'((?:https?://)?(?:[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}|\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})(?:\/[a-zA-Z0-9-._\/~?%&=]*)?)'
-            data_into_list = re.findall(url_ipv4_regex, response)
-            for item in data_into_list:
-                try:
-                    indicators.append(
-                        Indicator(value=item.strip(),
-                                  type=IndicatorType.URL)
-                    )
-                except ValidationError:
+                except Exception:
                     skipped_count += 1
 
-        if "md5" in indicator_type:
-            md5_list = re.findall(r"(\b[a-fA-F\d]{32}\b)", response)
+        if "md5" in indicator_types:
+            md5_regex = r"\b[a-fA-F\d]{32}\b"
+            md5_list = re.findall(md5_regex, response)
 
             for md5 in md5_list:
                 try:
                     indicators.append(
-                        Indicator(value=md5, type=IndicatorType.MD5))
+                        Indicator(value=md5, type=indicator_types["md5"])
+                    )
+                    indicator_type_count["md5"] += 1
                 except ValidationError:
                     skipped_count += 1
-        return indicators, skipped_count
+                except Exception:
+                    skipped_count += 1
+
+        if "url" in indicator_types:
+            url_regex = r"\b(?:https?|ftp):\/\/[-A-Za-z0-9+&@#\/%?=~_|!:,.;]*[-A-Za-z0-9+&@#\/%=~_|]"  # noqa
+            url_list = re.findall(url_regex, response)
+            for url in url_list:
+                try:
+                    indicators.append(
+                        Indicator(value=url.strip(), type=indicator_types["url"])
+                    )
+                    indicator_type_count["url"] += 1
+                except ValidationError:
+                    skipped_count += 1
+                except Exception:
+                    skipped_count += 1
+
+        if "ipv4" in indicator_types:
+            ipv4_regex = r"(?<![:\/\d])\b(?:\d{1,3}\.){3}\d{1,3}\b(?![:\/\d])"  # noqa
+            ipv4_list = re.findall(ipv4_regex, response)
+            for ipv4 in ipv4_list:
+                try:
+                    if isinstance(ip_address(ipv4), IPv4Address):
+                        indicators.append(
+                            Indicator(value=ipv4, type=indicator_types["ipv4"])
+                        )
+                        indicator_type_count["ipv4"] += 1
+                except ValidationError:
+                    skipped_count += 1
+                except Exception:
+                    skipped_count += 1
+
+        if "ipv6" in indicator_types:
+            ipv6_regex = r"(?<![:\w])(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}(?![:\w/])"
+            ipv6_list = re.findall(ipv6_regex, response)
+            for ipv6 in ipv6_list:
+                try:
+                    if isinstance(ip_address(ipv6), IPv6Address):
+                        indicators.append(
+                            Indicator(value=ipv6, type=indicator_types["ipv6"])
+                        )
+                        indicator_type_count["ipv6"] += 1
+                except ValidationError:
+                    skipped_count += 1
+                except Exception:
+                    skipped_count += 1
+
+        if "domain" in indicator_types:
+            domain_regex = r"(?<![:\/\w.])(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.(?:[a-zA-Z]{2,}\.?){1,})(?:\/)?(?![:\/\w])"  # noqa
+            domain_list = re.findall(domain_regex, response)
+            for domain in domain_list:
+                try:
+                    indicators.append(
+                        Indicator(value=domain, type=indicator_types["domain"])
+                    )
+                    indicator_type_count["domain"] += 1
+                except ValidationError:
+                    skipped_count += 1
+                except Exception:
+                    skipped_count += 1
+
+        return indicators, skipped_count, indicator_type_count
 
     def is_url(self, url: str) -> bool:
         """Validate URL.
+
         Args:
             url (str): URL for validation.
         Returns:
@@ -206,25 +321,39 @@ class ExternalWebsitePlugin(PluginBase):
         try:
             result = urlparse(url)
             return all([result.scheme, result.netloc])
-        except ValueError:
+        except (ValueError, Exception):
             return False
 
-    def validate_auth_credentials(self, url):
+    def _validate_url(self, url):
+        """
+        Validate the URL provided in configuration parameters.
+
+        Args:
+            url (str): The URL to validate.
+
+        Returns:
+            ValidationResult: The result of the validation.
+        """
         try:
-            self.externalwebsite_helper.api_helper(
+            self.logger.debug(
+                f"{self.log_prefix}: Validating URL provided in configuration parameters."
+            )
+            self.web_page_ioc_scraper_helper.api_helper(
                 url=url,
                 method="GET",
                 verify=self.ssl_validation,
                 proxies=self.proxy,
-                logger_msg="validating configuration parameters."
+                logger_msg=f"verifying the connectivity with {url}.",
+                is_validation=True
             )
 
-            self.logger.debug(f"{self.log_prefix}: Validation successful.")
+            validation_msg = f"Validation successful for {MODULE_NAME} {self.plugin_name} Plugin."
+            self.logger.debug(f"{self.log_prefix}: {validation_msg}")
             return ValidationResult(
                 success=True,
-                message="Validation successful.",
+                message=validation_msg,
             )
-        except ExternalWebsitePluginException as exp:
+        except WebPageIOCScraperPluginException as exp:
             err_msg = f"Validation error occurred. Error: {exp}"
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg}",
@@ -242,6 +371,7 @@ class ExternalWebsitePlugin(PluginBase):
 
     def validate(self, configuration) -> ValidationResult:
         """Validate the Plugin configuration parameters.
+
         Args:
             configuration (dict): Dict object having all the Plugin
             configuration parameters.
@@ -249,18 +379,15 @@ class ExternalWebsitePlugin(PluginBase):
             cte.plugin_base.ValidationResult: ValidationResult object with
             success flag and message.
         """
-        url = configuration.get("url", "").strip()
-        threat_type = configuration.get("type")
+        url = configuration.get("url", "").strip().strip("/")
+        threat_type = configuration.get("type", [])
         validation_err = "Validation error occurred."
         if not url:
-            err_msg = ("External Website URL is a required "
-                       "configuration parameter.")
+            err_msg = "Website URL is a required configuration parameter."
             self.logger.error(f"{self.log_prefix}: {validation_err} {err_msg}")
             return ValidationResult(success=False, message=err_msg)
-        elif not self.is_url(url):
-            err_msg = ("Invalid External Website URL provided. External "
-                       "Website URL should contain device IP address "
-                       "or domain name.")
+        elif not isinstance(url, str) or not self.is_url(url):
+            err_msg = "Invalid website URL provided in configuration parameters."
             self.logger.error(f"{self.log_prefix}: {validation_err} {err_msg}")
             return ValidationResult(success=False, message=err_msg)
 
@@ -276,9 +403,9 @@ class ExternalWebsitePlugin(PluginBase):
         ):
             err_msg = (
                 "Invalid value for 'Type of Threat data to pull' "
-                "provided. Allowed values are 'SHA256', 'MD5' or 'URL'."
+                f"provided. Allowed values are {', '.join(THREAT_TYPES).upper()}."
             )
             self.logger.error(f"{self.log_prefix}: {validation_err} {err_msg}")
             return ValidationResult(success=False, message=err_msg)
 
-        return self.validate_auth_credentials(url)
+        return self._validate_url(url)

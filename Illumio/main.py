@@ -10,31 +10,28 @@ License:
 """
 import json
 import traceback
-from typing import List
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse
 
 from netskope.common.utils import add_user_agent
 from netskope.integrations.cte.models import Indicator, IndicatorType, TagIn
 from netskope.integrations.cte.plugin_base import PluginBase, ValidationResult
 from netskope.integrations.cte.utils import TagUtils
-from typing import Dict, List, Tuple
+from typing import List, Tuple
 
 from illumio import PolicyComputeEngine
 from pydantic import ValidationError
 
-from .utils.functions import (
-    IllumioPluginHelper
-)
+from .utils.functions import IllumioPluginHelper
 from .utils.exceptions import IllumioPluginException
 
 
 from .utils.constants import (
     MODULE_NAME,
     PLUGIN_NAME,
-    PLUGIN_VERSION
+    PLUGIN_VERSION,
+    ILO_ORANGE_HEX_CODE,
+    RETRACTION_IOC_TAG,
 )
-
-ILO_ORANGE_HEX_CODE = "#f96425"
 
 
 class IllumioPlugin(PluginBase):
@@ -60,10 +57,7 @@ class IllumioPlugin(PluginBase):
             log_prefix=self.log_prefix,
             plugin_name=self.plugin_name,
             plugin_version=self.plugin_version,
-            ssl_validation=self.ssl_validation,
-            proxy=self.proxy,
         )
-        
 
     def _get_plugin_info(self) -> Tuple:
         """Get plugin name and version from manifest.
@@ -99,6 +93,7 @@ class IllumioPlugin(PluginBase):
 
             def wrapper(self):
                 yield from self._get_threat_indicators()
+
             return wrapper(self)
 
         else:
@@ -121,6 +116,96 @@ class IllumioPlugin(PluginBase):
         headers["User-Agent"] = user_agent
         return headers
 
+    def get_modified_indicators(self, indicators):
+        """Get all modified indicators status."""
+        retracted_indicators = []
+        available_workloads = []
+        try:
+            logger_msg = (
+                "connecting to PCE for fetching "
+                f"indicators for {RETRACTION_IOC_TAG} task"
+            )
+            self.pce = self.illumio_helper.connect_to_pce(
+                logger_msg,
+                self.configuration,
+                verify=self.ssl_validation,
+                proxies=self.proxy,
+                headers=self._get_connection_headers(),
+            )
+            logger_msg = f"parsing label scopes for {RETRACTION_IOC_TAG} task"
+            label = self.illumio_helper.parse_label_scope(
+                logger_msg, self.configuration.get("label_scope").strip()
+            )
+            logger_msg = f"get label reference for {RETRACTION_IOC_TAG} task"
+            refs = self._get_label_refs(label)
+            workloads = self.pce.workloads.get_async(
+                # the labels query param takes a JSON-formatted nested list of
+                # label HREFs - each inner list represents a separate scope
+                params={
+                    "labels": json.dumps(refs),
+                    # include label keys/values in the response data
+                    "representation": "workload_labels",
+                }
+            )
+            if not workloads:
+                self.logger.info(
+                    f"{self.log_prefix}: For {RETRACTION_IOC_TAG} task, "
+                    "no Workloads found containing the Label Scope(s) - "
+                    f"'{self.configuration.get('label_scope')}'. "
+                    "All indicators needs to be retracted."
+                )
+            else:
+                self.logger.debug(
+                    f"{self.log_prefix}: Total {len(workloads)} Workload(s) "
+                    f"fetched for {RETRACTION_IOC_TAG} task "
+                    f"containing the Label Scope(s) - "
+                    f"'{self.configuration.get('label_scope')}'."
+                )
+                for workload in workloads:
+                    workload_id = workload.href.split("/")[-1]
+                    uris = [str(intf.address) for intf in workload.interfaces]
+                    uris.append(
+                        workload.hostname
+                    )  # include the hostname as an IoC
+                    available_workloads.extend(uris)
+                    self.logger.info(
+                        f"{self.log_prefix}: Successfully fetched {len(uris)} "
+                        f"indicator(s) as part of {RETRACTION_IOC_TAG} task "
+                        f"from workload ID '{workload_id}'. "
+                        f"Total {len(available_workloads)} indicator(s) "
+                        "fetched till now."
+                    )
+                info_msg = (
+                    f"Successfully fetched {len(available_workloads)}"
+                    f" indicator(s) as a part "
+                    f"of {RETRACTION_IOC_TAG} task."
+                )
+                self.logger.info(f"{self.log_prefix}: {info_msg}")
+        except IllumioPluginException:
+            raise
+        except Exception as err:
+            error_msg = f"Error occurred while {logger_msg}."
+            self.logger.error(
+                message=f"{self.log_prefix}: {error_msg} Error: {err}",
+                details=traceback.format_exc(),
+            )
+            raise IllumioPluginException(error_msg)
+        stored_indicators = set()
+        for indicator_list in indicators:
+            for indicator in indicator_list:
+                stored_indicators.add(indicator.value)
+        retracted_indicators = list(
+            stored_indicators - set(available_workloads)
+        )
+        if len(retracted_indicators) >= 0:
+            self.logger.info(
+                f"{self.log_prefix}: Total {len(retracted_indicators)} "
+                f"indicator(s) will be retracted as part "
+                f"of {RETRACTION_IOC_TAG} task out of "
+                f"{len(stored_indicators)} total indicator(s)."
+            )
+        yield retracted_indicators, False
+
     def _get_threat_indicators(self):
         """Retrieve threat workload IPs from the Illumio PCE.
 
@@ -140,19 +225,23 @@ class IllumioPlugin(PluginBase):
             self.pce = self.illumio_helper.connect_to_pce(
                 logger_msg,
                 self.configuration,
-                headers=self._get_connection_headers()
+                verify=self.ssl_validation,
+                proxies=self.proxy,
+                headers=self._get_connection_headers(),
             )
             logger_msg = "parsing label scopes"
-            label = self.illumio_helper.parse_label_scope(logger_msg, self.configuration.get("label_scope").strip())
+            label = self.illumio_helper.parse_label_scope(
+                logger_msg, self.configuration.get("label_scope").strip()
+            )
             logger_msg = "get label reference"
             refs = self._get_label_refs(label)
             workloads = self.pce.workloads.get_async(
                 # the labels query param takes a JSON-formatted nested list of
                 # label HREFs - each inner list represents a separate scope
                 params={
-                    'labels': json.dumps(refs),
+                    "labels": json.dumps(refs),
                     # include label keys/values in the response data
-                    'representation': 'workload_labels'
+                    "representation": "workload_labels",
                 }
             )
             if not workloads:
@@ -164,7 +253,7 @@ class IllumioPlugin(PluginBase):
                     yield [], None
                 else:
                     yield []
-            
+
             self.logger.debug(
                 f"{self.log_prefix}: Total {len(workloads)} Workload(s) "
                 "fetched containing the Label Scope(s) - "
@@ -177,24 +266,27 @@ class IllumioPlugin(PluginBase):
             url_count = 0
 
             for key, value in label.items():
-                # Removing the <config_name> Latest tag from the existing indicators
+                # Removing the <config_name> Latest tag from the
+                # existing indicators
                 query = {"sources": {"$elemMatch": {"source": f"{self.name}"}}}
                 if not self.tag_utils:
                     self.tag_utils = TagUtils()
                 self.tag_utils.on_indicators(query).remove(f"{key}:{value}")
             for workload in workloads:
-                workload_id = workload.href.split('/')[-1]
+                workload_id = workload.href.split("/")[-1]
                 pce_url = "{}://{}:{}".format(
                     self.pce._scheme, self.pce._hostname, self.pce._port
                 )
-                workload_uri = f'{pce_url}/#/workloads/{workload_id}'
+                workload_uri = f"{pce_url}/#/workloads/{workload_id}"
                 desc = (
-                    f'Illumio Workload - {workload.name}'
-                    f'\n{workload.description}'
+                    f"Illumio Workload - {workload.name}"
+                    f"\n{workload.description}"
                 )
 
                 uris = [str(intf.address) for intf in workload.interfaces]
-                uris.append(workload.hostname)  # include the hostname as an IoC
+                uris.append(
+                    workload.hostname
+                )  # include the hostname as an IoC
                 self.logger.debug(
                     f"{self.log_prefix}: Extracting Indicator(s) "
                     f"from workload with ID '{workload_id}'."
@@ -202,7 +294,9 @@ class IllumioPlugin(PluginBase):
                 url_count = 0
                 for uri in uris:
                     if uri:
-                        tags, skipped_tags = self._create_label_tags(workload.labels)
+                        tags, skipped_tags = self._create_label_tags(
+                            workload.labels
+                        )
                         total_skipped_tags.update(skipped_tags)
                         try:
                             indicators.append(
@@ -213,7 +307,7 @@ class IllumioPlugin(PluginBase):
                                     lastSeen=workload.updated_at,
                                     comments=desc,
                                     extendedInformation=workload_uri,
-                                    tags=tags
+                                    tags=tags,
                                 )
                             )
                             url_count += 1
@@ -236,7 +330,8 @@ class IllumioPlugin(PluginBase):
                 self.logger.info(
                     f"{self.log_prefix}: Successfully fetched {url_count} "
                     f"indicator(s) with workload ID '{workload_id}'. "
-                    f"Total indicator(s) fetched till now - {successfully_fetched_ioc_count}."
+                    "Total indicator(s) fetched till now - "
+                    f"{successfully_fetched_ioc_count}."
                 )
             if len(total_skipped_tags) > 0:
                 self.logger.info(
@@ -247,13 +342,12 @@ class IllumioPlugin(PluginBase):
                     f"({', '.join(total_skipped_tags)})."
                 )
             info_msg = (
-                f"Successfully fetched {successfully_fetched_ioc_count} indicator(s)."
+                f"Successfully fetched {successfully_fetched_ioc_count} "
+                "indicator(s)."
             )
             if skip_iocs:
                 info_msg += f" Skipped {skip_iocs} indicator(s)."
-            self.logger.info(
-                f"{self.log_prefix}: {info_msg}"
-            )
+            self.logger.info(f"{self.log_prefix}: {info_msg}")
             if hasattr(self, "sub_checkpoint"):
                 yield indicators, None
             else:
@@ -261,12 +355,10 @@ class IllumioPlugin(PluginBase):
         except IllumioPluginException:
             raise
         except Exception as err:
-            error_msg = (
-                f"Error occurred while {logger_msg}."
-            )
+            error_msg = f"Error occurred while {logger_msg}."
             self.logger.error(
                 message=f"{self.log_prefix}: {error_msg} Error: {err}",
-                details=traceback.format_exc()
+                details=traceback.format_exc(),
             )
             raise IllumioPluginException(error_msg)
 
@@ -294,19 +386,19 @@ class IllumioPlugin(PluginBase):
                 else:
                     # if we don't raise an error, we risk pulling workloads
                     # outside the expected scope and blocking legitimate access
-                    msg = f'Failed to find label Href for {key}:{value} - Verify that the provided Label Scope is present on the {PLUGIN_NAME} platform.'
-                    self.logger.error(f'{self.log_prefix}: {msg}')
+                    msg = (
+                        f"Failed to find label Href for {key}:{value} - "
+                        "Verify that the provided Label Scope is "
+                        f"present on the {PLUGIN_NAME} platform."
+                    )
+                    self.logger.error(f"{self.log_prefix}: {msg}")
                     raise IllumioPluginException(msg)
             return refs
         except IllumioPluginException:
             raise
         except Exception as err:
-            err_msg = (
-                f"Error occurred while fetching label reference."
-            )
-            self.logger.error(
-                f"{self.log_prefix}: {err_msg}. Error: {err}"
-            )
+            err_msg = "Error occurred while fetching label reference."
+            self.logger.error(f"{self.log_prefix}: {err_msg}. Error: {err}")
             raise IllumioPluginException(err_msg)
 
     def _create_label_tags(self, labels: list) -> List[str]:
@@ -320,7 +412,7 @@ class IllumioPlugin(PluginBase):
         Returns:
             List[str]: the label tag names, of the form key:value.
         """
-        if str(self.configuration.get('enable_tagging', '')).lower() != 'yes':
+        if str(self.configuration.get("enable_tagging", "")).lower() != "yes":
             return []
 
         if not self.tag_utils:
@@ -329,7 +421,7 @@ class IllumioPlugin(PluginBase):
         created_tags, skipped_tags = set(), set()
 
         for label in labels:
-            label_tag = f'{label.key}:{label.value}'
+            label_tag = f"{label.key}:{label.value}"
             try:
                 if not self.tag_utils.exists(label_tag):
                     self.tag_utils.create_tag(
@@ -352,7 +444,6 @@ class IllumioPlugin(PluginBase):
                 skipped_tags.add(label_tag)
 
         return list(created_tags), list(skipped_tags)
-    
     def _validate_url(self, url: str) -> bool:
         """Validate the given URL."""
         parsed = urlparse(url.strip())
@@ -384,114 +475,114 @@ class IllumioPlugin(PluginBase):
         if not base_url:
             error_message = "PCE URL is a required configuration parameter."
             self.logger.error(f"{validation_msg} {error_message}")
-            return ValidationResult(
-                success=False, message=error_message
+            return ValidationResult(success=False, message=error_message)
+        elif not (isinstance(base_url, str) and self._validate_url(base_url)):
+            error_message = (
+                "Invalid PCE URL provided in the configuration parameters."
             )
-        elif not (
-            isinstance(base_url, str)
-            and self._validate_url(base_url)
-        ):
-            error_message = "Invalid PCE URL provided in the configuration parameters."
             self.logger.error(f"{validation_msg} {error_message}")
-            return ValidationResult(
-                success=False, message=error_message
-            )
+            return ValidationResult(success=False, message=error_message)
 
         # PCE PORT
         if pce_port is None:
-            error_message = "PCE Port Number is a required configuration parameter."
-            self.logger.error(f"{validation_msg} {error_message}")
-            return ValidationResult(
-                success=False, message=error_message
+            error_message = (
+                "PCE Port Number is a required configuration parameter."
             )
+            self.logger.error(f"{validation_msg} {error_message}")
+            return ValidationResult(success=False, message=error_message)
         elif not isinstance(pce_port, int) or not (1 <= pce_port <= 65535):
-            error_message = "Invalid PCE Port Number found in the configuration parameters. PCE Port Number should be between 1 to 65535."
-            self.logger.error(f"{validation_msg} {error_message}")
-            return ValidationResult(
-                success=False, message=error_message
+            error_message = (
+                "Invalid PCE Port Number found in the configuration "
+                "parameters. PCE Port Number should be between 1 to 65535."
             )
+            self.logger.error(f"{validation_msg} {error_message}")
+            return ValidationResult(success=False, message=error_message)
 
         # Organization ID
         if org_id is None:
-            error_message = "PCE Organization ID is a required configuration parameter."
-            self.logger.error(f"{validation_msg} {error_message}")
-            return ValidationResult(
-                success=False, message=error_message
+            error_message = (
+                "PCE Organization ID is a required configuration parameter."
             )
+            self.logger.error(f"{validation_msg} {error_message}")
+            return ValidationResult(success=False, message=error_message)
         elif not isinstance(org_id, int) or org_id <= 0:
-            error_message = "Invalid PCE Organization ID found in the configuration parameters. PCE Organization ID should be greater than 0."
-            self.logger.error(f"{validation_msg} {error_message}")
-            return ValidationResult(
-                success=False, message=error_message
+            error_message = (
+                "Invalid PCE Organization ID found in the configuration "
+                "parameters. PCE Organization ID should "
+                "an integer greater than 0."
             )
+            self.logger.error(f"{validation_msg} {error_message}")
+            return ValidationResult(success=False, message=error_message)
 
         # API Username
         if not api_username:
-            error_message = "API Authentication Username is a required configuration parameter."
-            self.logger.error(f"{validation_msg} {error_message}")
-            return ValidationResult(
-                success=False, message=error_message
+            error_message = (
+                "API Authentication Username is a required "
+                "configuration parameter."
             )
+            self.logger.error(f"{validation_msg} {error_message}")
+            return ValidationResult(success=False, message=error_message)
         elif not isinstance(api_username, str):
-            error_message = "Invalid API Authentication Username found in the configuration parameters."
-            self.logger.error(f"{validation_msg} {error_message}")
-            return ValidationResult(
-                success=False, message=error_message
+            error_message = (
+                "Invalid API Authentication Username found in the "
+                "configuration parameters."
             )
-        
+            self.logger.error(f"{validation_msg} {error_message}")
+            return ValidationResult(success=False, message=error_message)
+
         # API Secret
         if not api_secret:
             error_message = "API Secret is a required configuration parameter."
             self.logger.error(f"{validation_msg} {error_message}")
-            return ValidationResult(
-                success=False, message=error_message
-            )
+            return ValidationResult(success=False, message=error_message)
         elif not isinstance(api_secret, str):
-            error_message = "Invalid API Secret found in the configuration parameters."
-            self.logger.error(f"{validation_msg} {error_message}")
-            return ValidationResult(
-                success=False, message=error_message
+            error_message = (
+                "Invalid API Secret found in the configuration parameters."
             )
+            self.logger.error(f"{validation_msg} {error_message}")
+            return ValidationResult(success=False, message=error_message)
 
         # Label Scope
         if not label_scope:
-            error_message = "Label Scope is a required configuration parameter."
-            self.logger.error(f"{validation_msg} {error_message}")
-            return ValidationResult(
-                success=False, message=error_message
+            error_message = (
+                "Label Scope is a required configuration parameter."
             )
+            self.logger.error(f"{validation_msg} {error_message}")
+            return ValidationResult(success=False, message=error_message)
         elif not isinstance(label_scope, str):
-            error_message = "Invalid Label Scope found in the configuration parameters."
-            self.logger.error(f"{validation_msg} {error_message}")
-            return ValidationResult(
-                success=False, message=error_message
+            error_message = (
+                "Invalid Label Scope found in the configuration parameters."
             )
+            self.logger.error(f"{validation_msg} {error_message}")
+            return ValidationResult(success=False, message=error_message)
         else:
             try:
                 logger_message = "parsing label references for validation"
-                self.illumio_helper.parse_label_scope(logger_message, label_scope, is_validation=True)
+                self.illumio_helper.parse_label_scope(
+                    logger_message, label_scope, is_validation=True
+                )
             except IllumioPluginException as err:
-                return ValidationResult(
-                    success=False, message=str(err)
-                )
+                return ValidationResult(success=False, message=str(err))
             except Exception as e:
-                return ValidationResult(
-                    success=False, message=str(e)
-                )
+                return ValidationResult(success=False, message=str(e))
 
         # Enable Tagging
         if not enable_tagging:
-            error_message = "Enable Tagging is a required configuration parameter."
-            self.logger.error(f"{validation_msg} {error_message}")
-            return ValidationResult(
-                success=False, message=error_message
+            error_message = (
+                "Enable Tagging is a required configuration parameter."
             )
-        elif not isinstance(enable_tagging, str) or enable_tagging not in ["yes", "no"]:
-            error_message = "Invalid Enable Tagging found in the configuration parameters. Valid values are 'Yes' or 'No'."
             self.logger.error(f"{validation_msg} {error_message}")
-            return ValidationResult(
-                success=False, message=error_message
+            return ValidationResult(success=False, message=error_message)
+        elif not isinstance(enable_tagging, str) or enable_tagging not in [
+            "yes",
+            "no",
+        ]:
+            error_message = (
+                "Invalid Enable Tagging found in the configuration "
+                "parameters. Valid values are 'Yes' or 'No'."
             )
+            self.logger.error(f"{validation_msg} {error_message}")
+            return ValidationResult(success=False, message=error_message)
 
         # only try to connect if the configuration is valid
         try:
@@ -499,33 +590,24 @@ class IllumioPlugin(PluginBase):
             self.illumio_helper.connect_to_pce(
                 logger_msg,
                 configuration,
+                verify=self.ssl_validation,
+                proxies=self.proxy,
                 headers=self._get_connection_headers(),
                 # fail quickly if PCE connection params are invalid
                 retry_count=1,
-                request_timeout=5
+                request_timeout=5,
             )
         except IllumioPluginException as err:
-            return ValidationResult(
-                success=False,
-                message=str(err)
-            )
+            return ValidationResult(success=False, message=str(err))
         except Exception as err:
-            err_msg =(
+            err_msg = (
                 "Error occurred while Connecting to PCE."
                 "Validate the provided configuration parameters."
             )
 
             self.logger.error(
-                f"{self.log_prefix}: "
-                f"{err_msg} "
-                f"Error: {err}",
-                details=traceback.format_exc()
+                f"{self.log_prefix}: " f"{err_msg} " f"Error: {err}",
+                details=traceback.format_exc(),
             )
-            return ValidationResult(
-                success=False,
-                message=f"{err_msg}"
-            )
-        return ValidationResult(
-            success=True,
-            message="Validation successful"
-        )
+            return ValidationResult(success=False, message=f"{err_msg}")
+        return ValidationResult(success=True, message="Validation successful")

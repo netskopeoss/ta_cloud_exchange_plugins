@@ -1,0 +1,34 @@
+{
+  "name": "ServiceNow",
+  "description": "This plugin supports performing 'Share application data' action to 'User Administration > Companies' page of the ServiceNow platform. This plugin does not support fetching data from the ServiceNow platform.",
+  "id": "servicenow_ztre",
+  "version": "1.0.0",
+  "module": "CRE",
+  "minimum_version": "5.1.0",
+  "configuration": [
+    {
+      "label": "Instance URL",
+      "key": "instance_url",
+      "type": "text",
+      "default": "",
+      "mandatory": true,
+      "description": "ServiceNow instance URL."
+    },
+    {
+      "label": "Username",
+      "key": "username",
+      "type": "text",
+      "default": "",
+      "mandatory": true,
+      "description": "Username of your ServiceNow instance. Username can be created from 'System Security > Users and Groups > Users' page of the ServiceNow instance."
+    },
+    {
+      "label": "Password",
+      "key": "password",
+      "type": "password",
+      "default": "",
+      "mandatory": true,
+      "description": "Password of your ServiceNow instance. Password for the username can be set from 'System Security > Users and Groups > Users > Select User > Set Password' page of the ServiceNow instance."
+    }
+  ]
+}

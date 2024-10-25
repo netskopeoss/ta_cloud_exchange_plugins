@@ -1,0 +1,35 @@
+{
+  "name": "Netskope WebTx",
+  "id": "netskope_webtx",
+  "netskope": true,
+  "types": [
+    "webtx"
+  ],
+  "version": "2.0.0",
+  "module": "CLS",
+  "minimum_version": "5.1.0",
+  "minimum_provider_version": "1.0.0",
+  "provider_id": "netskope_provider",
+  "mapping": "",
+  "description": "This plugin facilitates the subscription to web transaction data from Netskope. This plugin supports web transaction data of types format 1, format 2 and format 3.",
+  "configuration": [
+    {
+      "label": "Allow Empty Values",
+      "key": "allow_empty_values",
+      "type": "choice",
+      "choices": [
+        {
+          "key": "Yes",
+          "value": "yes"
+        },
+        {
+          "key": "No",
+          "value": "no"
+        }
+      ],
+      "default": "no",
+      "mandatory": true,
+      "description": "If 'Allow Empty Fields' enabled then it will send fields which contains empty values to destination plugin. For JSON, empty values will be sent as null, and for CEF format, they will be replaced with default values specified in the mapping file."
+    }
+  ]
+}

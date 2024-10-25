@@ -1,0 +1,360 @@
+Metadata-Version: 2.1
+Name: netskopesdk
+Version: 0.0.38
+Summary: SDK to download the Netskope Events
+Home-page: http://www.netskope.com/
+Author: Bharath Rajendran
+Author-email: bharath@netskope.com
+Project-URL: Bug Tracker, http://www.netskope.com/
+Classifier: Programming Language :: Python :: 3
+Classifier: Operating System :: OS Independent
+Requires-Python: >=3.6
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: requests >=2.27.1
+
+# Netskope SDK
+
+Neskope SDK is Python library for dealing with API's to download the Netskope events. 
+
+## Installation
+
+Use the package manager [pip](https://pip.pypa.io/en/stable/) to install NetskopeSDK.
+
+```bash
+pip install netskopesdk
+```
+
+## Rest sdk Usage to pull the Alert & Events 
+
+```python
+from netskope_api.iterator.netskope_iterator import NetskopeIterator
+from netskope_api.iterator.const import Const
+from requests.exceptions import RequestException
+import time
+
+# Construct the params dict to pass the authentication details 
+params = {
+        Const.NSKP_TOKEN : "<REST-API-TOKEN>",
+        Const.NSKP_TENANT_HOSTNAME : "<HOSTNAME>",
+        # Optional param to pass the proxy hosts.
+        Const.NSKP_PROXIES : {"<PROXY-HOSTS>"},
+        Const.NSKP_EVENT_TYPE : "<EVENT-TYPE>",
+        Const.NSKP_ITERATOR_NAME : "<ITERATOR-NAME>",
+        Const.NSKP_USER_AGENT : "<SPLUNK-TENANT-HOSTNAME>"
+    
+        # To query specific alert pass the NSKP_EVENT_TYPE as "alert" and the alert type.
+        # Const.NSKP_EVENT_TYPE : Const.EVENT_TYPE_ALERT,
+        # Const.NSKP_ALERT_TYPE : Const.ALERT_TYPE_DLP
+    }
+
+DEFAULT_WAIT_TIME = 30
+RESULT = "result"
+WAIT_TIME = "wait_time"
+
+# Create an Iterator
+iterator = NetskopeIterator(params)
+
+# Use the next() iterator to download the logs. 
+# Consume the message indefinitely in a loop and ingest the data to SIEM
+while True:
+    response = (iterator.next())
+    try:
+        if response:
+            data = response.json()
+            if RESULT in data and len(data[RESULT]) != 0:
+                # processData() 
+                # sleep() the thread to avoid constant polling
+                if WAIT_TIME in data:
+                    time.sleep(data[WAIT_TIME])
+                else:
+                    time.sleep(DEFAULT_WAIT_TIME)
+            else:
+                print("No response received from the iterator")
+                time.sleep(DEFAULT_WAIT_TIME)
+    except Exception as e:
+        time.sleep(DEFAULT_WAIT_TIME)
+        raise RequestException(e)
+```
+
+## Rest sdk Usage to pull the Alert & Events in CSV format.
+
+```python
+import csv
+from io import StringIO
+from netskope_api.iterator.netskope_iterator import NetskopeIterator
+from netskope_api.iterator.const import Const
+from requests.exceptions import RequestException
+
+# Construct the params dict to pass the authentication details 
+# Note: For CSV iterator - only the next(), resend() and tail() apis are supported.
+params = {
+        Const.NSKP_TOKEN : "<REST-API-TOKEN>",
+        Const.NSKP_TENANT_HOSTNAME : "<HOSTNAME>",
+        # Optional param to pass the proxy hosts.
+        Const.NSKP_PROXIES : {"<PROXY-HOSTS>"},
+        Const.NSKP_EVENT_TYPE : "<EVENT-TYPE>",
+        Const.NSKP_ITERATOR_NAME : "<ITERATOR-NAME>",
+        Const.NSKP_USER_AGENT : "<SPLUNK-TENANT-HOSTNAME>"
+    
+        # To query specific alert pass the NSKP_EVENT_TYPE as "alert" and the alert type.
+        # Const.NSKP_EVENT_TYPE : Const.EVENT_TYPE_ALERT,
+        # Const.NSKP_ALERT_TYPE : Const.ALERT_TYPE_DLP
+    }
+
+# Create an Iterator
+iterator = NetskopeIterator(params)
+
+    # Create an Iterator. Next is the only API supported.
+    iterator = NetskopeIterator(params)
+    
+# Consume the message indefinitely in a loop and ingest the data to SIEM
+   
+    while True:
+        try:
+            # Use the next() iterator to download the logs.
+            response = (iterator.next())
+            if response.status_code == 200:
+                # Parse the CSV data from the response
+                headers = response.headers["schema_headers"]
+                csv_data = StringIO(response.text)
+
+                # Create a CSV reader object
+                csv_reader = csv.reader(csv_data)
+                # Print or use the headers as needed
+                print("CSV Headers:", headers)
+
+                # Iterate over each row in the CSV data
+                for row in csv_reader:
+                    # Process each row as needed
+                    print(row)
+            else:
+                print("API failed with response code: {}, response content {}".format(response.status_code,
+                                                                                      response.text))
+        except Exception as e:
+            raise RequestException(e)
+
+
+## Rest sdk Usage to retrieve tokens used for subscribing to transaction events from PSL.
+
+```python
+from requests.exceptions import RequestException
+from netskope_api.iterator.const import Const
+from netskope_api.token_management.netskope_management import NetskopeTokenManagement
+
+if __name__ == '__main__':
+    params = {
+        Const.NSKP_TOKEN: "",
+        Const.NSKP_TENANT_HOSTNAME: "<HOSTNAME>",
+        # Optional param to pass the proxy hosts.
+        Const.NSKP_PROXIES : {"<PROXY-HOSTS>"}
+    }
+
+    sub_path_response = None
+    sub_key_response = None
+    try:
+        # Create token_management client
+        token_management = NetskopeTokenManagement(params)
+        token_management_response = token_management.get()
+        if token_management_response:
+            if "subscription" in token_management_response:
+                sub_path_response = token_management_response["subscription"]
+            if "subscription-key" in token_management_response:
+                sub_key_response = token_management_response["subscription-key"]
+    except Exception as e:
+        raise RequestException(e)
+```
+
+Api response will carry 200 status code, subscription-key and subscription in the response for successful api calls
+and a meaningfull error_msg and respective status codes in case of failures.
+
+
+1. 200 response code means Customer is authorized to create/get subscription key and path.
+
+2. 401 response code means Customer is not authorized to create/get subscription key and path.
+   This is a licensed feature, please contact Netskope support to purchase.
+
+3. 449 response code means Existing customer authorized for transaction events, subscription key and path were already downloaded.
+   Use regenerate_and_get() to regenerate the subscription key.
+   This is a one time step to onboard the existing customer to the API.
+
+4. 503 response code means services responsibles for Transaction events are not available yet in the
+   region where the customer is located.
+   
+API response examples:
+  ```
+        {
+            "ok": 1,
+            "status": 200,
+            "subscription-key": "sub-key-value",
+            "subscription": "sub-path-value"
+
+        }               
+        {
+            "ok": 0,
+            "status": 401,
+            "error_msg": "This is a licensed feature, please contact Netskope support to purchase"
+        }                                
+        {
+            "ok": 0,
+            "status": 503,
+            "error_msg": "Service is unavailable in this region"
+        } 
+   ```
+
+## When to use regenerate_and_get() API.
+    regenerate_and_get() API must only be used:
+    1. if google-cloud-pubsublite throws 401 invalid credentials exception
+    while using subscription key and path retrieved by using Netskope API.
+    2. To handle 449 response code as explained above.
+
+    Example error:
+    google.api_core.exceptions.Unauthenticated: 401 Request had invalid authentication credentials
+    grpc.aio._call.AioRpcError: <AioRpcError of RPC that terminated with:
+    status = StatusCode.UNAUTHENTICATED
+    details = "Request had invalid authentication credentials. Expected OAuth 2 access token, login cookie or other valid authentication credential.
+
+    Regenerating subscription key will invalidate the existing key but subscription path will not be updated
+    so that clients can continue consuming events where they left off.
+
+## How to use regenerate_and_get() API.
+    1. regenerate_and_get() API must only be used if google-cloud-pubsublite throws 401 Request had invalid authentication credentials errors.
+    2. Retry 3 times with get() API with some Exponential backoff logic with an intial time interval of 60 seconds.
+    3. If the responses returned by get() API continues to be invalid credentials. Use regenerate_and_get() API and use the new credentials.
+
+## Note: Regenerating subscription key will invalidate the existing key.
+
+
+```python
+from requests.exceptions import RequestException
+from netskope_api.iterator.const import Const
+from netskope_api.token_management.netskope_management import NetskopeTokenManagement
+
+if __name__ == '__main__':
+    params = {
+        Const.NSKP_TOKEN: "",
+        Const.NSKP_TENANT_HOSTNAME: "<HOSTNAME>",
+        # Optional param to pass the proxy hosts.
+        Const.NSKP_PROXIES : {"<PROXY-HOSTS>"}
+    }
+
+    sub_path_response = None
+    sub_key_response = None
+    try:
+        # Create token_management client
+        token_management = NetskopeTokenManagement(params)
+        token_management_response = token_management.regenerate_and_get()
+        if token_management_response:
+            if "subscription" in token_management_response:
+                sub_path_response = token_management_response["subscription"]
+            if "subscription-key" in token_management_response:
+                sub_key_response = token_management_response["subscription-key"]
+    except Exception as e:
+        raise RequestException(e)
+```
+
+## Example usage of web txn tokens using Pubsublite client library
+
+Please install Pubsublite client library if not present.
+
+```bash
+pip install google-cloud-pubsublite
+```
+
+
+```python
+import concurrent.futures
+import logging
+import os
+from concurrent.futures._base import TimeoutError
+
+from google.cloud.pubsublite.cloudpubsub import SubscriberClient
+from google.cloud.pubsublite.types import FlowControlSettings, MessageMetadata
+from google.pubsub_v1 import PubsubMessage
+from requests.exceptions import RequestException
+
+from netskope_api.iterator.const import Const
+from netskope_api.token_management.netskope_management import NetskopeTokenManagement
+
+_logger = logging.getLogger()
+
+
+def callback(message: PubsubMessage):
+    message_data = message.data.decode("utf-8")
+    metadata = MessageMetadata.decode(message.message_id)
+    _logger.info(
+        f"Received {message_data} of ordering key {message.ordering_key} with id {metadata}."
+    )
+    message.ack()
+
+
+class PSLSubscriberClient:
+    def __init__(self):
+
+        configs = {
+            "messages_outstanding": 1000,
+            "bytes_outstanding": 3.5 * 1024 * 1024,
+            "timeout": 60,
+            "thread_count": 1
+        }
+        self.configs = configs
+
+    def make_default_thread_pool_executor(self):
+        return concurrent.futures.ThreadPoolExecutor(self.configs.get("thread_count"))
+
+    def stream(self, subscription_path):
+        global streaming_pull_future
+
+        per_partition_flow_control_settings = FlowControlSettings(
+            # Must be >0.
+            messages_outstanding=self.configs.get("messages_outstanding"),
+            # Must be greater than the allowed size of the largest message.
+            bytes_outstanding=self.configs.get("bytes_outstanding"),
+        )
+
+        executor = self.make_default_thread_pool_executor()
+        with SubscriberClient(executor=executor) as subscriber_client:
+            _logger.info(
+                "Listening for messages on the pub sub lite subscription {}".format(subscription_path))
+            streaming_pull_future = subscriber_client.subscribe(
+                subscription_path,
+                callback=callback,
+                per_partition_flow_control_settings=per_partition_flow_control_settings,
+            )
+            try:
+                timeout = self.configs.get("timeout")
+                if timeout:
+                    streaming_pull_future.result(timeout=self.configs.get("timeout"))
+                else:
+                    streaming_pull_future.result()
+            except TimeoutError or KeyboardInterrupt:
+                streaming_pull_future.cancel()
+                assert streaming_pull_future.done()
+
+
+if __name__ == '__main__':
+    params = {
+        Const.NSKP_TOKEN: "",
+        Const.NSKP_TENANT_HOSTNAME: "<HOSTNAME>",
+        # Optional param to pass the proxy hosts.
+        Const.NSKP_PROXIES : {"<PROXY-HOSTS>"}
+    }
+
+    sub_path_response = None
+    sub_key_response = None
+    try:
+        # Create token_management client
+        token_management = NetskopeTokenManagement(params)
+        token_management_response = token_management.get()
+        if token_management_response:
+            if "subscription" in token_management_response:
+                sub_path_response = token_management_response["subscription"]
+            if "subscription-key" in token_management_response:
+                sub_key_response = token_management_response["subscription-key"]
+    except Exception as e:
+        raise RequestException(e)
+
+    os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = sub_key_response
+    psl_client = PSLSubscriberClient()
+    psl_client.stream(subscription_path=sub_path_response)
+```

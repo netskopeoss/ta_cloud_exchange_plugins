@@ -1,30 +1,49 @@
 {
-    "name": "Cloud Exchange",
-    "description": "Pull logs from Cloud Exchange.",
-    "id": "logs_itsm",
-    "pulling_supported": true,
-    "receiving_supported": false,
-    "version": "1.0.0",
-    "configuration": [
+  "name": "Cloud Exchange Alerts",
+  "description": "This plugin creates Alerts in CTO module of types Information, Warning, Error and Debug from Cloud Exchange Logs.",
+  "id": "logs_itsm",
+  "pulling_supported": true,
+  "receiving_supported": false,
+  "minimum_version": "5.1.0",
+  "version": "1.0.0",
+  "module": "CTO",
+  "configuration": [
+    {
+      "label": "Configuration Parameters",
+      "name": "params",
+      "type": "step",
+      "fields": [
         {
-            "label": "Configuration Parameters",
-            "name": "params",
-            "type": "step",
-            "fields": [
-                {
-                    "label": "Log Types",
-                    "key": "logs_type",
-                    "type": "multichoice",
-                    "choices": [
-                        {"key": "Information", "value": "info"},
-                        {"key": "Warning", "value": "warning"},
-                        {"key": "Error", "value": "error"}
-                    ],
-                    "default": ["info", "warning", "error"],
-                    "mandatory": true,
-                    "description": "Only this type(s) of logs will be fetched."
-                }
-            ]
+          "label": "Log Types",
+          "key": "logs_type",
+          "type": "multichoice",
+          "choices": [
+            {
+              "key": "Information",
+              "value": "info"
+            },
+            {
+              "key": "Warning",
+              "value": "warning"
+            },
+            {
+              "key": "Error",
+              "value": "error"
+            },
+            {
+              "key": "Debug",
+              "value": "debug"
+            }
+          ],
+          "default": [
+            "info",
+            "warning",
+            "error"
+          ],
+          "mandatory": true,
+          "description": "Only this type(s) of logs will be fetched."
         }
-    ]
+      ]
+    }
+  ]
 }

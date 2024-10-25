@@ -87,7 +87,7 @@ class CELogsPlugin(PluginBase):
                         type=log["type"],
                         user="",
                         timestamp=log["createdAt"],
-                        rawAlert={"message": log["message"]},
+                        rawData={"message": log["message"], "errorCode": log["errorCode"]},
                     )
                 )
             except KeyError as ex:

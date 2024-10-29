@@ -1,92 +1,92 @@
 {
-  "name": "Netskope Threat Exchange",
-  "id": "netskope",
-  "netskope": true,
-  "version": "2.1.0",
-  "module": "CTE",
-  "minimum_version": "5.1.0",
-  "minimum_provider_version": "1.0.0",
-  "description": "This plugin is used to fetch the File hashes (MD5 and SHA256) and URLs (URL, IPv4, hostname, domain, and FQDN) from the Malware and Malsite alerts available on the Netskope Tenant from Skope IT > Alerts. This plugin also supports sharing File Hashes (MD5 and SHA256) and URLs (URL, IPv4, hostname, domain, and FQDN) indicators to File Hash List (Policies > File), URL List (Policies > Web > URL LISTS) and Private App (Settings > Security Cloud Platform > App Defination > Private App) within Netskope. Consider the maximum size of data that Netskope File Hash List and URL List can hold (8 MB) while configuring the Business Rule.",
-  "provider_id": "netskope_provider",
-  "delete_supported": true,
-  "patch_supported": false,
-  "supported_subtypes": {
-    "alerts": [
-      "malsite",
-      "Malware"
-    ],
-    "events": []
-  },
-  "configuration": [
-    {
-      "label": "Enable Polling",
-      "key": "is_pull_required",
-      "type": "choice",
-      "choices": [
-        {
-          "key": "Yes",
-          "value": "Yes"
-        },
-        {
-          "key": "No",
-          "value": "No"
-        }
-      ],
-      "default": "Yes",
-      "mandatory": true,
-      "description": "Enable/Disable polling data from Netskope."
+    "name": "Netskope Threat Exchange",
+    "id": "netskope",
+    "netskope": true,
+    "version": "2.1.0",
+    "module": "CTE",
+    "minimum_version": "5.1.0",
+    "minimum_provider_version": "1.0.0",
+    "description": "This plugin is used to fetch the File hashes (MD5 and SHA256) and URLs (URL, IPv4, hostname, domain, and FQDN) from the Malware and Malsite alerts available on the Netskope Tenant from Skope IT > Alerts. This plugin also supports sharing File Hashes (MD5 and SHA256) and URLs (URL, IPv4, hostname, domain, and FQDN) indicators to File Hash List (Policies > File), URL List (Policies > Web > URL LISTS) and Private App (Settings > Security Cloud Platform > App Defination > Private App) within Netskope. Consider the maximum size of data that Netskope File Hash List and URL List can hold (8 MB) while configuring the Business Rule.",
+    "provider_id": "netskope_provider",
+    "delete_supported": true,
+    "patch_supported": false,
+    "supported_subtypes": {
+        "alerts": [
+            "malsite",
+            "Malware"
+        ],
+        "events": []
     },
-    {
-      "label": "Types of Threat Data to Pull",
-      "key": "threat_data_type",
-      "type": "multichoice",
-      "choices": [
+    "configuration": [
         {
-          "key": "MD5",
-          "value": "MD5"
+            "label": "Enable Polling",
+            "key": "is_pull_required",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Yes",
+                    "value": "Yes"
+                },
+                {
+                    "key": "No",
+                    "value": "No"
+                }
+            ],
+            "default": "Yes",
+            "mandatory": true,
+            "description": "Enable/Disable polling data from Netskope."
         },
         {
-          "key": "SHA256",
-          "value": "SHA256"
+            "label": "Types of Threat Data to Pull",
+            "key": "threat_data_type",
+            "type": "multichoice",
+            "choices": [
+                {
+                    "key": "MD5",
+                    "value": "MD5"
+                },
+                {
+                    "key": "SHA256",
+                    "value": "SHA256"
+                },
+                {
+                    "key": "URL",
+                    "value": "URL"
+                }
+            ],
+            "mandatory": true,
+            "default": [
+                "MD5",
+                "SHA256",
+                "URL"
+            ],
+            "description": "Indicators of selected types will be extracted from Netskope malware alerts and stored on CTE."
         },
         {
-          "key": "URL",
-          "value": "URL"
+            "label": "Initial Range (in days)",
+            "key": "days",
+            "type": "number",
+            "mandatory": true,
+            "default": 7,
+            "description": "Number of days to pull the data for the initial run."
+        },
+        {
+            "label": "Enable Tagging",
+            "key": "enable_tagging",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Yes",
+                    "value": "yes"
+                },
+                {
+                    "key": "No",
+                    "value": "no"
+                }
+            ],
+            "default": "yes",
+            "mandatory": true,
+            "description": "Enable/disable tagging of unshared indicators."
         }
-      ],
-      "mandatory": true,
-      "default": [
-        "MD5",
-        "SHA256",
-        "URL"
-      ],
-      "description": "Indicators of selected types will be extracted from Netskope malware alerts and stored on CTE."
-    },
-    {
-      "label": "Initial Range (in days)",
-      "key": "days",
-      "type": "number",
-      "mandatory": true,
-      "default": 7,
-      "description": "Number of days to pull the data for the initial run."
-    },
-    {
-      "label": "Enable Tagging",
-      "key": "enable_tagging",
-      "type": "choice",
-      "choices": [
-        {
-          "key": "Yes",
-          "value": "yes"
-        },
-        {
-          "key": "No",
-          "value": "no"
-        }
-      ],
-      "default": "yes",
-      "mandatory": true,
-      "description": "Enable/disable tagging of unshared indicators."
-    }
-  ]
+    ]
 }

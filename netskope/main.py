@@ -952,6 +952,7 @@ class NetskopePlugin(PluginBase):
                     message="Could not share indicators.",
                 )
             invalid_indicators = []
+            ipv6_iocs = []
             if append_urllist_netskope.status_code == 400:
                 response_json = append_urllist_netskope.json()
                 invalid_indicators, ipv6_iocs = self._extract_invalid_indicators(

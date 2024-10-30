@@ -1,10 +1,12 @@
 {
   "name": "MISP",
   "id": "misp",
-  "version": "1.4.0",
-  "description": "This plugin is used to fetch event attributes from MISP (Malware Information Sharing Platform) and extract indicators of type SHA256, MD5, URL, Domain, IP (IPv4 and IPv6) from them. It can also share the indicators of type SHA256, MD5, URL, Domain (Domain, FQDN and Hostname), IP (IPv4 and IPv6) as attributes to MISP Custom Events. To get required details for creating a new configuration, navigate to https://<misp-url>/events/automation.",
+  "version": "1.5.0",
+  "description": "This plugin is used to fetch event attributes from MISP (Malware Information Sharing Platform) and extract indicators of type SHA256, MD5, URL, Domain, IP (IPv4 and IPv6) and Hostname from them. It can also share the indicators of type SHA256, MD5, URL, Domain (Domain and FQDN), Hostname, IP (IPv4 and IPv6) as attributes to MISP Custom Events. To get required details for creating a new configuration, navigate to https://<misp-url>/events/automation.\n\nNote: The Source IP (ip-src) and Destination IP (ip-dst) will be stored as either IPv4 or IPv6 in Cloud Exchange. Source IP|Port (ip-src|port), Destination IP|Port (ip-dst|port), and Hostname|Port (hostname|port) will be stored as URLs in Cloud Exchange. For Domain|IP, the domain and IP (either IPv4 or IPv6) will be split and stored as separate IoCs in Cloud Exchange.",
   "patch_supported": true,
   "push_supported": true,
+  "delete_supported": true,
+  "fetch_retraction_info": true,
   "configuration": [
     {
       "label": "MISP Base URL",
@@ -36,16 +38,40 @@
           "value": "sha256"
         },
         {
-          "key": "IP (IPv4 and IPv6)",
+          "key": "Source IP",
           "value": "ip-src"
+        },
+        {
+          "key": "Source IP|Port",
+          "value": "ip-src|port"
+        },
+        {
+          "key": "Destination IP",
+          "value": "ip-dst"
+        },
+        {
+          "key": "Destination IP|Port",
+          "value": "ip-dst|port"
         },
         {
           "key": "URL",
           "value": "url"
         },
         {
-          "key": "DOMAIN",
+          "key": "Domain",
           "value": "domain"
+        },
+        {
+          "key": "Domain|IP",
+          "value": "domain|ip"
+        },
+        {
+          "key": "Hostname",
+          "value": "hostname"
+        },
+        {
+          "key": "Hostname|Port",
+          "value": "hostname|port"
         }
       ],
       "mandatory": false,
@@ -143,12 +169,12 @@
       "description": "Indicators from only the specified comma separated event names will be fetched. Keep empty to pull indicators from all the events."
     },
     {
-      "label": "Exclude IoCs from Event",
+      "label": "Exclude IoCs from Events",
       "key": "event_name",
       "type": "text",
       "mandatory": true,
       "default": "",
-      "description": "Indicators attached to this event will be ignored while pulling data from MISP."
+      "description": "Indicators attached to the provided comma-separated events will be ignored while pulling data from MISP. Expected value is comma-separated event names or event IDs."
     },
     {
       "label": "IoC Event Type",
@@ -244,6 +270,13 @@
       "mandatory": false,
       "default": 24,
       "description": "Look Back hours for fetching the indicators from MISP. Note: This parameter will only be considered if \"Pulling Mechanism\" is set to \"Look Back\"."
+    },
+    {
+      "label": "Retraction Interval (in days)",
+      "key": "retraction_interval",
+      "type": "number",
+      "mandatory": false,
+      "description": "Retraction Interval days to run IoC(s) retraction for MISP indicators. Note: This parameter will only be considered if \"IoC(s) Retraction\" is enabled in Threat Exchange Settings."
     },
     {
       "label": "Enable Tagging",

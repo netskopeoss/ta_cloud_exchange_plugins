@@ -1,3 +1,13 @@
+# 1.5.0
+## Added
+- Added support for IoC(s) Retraction.
+- Added support for IoC Source Labelling.
+- Added support for pulling Hostname, Destination IP (ip-dst), Destination IP|Port (ip-dst|port), Domain|IP (domain|ip), Source IP|Port (ip-src|port),  and Hostname|Port (hostname|port) from MISP.
+
+# 1.4.1
+## Added
+- Added support for accepting multiple events in the "Exclude IoCs from Event" parameter.
+
 # 1.4.0
 ## Added
 - Added support for pulling indicators on the basis of Decaying Score Threshold, Decaying Model IDs, Published Events, IDS flag and Enforce Warning List IoCs flag.

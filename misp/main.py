@@ -64,6 +64,9 @@ from .utils.constants import (
     PLUGIN_NAME,
     PLUGIN_VERSION,
     PULL_PAGE_SIZE,
+    RETRACTION,
+    RETRACTION_BATCH,
+    SHARING_TAG_CONSTANT,
 )
 from .utils.helper import MISPPluginException, MISPPluginHelper
 
@@ -72,6 +75,10 @@ MISP_TO_INTERNAL_TYPE = {
     "sha256": IndicatorType.SHA256,
     "url": IndicatorType.URL,
     "domain": getattr(IndicatorType, "DOMAIN", IndicatorType.URL),
+    "ip-src|port": IndicatorType.URL,
+    "ip-dst|port": IndicatorType.URL,
+    "hostname": getattr(IndicatorType, "HOSTNAME", IndicatorType.URL),
+    "hostname|port": IndicatorType.URL,
 }
 
 
@@ -96,9 +103,10 @@ class MISPPlugin(PluginBase):
         )
         self.plugin_name, self.plugin_version = self._get_plugin_info()
         self.log_prefix = f"{MODULE_NAME} {self.plugin_name}"
+        self.config_name = name
         if name:
             self.log_prefix = f"{self.log_prefix} [{name}]"
-
+        self.retraction_batch = RETRACTION_BATCH
         self.misp_helper = MISPPluginHelper(
             logger=self.logger,
             plugin_name=self.plugin_name,
@@ -127,6 +135,466 @@ class MISPPlugin(PluginBase):
             )
         return (PLATFORM_NAME, PLUGIN_VERSION)
 
+    def _retract_attributes(self, attribute_ids, base_url, api_key):
+        """Make an API call to delete one batch from misp."""
+        for event_id, attributes in attribute_ids.items():
+            if not attributes:
+                continue
+            retracted_count = 0
+            try:
+                event_log = f"event with Event ID '{event_id}'"
+                resp_json = self.misp_helper.api_helper(
+                    method="POST",
+                    url=f"{base_url}/attributes/deleteSelected/{event_id}",
+                    headers=self.misp_helper.get_header(api_key),
+                    json={"id": attributes, "event_id": event_id},
+                    logger_msg=(
+                        f"retracting {len(attributes)} indicator(s) "
+                        f"from {event_log} from {PLATFORM_NAME}"
+                    ),
+                    verify=self.ssl_validation,
+                    proxies=self.proxy,
+                )
+                if resp_json.get("success"):
+                    retracted_count += len(attributes)
+                    self.logger.info(
+                        f"{self.log_prefix}: Successfully retracted "
+                        f"{retracted_count} indicator(s) from"
+                        f" {event_log}."
+                    )
+                else:
+                    err_msg = resp_json.get("errors")
+                    if err_msg and isinstance(err_msg, str):
+                        log_msg = (
+                            f"Unable to retract all indicators "
+                            f"from {event_log}. API Error: {err_msg}"
+                        )
+                        success_pattern = re.compile(
+                            r"(\d+) attributes deleted"
+                        )
+                        match = success_pattern.search(err_msg)
+                        if match:
+                            retracted_count += int(match.group(1))
+
+                        self.logger.error(
+                            message=log_msg,
+                            details=f"API response: {resp_json}",
+                        )
+                    else:
+                        self.logger.error(
+                            message=(
+                                f"{self.log_prefix}: Unable to retract "
+                                f"{len(attributes)} indicator(s) "
+                                f"from {event_log}."
+                            ),
+                            details=f"API response: {resp_json}",
+                        )
+            except MISPPluginException:
+                continue
+            except Exception as exp:
+                err_mg = (
+                    "Unexpected error occurred while retracting"
+                    f" {len(attributes)} indicator(s) from "
+                    f"{event_log}. Error: {exp}"
+                )
+                self.logger.error(
+                    message=f"{self.log_prefix}: {err_mg}",
+                    details=traceback.format_exc(),
+                )
+            self.logger.info(
+                f"Successfully retracted {retracted_count} indicator(s) "
+                f"for {event_log}."
+            )
+
+    def retract_indicators(
+        self,
+        retracted_indicators_lists: List[List[Indicator]],
+        list_action_dict: List[Action],
+    ):
+        """Retract indicators from misp."""
+        if RETRACTION not in self.log_prefix:
+            self.log_prefix = self.log_prefix + f" [{RETRACTION}]"
+        end_time = datetime.now()
+        retraction_interval = self.configuration.get("retraction_interval")
+        if not (retraction_interval and isinstance(retraction_interval, int)):
+            log_msg = (
+                "Retraction Interval is not available for the configuration"
+                f' "{self.config_name}". Skipping retraction of IoC(s)'
+                f" from {PLATFORM_NAME}."
+            )
+            self.logger.info(f"{self.log_prefix}: {log_msg}")
+            yield ValidationResult(
+                success=False, disabled=True, message=log_msg
+            )
+        retraction_interval = int(retraction_interval)
+        start_time = end_time - timedelta(days=int(retraction_interval))
+        start_time = int(start_time.timestamp())
+        end_time = int(end_time.timestamp())
+        self.logger.info(
+            f"{self.log_prefix}: Start time for this retract"
+            f" indicators cycle: {start_time}"
+        )
+        event_ids = []
+        base_url, api_key = self.misp_helper.get_credentials(
+            self.configuration
+        )
+        for inc_event in list_action_dict:
+            event_id = self._event_exists(
+                inc_event.parameters.get("event_name"),
+                base_url,
+                api_key,
+                is_retraction=True,
+            )[1]
+            event_ids.append(event_id)
+        if len(event_ids) == 0:
+            err_msg = (
+                "Error occurred while getting event ids for events which"
+                " are provided in sharing configurations."
+            )
+            self.logger.error(f"{self.log_prefix}: {err_msg}")
+            raise MISPPluginException(err_msg)
+
+        log_event_ids = ", ".join(event_ids)
+        for retraction_batch in retracted_indicators_lists:
+            iocs = [ioc.value for ioc in retraction_batch]
+            available_attributes_id = {}
+            body = {
+                "returnFormat": "json",
+                "limit": PULL_PAGE_SIZE,
+                "page": 1,
+                "attribute_timestamp": [str(start_time), str(end_time)],
+                "eventid": event_ids,
+            }
+            last_page = False
+            while True:
+                page_ioc_count = 0
+                resp_json = self.misp_helper.api_helper(
+                    method="POST",
+                    url=f"{base_url}/attributes/restSearch",
+                    headers=self.misp_helper.get_header(api_key),
+                    json=body,
+                    logger_msg=(
+                        f"pulling indicators for page {body['page']}"
+                        f" from {PLATFORM_NAME}"
+                    ),
+                    verify=self.ssl_validation,
+                    proxies=self.proxy,
+                    is_retraction=True,
+                )
+
+                for attr in resp_json.get("response", {}).get(
+                    "Attribute", []
+                ):
+                    event_id = attr.get("event_id")
+                    # if attr.get("value") and attr.get("value") not in iocs:
+                    #     continue
+                    if attr.get("value") in iocs:
+                        if event_id in available_attributes_id:
+                            available_attributes_id.get(event_id).append(
+                                attr.get("id")
+                            )
+                            page_ioc_count += 1
+                        else:
+                            available_attributes_id[event_id] = [
+                                attr.get("id")
+                            ]
+                            page_ioc_count += 1
+
+                if (
+                    len(resp_json.get("response", {}).get("Attribute", []))
+                    < body["limit"]
+                ):
+                    last_page = True
+
+                total_ioc_count = sum(
+                    len(attributes)
+                    for attributes in available_attributes_id.values()
+                )
+                self.logger.info(
+                    f"{self.log_prefix}: Successfully pulled {page_ioc_count}"
+                    f" IoC(s) from MISP for page {body['page']} from Event "
+                    f"ID(s) '{log_event_ids}'. Total IoCs: {total_ioc_count}"
+                )
+                if last_page:
+                    break
+                body["page"] += 1
+
+            # Run API to remove attributes from misp
+            self._retract_attributes(
+                available_attributes_id, base_url, api_key
+            )
+
+            # yield indicators, None if last_page else body
+            yield ValidationResult(
+                success=True, message="Completed execution for one batch."
+            )
+
+    def get_modified_indicators(self, source_indicators):
+        """Get all modified indicators status.
+
+        Args:
+            source_indicators (List[List[Dict]]): Source Indicators.
+
+        Yields:
+            List of retracted indicators, Status (List, bool): List of
+                retracted indicators values. Status of execution.
+        """
+        self.log_prefix = f"{self.log_prefix} [{RETRACTION}]"
+        retraction_interval = self.configuration.get("retraction_interval")
+        if not (retraction_interval and isinstance(retraction_interval, int)):
+            log_msg = (
+                "Retraction Interval is not available for the configuration"
+                f' "{self.config_name}". Skipping retraction of IoC(s)'
+                f" from {PLATFORM_NAME}."
+            )
+            self.logger.info(f"{self.log_prefix}: {log_msg}")
+            yield [], True
+
+        retraction_interval = int(retraction_interval)
+        pulling_mechanism = self.configuration.get(
+            "pulling_mechanism", "incremental"
+        )
+        end_time = datetime.now()
+        for source_ioc_list in source_indicators:
+            source_unique_iocs = set()
+            for ioc in source_ioc_list:
+                source_unique_iocs.add(ioc.value)
+            self.logger.info(
+                f"{self.log_prefix}: Getting modified indicators status"
+                f" for {len(source_unique_iocs)} indicator(s) from"
+                f" {PLATFORM_NAME}."
+            )
+
+            if pulling_mechanism == "look_back":
+                look_back = self.configuration.get("look_back", 24)
+                if look_back is None:
+                    err_msg = (
+                        "Look Back is a required configuration "
+                        'parameter when "Look Back" is selected as '
+                        "Pulling Mechanism."
+                    )
+                    self.logger.error(f"{self.log_prefix}: {err_msg}")
+                    raise MISPPluginException(err_msg)
+                elif (
+                    not isinstance(look_back, int)
+                    or look_back <= 0
+                    or look_back > MAX_LOOK_BACK
+                ):
+                    err_msg = (
+                        "Invalid value for Look Back provided in"
+                        " configuration parameters. Valid value should be "
+                        "an integer in range 1-8760 i.e. 1 year."
+                    )
+                    self.logger.error(f"{self.log_prefix}: {err_msg}")
+                    raise MISPPluginException(err_msg)
+                else:
+                    start_time = end_time - timedelta(hours=int(look_back))
+            else:
+                start_time = end_time - timedelta(days=retraction_interval)
+
+            # create set of excluded events for
+            event_ids = []
+            include_event_name = self.configuration.get("include_event_name")
+            exclude_event = self.configuration.get("event_name", "")
+            exclude_events = []
+            if exclude_event:
+                exclude_events = [
+                    event
+                    for event in exclude_event.strip().split(",")
+                    if event
+                ]
+            base_url, api_key = self.misp_helper.get_credentials(
+                self.configuration
+            )
+
+            if include_event_name:
+                for inc_event in include_event_name.strip().split(","):
+                    event_id = self._event_exists(
+                        inc_event, base_url, api_key, is_retraction=True
+                    )[1]
+                    event_ids.append(event_id)
+
+            misp_tags = [f"!{DEFAULT_IOC_TAG}"]
+            tags = self.configuration.get("tags", "").strip()
+            if tags:
+                misp_tags.extend(tags.split(","))
+
+            body = {
+                "returnFormat": "json",
+                "limit": PULL_PAGE_SIZE,
+                "page": 1,
+                "attribute_timestamp": [
+                    int(start_time.timestamp()),
+                    int(end_time.timestamp()),
+                ],
+                # Filter attributes based on type, category and tags
+                "category": self.configuration.get("attr_category"),
+                "type": self.configuration.get("attr_type"),
+                "tags": misp_tags,
+                "includeDecayScore": 1,
+            }
+            published = self.configuration.get("published", [])
+            if published == ["published"]:
+                body["published"] = 1
+            elif published == ["unpublished"]:
+                body["published"] = 0
+
+            to_ids = self.configuration.get("to_ids", [])
+            if to_ids == ["enabled"]:
+                body["to_ids"] = 1
+            elif to_ids == ["disabled"]:
+                body["to_ids"] = 0
+
+            enforce_warning_list = self.configuration.get(
+                "enforce_warning_list", "no"
+            ).strip()
+            if enforce_warning_list == "yes":
+                body["enforceWarninglist"] = 1
+            elif enforce_warning_list == "no":
+                body["enforceWarninglist"] = 0
+
+            if event_ids:
+                body["eventid"] = event_ids
+            score_threshold = self.configuration.get("score_threshold")
+            decaying_models = (
+                self.configuration.get("decaying_models", "")
+                .strip()
+                .split(",")
+            )
+            if score_threshold is not None:
+                model_ids = [
+                    int(model_id) for model_id in decaying_models if model_id
+                ]
+                score_params = {
+                    "excludeDecayed": 1,
+                    "decayingModel": model_ids,
+                    "modelOverrides": {"threshold": score_threshold},
+                }
+                body.update(score_params)
+
+            last_page = False
+            while True:
+                indicators = set()
+                try:
+                    resp_json = self.misp_helper.api_helper(
+                        method="POST",
+                        url=f"{base_url}/attributes/restSearch",
+                        headers=self.misp_helper.get_header(api_key),
+                        json=body,
+                        logger_msg=(
+                            f"pulling indicators for page {body['page']}"
+                            f" to check their existence on {PLATFORM_NAME}"
+                        ),
+                        verify=self.ssl_validation,
+                        proxies=self.proxy,
+                        is_retraction=True,
+                    )
+
+                    for attr in resp_json.get("response", {}).get(
+                        "Attribute", []
+                    ):
+                        if (
+                            attr.get("Event", {}).get("info", "")
+                            in exclude_events
+                            or attr.get("Event", {}).get("id")
+                            in exclude_events
+                        ):
+
+                            continue
+
+                        if attr.get("type") == "domain|ip":
+                            iocs = attr.get("value", "").split("|")
+                            for ioc in iocs:
+                                if ioc:
+                                    indicators.add(ioc)
+                        elif attr.get("type") in ATTRIBUTE_TYPES:
+                            # Filter already pushed attributes/indicators
+                            indicators.add(attr.get("value"))
+
+                    if (
+                        len(
+                            resp_json.get("response", {}).get("Attribute", [])
+                        )
+                        < body["limit"]
+                    ):
+                        last_page = True
+                    # remove existing indicators.
+                    source_unique_iocs = source_unique_iocs - indicators
+                    self.logger.info(
+                        f"{self.log_prefix}: Successfully fetched "
+                        f"{len(indicators)} indicator(s) in "
+                        f"page {body['page']}."
+                    )
+                    body["page"] += 1
+                    # yield indicators, None if last_page else body
+                    if last_page or len(source_unique_iocs) == 0:
+                        break
+                except MISPPluginException:
+                    raise
+                except Exception as exp:
+                    err_msg = (
+                        f"Unexpected error occurred while pulling "
+                        f"indicators for page {body['page']} "
+                        f"from {PLATFORM_NAME}. Error: {exp}"
+                    )
+                    self.logger.error(
+                        message=f"{self.log_prefix}: {err_msg}",
+                        details=str(traceback.format_exc()),
+                    )
+                    raise MISPPluginException(err_msg)
+
+            yield list(source_unique_iocs), False
+
+    def _get_ioc_type_from_attribute(self, attribute_value):
+        """Get IoC type from attribute."""
+        if self._is_valid_ipv4(attribute_value):
+            return getattr(
+                IndicatorType,
+                "IPV4",
+                IndicatorType.URL,
+            )
+        elif self._is_valid_ipv6(attribute_value):
+            return getattr(
+                IndicatorType,
+                "IPV6",
+                IndicatorType.URL,
+            )
+        elif self._is_valid_domain(attribute_value):
+            return getattr(
+                IndicatorType,
+                "DOMAIN",
+                IndicatorType.URL,
+            )
+        else:
+            return getattr(
+                IndicatorType,
+                "URL",
+                IndicatorType.URL,
+            )
+
+    def _get_decaying_comment(self, decay_score, comment) -> str:
+        score_comment = []
+        if decay_score:
+            for decay in decay_score:
+                model = decay.get("DecayingModel", {})
+                if decay.get("score"):
+                    cmt = (
+                        "Decaying Score: "
+                        + str(round(decay.get("score"), 2))
+                        + ", Decaying Model ID: "
+                        + str(model.get("id", "Unknown"))
+                        + ", Decaying Model Name: "
+                        + str(model.get("name", "Unknown"))
+                    )
+                    score_comment.append(cmt)
+
+        if score_comment:
+            if comment:
+                comment += str(f" | {' | '.join(score_comment)}")  # noqa
+            else:
+                comment += f"{' | '.join(score_comment)}"  # noqa
+        return comment
+
     def _pull(self):
         """Pull indicators from MISP."""
         existing_tag = f"{self.name} Latest"
@@ -140,7 +608,7 @@ class MISPPlugin(PluginBase):
         start_time = None
         if pulling_mechanism == "look_back":
             look_back = self.configuration.get("look_back", 24)
-            if not look_back:
+            if look_back is None:
                 err_msg = (
                     "Look Back is a required configuration "
                     'parameter when "Look Back" is selected as '
@@ -148,10 +616,25 @@ class MISPPlugin(PluginBase):
                 )
                 self.logger.error(f"{self.log_prefix}: {err_msg}")
                 raise MISPPluginException(err_msg)
+            elif (
+                not isinstance(look_back, int)
+                or look_back <= 0
+                or look_back > MAX_LOOK_BACK
+            ):
+                err_msg = (
+                    "Invalid value for Look Back provided in"
+                    " configuration parameters. Valid value should be "
+                    "an integer in range 1-8760 i.e. 1 year."
+                )
+                self.logger.error(f"{self.log_prefix}: {err_msg}")
+                raise MISPPluginException(err_msg)
+
             else:
                 # Removing the <config_name> Latest tag from the existing
                 # indicators
-                query = {"sources": {"$elemMatch": {"source": f"{self.name}"}}}
+                query = {
+                    "sources": {"$elemMatch": {"source": f"{self.name}"}}
+                }
                 TagUtils().on_indicators(query).remove(existing_tag)
                 start_time = end_time - timedelta(hours=int(look_back))
                 if self.last_run_at and self.last_run_at < start_time:
@@ -179,7 +662,7 @@ class MISPPlugin(PluginBase):
         # create set of excluded events for
         event_ids = []
         include_event_name = self.configuration.get("include_event_name")
-        exclude_event = self.configuration.get("event_name")
+        exclude_event = self.configuration.get("event_name", "")
         base_url, api_key = self.misp_helper.get_credentials(
             self.configuration
         )
@@ -188,6 +671,11 @@ class MISPPlugin(PluginBase):
             for inc_event in include_event_name.strip().split(","):
                 event_id = self._event_exists(inc_event, base_url, api_key)[1]
                 event_ids.append(event_id)
+        exclude_events = []
+        if exclude_event:
+            exclude_events = [
+                event for event in exclude_event.strip().split(",") if event
+            ]
 
         # Convert to epoch
         if start_time:
@@ -205,7 +693,7 @@ class MISPPlugin(PluginBase):
                 "returnFormat": "json",
                 "limit": PULL_PAGE_SIZE,
                 "page": 1,
-                "timestamp": [str(start_time), str(end_time)],
+                "attribute_timestamp": [str(start_time), str(end_time)],
                 # Filter attributes based on type, category and tags
                 "category": self.configuration.get("attr_category"),
                 "type": self.configuration.get("attr_type"),
@@ -268,6 +756,7 @@ class MISPPlugin(PluginBase):
                 "ipv4": 0,
                 "ipv6": 0,
                 "url": 0,
+                "hostname": 0,
             }
             page_skip_count = 0
             indicators, skipped_tags = [], []
@@ -285,15 +774,22 @@ class MISPPlugin(PluginBase):
                     proxies=self.proxy,
                 )
 
-                for attr in resp_json.get("response", {}).get("Attribute", []):
+                for attr in resp_json.get("response", {}).get(
+                    "Attribute", []
+                ):
 
                     if (
-                        attr.get("type") in ATTRIBUTE_TYPES
+                        attr.get("Event", {}).get("info", "")
+                        in exclude_events
+                        or attr.get("Event", {}).get("id") in exclude_events
+                    ):
+
+                        continue
+
+                    if (
+                        attr.get("type")
+                        in ATTRIBUTE_TYPES
                         # Filter already pushed attributes/indicators
-                        and (
-                            attr.get("Event", {}).get("info", "")
-                            != exclude_event
-                        )
                     ):
 
                         # Deep link of event corresponding to the attribute
@@ -315,65 +811,78 @@ class MISPPlugin(PluginBase):
                         skipped_tags.extend(skipped)
                         if pulling_mechanism == "look_back" and look_back:
                             tags.append(new_indicator_tag)
-                        ioc_type = ioc_type = MISP_TO_INTERNAL_TYPE.get(
-                            attr.get("type")
-                        )
-                        if attr.get(
-                            "type"
-                        ) == "ip-src" and self._is_valid_ipv4(
-                            attr.get("value")
-                        ):
-                            ioc_type = getattr(
-                                IndicatorType, "IPV4", IndicatorType.URL
+
+                        if not attr.get("value"):
+                            page_skip_count += 1
+                            continue
+
+                        if attr.get("type") in [
+                            "ip-src",
+                            "ip-dst",
+                        ]:
+                            ioc_type = self._get_ioc_type_from_attribute(
+                                attr.get("value")
                             )
-                        elif attr.get(
-                            "type"
-                        ) == "ip-src" and self._is_valid_ipv6(
-                            attr.get("value")
-                        ):
-                            ioc_type = getattr(
-                                IndicatorType, "IPV6", IndicatorType.URL
+                        else:
+                            ioc_type = MISP_TO_INTERNAL_TYPE.get(
+                                attr.get("type")
                             )
+
                         try:
-                            score_comment = []
+                            # Get decaying score
                             decay_score = attr.get("decay_score", [])
-                            if decay_score:
-                                for decay in decay_score:
-                                    model = decay.get("DecayingModel", {})
-                                    if decay.get("score"):
-                                        cmt = (
-                                            "Decaying Score: "
-                                            + str(round(decay.get("score"), 2))
-                                            + ", Decaying Model ID: "
-                                            + str(model.get("id", "Unknown"))
-                                            + ", Decaying Model Name: "
-                                            + str(model.get("name", "Unknown"))
-                                        )
-                                        score_comment.append(cmt)
-                            comment = attr.get("comment", "")
 
-                            if score_comment:
-                                if comment:
-                                    comment += str(
-                                        f" | {' | '.join(score_comment)}"  # noqa
-                                    )
-                                else:
-                                    comment += (
-                                        f"{' | '.join(score_comment)}"  # noqa
-                                    )
-
-                            indicators.append(
-                                Indicator(
-                                    value=attr.get("value"),
-                                    type=ioc_type,
-                                    firstSeen=attr.get("first_seen", None),
-                                    comments=comment,
-                                    tags=tags,
-                                    extendedInformation=deep_link,
-                                )
+                            # Get comments
+                            comment = self._get_decaying_comment(
+                                decay_score, attr.get("comment", "")
                             )
-                            ioc_counts[ioc_type] += 1
-                            total_ioc_count += 1
+
+                            first_seen = attr.get("first_seen", None)
+                            if first_seen:
+                                first_seen = datetime.fromisoformat(
+                                    first_seen
+                                )
+                            last_seen = attr.get("last_seen", None)
+                            if last_seen:
+                                last_seen = datetime.fromisoformat(last_seen)
+                            if attr.get("type") == "domain|ip":
+                                iocs = attr.get("value", "").split("|")
+                                for ioc in iocs:
+                                    if not ioc:
+                                        # Skip IoC creation if IoC value
+                                        # is none or empty string
+                                        page_skip_count += 1
+                                        continue
+                                    ioc_type = (
+                                        self._get_ioc_type_from_attribute(ioc)
+                                    )
+                                    indicators.append(
+                                        Indicator(
+                                            value=ioc,
+                                            type=ioc_type,
+                                            firstSeen=first_seen,
+                                            lastSeen=last_seen,
+                                            comments=comment,
+                                            tags=tags,
+                                            extendedInformation=deep_link,
+                                        )
+                                    )
+                                    ioc_counts[ioc_type] += 1
+                                    total_ioc_count += 1
+                            else:
+                                indicators.append(
+                                    Indicator(
+                                        value=attr.get("value"),
+                                        type=ioc_type,
+                                        firstSeen=first_seen,
+                                        lastSeen=last_seen,
+                                        comments=comment,
+                                        tags=tags,
+                                        extendedInformation=deep_link,
+                                    )
+                                )
+                                ioc_counts[ioc_type] += 1
+                                total_ioc_count += 1
                         except (ValidationError, Exception) as error:
                             page_skip_count += 1
                             error_message = (
@@ -381,12 +890,14 @@ class MISPPlugin(PluginBase):
                                 if isinstance(error, ValidationError)
                                 else "Unexpected error occurred"
                             )
+                            attr_id = attr.get("id")
                             self.logger.error(
                                 message=(
                                     f"{self.log_prefix}: {error_message} while"
-                                    " creating indicator for page "
-                                    f"{body['page']}. This record will be"
-                                    f" skipped. Error: {error}."
+                                    f" creating indicator from attribute "
+                                    f"having ID {attr_id} for page "
+                                    f"{body['page']}. This record will be "
+                                    f"skipped. Error: {error}."
                                 ),
                                 details=str(traceback.format_exc()),
                             )
@@ -425,15 +936,17 @@ class MISPPlugin(PluginBase):
                     break
             except MISPPluginException:
                 raise
-            except Exception:
+            except Exception as exp:
                 err_msg = (
                     f"Unexpected error occurred while pulling "
-                    f"indicators for page {body['page']} from {PLATFORM_NAME}."
+                    f"indicators for page {body['page']} "
+                    f"from {PLATFORM_NAME}. Error: {exp}"
                 )
                 self.logger.error(
                     message=f"{self.log_prefix}: {err_msg}",
                     details=str(traceback.format_exc()),
                 )
+                raise MISPPluginException(err_msg)
 
     def pull(self) -> List[Indicator]:
         if hasattr(self, "sub_checkpoint"):
@@ -605,6 +1118,7 @@ class MISPPlugin(PluginBase):
         base_url: str,
         api_key: str,
         is_validation: bool = False,
+        is_retraction: bool = False,
     ) -> tuple:
         """Check if event exists on MISP instance.
 
@@ -612,6 +1126,10 @@ class MISPPlugin(PluginBase):
             event_name (str): MISP event name.
             base_url (str): Base URL.
             api_key (str): Authentication Key
+            is_validation (bool, optional): Is validation.
+              Defaults to False.
+            is_retraction (bool, optional): Is retraction.
+              Defaults to False.
 
         Returns:
             tuple: True if exists else False, event_id
@@ -634,11 +1152,12 @@ class MISPPlugin(PluginBase):
                 logger_msg=logger_msg,
                 verify=self.ssl_validation,
                 proxies=self.proxy,
+                is_retraction=is_retraction,
             )
             if resp_json.get("response", []):
-                return True, resp_json.get("response")[0].get("Event", {}).get(
-                    "id", None
-                )
+                return True, resp_json.get("response")[0].get(
+                    "Event", {}
+                ).get("id", None)
             return False, None
         except MISPPluginException:
             if is_validation:
@@ -738,7 +1257,9 @@ class MISPPlugin(PluginBase):
             )
             return False
 
-    def _is_tag_exists(self, base_url: str, api_key: str) -> bool:
+    def _is_tag_exists(
+        self, base_url: str, api_key: str, tag_name: str
+    ) -> bool:
         """Is netskope-ce tag exists on MISP.
 
         Args:
@@ -748,7 +1269,7 @@ class MISPPlugin(PluginBase):
         Returns:
             bool: True if tag exists else False.
         """
-        endpoint = f"{base_url}/tags/search/{DEFAULT_IOC_TAG}"
+        endpoint = f"{base_url}/tags/search/{tag_name}"
         headers = self.misp_helper.get_header(api_key)
         resp_json = self.misp_helper.api_helper(
             method="POST",
@@ -758,16 +1279,13 @@ class MISPPlugin(PluginBase):
             verify=self.ssl_validation,
             proxies=self.proxy,
             logger_msg=(
-                f"checking existence of '{DEFAULT_IOC_TAG}' tag "
+                f"checking existence of '{tag_name}' tag "
                 f"on {PLATFORM_NAME}"
             ),
         )
-        if (
-            resp_json
-            and resp_json[0].get("Tag", {}).get("name") == DEFAULT_IOC_TAG
-        ):
+        if resp_json and resp_json[0].get("Tag", {}).get("name") == tag_name:
             self.logger.debug(
-                f"{self.log_prefix}: '{DEFAULT_IOC_TAG}' tag "
+                f"{self.log_prefix}: '{tag_name}' tag "
                 f"exists on {PLATFORM_NAME}."
             )
             return True
@@ -775,7 +1293,12 @@ class MISPPlugin(PluginBase):
             return False
 
     def push(
-        self, indicators: List[Indicator], action_dict: Dict
+        self,
+        indicators: List[Indicator],
+        action_dict: Dict,
+        source: str = None,
+        business_rule: str = None,
+        plugin_name: str = None,
     ) -> PushResult:
         """Push given indicators to MISP Event.
 
@@ -800,46 +1323,64 @@ class MISPPlugin(PluginBase):
             )
             self.logger.error(f"{self.log_prefix}: {err_msg}")
             raise MISPPluginException(err_msg)
-
-        event_name = action_dict.get("parameters", {}).get("event_name")
-        # Check if event already exists
         base_url, api_key = self.misp_helper.get_credentials(
             self.configuration
         )
-
-        result = self._is_tag_exists(base_url, api_key)
-        if not result:
-            # Create it
-            endpoint = f"{base_url}/tags/add"
-            body = {"name": DEFAULT_IOC_TAG, "colour": "#ff0000"}
-            headers = self.misp_helper.get_header(api_key)
-            resp_json = self.misp_helper.api_helper(
-                method="POST",
-                url=endpoint,
-                headers=headers,
-                verify=self.ssl_validation,
-                proxies=self.proxy,
-                logger_msg=(
-                    f"creating '{DEFAULT_IOC_TAG}' tag on {PLATFORM_NAME}"
-                ),
-                json=body,
+        source_label_tag = (
+            f"{SHARING_TAG_CONSTANT} | {plugin_name}" if plugin_name else None
+        )
+        default_tags_to_send = [DEFAULT_IOC_TAG]
+        if source_label_tag and len(source_label_tag) <= 255:
+            default_tags_to_send.append(source_label_tag)
+        else:
+            self.logger.info(
+                f"{self.log_prefix}: Skipped adding source label tag"
+                f" {source_label_tag} to IoCs as it exceeds MISP's 255 "
+                "character tag limit."
             )
-            if (
-                resp_json
-                and resp_json.get("Tag", {}).get("name") == DEFAULT_IOC_TAG
-            ):
-                self.logger.info(
-                    f"{self.log_prefix}: Successfully created "
-                    f"'{DEFAULT_IOC_TAG}' tag on {PLATFORM_NAME}."
-                )
-            else:
-                err_msg = (
-                    f"Unable to create '{DEFAULT_IOC_TAG}' "
-                    f"tag on {PLATFORM_NAME}."
-                )
-                self.logger.error(f"{self.log_prefix}: {err_msg}")
-                raise MISPPluginException(err_msg)
 
+        for tag_name in default_tags_to_send:
+            result = self._is_tag_exists(base_url, api_key, tag_name)
+            if not result:
+                # Create it
+                endpoint = f"{base_url}/tags/add"
+                body = {"name": tag_name, "colour": "#ff0000"}
+                headers = self.misp_helper.get_header(api_key)
+                resp_json = self.misp_helper.api_helper(
+                    method="POST",
+                    url=endpoint,
+                    headers=headers,
+                    verify=self.ssl_validation,
+                    proxies=self.proxy,
+                    logger_msg=(
+                        f"creating '{tag_name}' tag on {PLATFORM_NAME}"
+                    ),
+                    json=body,
+                )
+                if (
+                    resp_json
+                    and resp_json.get("Tag", {}).get("name") == tag_name
+                ):
+                    self.logger.info(
+                        f"{self.log_prefix}: Successfully created "
+                        f"'{tag_name}' tag on {PLATFORM_NAME}."
+                    )
+                else:
+                    err_msg = (
+                        f"Unable to create '{tag_name}' "
+                        f"tag on {PLATFORM_NAME}."
+                    )
+                    self.logger.error(f"{self.log_prefix}: {err_msg}")
+                    raise MISPPluginException(err_msg)
+        tags_payload = [
+            {"name": tag_name} for tag_name in default_tags_to_send
+        ]
+
+        event_name = action_dict.get("parameters", {}).get("event_name")
+        ip_ioc_type = action_dict.get("parameters", {}).get(
+            "ip_ioc_type", "ip-src"
+        )
+        # Check if event already exists
         exists, event_id = self._event_exists(
             event_name=event_name,
             base_url=base_url,
@@ -851,17 +1392,15 @@ class MISPPlugin(PluginBase):
         action_dict = action_dict.get("parameters")
         for indicator in indicators:
             ioc_type = indicator.type.value
-            if ioc_type in BIFURCATE_INDICATOR_TYPES:
-                if (
-                    self._is_valid_domain(indicator.value)
-                    or self._is_valid_fqdn(indicator.value)
-                    or self.is_valid_hostname(indicator.value)
-                ):
-                    ioc_type = "domain"
-                elif self._is_valid_ipv4(
+            if ioc_type == "hostname":
+                ioc_type = "hostname"
+            elif ioc_type in ["domain", "fqdn"]:
+                ioc_type = "domain"
+            elif ioc_type in BIFURCATE_INDICATOR_TYPES:
+                if self._is_valid_ipv4(
                     indicator.value
                 ) or self._is_valid_ipv6(indicator.value):
-                    ioc_type = "ip-src"
+                    ioc_type = ip_ioc_type
                 else:
                     ioc_type = "url"
 
@@ -880,7 +1419,7 @@ class MISPPlugin(PluginBase):
                         if indicator.lastSeen
                         else None
                     ),
-                    "Tag": [{"name": DEFAULT_IOC_TAG}],
+                    "Tag": tags_payload,
                 }
             )
 
@@ -1057,6 +1596,13 @@ class MISPPlugin(PluginBase):
 
             events_to_include = include_event_name.split(",")
             event_to_exclude = configuration.get("event_name", "").strip()
+            exclude_events = []
+            if event_to_exclude:
+                exclude_events = [
+                    event.strip()
+                    for event in event_to_exclude.strip().split(",")
+                    if event.strip()
+                ]
 
             for event in events_to_include:
                 event = event.strip()
@@ -1071,7 +1617,7 @@ class MISPPlugin(PluginBase):
                     )
                     return ValidationResult(success=False, message=err_msg)
 
-                if event == event_to_exclude:
+                if event in exclude_events:
                     err_msg = (
                         f"{event} is present in Event Names and "
                         "Exclude IoCs from Event. Event Names and Exclude"
@@ -1086,9 +1632,24 @@ class MISPPlugin(PluginBase):
                         message=err_msg,
                     )
                 try:
-                    exist = self._event_exists(
+                    exist, event_id = self._event_exists(
                         event, base_url, api_key, is_validation=True
-                    )[0]
+                    )
+                    if event_id in exclude_events:
+                        err_msg = (
+                            f"{event} is present in Event Names and "
+                            "Exclude IoCs from Event. Event Names and Exclude"
+                            " IoCs from Event can't contain same value "
+                            "of event."
+                        )
+                        self.logger.error(
+                            f"{self.log_prefix}: {validation_err_msg}."
+                            f" {err_msg}."
+                        )
+                        return ValidationResult(
+                            success=False,
+                            message=err_msg,
+                        )
                 except Exception as exp:
                     err_msg = (
                         f"Unable to check the existence of {event}"
@@ -1167,7 +1728,9 @@ class MISPPlugin(PluginBase):
                             "by commas."
                         )
                         self.logger.error(f"{self.log_prefix}: {err_msg}")
-                        return ValidationResult(success=False, message=err_msg)
+                        return ValidationResult(
+                            success=False, message=err_msg
+                        )
 
             except Exception as exp:
                 err_msg = (
@@ -1206,6 +1769,25 @@ class MISPPlugin(PluginBase):
                 f"{self.log_prefix}: {validation_err_msg}. {err_msg}"
             )
             return ValidationResult(success=False, message=err_msg)
+
+        retraction_days = configuration.get("retraction_interval")
+        if retraction_days:
+            if (
+                not isinstance(retraction_days, int)
+                or int(retraction_days) <= 0
+                or int(retraction_days) > INTEGER_THRESHOLD
+            ):
+                err_msg = (
+                    "Invalid Retraction Interval provided in configuration"
+                    " parameters. Valid value should be in range 1 to 2^62."
+                )
+                self.logger.error(
+                    f"{self.log_prefix}: {validation_err_msg}. {err_msg}"
+                )
+                return ValidationResult(
+                    success=False,
+                    message=err_msg,
+                )
 
         enable_tagging = configuration.get("enable_tagging", "").strip()
         if not enable_tagging:
@@ -1251,7 +1833,7 @@ class MISPPlugin(PluginBase):
                     f"{self.log_prefix}: {validation_err_msg}. {err_msg}"
                 )
                 return ValidationResult(success=False, message=err_msg)
-            elif pulling_mechanism == "look_back" and not look_back:
+            elif pulling_mechanism == "look_back" and look_back is None:
                 err_msg = (
                     "Look Back is a required configuration "
                     'parameter when "Look Back" is selected as '
@@ -1294,8 +1876,12 @@ class MISPPlugin(PluginBase):
             return ValidationResult(success=False, message=err_msg)
 
         days = configuration.get("days")
-        if days is None:
-            err_msg = "Initial Range is a required configuration parameter."
+        if pulling_mechanism == "incremental" and days is None:
+            err_msg = (
+                "Initial Range is a required configuration parameter."
+                ' When "Incremental" is selected as '
+                "Pulling Mechanism."
+            )
             self.logger.error(f"{self.log_prefix}: {err_msg}")
             return ValidationResult(
                 success=False,
@@ -1321,11 +1907,9 @@ class MISPPlugin(PluginBase):
                 message=err_msg,
             )
 
-        self.logger.debug(
-            f"{self.log_prefix}: Successfully validated credentials "
-            f"for {PLATFORM_NAME} plugin."
+        return ValidationResult(
+            success=True, message="Validation successful."
         )
-        return ValidationResult(success=True, message="Validation successful.")
 
     def _validate_auth(
         self,
@@ -1391,7 +1975,24 @@ class MISPPlugin(PluginBase):
             err_msg = "Invalid Event Name provided in action parameters."
             self.logger.error(f"{self.log_prefix}: {err_msg}")
             return ValidationResult(success=False, message=err_msg)
-        self.logger.info(
+
+        ip_ioc_type = action.parameters.get("ip_ioc_type", "ip-src")
+        if not ip_ioc_type:
+            err_msg = "Invalid Type of IoC provided in action parameters."
+            self.logger.error(f"{self.log_prefix}: {err_msg}")
+            return ValidationResult(success=False, message=err_msg)
+        elif not isinstance(ip_ioc_type, str) or ip_ioc_type not in [
+            "ip-src",
+            "ip-dst",
+        ]:
+            err_msg = (
+                "Invalid Type of IoC provided in action parameters. Valid"
+                " values are Source IP (ip-src) and Destination IP (ip-dst)."
+            )
+            self.logger.error(f"{self.log_prefix}: {err_msg}")
+            return ValidationResult(success=False, message=err_msg)
+
+        self.logger.debug(
             f"{self.log_prefix}: Successfully saved Action configuration."
         )
         return ValidationResult(
@@ -1412,5 +2013,20 @@ class MISPPlugin(PluginBase):
                         "Name of the MISP Event in which the "
                         "attributes/indicators are to be pushed."
                     ),
-                }
+                },
+                {
+                    "label": "Type of IPv4 or IPv6 IoC to be shared",
+                    "key": "ip_ioc_type",
+                    "type": "choice",
+                    "mandatory": True,
+                    "choices": [
+                        {"key": "Source IP (ip-src)", "value": "ip-src"},
+                        {"key": "Destination IP (ip-dst)", "value": "ip-dst"},
+                    ],
+                    "default": "ip-src",
+                    "description": (
+                        "Select the IoC type to which IPv4 or IPv6"
+                        " addresses should be shared."
+                    ),
+                },
             ]

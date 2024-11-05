@@ -1,559 +1,559 @@
 {
-  "name": "CrowdStrike Falcon Cloud Security",
-  "description": "The CrowdStrike Falcon Cloud Security plugin fetches users from the **Cloud Indicators of attack (IOAs)** page and cloud workloads (applications) from the **Indicators of misconfiguration (IOMs)** page. Both pages are available under **Cloud Security > Cloud Posture** in the CrowdStrike tenant. This plugin does not support any actions on users or applications in CrowdStrike Falcon Cloud Security.\n\nNetskope normalization score calculation for users => (100 - CrowdStrike's IOA score) x 10",
-  "minimum_version": "5.1.0",
-  "id": "crowdstrike_cloud_security_ztre",
-  "version": "1.0.0",
-  "module": "CRE",
-  "configuration": [
-    {
-      "label": "Base URL",
-      "key": "base_url",
-      "type": "choice",
-      "choices": [
+    "name": "CrowdStrike Falcon Cloud Security",
+    "description": "The CrowdStrike Falcon Cloud Security plugin fetches users from the **Cloud Indicators of attack (IOAs)** page and cloud workloads (applications) from the **Indicators of misconfiguration (IOMs)** page. Both pages are available under **Cloud Security > Cloud Posture** in the CrowdStrike tenant. This plugin does not support any actions on users or applications in CrowdStrike Falcon Cloud Security.\n\nNetskope normalization score calculation for users => (100 - CrowdStrike's IOA score) x 10",
+    "minimum_version": "5.1.0",
+    "id": "crowdstrike_cloud_security_ztre",
+    "version": "1.0.0",
+    "module": "CRE",
+    "configuration": [
         {
-          "key": "Commercial cloud (api.crowdstrike.com)",
-          "value": "https://api.crowdstrike.com"
+            "label": "Base URL",
+            "key": "base_url",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Commercial cloud (api.crowdstrike.com)",
+                    "value": "https://api.crowdstrike.com"
+                },
+                {
+                    "key": "US 2 (api.us-2.crowdstrike.com)",
+                    "value": "https://api.us-2.crowdstrike.com"
+                },
+                {
+                    "key": "Falcon on GovCloud (api.laggar.gcw.crowdstrike.com)",
+                    "value": "https://api.laggar.gcw.crowdstrike.com"
+                },
+                {
+                    "key": "EU cloud (api.eu-1.crowdstrike.com)",
+                    "value": "https://api.eu-1.crowdstrike.com"
+                }
+            ],
+            "default": "https://api.crowdstrike.com",
+            "mandatory": true,
+            "description": "Base URL of CrowdStrike instance. e.g. https://api.crowdstrike.com"
         },
         {
-          "key": "US 2 (api.us-2.crowdstrike.com)",
-          "value": "https://api.us-2.crowdstrike.com"
+            "label": "Client ID",
+            "key": "client_id",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "Client ID generated from the CrowdStrike platform. Client ID can be generated from the 'Support and resources > API clients and keys' page."
         },
         {
-          "key": "Falcon on GovCloud (api.laggar.gcw.crowdstrike.com)",
-          "value": "https://api.laggar.gcw.crowdstrike.com"
+            "label": "Client Secret",
+            "key": "client_secret",
+            "type": "password",
+            "default": "",
+            "mandatory": true,
+            "description": "Client Secret generated from the CrowdStrike platform. Client Secret can be generated from the 'Support and resources > API clients and keys' page."
         },
         {
-          "key": "EU cloud (api.eu-1.crowdstrike.com)",
-          "value": "https://api.eu-1.crowdstrike.com"
+            "label": "IOA Cloud Provider",
+            "key": "ioa_cloud_provider",
+            "type": "multichoice",
+            "default": [
+                "aws",
+                "azure"
+            ],
+            "choices": [
+                {
+                    "key": "AWS",
+                    "value": "aws"
+                },
+                {
+                    "key": "Azure",
+                    "value": "azure"
+                }
+            ],
+            "mandatory": true,
+            "description": "Users from the specified IOA Cloud Provider will be pulled from the Cloud Indicators of attack (IOAs) events."
+        },
+        {
+            "label": "IOA Cloud Service",
+            "key": "ioa_cloud_service",
+            "type": "choice",
+            "default": "",
+            "choices": [
+                {
+                    "key": "ACM",
+                    "value": "ACM"
+                },
+                {
+                    "key": "ACR",
+                    "value": "ACR"
+                },
+                {
+                    "key": "Any",
+                    "value": "Any"
+                },
+                {
+                    "key": "App Engine",
+                    "value": "App Engine"
+                },
+                {
+                    "key": "AppService",
+                    "value": "AppService"
+                },
+                {
+                    "key": "BigQuery",
+                    "value": "BigQuery"
+                },
+                {
+                    "key": "Cloud Load Balancing",
+                    "value": "Cloud Load Balancing"
+                },
+                {
+                    "key": "Cloud Logging",
+                    "value": "Cloud Logging"
+                },
+                {
+                    "key": "Cloud SQL",
+                    "value": "Cloud SQL"
+                },
+                {
+                    "key": "Cloud Storage",
+                    "value": "Cloud Storage"
+                },
+                {
+                    "key": "CloudFormation",
+                    "value": "CloudFormation"
+                },
+                {
+                    "key": "CloudTrail",
+                    "value": "CloudTrail"
+                },
+                {
+                    "key": "CloudWatch Logs",
+                    "value": "CloudWatch Logs"
+                },
+                {
+                    "key": "Cloudfront",
+                    "value": "Cloudfront"
+                },
+                {
+                    "key": "Compute Engine",
+                    "value": "Compute Engine"
+                },
+                {
+                    "key": "Config",
+                    "value": "Config"
+                },
+                {
+                    "key": "Disk",
+                    "value": "Disk"
+                },
+                {
+                    "key": "DynamoDB",
+                    "value": "DynamoDB"
+                },
+                {
+                    "key": "EBS",
+                    "value": "EBS"
+                },
+                {
+                    "key": "EC2",
+                    "value": "EC2"
+                },
+                {
+                    "key": "ECR",
+                    "value": "ECR"
+                },
+                {
+                    "key": "EFS",
+                    "value": "EFS"
+                },
+                {
+                    "key": "EKS",
+                    "value": "EKS"
+                },
+                {
+                    "key": "ELB",
+                    "value": "ELB"
+                },
+                {
+                    "key": "EMR",
+                    "value": "EMR"
+                },
+                {
+                    "key": "Elasticache",
+                    "value": "Elasticache"
+                },
+                {
+                    "key": "GuardDuty",
+                    "value": "GuardDuty"
+                },
+                {
+                    "key": "IAM",
+                    "value": "IAM"
+                },
+                {
+                    "key": "Identity",
+                    "value": "Identity"
+                },
+                {
+                    "key": "KMS",
+                    "value": "KMS"
+                },
+                {
+                    "key": "KeyVault",
+                    "value": "KeyVault"
+                },
+                {
+                    "key": "Kinesis",
+                    "value": "Kinesis"
+                },
+                {
+                    "key": "Kubernetes",
+                    "value": "Kubernetes"
+                },
+                {
+                    "key": "Lambda",
+                    "value": "Lambda"
+                },
+                {
+                    "key": "LoadBalancer",
+                    "value": "LoadBalancer"
+                },
+                {
+                    "key": "Monitor",
+                    "value": "Monitor"
+                },
+                {
+                    "key": "NLB/ALB",
+                    "value": "NLB/ALB"
+                },
+                {
+                    "key": "NetworkSecurityGroup",
+                    "value": "NetworkSecurityGroup"
+                },
+                {
+                    "key": "PostgreSQL",
+                    "value": "PostgreSQL"
+                },
+                {
+                    "key": "RDS",
+                    "value": "RDS"
+                },
+                {
+                    "key": "Redshift",
+                    "value": "Redshift"
+                },
+                {
+                    "key": "S3",
+                    "value": "S3"
+                },
+                {
+                    "key": "SES",
+                    "value": "SES"
+                },
+                {
+                    "key": "SNS",
+                    "value": "SNS"
+                },
+                {
+                    "key": "SQLDatabase",
+                    "value": "SQLDatabase"
+                },
+                {
+                    "key": "SQLServer",
+                    "value": "SQLServer"
+                },
+                {
+                    "key": "SQS",
+                    "value": "SQS"
+                },
+                {
+                    "key": "SSM",
+                    "value": "SSM"
+                },
+                {
+                    "key": "Serverless Application Repository",
+                    "value": "Serverless Application Repository"
+                },
+                {
+                    "key": "StorageAccount",
+                    "value": "StorageAccount"
+                },
+                {
+                    "key": "Subscriptions",
+                    "value": "Subscriptions"
+                },
+                {
+                    "key": "VPC",
+                    "value": "VPC"
+                },
+                {
+                    "key": "VirtualMachine",
+                    "value": "VirtualMachine"
+                },
+                {
+                    "key": "VirtualNetwork",
+                    "value": "VirtualNetwork"
+                }
+            ],
+            "mandatory": false,
+            "description": "Users from the specified IOA Cloud Service will be pulled from the Cloud Indicators of attack (IOAs). Keep empty to fetch users from all Cloud Services."
+        },
+        {
+            "label": "IOM Cloud Provider",
+            "key": "iom_cloud_provider",
+            "type": "multichoice",
+            "default": [
+                "aws",
+                "azure",
+                "gcp"
+            ],
+            "choices": [
+                {
+                    "key": "AWS",
+                    "value": "aws"
+                },
+                {
+                    "key": "Azure",
+                    "value": "azure"
+                },
+                {
+                    "key": "GCP",
+                    "value": "gcp"
+                }
+            ],
+            "mandatory": false,
+            "description": "Applications (Cloud Workloads) from the specified IOM Cloud Provider will be pulled from Indicators of misconfiguration (IOMs) events. Keep empty to pull Applications (Cloud Workloads) from all Cloud Providers."
+        },
+        {
+            "label": "IOM Cloud Service",
+            "key": "iom_cloud_service",
+            "type": "multichoice",
+            "default": [],
+            "choices": [
+                {
+                    "key": "ACM",
+                    "value": "ACM"
+                },
+                {
+                    "key": "ACR",
+                    "value": "ACR"
+                },
+                {
+                    "key": "Any",
+                    "value": "Any"
+                },
+                {
+                    "key": "App Engine",
+                    "value": "App Engine"
+                },
+                {
+                    "key": "AppService",
+                    "value": "AppService"
+                },
+                {
+                    "key": "BigQuery",
+                    "value": "BigQuery"
+                },
+                {
+                    "key": "Cloud Load Balancing",
+                    "value": "Cloud Load Balancing"
+                },
+                {
+                    "key": "Cloud Logging",
+                    "value": "Cloud Logging"
+                },
+                {
+                    "key": "Cloud SQL",
+                    "value": "Cloud SQL"
+                },
+                {
+                    "key": "Cloud Storage",
+                    "value": "Cloud Storage"
+                },
+                {
+                    "key": "CloudFormation",
+                    "value": "CloudFormation"
+                },
+                {
+                    "key": "CloudTrail",
+                    "value": "CloudTrail"
+                },
+                {
+                    "key": "CloudWatch Logs",
+                    "value": "CloudWatch Logs"
+                },
+                {
+                    "key": "Cloudfront",
+                    "value": "Cloudfront"
+                },
+                {
+                    "key": "Compute Engine",
+                    "value": "Compute Engine"
+                },
+                {
+                    "key": "Config",
+                    "value": "Config"
+                },
+                {
+                    "key": "Disk",
+                    "value": "Disk"
+                },
+                {
+                    "key": "DynamoDB",
+                    "value": "DynamoDB"
+                },
+                {
+                    "key": "EBS",
+                    "value": "EBS"
+                },
+                {
+                    "key": "EC2",
+                    "value": "EC2"
+                },
+                {
+                    "key": "ECR",
+                    "value": "ECR"
+                },
+                {
+                    "key": "EFS",
+                    "value": "EFS"
+                },
+                {
+                    "key": "EKS",
+                    "value": "EKS"
+                },
+                {
+                    "key": "ELB",
+                    "value": "ELB"
+                },
+                {
+                    "key": "EMR",
+                    "value": "EMR"
+                },
+                {
+                    "key": "Elasticache",
+                    "value": "Elasticache"
+                },
+                {
+                    "key": "GuardDuty",
+                    "value": "GuardDuty"
+                },
+                {
+                    "key": "IAM",
+                    "value": "IAM"
+                },
+                {
+                    "key": "Identity",
+                    "value": "Identity"
+                },
+                {
+                    "key": "KMS",
+                    "value": "KMS"
+                },
+                {
+                    "key": "KeyVault",
+                    "value": "KeyVault"
+                },
+                {
+                    "key": "Kinesis",
+                    "value": "Kinesis"
+                },
+                {
+                    "key": "Kubernetes",
+                    "value": "Kubernetes"
+                },
+                {
+                    "key": "Lambda",
+                    "value": "Lambda"
+                },
+                {
+                    "key": "LoadBalancer",
+                    "value": "LoadBalancer"
+                },
+                {
+                    "key": "Monitor",
+                    "value": "Monitor"
+                },
+                {
+                    "key": "NLB/ALB",
+                    "value": "NLB/ALB"
+                },
+                {
+                    "key": "NetworkSecurityGroup",
+                    "value": "NetworkSecurityGroup"
+                },
+                {
+                    "key": "PostgreSQL",
+                    "value": "PostgreSQL"
+                },
+                {
+                    "key": "RDS",
+                    "value": "RDS"
+                },
+                {
+                    "key": "Redshift",
+                    "value": "Redshift"
+                },
+                {
+                    "key": "S3",
+                    "value": "S3"
+                },
+                {
+                    "key": "SES",
+                    "value": "SES"
+                },
+                {
+                    "key": "SNS",
+                    "value": "SNS"
+                },
+                {
+                    "key": "SQLDatabase",
+                    "value": "SQLDatabase"
+                },
+                {
+                    "key": "SQLServer",
+                    "value": "SQLServer"
+                },
+                {
+                    "key": "SQS",
+                    "value": "SQS"
+                },
+                {
+                    "key": "SSM",
+                    "value": "SSM"
+                },
+                {
+                    "key": "Serverless Application Repository",
+                    "value": "Serverless Application Repository"
+                },
+                {
+                    "key": "StorageAccount",
+                    "value": "StorageAccount"
+                },
+                {
+                    "key": "Subscriptions",
+                    "value": "Subscriptions"
+                },
+                {
+                    "key": "VPC",
+                    "value": "VPC"
+                },
+                {
+                    "key": "VirtualMachine",
+                    "value": "VirtualMachine"
+                },
+                {
+                    "key": "VirtualNetwork",
+                    "value": "VirtualNetwork"
+                }
+            ],
+            "mandatory": false,
+            "description": "Applications (Cloud Workloads) from the specified IOM Cloud Service will be pulled from Indicators of misconfiguration (IOMs) events. Keep empty to pull Applications (Cloud Workloads) from all Cloud Services."
+        },
+        {
+            "label": "Initial Range (in days)",
+            "key": "days",
+            "type": "number",
+            "mandatory": true,
+            "default": 7,
+            "description": "Number of days to pull the data for the initial run."
         }
-      ],
-      "default": "https://api.crowdstrike.com",
-      "mandatory": true,
-      "description": "Base URL of CrowdStrike instance. e.g. https://api.crowdstrike.com"
-    },
-    {
-      "label": "Client ID",
-      "key": "client_id",
-      "type": "text",
-      "default": "",
-      "mandatory": true,
-      "description": "Client ID generated from the CrowdStrike platform. Client ID can be generated from the 'Support and resources > API clients and keys' page."
-    },
-    {
-      "label": "Client Secret",
-      "key": "client_secret",
-      "type": "password",
-      "default": "",
-      "mandatory": true,
-      "description": "Client Secret generated from the CrowdStrike platform. Client Secret can be generated from the 'Support and resources > API clients and keys' page."
-    },
-    {
-      "label": "IOA Cloud Provider",
-      "key": "ioa_cloud_provider",
-      "type": "multichoice",
-      "default": [
-        "aws",
-        "azure"
-      ],
-      "choices": [
-        {
-          "key": "AWS",
-          "value": "aws"
-        },
-        {
-          "key": "Azure",
-          "value": "azure"
-        }
-      ],
-      "mandatory": true,
-      "description": "Users from the specified IOA Cloud Provider will be pulled from the Cloud Indicators of attack (IOAs) events."
-    },
-    {
-      "label": "IOA Cloud Service",
-      "key": "ioa_cloud_service",
-      "type": "choice",
-      "default": "",
-      "choices": [
-        {
-          "key": "ACM",
-          "value": "ACM"
-        },
-        {
-          "key": "ACR",
-          "value": "ACR"
-        },
-        {
-          "key": "Any",
-          "value": "Any"
-        },
-        {
-          "key": "App Engine",
-          "value": "App Engine"
-        },
-        {
-          "key": "AppService",
-          "value": "AppService"
-        },
-        {
-          "key": "BigQuery",
-          "value": "BigQuery"
-        },
-        {
-          "key": "Cloud Load Balancing",
-          "value": "Cloud Load Balancing"
-        },
-        {
-          "key": "Cloud Logging",
-          "value": "Cloud Logging"
-        },
-        {
-          "key": "Cloud SQL",
-          "value": "Cloud SQL"
-        },
-        {
-          "key": "Cloud Storage",
-          "value": "Cloud Storage"
-        },
-        {
-          "key": "CloudFormation",
-          "value": "CloudFormation"
-        },
-        {
-          "key": "CloudTrail",
-          "value": "CloudTrail"
-        },
-        {
-          "key": "CloudWatch Logs",
-          "value": "CloudWatch Logs"
-        },
-        {
-          "key": "Cloudfront",
-          "value": "Cloudfront"
-        },
-        {
-          "key": "Compute Engine",
-          "value": "Compute Engine"
-        },
-        {
-          "key": "Config",
-          "value": "Config"
-        },
-        {
-          "key": "Disk",
-          "value": "Disk"
-        },
-        {
-          "key": "DynamoDB",
-          "value": "DynamoDB"
-        },
-        {
-          "key": "EBS",
-          "value": "EBS"
-        },
-        {
-          "key": "EC2",
-          "value": "EC2"
-        },
-        {
-          "key": "ECR",
-          "value": "ECR"
-        },
-        {
-          "key": "EFS",
-          "value": "EFS"
-        },
-        {
-          "key": "EKS",
-          "value": "EKS"
-        },
-        {
-          "key": "ELB",
-          "value": "ELB"
-        },
-        {
-          "key": "EMR",
-          "value": "EMR"
-        },
-        {
-          "key": "Elasticache",
-          "value": "Elasticache"
-        },
-        {
-          "key": "GuardDuty",
-          "value": "GuardDuty"
-        },
-        {
-          "key": "IAM",
-          "value": "IAM"
-        },
-        {
-          "key": "Identity",
-          "value": "Identity"
-        },
-        {
-          "key": "KMS",
-          "value": "KMS"
-        },
-        {
-          "key": "KeyVault",
-          "value": "KeyVault"
-        },
-        {
-          "key": "Kinesis",
-          "value": "Kinesis"
-        },
-        {
-          "key": "Kubernetes",
-          "value": "Kubernetes"
-        },
-        {
-          "key": "Lambda",
-          "value": "Lambda"
-        },
-        {
-          "key": "LoadBalancer",
-          "value": "LoadBalancer"
-        },
-        {
-          "key": "Monitor",
-          "value": "Monitor"
-        },
-        {
-          "key": "NLB/ALB",
-          "value": "NLB/ALB"
-        },
-        {
-          "key": "NetworkSecurityGroup",
-          "value": "NetworkSecurityGroup"
-        },
-        {
-          "key": "PostgreSQL",
-          "value": "PostgreSQL"
-        },
-        {
-          "key": "RDS",
-          "value": "RDS"
-        },
-        {
-          "key": "Redshift",
-          "value": "Redshift"
-        },
-        {
-          "key": "S3",
-          "value": "S3"
-        },
-        {
-          "key": "SES",
-          "value": "SES"
-        },
-        {
-          "key": "SNS",
-          "value": "SNS"
-        },
-        {
-          "key": "SQLDatabase",
-          "value": "SQLDatabase"
-        },
-        {
-          "key": "SQLServer",
-          "value": "SQLServer"
-        },
-        {
-          "key": "SQS",
-          "value": "SQS"
-        },
-        {
-          "key": "SSM",
-          "value": "SSM"
-        },
-        {
-          "key": "Serverless Application Repository",
-          "value": "Serverless Application Repository"
-        },
-        {
-          "key": "StorageAccount",
-          "value": "StorageAccount"
-        },
-        {
-          "key": "Subscriptions",
-          "value": "Subscriptions"
-        },
-        {
-          "key": "VPC",
-          "value": "VPC"
-        },
-        {
-          "key": "VirtualMachine",
-          "value": "VirtualMachine"
-        },
-        {
-          "key": "VirtualNetwork",
-          "value": "VirtualNetwork"
-        }
-      ],
-      "mandatory": false,
-      "description": "Users from the specified IOA Cloud Service will be pulled from the Cloud Indicators of attack (IOAs). Keep empty to fetch users from all Cloud Services."
-    },
-    {
-      "label": "IOM Cloud Provider",
-      "key": "iom_cloud_provider",
-      "type": "multichoice",
-      "default": [
-        "aws",
-        "azure",
-        "gcp"
-      ],
-      "choices": [
-        {
-          "key": "AWS",
-          "value": "aws"
-        },
-        {
-          "key": "Azure",
-          "value": "azure"
-        },
-        {
-          "key": "GCP",
-          "value": "gcp"
-        }
-      ],
-      "mandatory": false,
-      "description": "Applications (Cloud Workloads) from the specified IOM Cloud Provider will be pulled from Indicators of misconfiguration (IOMs) events. Keep empty to pull Applications (Cloud Workloads) from all Cloud Providers."
-    },
-    {
-      "label": "IOM Cloud Service",
-      "key": "iom_cloud_service",
-      "type": "multichoice",
-      "default": [],
-      "choices": [
-        {
-          "key": "ACM",
-          "value": "ACM"
-        },
-        {
-          "key": "ACR",
-          "value": "ACR"
-        },
-        {
-          "key": "Any",
-          "value": "Any"
-        },
-        {
-          "key": "App Engine",
-          "value": "App Engine"
-        },
-        {
-          "key": "AppService",
-          "value": "AppService"
-        },
-        {
-          "key": "BigQuery",
-          "value": "BigQuery"
-        },
-        {
-          "key": "Cloud Load Balancing",
-          "value": "Cloud Load Balancing"
-        },
-        {
-          "key": "Cloud Logging",
-          "value": "Cloud Logging"
-        },
-        {
-          "key": "Cloud SQL",
-          "value": "Cloud SQL"
-        },
-        {
-          "key": "Cloud Storage",
-          "value": "Cloud Storage"
-        },
-        {
-          "key": "CloudFormation",
-          "value": "CloudFormation"
-        },
-        {
-          "key": "CloudTrail",
-          "value": "CloudTrail"
-        },
-        {
-          "key": "CloudWatch Logs",
-          "value": "CloudWatch Logs"
-        },
-        {
-          "key": "Cloudfront",
-          "value": "Cloudfront"
-        },
-        {
-          "key": "Compute Engine",
-          "value": "Compute Engine"
-        },
-        {
-          "key": "Config",
-          "value": "Config"
-        },
-        {
-          "key": "Disk",
-          "value": "Disk"
-        },
-        {
-          "key": "DynamoDB",
-          "value": "DynamoDB"
-        },
-        {
-          "key": "EBS",
-          "value": "EBS"
-        },
-        {
-          "key": "EC2",
-          "value": "EC2"
-        },
-        {
-          "key": "ECR",
-          "value": "ECR"
-        },
-        {
-          "key": "EFS",
-          "value": "EFS"
-        },
-        {
-          "key": "EKS",
-          "value": "EKS"
-        },
-        {
-          "key": "ELB",
-          "value": "ELB"
-        },
-        {
-          "key": "EMR",
-          "value": "EMR"
-        },
-        {
-          "key": "Elasticache",
-          "value": "Elasticache"
-        },
-        {
-          "key": "GuardDuty",
-          "value": "GuardDuty"
-        },
-        {
-          "key": "IAM",
-          "value": "IAM"
-        },
-        {
-          "key": "Identity",
-          "value": "Identity"
-        },
-        {
-          "key": "KMS",
-          "value": "KMS"
-        },
-        {
-          "key": "KeyVault",
-          "value": "KeyVault"
-        },
-        {
-          "key": "Kinesis",
-          "value": "Kinesis"
-        },
-        {
-          "key": "Kubernetes",
-          "value": "Kubernetes"
-        },
-        {
-          "key": "Lambda",
-          "value": "Lambda"
-        },
-        {
-          "key": "LoadBalancer",
-          "value": "LoadBalancer"
-        },
-        {
-          "key": "Monitor",
-          "value": "Monitor"
-        },
-        {
-          "key": "NLB/ALB",
-          "value": "NLB/ALB"
-        },
-        {
-          "key": "NetworkSecurityGroup",
-          "value": "NetworkSecurityGroup"
-        },
-        {
-          "key": "PostgreSQL",
-          "value": "PostgreSQL"
-        },
-        {
-          "key": "RDS",
-          "value": "RDS"
-        },
-        {
-          "key": "Redshift",
-          "value": "Redshift"
-        },
-        {
-          "key": "S3",
-          "value": "S3"
-        },
-        {
-          "key": "SES",
-          "value": "SES"
-        },
-        {
-          "key": "SNS",
-          "value": "SNS"
-        },
-        {
-          "key": "SQLDatabase",
-          "value": "SQLDatabase"
-        },
-        {
-          "key": "SQLServer",
-          "value": "SQLServer"
-        },
-        {
-          "key": "SQS",
-          "value": "SQS"
-        },
-        {
-          "key": "SSM",
-          "value": "SSM"
-        },
-        {
-          "key": "Serverless Application Repository",
-          "value": "Serverless Application Repository"
-        },
-        {
-          "key": "StorageAccount",
-          "value": "StorageAccount"
-        },
-        {
-          "key": "Subscriptions",
-          "value": "Subscriptions"
-        },
-        {
-          "key": "VPC",
-          "value": "VPC"
-        },
-        {
-          "key": "VirtualMachine",
-          "value": "VirtualMachine"
-        },
-        {
-          "key": "VirtualNetwork",
-          "value": "VirtualNetwork"
-        }
-      ],
-      "mandatory": false,
-      "description": "Applications (Cloud Workloads) from the specified IOM Cloud Service will be pulled from Indicators of misconfiguration (IOMs) events. Keep empty to pull Applications (Cloud Workloads) from all Cloud Services."
-    },
-    {
-      "label": "Initial Range (in days)",
-      "key": "days",
-      "type": "number",
-      "mandatory": true,
-      "default": 7,
-      "description": "Number of days to pull the data for the initial run."
-    }
-  ]
+    ]
 }

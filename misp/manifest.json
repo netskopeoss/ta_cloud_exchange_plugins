@@ -1,308 +1,309 @@
 {
-  "name": "MISP",
-  "id": "misp",
-  "version": "1.5.0",
-  "description": "This plugin is used to fetch event attributes from MISP (Malware Information Sharing Platform) and extract indicators of type SHA256, MD5, URL, Domain, IP (IPv4 and IPv6) and Hostname from them. It can also share the indicators of type SHA256, MD5, URL, Domain (Domain and FQDN), Hostname, IP (IPv4 and IPv6) as attributes to MISP Custom Events. To get required details for creating a new configuration, navigate to https://<misp-url>/events/automation.\n\nNote: The Source IP (ip-src) and Destination IP (ip-dst) will be stored as either IPv4 or IPv6 in Cloud Exchange. Source IP|Port (ip-src|port), Destination IP|Port (ip-dst|port), and Hostname|Port (hostname|port) will be stored as URLs in Cloud Exchange. For Domain|IP, the domain and IP (either IPv4 or IPv6) will be split and stored as separate IoCs in Cloud Exchange.",
-  "patch_supported": true,
-  "push_supported": true,
-  "delete_supported": true,
-  "fetch_retraction_info": true,
-  "configuration": [
-    {
-      "label": "MISP Base URL",
-      "key": "base_url",
-      "type": "text",
-      "mandatory": true,
-      "default": "",
-      "description": "Base URL for MISP instance."
-    },
-    {
-      "label": "Authentication Key",
-      "key": "api_key",
-      "type": "password",
-      "mandatory": true,
-      "default": "",
-      "description": "Authentication Key for MISP instance. Authentication Key can be generated from 'Administration > List Auth Keys'."
-    },
-    {
-      "label": "MISP Attribute Type",
-      "key": "attr_type",
-      "type": "multichoice",
-      "choices": [
+    "name": "MISP",
+    "id": "misp",
+    "version": "1.5.0",
+    "description": "This plugin is used to fetch event attributes from MISP (Malware Information Sharing Platform) and extract indicators of type SHA256, MD5, URL, Domain, IP (IPv4 and IPv6) and Hostname from them. It can also share the indicators of type SHA256, MD5, URL, Domain (Domain and FQDN), Hostname, IP (IPv4 and IPv6) as attributes to MISP Custom Events. To get required details for creating a new configuration, navigate to https://<misp-url>/events/automation.\n\nNote: The Source IP (ip-src) and Destination IP (ip-dst) will be stored as either IPv4 or IPv6 in Cloud Exchange. Source IP|Port (ip-src|port), Destination IP|Port (ip-dst|port), and Hostname|Port (hostname|port) will be stored as URLs in Cloud Exchange. For Domain|IP, the domain and IP (either IPv4 or IPv6) will be split and stored as separate IoCs in Cloud Exchange.",
+    "patch_supported": true,
+    "push_supported": true,
+    "delete_supported": true,
+    "fetch_retraction_info": true,
+    "module": "CTE",
+    "configuration": [
         {
-          "key": "MD5",
-          "value": "md5"
+            "label": "MISP Base URL",
+            "key": "base_url",
+            "type": "text",
+            "mandatory": true,
+            "default": "",
+            "description": "Base URL for MISP instance."
         },
         {
-          "key": "SHA256",
-          "value": "sha256"
+            "label": "Authentication Key",
+            "key": "api_key",
+            "type": "password",
+            "mandatory": true,
+            "default": "",
+            "description": "Authentication Key for MISP instance. Authentication Key can be generated from 'Administration > List Auth Keys'."
         },
         {
-          "key": "Source IP",
-          "value": "ip-src"
+            "label": "MISP Attribute Type",
+            "key": "attr_type",
+            "type": "multichoice",
+            "choices": [
+                {
+                    "key": "MD5",
+                    "value": "md5"
+                },
+                {
+                    "key": "SHA256",
+                    "value": "sha256"
+                },
+                {
+                    "key": "Source IP",
+                    "value": "ip-src"
+                },
+                {
+                    "key": "Source IP|Port",
+                    "value": "ip-src|port"
+                },
+                {
+                    "key": "Destination IP",
+                    "value": "ip-dst"
+                },
+                {
+                    "key": "Destination IP|Port",
+                    "value": "ip-dst|port"
+                },
+                {
+                    "key": "URL",
+                    "value": "url"
+                },
+                {
+                    "key": "Domain",
+                    "value": "domain"
+                },
+                {
+                    "key": "Domain|IP",
+                    "value": "domain|ip"
+                },
+                {
+                    "key": "Hostname",
+                    "value": "hostname"
+                },
+                {
+                    "key": "Hostname|Port",
+                    "value": "hostname|port"
+                }
+            ],
+            "mandatory": false,
+            "default": [],
+            "description": "Indicators from only specified Attribute types will be fetched. Keep empty to fetch indicators of all Types. Multiple Types are accepted."
         },
         {
-          "key": "Source IP|Port",
-          "value": "ip-src|port"
+            "label": "MISP Attribute Category",
+            "key": "attr_category",
+            "type": "multichoice",
+            "choices": [
+                {
+                    "key": "Internal reference",
+                    "value": "Internal reference"
+                },
+                {
+                    "key": "Targeting data",
+                    "value": "Targeting data"
+                },
+                {
+                    "key": "Antivirus detection",
+                    "value": "Antivirus detection"
+                },
+                {
+                    "key": "Payload delivery",
+                    "value": "Payload delivery"
+                },
+                {
+                    "key": "Artifacts dropped",
+                    "value": "Artifacts dropped"
+                },
+                {
+                    "key": "Payload installation",
+                    "value": "Payload installation"
+                },
+                {
+                    "key": "Persistence mechanism",
+                    "value": "Persistence mechanism"
+                },
+                {
+                    "key": "Network activity",
+                    "value": "Network activity"
+                },
+                {
+                    "key": "Payload type",
+                    "value": "Payload type"
+                },
+                {
+                    "key": "Attribution",
+                    "value": "Attribution"
+                },
+                {
+                    "key": "External analysis",
+                    "value": "External analysis"
+                },
+                {
+                    "key": "Financial fraud",
+                    "value": "Financial fraud"
+                },
+                {
+                    "key": "Support Tool",
+                    "value": "Support Tool"
+                },
+                {
+                    "key": "Social network",
+                    "value": "Social network"
+                },
+                {
+                    "key": "Person",
+                    "value": "Person"
+                },
+                {
+                    "key": "Other",
+                    "value": "Other"
+                }
+            ],
+            "mandatory": false,
+            "default": [],
+            "description": "Indicators from only specified Attribute Categories will be fetched. Keep empty to fetch indicators of all Categories. Multiple Categories are accepted."
         },
         {
-          "key": "Destination IP",
-          "value": "ip-dst"
+            "label": "MISP Attribute Tags",
+            "key": "tags",
+            "type": "text",
+            "mandatory": false,
+            "default": "",
+            "description": "Indicators from only specified comma separated Tags will be fetched. Keep empty to fetch indicators of all Tags. Dynamic values are accepted."
         },
         {
-          "key": "Destination IP|Port",
-          "value": "ip-dst|port"
+            "label": "Event Names",
+            "key": "include_event_name",
+            "type": "text",
+            "mandatory": false,
+            "default": "",
+            "description": "Indicators from only the specified comma separated event names will be fetched. Keep empty to pull indicators from all the events."
         },
         {
-          "key": "URL",
-          "value": "url"
+            "label": "Exclude IoCs from Events",
+            "key": "event_name",
+            "type": "text",
+            "mandatory": true,
+            "default": "",
+            "description": "Indicators attached to the provided comma-separated events will be ignored while pulling data from MISP. Expected value is comma-separated event names or event IDs."
         },
         {
-          "key": "Domain",
-          "value": "domain"
+            "label": "IoC Event Type",
+            "key": "published",
+            "type": "multichoice",
+            "choices": [
+                {
+                    "key": "Published",
+                    "value": "published"
+                },
+                {
+                    "key": "Unpublished",
+                    "value": "unpublished"
+                }
+            ],
+            "default": [],
+            "mandatory": false,
+            "description": "Indicators will be pulled based on the selected event type. Keep empty to fetch all IoCs."
         },
         {
-          "key": "Domain|IP",
-          "value": "domain|ip"
+            "label": "Decaying Score Threshold",
+            "key": "score_threshold",
+            "type": "number",
+            "mandatory": false,
+            "description": "Only indicators having Decaying Score greater then provided value will be pulled. Value should be in range of 0 to 100."
         },
         {
-          "key": "Hostname",
-          "value": "hostname"
+            "label": "Decaying Model IDs",
+            "key": "decaying_models",
+            "type": "text",
+            "mandatory": false,
+            "default": "",
+            "description": "Decaying scores of only specified comma separated decaying models will be tracked. Keep blank to fetch scores of all Decaying Models. Decaying Model IDs can be found from 'Global Actions > List Decaying Models'."
         },
         {
-          "key": "Hostname|Port",
-          "value": "hostname|port"
+            "label": "Filter on IDS flag",
+            "key": "to_ids",
+            "type": "multichoice",
+            "choices": [
+                {
+                    "key": "Enabled",
+                    "value": "enabled"
+                },
+                {
+                    "key": "Disabled",
+                    "value": "disabled"
+                }
+            ],
+            "default": [],
+            "mandatory": false,
+            "description": "Only pull IoCs having IDS flag enabled. Keep blank to fetch all IoCs."
+        },
+        {
+            "label": "Enforce Warning List IoCs",
+            "key": "enforce_warning_list",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Yes",
+                    "value": "yes"
+                },
+                {
+                    "key": "No",
+                    "value": "no"
+                }
+            ],
+            "default": "no",
+            "mandatory": false,
+            "description": "Remove any IoC from the events that would cause a hit on a warning list entry."
+        },
+        {
+            "label": "Pulling Mechanism",
+            "key": "pulling_mechanism",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Incremental",
+                    "value": "incremental"
+                },
+                {
+                    "key": "Look Back",
+                    "value": "look_back"
+                }
+            ],
+            "default": "incremental",
+            "mandatory": true,
+            "description": "Pulling mechanism used to fetch the indicators from MISP."
+        },
+        {
+            "label": "Look Back (in hours)",
+            "key": "look_back",
+            "type": "number",
+            "mandatory": false,
+            "default": 24,
+            "description": "Look Back hours for fetching the indicators from MISP. Note: This parameter will only be considered if \"Pulling Mechanism\" is set to \"Look Back\"."
+        },
+        {
+            "label": "Retraction Interval (in days)",
+            "key": "retraction_interval",
+            "type": "number",
+            "mandatory": false,
+            "description": "Retraction Interval days to run IoC(s) retraction for MISP indicators. Note: This parameter will only be considered if \"IoC(s) Retraction\" is enabled in Threat Exchange Settings."
+        },
+        {
+            "label": "Enable Tagging",
+            "key": "enable_tagging",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Yes",
+                    "value": "yes"
+                },
+                {
+                    "key": "No",
+                    "value": "no"
+                }
+            ],
+            "default": "yes",
+            "mandatory": true,
+            "description": "Enable/Disable tagging functionality."
+        },
+        {
+            "label": "Initial Range (in days)",
+            "key": "days",
+            "type": "number",
+            "mandatory": true,
+            "default": 7,
+            "description": "Number of days to pull the data for the initial run. Note: This parameter will only be considered if \"Pulling Mechanism\" is set to \"Incremental\"."
         }
-      ],
-      "mandatory": false,
-      "default": [],
-      "description": "Indicators from only specified Attribute types will be fetched. Keep empty to fetch indicators of all Types. Multiple Types are accepted."
-    },
-    {
-      "label": "MISP Attribute Category",
-      "key": "attr_category",
-      "type": "multichoice",
-      "choices": [
-        {
-          "key": "Internal reference",
-          "value": "Internal reference"
-        },
-        {
-          "key": "Targeting data",
-          "value": "Targeting data"
-        },
-        {
-          "key": "Antivirus detection",
-          "value": "Antivirus detection"
-        },
-        {
-          "key": "Payload delivery",
-          "value": "Payload delivery"
-        },
-        {
-          "key": "Artifacts dropped",
-          "value": "Artifacts dropped"
-        },
-        {
-          "key": "Payload installation",
-          "value": "Payload installation"
-        },
-        {
-          "key": "Persistence mechanism",
-          "value": "Persistence mechanism"
-        },
-        {
-          "key": "Network activity",
-          "value": "Network activity"
-        },
-        {
-          "key": "Payload type",
-          "value": "Payload type"
-        },
-        {
-          "key": "Attribution",
-          "value": "Attribution"
-        },
-        {
-          "key": "External analysis",
-          "value": "External analysis"
-        },
-        {
-          "key": "Financial fraud",
-          "value": "Financial fraud"
-        },
-        {
-          "key": "Support Tool",
-          "value": "Support Tool"
-        },
-        {
-          "key": "Social network",
-          "value": "Social network"
-        },
-        {
-          "key": "Person",
-          "value": "Person"
-        },
-        {
-          "key": "Other",
-          "value": "Other"
-        }
-      ],
-      "mandatory": false,
-      "default": [],
-      "description": "Indicators from only specified Attribute Categories will be fetched. Keep empty to fetch indicators of all Categories. Multiple Categories are accepted."
-    },
-    {
-      "label": "MISP Attribute Tags",
-      "key": "tags",
-      "type": "text",
-      "mandatory": false,
-      "default": "",
-      "description": "Indicators from only specified comma separated Tags will be fetched. Keep empty to fetch indicators of all Tags. Dynamic values are accepted."
-    },
-    {
-      "label": "Event Names",
-      "key": "include_event_name",
-      "type": "text",
-      "mandatory": false,
-      "default": "",
-      "description": "Indicators from only the specified comma separated event names will be fetched. Keep empty to pull indicators from all the events."
-    },
-    {
-      "label": "Exclude IoCs from Events",
-      "key": "event_name",
-      "type": "text",
-      "mandatory": true,
-      "default": "",
-      "description": "Indicators attached to the provided comma-separated events will be ignored while pulling data from MISP. Expected value is comma-separated event names or event IDs."
-    },
-    {
-      "label": "IoC Event Type",
-      "key": "published",
-      "type": "multichoice",
-      "choices": [
-        {
-          "key": "Published",
-          "value": "published"
-        },
-        {
-          "key": "Unpublished",
-          "value": "unpublished"
-        }
-      ],
-      "default": [],
-      "mandatory": false,
-      "description": "Indicators will be pulled based on the selected event type. Keep empty to fetch all IoCs."
-    },
-    {
-      "label": "Decaying Score Threshold",
-      "key": "score_threshold",
-      "type": "number",
-      "mandatory": false,
-      "description": "Only indicators having Decaying Score greater then provided value will be pulled. Value should be in range of 0 to 100."
-    },
-    {
-      "label": "Decaying Model IDs",
-      "key": "decaying_models",
-      "type": "text",
-      "mandatory": false,
-      "default": "",
-      "description": "Decaying scores of only specified comma separated decaying models will be tracked. Keep blank to fetch scores of all Decaying Models. Decaying Model IDs can be found from 'Global Actions > List Decaying Models'."
-    },
-    {
-      "label": "Filter on IDS flag",
-      "key": "to_ids",
-      "type": "multichoice",
-      "choices": [
-        {
-          "key": "Enabled",
-          "value": "enabled"
-        },
-        {
-          "key": "Disabled",
-          "value": "disabled"
-        }
-      ],
-      "default": [],
-      "mandatory": false,
-      "description": "Only pull IoCs having IDS flag enabled. Keep blank to fetch all IoCs."
-    },
-    {
-      "label": "Enforce Warning List IoCs",
-      "key": "enforce_warning_list",
-      "type": "choice",
-      "choices": [
-        {
-          "key": "Yes",
-          "value": "yes"
-        },
-        {
-          "key": "No",
-          "value": "no"
-        }
-      ],
-      "default": "no",
-      "mandatory": false,
-      "description": "Remove any IoC from the events that would cause a hit on a warning list entry."
-    },
-    {
-      "label": "Pulling Mechanism",
-      "key": "pulling_mechanism",
-      "type": "choice",
-      "choices": [
-        {
-          "key": "Incremental",
-          "value": "incremental"
-        },
-        {
-          "key": "Look Back",
-          "value": "look_back"
-        }
-      ],
-      "default": "incremental",
-      "mandatory": true,
-      "description": "Pulling mechanism used to fetch the indicators from MISP."
-    },
-    {
-      "label": "Look Back (in hours)",
-      "key": "look_back",
-      "type": "number",
-      "mandatory": false,
-      "default": 24,
-      "description": "Look Back hours for fetching the indicators from MISP. Note: This parameter will only be considered if \"Pulling Mechanism\" is set to \"Look Back\"."
-    },
-    {
-      "label": "Retraction Interval (in days)",
-      "key": "retraction_interval",
-      "type": "number",
-      "mandatory": false,
-      "description": "Retraction Interval days to run IoC(s) retraction for MISP indicators. Note: This parameter will only be considered if \"IoC(s) Retraction\" is enabled in Threat Exchange Settings."
-    },
-    {
-      "label": "Enable Tagging",
-      "key": "enable_tagging",
-      "type": "choice",
-      "choices": [
-        {
-          "key": "Yes",
-          "value": "yes"
-        },
-        {
-          "key": "No",
-          "value": "no"
-        }
-      ],
-      "default": "yes",
-      "mandatory": true,
-      "description": "Enable/Disable tagging functionality."
-    },
-    {
-      "label": "Initial Range (in days)",
-      "key": "days",
-      "type": "number",
-      "mandatory": true,
-      "default": 7,
-      "description": "Number of days to pull the data for the initial run. Note: This parameter will only be considered if \"Pulling Mechanism\" is set to \"Incremental\"."
-    }
-  ]
+    ]
 }

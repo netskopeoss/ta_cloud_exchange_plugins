@@ -139,6 +139,11 @@ class CrowdstrikeCloudSecurityPlugin(PluginBase):
                         required=True,
                     ),
                     EntityField(
+                        name="Resource ID",
+                        type=EntityFieldType.STRING,
+                        required=True,
+                    ),
+                    EntityField(
                         name="Display Name",
                         type=EntityFieldType.STRING,
                     ),
@@ -241,11 +246,6 @@ class CrowdstrikeCloudSecurityPlugin(PluginBase):
                     EntityField(
                         name="Score",
                         type=EntityFieldType.NUMBER,
-                    ),
-                    EntityField(
-                        name="Resource ID",
-                        type=EntityFieldType.STRING,
-                        required=True,
                     ),
                     EntityField(
                         name="Resource UUID",
@@ -456,7 +456,9 @@ class CrowdstrikeCloudSecurityPlugin(PluginBase):
             score = int(event.get("aggregate", {}).get("score"))
             normalized_score = abs(100 - score) * NORMALIZATION_MULTIPLIER
             self.add_field(
-                extracted_fields, "Netskope Normalized Score", normalized_score
+                extracted_fields,
+                "Netskope Normalized Score",
+                normalized_score,
             )
 
         return extracted_fields
@@ -635,6 +637,8 @@ class CrowdstrikeCloudSecurityPlugin(PluginBase):
         headers: dict,
         event_ids: List,
         is_update: bool = False,
+        page: int = 0,
+        batch: int = 0,
     ):
         """Get IOM Event details.
 
@@ -642,7 +646,7 @@ class CrowdstrikeCloudSecurityPlugin(PluginBase):
             base_url (str): Base URL.
             headers (dict): Headers.
             event_ids (List): Event Ids list.
-            is_update (bool, optional): Whther this method is called from
+            is_update (bool, optional): Whether this method is called from
                 update or not. Defaults to False.
 
         Returns:
@@ -654,17 +658,23 @@ class CrowdstrikeCloudSecurityPlugin(PluginBase):
         records = {} if is_update else []
         skip_count = 0
         try:
+            details_batch = 1
             for i in range(0, len(event_ids), IOM_PAGE_SIZE):
+                batch_log = f"batch(Event IDs) {details_batch}"
                 payload = {"ids": event_ids[i : i + IOM_PAGE_SIZE]}  # noqa
+                logger_msg = (
+                    f"pulling details for {len(payload['ids'])} "
+                    f"IOM Event IDs for page {page}, {batch_log}"
+                )
+                if batch:
+                    logger_msg = logger_msg + f", batch {batch}"
+
                 resp_json = self.crowdstrike_helper.api_helper(
                     method="GET",
                     url=iom_details_endpoint,
                     headers=headers,
                     params=payload,
-                    logger_msg=(
-                        f"pulling details for {len(payload['ids'])} "
-                        f"IOM events from {PLATFORM_NAME}"
-                    ),
+                    logger_msg=logger_msg,
                     show_params=False,
                 )
                 for event in resp_json.get("resources", []):
@@ -687,32 +697,40 @@ class CrowdstrikeCloudSecurityPlugin(PluginBase):
                         event_id = event.get("id")
                         err_msg = (
                             "Unable to extract record from IOM event"
-                            f' ID "{event_id}".'
+                            f' ID "{event_id}" for page {page}, {batch_log}'
                         )
+                        if batch:
+                            err_msg = err_msg + f", batch {batch}"
                         self.logger.error(
-                            message=f"{self.log_prefix}: {err_msg}",
+                            message=f"{self.log_prefix}: {err_msg}.",
                             details=str(traceback.format_exc()),
                         )
                         skip_count += 1
-                return records, skip_count
+                # Increment Details batch counter.
+                details_batch += 1
+            return records, skip_count
         except CrowdstrikeCloudSecurityPluginException:
             raise
         except Exception:
             err_msg = (
                 "Unexpected error occurred while fetching IOM"
-                f" event details from {PLATFORM_NAME}."
+                f" event details for page {page}, {batch_log}"
             )
+            if batch:
+                err_msg = err_msg + f", batch {batch}"
             self.logger.error(
-                message=f"{self.log_prefix}: {err_msg}",
+                message=f"{self.log_prefix}: {err_msg}.",
                 details=str(traceback.format_exc()),
             )
-            raise CrowdstrikeCloudSecurityPluginException(err_msg)
+            raise CrowdstrikeCloudSecurityPluginException(f"{err_msg}.")
 
     def _fetch_iom_events(
         self,
         filter_query: str,
-        method_log_msg: str = "pulling",
+        batch: int = 0,
         is_update: bool = False,
+        headers: dict = {},
+        base_url: str = "",
     ) -> List[dict]:
         """Fetch IOM events from CrowdStrike Cloud Security platform.
 
@@ -724,9 +742,6 @@ class CrowdstrikeCloudSecurityPlugin(PluginBase):
         Returns:
             List[dict]: List of fetched IOM fields dictionary.
         """
-        base_url, client_id, client_secret = (
-            self.crowdstrike_helper.get_credentials(self.configuration)
-        )
         iom_ids_endpoint = f"{base_url}/detects/queries/iom/v2"
         params = {
             "limit": PAGE_SIZE,
@@ -737,23 +752,25 @@ class CrowdstrikeCloudSecurityPlugin(PluginBase):
         page = 1
         skip_count = 0
         next_token = None
-        headers = self.crowdstrike_helper.get_auth_header(
-            base_url=base_url, client_id=client_id, client_secret=client_secret
-        )
+        show_params = not is_update
         try:
             while True:
                 if next_token:
                     params["next_token"] = next_token
                 page_records = {} if is_update else []
+                logger_msg = f"pulling IOM Event IDs for page {page}"
+                if batch:
+                    logger_msg = logger_msg + (
+                        f", batch {batch} to update the records"
+                    )
+
                 resp_json = self.crowdstrike_helper.api_helper(
                     method="GET",
                     url=iom_ids_endpoint,
                     headers=headers,
                     params=params,
-                    logger_msg=(
-                        f"{method_log_msg} IOM Events for page {page} "
-                        f"from {PLATFORM_NAME}"
-                    ),
+                    logger_msg=logger_msg,
+                    show_params=show_params,
                 )
                 event_ids = resp_json.get("resources", [])
                 if event_ids:
@@ -762,6 +779,8 @@ class CrowdstrikeCloudSecurityPlugin(PluginBase):
                         headers=headers,
                         event_ids=event_ids,
                         is_update=is_update,
+                        page=page,
+                        batch=batch,
                     )
                     skip_count += page_skip_count
                     if is_update:
@@ -772,9 +791,9 @@ class CrowdstrikeCloudSecurityPlugin(PluginBase):
                         log_msg = (
                             f"Successfully fetched {len(page_records)} "
                             f"unique {IOM_ENTITY_NAME} record(s) from "
-                            f"{len(event_ids)} Event ID(s) in page {page}."
-                            f" Total {IOM_ENTITY_NAME} record(s) fetched:"
-                            f" {len(records)}."
+                            f"{len(event_ids)} Event ID(s) in page {page} "
+                            f", batch {batch}. Total {IOM_ENTITY_NAME} "
+                            f"record(s) fetched: {len(records)}."
                         )
                     else:
                         log_msg = (
@@ -796,17 +815,12 @@ class CrowdstrikeCloudSecurityPlugin(PluginBase):
                 page += 1
             if skip_count > 0:
                 self.logger.info(
-                    f"{self.log_prefix}: Skipped {skip_count} IOM event(s)"
+                    f"{self.log_prefix}: Skipped {skip_count} IOM Event ID(s)"
                     " because they either do not have an Instance ID or"
                     " fields could not be extracted from them."
                 )
-            if is_update:
-                self.logger.info(
-                    f"{self.log_prefix}: Successfully fetched "
-                    f"{len(records)} unique {IOM_ENTITY_NAME} record(s) "
-                    f"from {PLATFORM_NAME}."
-                )
-            else:
+
+            if not is_update:
                 self.logger.info(
                     f"{self.log_prefix}: Successfully fetched "
                     f"{len(records)} {IOM_ENTITY_NAME} record(s) "
@@ -818,10 +832,12 @@ class CrowdstrikeCloudSecurityPlugin(PluginBase):
         except Exception as exp:
             err_msg = (
                 "Unexpected error occurred while "
-                f"{log_msg} records from IOM events."
+                "pulling records from IOM events"
             )
+            if batch:
+                err_msg = err_msg + f" for batch {batch}"
             self.logger.error(
-                message=f"{self.log_prefix}: {err_msg} Error: {exp}",
+                message=f"{self.log_prefix}: {err_msg}. Error: {exp}",
                 details=str(traceback.format_exc()),
             )
 
@@ -868,8 +884,22 @@ class CrowdstrikeCloudSecurityPlugin(PluginBase):
                     filter_query += (
                         f"+cloud_service_keyword: {iom_cloud_services}"
                     )
+                base_url, client_id, client_secret = (
+                    self.crowdstrike_helper.get_credentials(
+                        self.configuration
+                    )
+                )
+                headers = self.crowdstrike_helper.get_auth_header(
+                    base_url=base_url,
+                    client_id=client_id,
+                    client_secret=client_secret,
+                )
                 records.extend(
-                    self._fetch_iom_events(filter_query=filter_query)
+                    self._fetch_iom_events(
+                        filter_query=filter_query,
+                        headers=headers,
+                        base_url=base_url,
+                    )
                 )
             else:
                 err_msg = (
@@ -922,11 +952,16 @@ class CrowdstrikeCloudSecurityPlugin(PluginBase):
             for record in records:
                 if record.get("Resource ID"):
                     resource_ids.append(record.get("Resource ID"))
-            self.logger.info(
-                f"{self.log_prefix}: {len(resource_ids)} user record(s) will "
-                f"be updated and skipped {len(records) - len(resource_ids)} "
-                "records as they do not have Resource ID field in it."
+            log_msg = (
+                f"{len(resource_ids)} user record(s) will "
+                f"be updated in the batch of {IOA_RESOURCES_PAGE_SIZE}."
             )
+            if len(records) - len(resource_ids) > 0:
+                log_msg = log_msg + (
+                    f" Skipped {len(records) - len(resource_ids)} records as "
+                    "they do not have Resource ID field in it."
+                )
+            self.logger.info(f"{self.log_prefix}: {log_msg}")
 
             ioa_cloud_provider = self.configuration.get(
                 "ioa_cloud_provider", []
@@ -1057,20 +1092,32 @@ class CrowdstrikeCloudSecurityPlugin(PluginBase):
                     resource_ids.append(record.get("Resource ID"))
                 elif record.get("Instance ID"):
                     resource_ids.append(record.get("Instance ID"))
-
-            self.logger.info(
-                f"{self.log_prefix}: {len(resource_ids)} {IOM_ENTITY_NAME}"
-                " record(s) will be updated and skipped"
-                f" {len(records) - len(resource_ids)} {IOM_ENTITY_NAME} "
-                "record(s) as they might not have Instance ID or Resource ID "
-                "field in them."
+            log_msg = (
+                f"{len(resource_ids)} {IOM_ENTITY_NAME} record(s) will"
+                f" be updated in the batch of {PAGE_SIZE}."
             )
+            if len(records) - len(resource_ids) > 0:
+                log_msg = log_msg + (
+                    f" Skipped {len(records) - len(resource_ids)} "
+                    f"{IOM_ENTITY_NAME} record(s) as they might not have"
+                    " Instance ID or Resource ID field in them."
+                )
+            self.logger.info(f"{self.log_prefix}: {log_msg}")
             iom_cloud_provider = self.configuration.get(
                 "iom_cloud_provider", []
             )
             iom_cloud_services = self.configuration.get(
                 "iom_cloud_service", []
             )
+            base_url, client_id, client_secret = (
+                self.crowdstrike_helper.get_credentials(self.configuration)
+            )
+            headers = self.crowdstrike_helper.get_auth_header(
+                base_url=base_url,
+                client_id=client_id,
+                client_secret=client_secret,
+            )
+            batch = 1
             for i in range(0, len(resource_ids), PAGE_SIZE):
                 payload = resource_ids[i : i + PAGE_SIZE]  # noqa
                 filter_query = f"scan_time: >='{date_filter}'"
@@ -1084,10 +1131,19 @@ class CrowdstrikeCloudSecurityPlugin(PluginBase):
                 updated_records.update(
                     self._fetch_iom_events(
                         filter_query=filter_query,
-                        method_log_msg="updating",
                         is_update=True,
+                        headers=headers,
+                        base_url=base_url,
+                        batch=batch,
                     )
                 )
+                self.logger.info(
+                    f"{self.log_prefix}: Successfully fetched"
+                    f" {len(updated_records)} unique {IOM_ENTITY_NAME}"
+                    f" record(s) in batch {batch} for update from"
+                    f" {PLATFORM_NAME}."
+                )
+                batch += 1
             # Checking for match in existing records if it
             # exists then update fields.
             count = 0
@@ -1128,7 +1184,9 @@ class CrowdstrikeCloudSecurityPlugin(PluginBase):
             return ValidationResult(
                 success=False, message="Unsupported action provided."
             )
-        return ValidationResult(success=True, message="Validation successful.")
+        return ValidationResult(
+            success=True, message="Validation successful."
+        )
 
     def get_action_params(self, action: Action):
         """Get action params."""
@@ -1181,7 +1239,9 @@ class CrowdstrikeCloudSecurityPlugin(PluginBase):
                 message=err_msg,
             )
         elif not isinstance(client_id, str):
-            err_msg = "Invalid Client ID provided in configuration parameters."
+            err_msg = (
+                "Invalid Client ID provided in configuration parameters."
+            )
             self.logger.error(
                 f"{self.log_prefix}: {validation_err_msg} {err_msg}"
             )

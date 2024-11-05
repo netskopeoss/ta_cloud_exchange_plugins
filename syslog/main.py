@@ -47,7 +47,6 @@ from netskope.integrations.cls.plugin_base import (
     PushResult,
 )
 from .utils.syslog_constants import (
-    SYSLOG_FORMATS,
     SYSLOG_PROTOCOLS,
     PLATFORM_NAME,
     MODULE_NAME,
@@ -59,6 +58,7 @@ from .utils.syslog_exceptions import (
     MappingValidationError,
     EmptyExtensionError,
     FieldNotFoundError,
+    SyslogPluginError,
 )
 from .utils.syslog_cef_generator import CEFGenerator
 from .utils.syslog_ssl import SSLSysLogHandler
@@ -188,7 +188,9 @@ class SyslogPlugin(PluginBase):
                     isinstance(headers[cef_header], str)
                     and headers[cef_header].lower() in mapping_variables
                 ):
-                    headers[cef_header] = mapping_variables[headers[cef_header].lower()]
+                    headers[cef_header] = mapping_variables[
+                        headers[cef_header].lower()
+                    ]
             except FieldNotFoundError as err:
                 missing_fields.append(str(err))
 
@@ -266,7 +268,10 @@ class SyslogPlugin(PluginBase):
         # mapped_field will be returned as true only if the value returned is\
         # using the mapping_field and not default_value
         mapped_field = False
-        if "mapping_field" in extension_mapping and extension_mapping["mapping_field"]:
+        if (
+            "mapping_field" in extension_mapping
+            and extension_mapping["mapping_field"]
+        ):
             if is_json_path:
                 # If mapping field specified by JSON path is present in data,\
                 #  map that field, else skip by raising
@@ -278,11 +283,15 @@ class SyslogPlugin(PluginBase):
                     mapped_field = True
                     return ",".join([str(val) for val in value]), mapped_field
                 else:
-                    raise FieldNotFoundError(extension_mapping["mapping_field"])
+                    raise FieldNotFoundError(
+                        extension_mapping["mapping_field"]
+                    )
             else:
                 # If mapping is present in data, map that field, \
                 # else skip by raising exception
-                if extension_mapping["mapping_field"] in data:  # case #1 and case #4
+                if (
+                    extension_mapping["mapping_field"] in data
+                ):  # case #1 and case #4
                     if (
                         extension_mapping.get("transformation") == "Time Stamp"
                         and data[extension_mapping["mapping_field"]]
@@ -303,7 +312,9 @@ class SyslogPlugin(PluginBase):
                     # mapped, map the default value (case #2)
                     return extension_mapping["default_value"], mapped_field
                 else:  # case #6
-                    raise FieldNotFoundError(extension_mapping["mapping_field"])
+                    raise FieldNotFoundError(
+                        extension_mapping["mapping_field"]
+                    )
         else:
             # If mapping is not present, 'default_value' must be there\
             #  because of validation (case #3 and case #5)
@@ -341,30 +352,36 @@ class SyslogPlugin(PluginBase):
                     self.mappings, "json", self.name
                 )
             except KeyError as err:
+                error_msg = (
+                    f"[{data_type}][{subtype}] "
+                    "An error occurred while fetching the mappings."
+                )
                 self.logger.error(
-                    message=(
-                        f"{self.log_prefix}: An error occurred while fetching the mappings. Error: {err}"
-                    ),
+                    message=(f"{self.log_prefix}: {error_msg} Error: {err}"),
                     details=str(traceback.format_exc()),
                 )
-                raise
+                raise SyslogPluginError(error_msg)
             except MappingValidationError as err:
+                error_msg = (
+                    f"[{data_type}][{subtype}] "
+                    "An error occurred while validating the mapping file."
+                )
                 self.logger.error(
-                    message=(
-                        f"{self.log_prefix}: An error occurred while validating the mapping file. {err}"
-                    ),
+                    message=(f"{self.log_prefix}: {error_msg} {err}"),
                     details=str(traceback.format_exc()),
                 )
-                raise
+                raise SyslogPluginError(error_msg)
             except Exception as err:
+                error_msg = (
+                    f"[{data_type}][{subtype}] "
+                    "An error occurred while mapping "
+                    "data using given json mappings."
+                )
                 self.logger.error(
-                    message=(
-                        f"{self.log_prefix}: An error occurred while mapping "
-                        f"data using given json mappings. Error: {err}"
-                    ),
+                    message=(f"{self.log_prefix}: {error_msg} Error: {err}"),
                     details=str(traceback.format_exc()),
                 )
-                raise
+                raise SyslogPluginError(error_msg)
 
             try:
                 subtype_mapping = self.get_subtype_mapping(
@@ -373,10 +390,11 @@ class SyslogPlugin(PluginBase):
                 if subtype_mapping == []:
                     transformed_data = []
                     for data in raw_data:
-                        if data:                            
+                        if data:
                             result = "{} {} {}".format(
                                 time.strftime(
-                                    "%b %d %H:%M:%S", time.localtime(time.time())
+                                    "%b %d %H:%M:%S",
+                                    time.localtime(time.time()),
                                 ),
                                 log_source_identifier,
                                 json.dumps(data),
@@ -385,23 +403,28 @@ class SyslogPlugin(PluginBase):
                         else:
                             count += 1
                     return transformed_data
-            except Exception:
+            except SyslogPluginError:
+                raise
+            except Exception as err:
+                error_msg = (
+                    f"[{data_type}][{subtype}] "
+                    "Error occurred while retrieving "
+                    f"mappings."
+                )
                 self.logger.error(
-                    message=(
-                        f"{self.log_prefix}: Error occurred while retrieving "
-                        f"mappings for datatype: {data_type} "
-                        f"(subtype: {subtype}) Transformation will be skipped."
-                    ),
+                    message=(f"{self.log_prefix}: {error_msg} Error: {err}"),
                     details=str(traceback.format_exc()),
                 )
-                raise
+                raise SyslogPluginError(error_msg)
 
             transformed_data = []
             for data in raw_data:
                 mapped_dict = self.map_json_data(subtype_mapping, data)
                 if mapped_dict:
                     result = "{} {} {}".format(
-                        time.strftime("%b %d %H:%M:%S", time.localtime(time.time())),
+                        time.strftime(
+                            "%b %d %H:%M:%S", time.localtime(time.time())
+                        ),
                         log_source_identifier,
                         json.dumps(mapped_dict),
                     )
@@ -410,7 +433,7 @@ class SyslogPlugin(PluginBase):
                     count += 1
 
             if count > 0:
-                self.logger.debug(
+                self.logger.info(
                     "{}: Plugin couldn't process {} records because they "
                     "either had no data or contained invalid/missing "
                     "fields according to the configured JSON mapping. "
@@ -425,30 +448,37 @@ class SyslogPlugin(PluginBase):
                     self.mappings, data_type, self.name
                 )
             except KeyError as err:
+                error_msg = (
+                    f"[{data_type}][{subtype}] "
+                    "An error occurred while "
+                    "fetching the mappings."
+                )
                 self.logger.error(
-                    message=(
-                        f"{self.log_prefix}: An error occurred while fetching the mappings. Error: {err}"
-                    ),
+                    message=(f"{self.log_prefix}: {error_msg} Error: {err}"),
                     details=str(traceback.format_exc()),
                 )
-                raise
+                raise SyslogPluginError(error_msg)
             except MappingValidationError as err:
+                error_msg = (
+                    f"[{data_type}][{subtype}] "
+                    "An error occurred while validating the mapping file."
+                )
                 self.logger.error(
-                    message=(
-                        f"{self.log_prefix}: An error occurred while validating the mapping file. {err}"
-                    ),
+                    message=(f"{self.log_prefix}: {error_msg} {err}"),
                     details=str(traceback.format_exc()),
                 )
-                raise
+                raise SyslogPluginError(error_msg)
             except Exception as err:
+                error_msg = (
+                    f"[{data_type}]:[{subtype}] "
+                    "An error occurred while mapping "
+                    "data using given json mappings."
+                )
                 self.logger.error(
-                    message=(
-                        f"{self.log_prefix}: An error occurred while mapping "
-                        f"data using given json mappings. Error: {err}"
-                    ),
+                    message=(f"{self.log_prefix}: {error_msg} Error: {err}"),
                     details=str(traceback.format_exc()),
                 )
-                raise
+                raise SyslogPluginError(error_msg)
 
             cef_generator = CEFGenerator(
                 self.mappings,
@@ -463,23 +493,25 @@ class SyslogPlugin(PluginBase):
                 subtype_mapping = self.get_subtype_mapping(
                     syslog_mappings[data_type], subtype
                 )
-            except KeyError:
-                self.logger.info(
-                    f"{self.log_prefix}: Unable to find the "
-                    f"[{data_type}]:[{subtype}] mappings in the mapping file, "
-                    "Transformation of current batch will be skipped."
+            except KeyError as err:
+                error_msg = (
+                    f"[{data_type}][{subtype}] Unable to find the "
+                    "mappings in the mapping file."
                 )
-                return []
-            except Exception:
+                self.logger.info(
+                    f"{self.log_prefix}: {error_msg}" f"Error: {err}"
+                )
+                raise SyslogPluginError(error_msg)
+            except Exception as err:
+                error_msg = (
+                    f"[{data_type}][{subtype}] Error occurred while"
+                    f" retrieving mappings for subtype {subtype}."
+                )
                 self.logger.error(
-                    message=(
-                        f"{self.log_prefix}: Error occurred while retrieving "
-                        f"mappings for subtype {subtype}. "
-                        "Transformation of current batch will be skipped."
-                    ),
+                    message=(f"{self.log_prefix}: {error_msg} Error: {err}"),
                     details=str(traceback.format_exc()),
                 )
-                return []
+                raise SyslogPluginError(error_msg)
 
             transformed_data = []
             for data in raw_data:
@@ -495,9 +527,10 @@ class SyslogPlugin(PluginBase):
                 except Exception as err:
                     self.logger.error(
                         message=(
-                            f"{self.log_prefix}: [{data_type}][{subtype}]- "
+                            f"{self.log_prefix}: [{data_type}][{subtype}] "
                             f"Error occurred while creating CEF header: {err}."
-                            " Transformation of current record will be skipped."
+                            " Transformation of current record will"
+                            " be skipped."
                         ),
                         details=str(traceback.format_exc()),
                     )
@@ -511,9 +544,10 @@ class SyslogPlugin(PluginBase):
                 except Exception as err:
                     self.logger.error(
                         message=(
-                            f"{self.log_prefix}: [{data_type}][{subtype}]- Error "
-                            f"occurred while creating CEF extension: {err}. "
-                            "Transformation of the current record will be skipped."
+                            f"{self.log_prefix}: [{data_type}][{subtype}]"
+                            f" Error occurred while creating CEF extension:"
+                            f" {err}. Transformation of the current record "
+                            "will be skipped."
                         ),
                         details=str(traceback.format_exc()),
                     )
@@ -537,7 +571,7 @@ class SyslogPlugin(PluginBase):
                 except EmptyExtensionError:
                     self.logger.error(
                         message=(
-                            f"{self.log_prefix}: [{data_type}][{subtype}]- Got"
+                            f"{self.log_prefix}: [{data_type}][{subtype}] Got"
                             " empty extension during transformation. "
                             "Transformation of current record will be skipped."
                         ),
@@ -547,8 +581,9 @@ class SyslogPlugin(PluginBase):
                 except Exception as err:
                     self.logger.error(
                         message=(
-                            f"{self.log_prefix}: [{data_type}][{subtype}]- An "
-                            f"error occurred during transformation. Error: {err}"
+                            f"{self.log_prefix}: [{data_type}][{subtype}] An "
+                            f"error occurred during transformation."
+                            f" Error: {err}"
                         ),
                         details=str(traceback.format_exc()),
                     )
@@ -567,37 +602,39 @@ class SyslogPlugin(PluginBase):
     def init_handler(self, configuration):
         """Initialize unique Syslog handler per thread\
               based on configured protocol."""
-        syslogger = logging.getLogger("SYSLOG_LOGGER_{}".format(threading.get_ident()))
+        syslogger = logging.getLogger(
+            "SYSLOG_LOGGER_{}".format(threading.get_ident())
+        )
         syslogger.setLevel(logging.INFO)
         syslogger.handlers = []
         syslogger.propagate = False
 
-        if configuration["syslog_protocol"] == "TLS":
+        if configuration.get("syslog_protocol") == "TLS":
             tls_handler = SSLSysLogHandler(
-                configuration["syslog_protocol"],
+                configuration.get("syslog_protocol"),
                 address=(
-                    configuration["syslog_server"].strip(),
-                    configuration["syslog_port"],
+                    configuration.get("syslog_server").strip(),
+                    configuration.get("syslog_port"),
                 ),
-                certs=configuration["syslog_certificate"],
+                certs=configuration.get("syslog_certificate"),
             )
             syslogger.addHandler(tls_handler)
         else:
             socktype = socket.SOCK_DGRAM  # Set protocol to UDP by default
-            if configuration["syslog_protocol"] == "TCP":
+            if configuration.get("syslog_protocol") == "TCP":
                 socktype = socket.SOCK_STREAM
 
             # Create a syslog handler with given configuration parameters
             handler = SSLSysLogHandler(
-                configuration["syslog_protocol"],
+                configuration.get("syslog_protocol"),
                 address=(
-                    configuration["syslog_server"].strip(),
-                    configuration["syslog_port"],
+                    configuration.get("syslog_server").strip(),
+                    configuration.get("syslog_port"),
                 ),
                 socktype=socktype,
             )
 
-            if configuration["syslog_protocol"] == "TCP":
+            if configuration.get("syslog_protocol") == "TCP":
                 # This will add a line break to the message before it is \
                 # 'emitted' which ensures that the messages are
                 # split up over multiple lines, \
@@ -611,91 +648,120 @@ class SyslogPlugin(PluginBase):
 
         return syslogger
 
+    def log_success_msg(
+        self, data_type, subtype, successful_log_push_counter, skipped_logs
+    ):
+        """Log the success message."""
+        log_msg = ""
+        if successful_log_push_counter > 0:
+            log_msg = (
+                f"[{data_type}] [{subtype}] Successfully "
+                f"ingested {successful_log_push_counter} log(s)"
+                f" to {self.plugin_name} server."
+            )
+        if log_msg and skipped_logs:
+            log_msg += (
+                " Received empty transformed data for "
+                f"{skipped_logs} log(s) hence ingestion of those log(s) "
+                "will be skipped."
+            )
+        if log_msg:
+            self.logger.info(f"{self.log_prefix}: {log_msg}")
+        return log_msg
+
     def push(self, transformed_data, data_type, subtype) -> PushResult:
         """Push the transformed_data to the 3rd party platform."""
+        self.logger.debug(
+            f"{self.log_prefix}: "
+            f"Initializing the sharing of {len(transformed_data)} "
+            f"[{data_type}]:[{subtype}] logs "
+            f"to the {PLATFORM_NAME} server."
+        )
         successful_log_push_counter, skipped_logs = 0, 0
         try:
             syslogger = self.init_handler(self.configuration)
-        except Exception as err:
-            self.logger.error(
-                message=(
-                    f"{self.log_prefix}: Error occurred during "
-                    f"initializing connection. Error: {err}"
+        except (TimeoutError, ConnectionRefusedError, Exception) as err:
+            error_msg = {
+                TimeoutError: (
+                    "Timeout error occurred during initializing "
+                    "connection with Syslog server."
                 ),
+                ConnectionRefusedError: (
+                    "Connection refused during initializing "
+                    "connection with Syslog server."
+                ),
+            }.get(type(err), "Error occurred during initializing connection.")
+            self.logger.error(
+                message=f"{self.log_prefix}: {error_msg} {err}.",
                 details=str(traceback.format_exc()),
             )
-            raise
+            raise SyslogPluginError(error_msg)
 
         # Log the transformed data to given syslog server
-        for data in transformed_data:
-            try:
+        try:
+            for data in transformed_data:
                 if data:
-                    syslogger.info(json.dumps(data) if isinstance(data, dict) else data)
-                    successful_log_push_counter += 1
+                    syslogger.info(
+                        json.dumps(data) if isinstance(data, dict) else data
+                    )
                     syslogger.handlers[0].flush()
+                    successful_log_push_counter += 1
                 else:
                     skipped_logs += 1
 
-            except Exception as err:
-                self.logger.error(
-                    message=(
-                        f"{self.log_prefix}: Error occurred during data ingestion."
-                        f" Error: {err}. Record will be skipped."
-                    ),
-                    details=str(traceback.format_exc()),
-                )
-
-        # Clean up
-        try:
-            syslogger.handlers[0].close()
-            del syslogger.handlers[:]
-            del syslogger
-
-            if skipped_logs > 0:
-                self.logger.debug(
-                    "{}: Received empty transformed data for {} log(s) hence "
-                    "ingestion of those log(s) will be skipped.".format(
-                        self.log_prefix,
-                        skipped_logs,
-                    )
-                )
-            log_msg = (
-                "[{}] [{}] Successfully ingested {} log(s)"
-                " to {} server.".format(
-                    data_type,
-                    subtype,
-                    successful_log_push_counter,
-                    self.plugin_name,
-                )
+            log_msg = self.log_success_msg(
+                data_type, subtype, successful_log_push_counter, skipped_logs
             )
-            self.logger.info(f"{self.log_prefix}: {log_msg}")
             return PushResult(
                 success=True,
                 message=log_msg,
             )
 
         except Exception as err:
+            failed_logs = len(transformed_data) - successful_log_push_counter
+            _ = self.log_success_msg(
+                data_type, subtype, successful_log_push_counter, skipped_logs
+            )
+            # Remove the data already been ingested
+            del transformed_data[:successful_log_push_counter]
+            error_msg = (
+                "Error occurred while ingesting "
+                f"data to Syslog server. {failed_logs} log(s) "
+                "failed to be ingested."
+            )
             self.logger.error(
-                message=(
-                    f"{self.log_prefix}: Error occurred during Clean up. Error: {err}"
-                ),
+                message=(f"{self.log_prefix}: {error_msg} Error: {err}"),
                 details=str(traceback.format_exc()),
             )
+            raise SyslogPluginError(error_msg)
+
+        # Clean up
+        finally:
+            try:
+                syslogger.handlers[0].close()
+                del syslogger.handlers[:]
+                del syslogger
+            except Exception as err:
+                error_msg = "Error occurred while cleaning up Syslog handler."
+                self.logger.debug(
+                    f"{self.log_prefix}: {error_msg} Error: {err}"
+                )
 
     def test_server_connectivity(self, configuration):
         """Tests whether the configured syslog server is reachable or not."""
         try:
             syslogger = self.init_handler(configuration)
         except Exception as err:
+            error_msg = (
+                "Error occurred while establishing "
+                "connection with syslog server. Make sure "
+                "you have provided correct syslog server and port."
+            )
             self.logger.error(
-                message=(
-                    f"{self.log_prefix}: Error occurred while establishing "
-                    "connection with syslog server. Make sure "
-                    "you have provided correct syslog server and port."
-                ),
+                message=(f"{self.log_prefix}: {error_msg} Error: {err}"),
                 details=str(traceback.format_exc()),
             )
-            raise err
+            raise SyslogPluginError(error_msg)
         else:
             # Clean up for further use
             syslogger.handlers[0].flush()
@@ -716,23 +782,9 @@ class SyslogPlugin(PluginBase):
                 message=err_msg,
             )
         elif not isinstance(syslog_server, str):
-            err_msg = "Invalid Syslog Server provided in configuration parameters."
-            self.logger.error(f"{validation_err_msg} {err_msg}")
-            return ValidationResult(
-                success=False,
-                message=err_msg,
+            err_msg = (
+                "Invalid Syslog Server provided in configuration parameters."
             )
-
-        syslog_format = configuration.get("syslog_format", "").strip()
-        if not syslog_format:
-            err_msg = "Syslog Format is a required configuration parameter."
-            self.logger.error(f"{validation_err_msg} {err_msg}")
-            return ValidationResult(
-                success=False,
-                message=err_msg,
-            )
-        elif not isinstance(syslog_format, str) or syslog_format not in SYSLOG_FORMATS:
-            err_msg = "Invalid Syslog Format provided in configuration parameters."
             self.logger.error(f"{validation_err_msg} {err_msg}")
             return ValidationResult(
                 success=False,
@@ -751,7 +803,9 @@ class SyslogPlugin(PluginBase):
             not isinstance(syslog_protocol, str)
             or syslog_protocol not in SYSLOG_PROTOCOLS
         ):
-            err_msg = "Invalid Syslog Protocol provided in configuration parameters."
+            err_msg = (
+                "Invalid Syslog Protocol provided in configuration parameters."
+            )
             self.logger.error(f"{validation_err_msg} {err_msg}")
             return ValidationResult(
                 success=False,
@@ -767,14 +821,19 @@ class SyslogPlugin(PluginBase):
                 message=err_msg,
             )
         elif not isinstance(syslog_port, int):
-            err_msg = "Invalid Syslog Port provided in configuration parameters."
+            err_msg = (
+                "Invalid Syslog Port provided in configuration parameters."
+            )
             self.logger.error(f"{validation_err_msg} {err_msg}")
             return ValidationResult(
                 success=False,
                 message=err_msg,
             )
         elif not syslog_validator.validate_syslog_port(syslog_port):
-            err_msg = "Invalid Syslog Port provided in configuration parameters. it should be in range 0-65535."
+            err_msg = (
+                "Invalid Syslog Port provided in configuration "
+                "parameters. it should be in range 0-65535."
+            )
             self.logger.error(f"{validation_err_msg} {err_msg}")
             return ValidationResult(
                 success=False,
@@ -783,9 +842,9 @@ class SyslogPlugin(PluginBase):
 
         mappings = self.mappings.get("jsonData", None)
         mappings = json.loads(mappings)
-        if not isinstance(mappings, dict) or not syslog_validator.validate_syslog_map(
-            mappings
-        ):
+        if not isinstance(
+            mappings, dict
+        ) or not syslog_validator.validate_syslog_map(mappings):
             err_msg = "Invalid attribute mapping provided."
             self.logger.error(f"{validation_err_msg} {err_msg}")
             return ValidationResult(
@@ -793,12 +852,15 @@ class SyslogPlugin(PluginBase):
                 message=err_msg,
             )
 
-        syslog_certificate = configuration.get("syslog_certificate", "").strip()
+        syslog_certificate = configuration.get(
+            "syslog_certificate", ""
+        ).strip()
         if syslog_protocol.upper() == "TLS":
             if not syslog_certificate:
                 err_msg = (
-                    "Syslog Certificate is a required configuration parameter when "
-                    "TLS is provided in the configuration parameters."
+                    "Syslog Certificate is a required configuration "
+                    "parameter when TLS is provided in the "
+                    "configuration parameters."
                 )
                 self.logger.error(f"{validation_err_msg} {err_msg}")
                 return ValidationResult(
@@ -807,7 +869,8 @@ class SyslogPlugin(PluginBase):
                 )
             elif not isinstance(syslog_certificate, str):
                 err_msg = (
-                    "Invalid Syslog Certificate provided in configuration parameters."
+                    "Invalid Syslog Certificate provided in"
+                    " configuration parameters."
                 )
                 self.logger.error(f"{validation_err_msg} {err_msg}")
                 return ValidationResult(
@@ -815,9 +878,13 @@ class SyslogPlugin(PluginBase):
                     message=err_msg,
                 )
 
-        log_source_identifier = configuration.get("log_source_identifier", "").strip()
+        log_source_identifier = configuration.get(
+            "log_source_identifier", ""
+        ).strip()
         if not log_source_identifier:
-            err_msg = "Log Source Identifier is a required configuration parameter."
+            err_msg = (
+                "Log Source Identifier is a required configuration parameter."
+            )
             self.logger.error(f"{validation_err_msg} {err_msg}")
             return ValidationResult(
                 success=False,
@@ -825,7 +892,8 @@ class SyslogPlugin(PluginBase):
             )
         elif not isinstance(log_source_identifier, str):
             err_msg = (
-                "Invalid Log Source Identifier provided in configuration parameters."
+                "Invalid Log Source Identifier provided in"
+                " configuration parameters."
             )
             self.logger.error(f"{validation_err_msg} {err_msg}")
             return ValidationResult(
@@ -835,11 +903,16 @@ class SyslogPlugin(PluginBase):
         # Validate Server connection.
         try:
             self.test_server_connectivity(configuration)
+        except SyslogPluginError as err:
+            return ValidationResult(
+                success=False,
+                message=str(err),
+            )
         except Exception:
             err_msg = (
-                "Error occurred while establishing connection with Syslog Server. "
-                "Make sure you have provided correct Syslog Server, Port and "
-                "Syslog Certificate(if required)."
+                "Error occurred while establishing connection with"
+                " Syslog Server. Make sure you have provided correct "
+                "Syslog Server, Port and Syslog Certificate(if required)."
             )
             self.logger.error(f"{validation_err_msg} {err_msg}")
             return ValidationResult(

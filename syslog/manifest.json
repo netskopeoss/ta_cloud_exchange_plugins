@@ -1,7 +1,7 @@
 {
   "name": "Syslog",
   "id": "syslog",
-  "version": "3.2.1",
+  "version": "3.2.2",
   "mapping": "Syslog Default Mappings",
   "types": [
     "alerts",
@@ -9,7 +9,7 @@
     "webtx",
     "logs"
   ],
-  "description": "This plugin supports ingestion of Alerts (Compromised Credential, Policy, Malsite, Malware, DLP, Security Assessment, Quarantine, Remediation, UBA, Watchlist, CTEP), Events (Page, Application, Audit, Infrastructure, Network, Incident), WebTx and Logs (Debug, Information, Error, Warning). The data will be ingested in SIEM platform. This plugin supports ingestion in CEF and JSON format.",
+  "description": "This plugin supports ingestion of Alerts (Anomaly, DLP, Malware, Policy, Compromised Credential, Legal Hold, Malsite, Quarantine, Remediation, Security Assessment, Watchlist, UBA, CTEP), Events (Page, Application, Audit, Infrastructure, Network, Incident, Endpoint), WebTx and Logs (Debug, Information, Error, Warning). The data will be ingested in SIEM platform. This plugin supports ingestion in CEF and JSON format.",
   "configuration": [
     {
       "label": "Syslog Server",
@@ -18,20 +18,6 @@
       "default": "",
       "mandatory": true,
       "description": "IP address/FQDN of Syslog server in which data will be ingested."
-    },
-    {
-      "label": "Syslog Format",
-      "key": "syslog_format",
-      "type": "choice",
-      "choices": [
-        {
-          "key": "CEF",
-          "value": "CEF"
-        }
-      ],
-      "default": "CEF",
-      "mandatory": true,
-      "description": "Data format required to ingest data."
     },
     {
       "label": "Syslog Protocol",
@@ -69,7 +55,7 @@
       "type": "textarea",
       "default": "",
       "mandatory": false,
-      "description": "certificate is required only for TLS protocol."
+      "description": "Certificate is required only for TLS protocol."
     },
     {
       "label": "Log Source Identifier",
@@ -77,7 +63,7 @@
       "type": "text",
       "default": "netskopece",
       "mandatory": true,
-      "description": "This will be added as prefix to all the logs. (The log source identifier should not contain the whitespace)."
+      "description": "This will be added as prefix to all the logs."
     }
   ]
 }

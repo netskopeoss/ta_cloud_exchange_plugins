@@ -1,3 +1,8 @@
+# 3.2.2
+## Added
+- Enhancement in the error handling.
+- Added support for the endpoint event type. To pull and ingest this event type update your CE version to 5.1.0.
+
 # 3.2.1
 ## Added
 - Added support for JA3 fields in WebTX and Application events.
@@ -9,12 +14,12 @@
 
 # 3.1.0
 ## Added
-- Added support for WebTX JSON format to send specific fields to SIEM platform
+- Added support for WebTX JSON format to send specific fields to SIEM platform.
 
 # 3.0.0
 ## Added
-- Added Support for the incident event type. To pull and ingest this event type update your CE version to 4.1.0
-- Added Support for the CTEP alert type. To pull and ingest this alert type update your CE version to 4.2.0.
+- Added support for the incident event type. To pull and ingest this event type update your CE version to 4.1.0.
+- Added support for the CTEP alert type. To pull and ingest this alert type update your CE version to 4.2.0.
 - Added support for WebTx format3.
 ## Changed
 - Changed error logs to warning if single field is skipped.

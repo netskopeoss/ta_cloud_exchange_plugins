@@ -39,6 +39,7 @@ from .syslog_constants import (
     SEVERITY_UNKNOWN,
     AUDIT_SEVERITY_MAP,
 )
+from .syslog_exceptions import SyslogPluginError
 from netskope.integrations.cls.utils.sanitizer import *
 from netskope.integrations.cls.utils.converter import *
 
@@ -52,7 +53,9 @@ class CEFGenerator(object):
         self.log_prefix = log_prefix
         self.cef_version = cef_version  # Version of CEF being used
         self.mapping = mapping  # Mapping file content
-        self.extension = collections.namedtuple("Extension", ("key_name", "sanitizer"))
+        self.extension = collections.namedtuple(
+            "Extension", ("key_name", "sanitizer")
+        )
         self.extension_converter = collections.namedtuple(
             "Extension", ("key_name", "converter")
         )
@@ -87,24 +90,30 @@ class CEFGenerator(object):
                 if data_type == "json":
                     continue
                 for subtype, subtype_mapping in data_mapping.items():
+
                     for key, value in subtype_mapping.items():
                         for field, field_mapping in value.items():
-                            field_converters[field] = self.extension_converter(
-                                key_name=field,
-                                converter=converters[
-                                    field_mapping.get("transformation", "String")
-                                ],
+                            field_converter_key = f"{data_type.lower()}_{subtype.lower()}_{key}_{field}"  # noqa
+                            field_converters[field_converter_key] = (
+                                self.extension_converter(
+                                    key_name=field,
+                                    converter=converters[
+                                        field_mapping.get(
+                                            "transformation", "String"
+                                        )
+                                    ],
+                                )
                             )
             return field_converters
         except Exception as err:
+            error_msg = (
+                "Error occurred while parsing CEF transformation field."
+            )
             self.logger.error(
-                message=(
-                    f"{self.log_prefix}: Error occurred while parsing CEF "
-                    f"transformation field. Error: {err}"
-                ),
+                message=(f"{self.log_prefix}: {error_msg} Error: {err}"),
                 details=str(traceback.format_exc()),
             )
-            raise
+            raise SyslogPluginError(error_msg)
 
     def _valid_extensions(self):
         """To Parse the given transformation mapping and creates
@@ -127,22 +136,25 @@ class CEFGenerator(object):
                 for subtype, subtype_mapping in data_mapping.items():
                     for key, value in subtype_mapping.items():
                         for field, field_mapping in value.items():
-                            field_sanitizers[field] = self.extension(
+                            field_key = f"{data_type.lower()}_{subtype.lower()}_{key}_{field}"  # noqa
+                            field_sanitizers[field_key] = self.extension(
                                 key_name=field,
                                 sanitizer=sanitizers[
-                                    field_mapping.get("transformation", "String")
+                                    field_mapping.get(
+                                        "transformation", "String"
+                                    )
                                 ],
                             )
             return field_sanitizers
         except Exception as err:
+            error_msg = (
+                "Error occurred while parsing CEF transformation field."
+            )
             self.logger.error(
-                message=(
-                    f"{self.log_prefix}: Error occurred while parsing CEF "
-                    f"transformation field. Error: {err}"
-                ),
+                message=(f"{self.log_prefix}: {error_msg} Error: {err}"),
                 details=str(traceback.format_exc()),
             )
-            raise
+            raise SyslogPluginError(error_msg)
 
     def get_header_value(self, header, headers):
         """To Fetch sanitized value of header from given
@@ -159,7 +171,9 @@ class CEFGenerator(object):
             return self._severity_sanitizer(headers[header], header)
         return self._prefix_field_str_sanitizer(headers[header], header)
 
-    def log_invalid_header(self, possible_headers, headers, data_type, subtype):
+    def log_invalid_header(
+        self, possible_headers, headers, data_type, subtype
+    ):
         """Issues log in case of invalid header found in mappings.
 
         Args:
@@ -206,50 +220,67 @@ class CEFGenerator(object):
         for name, value in extensions.items():
             # First convert the incoming value from
             # Netskope to appropriate data type
+
+            field_key = (
+                f"{data_type.lower()}_{subtype.lower()}_extension_{name}"
+            )
             try:
-                value = self.extension_converters[name].converter(value, name)
+                value = self.extension_converters[field_key].converter(
+                    value, name
+                )
+
             except KeyError:
                 self.logger.warn(
-                    "{}: [{}][{}]- An error occurred while generating CEF "
-                    'data for field: "{}". Could not find the field in '
-                    'the "valid_extensions". Field will be ignored.'.format(
-                        self.log_prefix, data_type, subtype, name
-                    )
+                    message=(
+                        f"{self.log_prefix}: [{data_type}][{subtype}] An error"
+                        f" occurred while generating CEF data for field:"
+                        f' "{name}". Could not find the field in the'
+                        ' "valid_extensions". Field will be ignored.'
+                    ),
+                    details=str(traceback.format_exc()),
                 )
                 continue
             except Exception as err:
                 self.logger.warn(
-                    "{}: [{}][{}]- An error occurred while generating "
-                    'CEF data for field: "{}". Error: {}. '
-                    "Field will be ignored.".format(
-                        self.log_prefix, data_type, subtype, name, err
-                    )
+                    message=(
+                        f"{self.log_prefix}: [{data_type}][{subtype}] An error"
+                        f" occurred while generating CEF data for field:"
+                        f' "{name}". Field will be ignored. Error: {err}'
+                    ),
+                    details=str(traceback.format_exc()),
                 )
                 continue
 
             # Validate and sanitise (if required) the incoming value
             # from Netskope before mapping it CEF
             try:
-                sanitized_value = self.valid_extensions[name].sanitizer(value, name)
+                sanitized_value = self.valid_extensions[field_key].sanitizer(
+                    value, name
+                )
                 if isinstance(sanitized_value, str):
                     sanitized_value = self._equals_escaper(sanitized_value)
 
-                extension_strs[self.valid_extensions[name].key_name] = sanitized_value
+                extension_strs[self.valid_extensions[field_key].key_name] = (
+                    sanitized_value
+                )
             except KeyError:
                 self.logger.warn(
-                    "{}: [{}][{}]- An error occurred while generating "
-                    'CEF data for field: "{}". Could not find the field in '
-                    'the "valid_extensions". Field will be ignored.'.format(
-                        self.log_prefix, data_type, subtype, name
-                    )
+                    message=(
+                        f"{self.log_prefix}: [{data_type}][{subtype}] An error"
+                        f" occurred while generating CEF data for field:"
+                        f' "{name}". Could not find the field in the'
+                        ' "valid_extensions". Field will be ignored.'
+                    ),
+                    details=str(traceback.format_exc()),
                 )
             except Exception as err:
                 self.logger.warn(
-                    "{}: [{}][{}]- An error occurred while generating CEF "
-                    'data for field: "{}". Error: {}. '
-                    "Field will be ignored.".format(
-                        self.log_prefix, data_type, subtype, name, err
-                    )
+                    message=(
+                        f"{self.log_prefix}: [{data_type}][{subtype}] An error"
+                        f" occurred while generating CEF data for field:"
+                        f' "{name}". Field will be ignored. Error: {err}'
+                    ),
+                    details=str(traceback.format_exc()),
                 )
 
         possible_headers = [
@@ -288,11 +319,13 @@ class CEFGenerator(object):
                                 str(headers[header]).lower(), SEVERITY_UNKNOWN
                             )
 
-                    cef_components.append(self.get_header_value(header, headers))
+                    cef_components.append(
+                        self.get_header_value(header, headers)
+                    )
 
                 except Exception as err:
                     self.logger.warn(
-                        "{}: [{}][{}]- An error occurred while generating "
+                        "{}: [{}][{}] An error occurred while generating "
                         'CEF data for header field: "{}". Error: {}. '
                         "Field will be ignored.".format(
                             self.log_prefix, data_type, subtype, header, err

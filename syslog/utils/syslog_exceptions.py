@@ -32,6 +32,12 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 Exception class for syslog plugin."""
 
 
+class SyslogPluginError(Exception):
+    """CEF Format Error class."""
+
+    pass
+
+
 class FormatCEFError(Exception):
     """CEF Format Error class."""
 

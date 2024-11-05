@@ -1,0 +1,46 @@
+{
+  "name": "Mimecast",
+  "id": "mimecast_ztre",
+  "version": "1.0.0",
+  "module": "CRE",
+  "minimum_version": "5.1.0",
+  "description": "This plugin is used to fetch users from Mimecast platform > Awareness Training > Reporting and Insights > Risk Center > View Details page. This plugin supports performing actions such as Add to Group, Remove from Group and No Action.\n\n CRE score grading scheme: Grade A: 800, Grade B: 600, Grade C: 400, Grade D: 200, Grade F: 1.",
+  "configuration": [
+    {
+      "label": "Base URL",
+      "key": "url",
+      "type": "text",
+      "default": "https://us-api.mimecast.com",
+      "mandatory": true,
+      "description": "The Mimecast API Instance URL, which includes the region information."
+    },
+    {
+      "label": "Application ID",
+      "key": "app_id",
+      "type": "text",
+      "mandatory": true,
+      "description": "Mimecast API Application ID. To generate the Application ID, go to Services > API Applications."
+    },
+    {
+      "label": "Application Key",
+      "key": "app_key",
+      "type": "password",
+      "mandatory": true,
+      "description": "Mimecast API Application Key. To generate the Application Key, go to Services > API Applications."
+    },
+    {
+      "label": "Access Key",
+      "key": "access_key",
+      "type": "password",
+      "mandatory": true,
+      "description": "Mimecast API Access Key. To obtain the Access Key, go to Services > API Applications."
+    },
+    {
+      "label": "Secret Key",
+      "key": "secret_key",
+      "type": "password",
+      "mandatory": true,
+      "description": "Mimecast API Secret Key. To obtain the Secret Key, go to Services > API Applications."
+    }
+  ]
+}

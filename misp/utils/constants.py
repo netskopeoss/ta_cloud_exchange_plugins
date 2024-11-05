@@ -32,15 +32,19 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 CTE MISP Constants module.
 """
 
-TYPES = {
-    "md5": "md5",
-    "sha256": "sha256",
-    "ip-src": "url",
-    "url": "url",
-    "domain": "url",
-}
-
-ATTRIBUTE_TYPES = ["md5", "sha256", "ip-src", "url", "domain"]
+ATTRIBUTE_TYPES = [
+    "md5",
+    "sha256",
+    "ip-src",
+    "ip-src|port",
+    "ip-dst",
+    "ip-dst|port",
+    "url",
+    "domain",
+    "domain|ip",
+    "hostname",
+    "hostname|port",
+]
 
 
 ATTRIBUTE_CATEGORIES = [
@@ -64,7 +68,7 @@ ATTRIBUTE_CATEGORIES = [
 PLATFORM_NAME = "MISP"
 PLUGIN_NAME = "MISP"
 MODULE_NAME = "CTE"
-PLUGIN_VERSION = "1.4.0"
+PLUGIN_VERSION = "1.5.0"
 BATCH_SIZE = 2500
 MAX_API_CALLS = 4
 DEFAULT_WAIT_TIME = 60
@@ -72,11 +76,11 @@ INTEGER_THRESHOLD = 4611686018427387904
 MAX_LOOK_BACK = 8760
 BIFURCATE_INDICATOR_TYPES = {
     "url",
-    "domain",
-    "hostname",
     "ipv4",
     "ipv6",
-    "fqdn",
 }
+RETRACTION = "Retraction"
 DEFAULT_IOC_TAG = "netskope-ce"
+SHARING_TAG_CONSTANT = "Netskope CE"
 PULL_PAGE_SIZE = 1000
+RETRACTION_BATCH = 10000

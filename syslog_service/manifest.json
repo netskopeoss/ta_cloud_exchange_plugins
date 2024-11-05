@@ -1,0 +1,53 @@
+{
+  "name": "Cloud Exchange Logs",
+  "description": "This plugin is used to pull logs of type Debug, Information, Warning and Error from Cloud Exchange Logs. This plugin can be used as a source plugin which can be used to ingest data to the Third Party platforms.",
+  "id": "syslog_service",
+  "pulling_supported": true,
+  "receiving_supported": false,
+  "netskope": true,
+  "version": "2.0.0",
+  "minimum_version": "5.1.0",
+  "module": "CLS",
+  "mapping": "",
+  "types": [
+    "logs"
+  ],
+  "configuration": [
+    {
+      "label": "Log Types",
+      "key": "logs_type",
+      "type": "multichoice",
+      "choices": [
+        {
+          "key": "Debug",
+          "value": "debug"
+        },
+        {
+          "key": "Information",
+          "value": "info"
+        },
+        {
+          "key": "Warning",
+          "value": "warning"
+        },
+        {
+          "key": "Error",
+          "value": "error"
+        }
+      ],
+      "default": [
+        "error"
+      ],
+      "mandatory": true,
+      "description": "Types of the logs to fetch."
+    },
+    {
+      "label": "Initial Range (in days)",
+      "key": "days",
+      "type": "number",
+      "mandatory": true,
+      "default": 7,
+      "description": "Number of days to pull the log data for the initial run."
+    }
+  ]
+}

@@ -1,0 +1,60 @@
+{
+  "name": "CrowdStrike",
+  "description": "This plugin fetches hosts and their respective ZTA scores from the **Host Setup and Management > Host Management** page on the CrowdStrike tenant. It also supports the **Put RTR Script** action on hosts.\n\n Netskope normalization score calculation => CrowdStrike host assessment overall score * 10.",
+  "minimum_version": "5.1.0",
+  "id": "crowdstrike_ztre",
+  "version": "1.0.0",
+  "module": "CRE",
+  "configuration": [
+    {
+      "label": "Base URL",
+      "key": "base_url",
+      "type": "choice",
+      "choices": [
+        {
+          "key": "Commercial cloud (api.crowdstrike.com)",
+          "value": "https://api.crowdstrike.com"
+        },
+        {
+          "key": "US 2 (api.us-2.crowdstrike.com)",
+          "value": "https://api.us-2.crowdstrike.com"
+        },
+        {
+          "key": "Falcon on GovCloud (api.laggar.gcw.crowdstrike.com)",
+          "value": "https://api.laggar.gcw.crowdstrike.com"
+        },
+        {
+          "key": "EU cloud (api.eu-1.crowdstrike.com)",
+          "value": "https://api.eu-1.crowdstrike.com"
+        }
+      ],
+      "default": "https://api.crowdstrike.com",
+      "mandatory": true,
+      "description": "Base URL of CrowdStrike instance. e.g. https://api.crowdstrike.com"
+    },
+    {
+      "label": "Client ID",
+      "key": "client_id",
+      "type": "text",
+      "default": "",
+      "mandatory": true,
+      "description": "Client ID generated from the CrowdStrike platform. Client ID can be generated from the 'Support and resources > API clients and keys' page."
+    },
+    {
+      "label": "Client Secret",
+      "key": "client_secret",
+      "type": "password",
+      "default": "",
+      "mandatory": true,
+      "description": "Client Secret generated from the CrowdStrike platform. Client Secret can be generated from the 'Support and resources > API clients and keys' page."
+    },
+    {
+      "label": "Maximum Score",
+      "key": "maximum_score",
+      "type": "number",
+      "default": 20,
+      "mandatory": true,
+      "description": "Only the host(s) with score less than or equal to the Maximum Score will be tracked. Value should be an integer in range of 1 to 100."
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "name": "Infoblox BloxOne",
+  "description": "This plugin is used to fetch applications data from **Monitor > Reports > Security > Application Discovery > All Applications** and devices from **Configure > Security > Endpoints** page of the Infoblox BloxOne platform. This plugin supports performing Update application status action on the applications and doesn't support any action on the devices.",
+  "id": "infoblox_cre",
+  "minimum_version": "5.1.0",
+  "version": "1.0.0",
+  "module": "CRE",
+  "configuration": [
+    {
+      "label": "Base URL",
+      "key": "base_url",
+      "type": "text",
+      "mandatory": true,
+      "description": "API Base URL of Infoblox BloxOne instance. e.g. https://csp.infoblox.com"
+    },
+    {
+      "label": "API Key",
+      "key": "api_key",
+      "type": "password",
+      "default": "",
+      "mandatory": false,
+      "description": "API Key generated from the Infoblox BloxOne instance. API Key can be generated from 'Profile > User API Keys' page."
+    }
+  ]
+}

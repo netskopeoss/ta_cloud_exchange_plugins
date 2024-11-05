@@ -32,6 +32,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 CTE Illumio plugin exceptions.
 """
 
+
 class IllumioPluginException(Exception):
     """Illumio plugin custom exception class."""
+
     pass

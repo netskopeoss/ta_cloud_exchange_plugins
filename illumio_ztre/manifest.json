@@ -1,0 +1,58 @@
+{
+  "name": "Illumio",
+  "id": "illumio_ztre",
+  "version": "1.0.0",
+  "minimum_version": "5.1.0",
+  "module": "CRE",
+  "description": "This plugin is used to fetch hosts from **Illumio > Servers and Endpoints > Workloads**. This plugin does not support any actions on hosts.",
+  "configuration": [
+    {
+      "label": "PCE URL",
+      "key": "pce_url",
+      "type": "text",
+      "default": "",
+      "mandatory": true,
+      "description": "Base URL of your Illumio Platform - e.g. https://my.pce.com"
+    },
+    {
+      "label": "PCE Port Number",
+      "key": "pce_port",
+      "type": "number",
+      "default": 443,
+      "mandatory": true,
+      "description": "PCE port number - use 443 for SaaS instances."
+    },
+    {
+      "label": "PCE Organization ID",
+      "key": "org_id",
+      "type": "number",
+      "default": 1,
+      "mandatory": true,
+      "description": "Illumio PCE Organization ID from My API Keys."
+    },
+    {
+      "label": "API Authentication Username",
+      "key": "api_username",
+      "type": "text",
+      "default": "",
+      "mandatory": true,
+      "description": "API Authentication Username generated on the Illumio PCE from My API Keys."
+    },
+    {
+      "label": "API Secret",
+      "key": "api_secret",
+      "type": "password",
+      "default": "",
+      "mandatory": true,
+      "description": "API Secret generated on the Illumio PCE from My API Keys."
+    },
+    {
+      "label": "Label Scope",
+      "key": "label_scope",
+      "type": "text",
+      "default": "",
+      "mandatory": true,
+      "description": "One or more label key/value pairs that make up the policy scope for threat workloads. Must be of the format key1:value1,key2:value2,... For example: env:Quarantine,loc:ca"
+    }
+  ]
+}

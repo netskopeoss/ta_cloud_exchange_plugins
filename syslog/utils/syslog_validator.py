@@ -64,6 +64,11 @@ class SyslogValidator(object):
                     return False
                 return True
             except ValueError:
+                err_msg = "Validation error occurred."
+                self.logger.error(
+                    message=f"{self.log_prefix}: {err_msg}",
+                    details=str(traceback.format_exc()),
+                )
                 return False
         else:
             return False
@@ -146,7 +151,9 @@ class SyslogValidator(object):
             self.logger.error(
                 message=(
                     "{}: Validation error occurred. "
-                    "Error: validating JSON schema: {}".format(self.log_prefix, err)
+                    "Error: validating JSON schema: {}".format(
+                        self.log_prefix, err
+                    )
                 ),
                 details=str(traceback.format_exc()),
             )
@@ -189,12 +196,13 @@ class SyslogValidator(object):
         try:
             if self.validate_mapping_schema(mappings):
                 return True
-
-        except Exception as err:
+        except Exception:
+            err_msg = "Validation error occurred."
             self.logger.error(
-                message=f"{self.log_prefix}: Validation error occurred. Error: {err}",
+                message=f"{self.log_prefix}: {err_msg}",
                 details=str(traceback.format_exc()),
             )
+            return False
 
         return False
 
@@ -209,14 +217,22 @@ class SyslogValidator(object):
             True in case of valid value, False otherwise
         """
         try:
-            csviter = csv.DictReader(io.StringIO(valid_extensions), strict=True)
+            csviter = csv.DictReader(
+                io.StringIO(valid_extensions), strict=True
+            )
             headers = next(csviter)
 
             if all(
-                header in headers for header in ["CEF Key Name", "Length", "Data Type"]
+                header in headers
+                for header in ["CEF Key Name", "Length", "Data Type"]
             ):
                 return True
         except Exception:
+            err_msg = "Validation error occurred."
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg}",
+                details=str(traceback.format_exc()),
+            )
             return False
 
         return False

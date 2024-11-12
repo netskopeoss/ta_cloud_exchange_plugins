@@ -189,8 +189,9 @@ class SSLSysLogHandler(logging.handlers.SysLogHandler):
                 self.socket.write(str.encode(msg))
             except (KeyboardInterrupt, SystemExit):
                 raise
-            except Exception:
+            except Exception as err:
                 self.handleError(record)
+                raise err
         else:
             try:
                 msg = self.format(record)
@@ -218,5 +219,6 @@ class SSLSysLogHandler(logging.handlers.SysLogHandler):
                     self.socket.sendto(msg, self.address)
                 else:
                     self.socket.sendall(msg)
-            except Exception:
+            except Exception as err:
                 self.handleError(record)
+                raise err

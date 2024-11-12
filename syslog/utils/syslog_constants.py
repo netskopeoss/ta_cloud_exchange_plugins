@@ -33,9 +33,8 @@ Syslog Plugin constants."""
 
 PLATFORM_NAME = "Syslog"
 MODULE_NAME = "CLS"
-PLUGIN_VERSION = "3.2.1"
+PLUGIN_VERSION = "3.2.2"
 
-SYSLOG_FORMATS = ["CEF"]
 SYSLOG_PROTOCOLS = ["UDP", "TCP", "TLS"]
 
 SEVERITY_LOW = "Low"

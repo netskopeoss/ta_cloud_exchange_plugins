@@ -1,3 +1,7 @@
+# 1.2.1
+## Added
+- Added tags for Security Label, Associated Group, Associated Case, Associated Artifacts, Owner, and Private Flag when pulling IoCs.
+
 # 1.2.0
 ## Added
 - Added support to bifurcate the URL by types (Hostname, IPv4, IPv6 & URL) starting from CE v5.0.1.

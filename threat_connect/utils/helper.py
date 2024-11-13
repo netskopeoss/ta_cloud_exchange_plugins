@@ -32,28 +32,30 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 CTE ThreatConnect plugin helper module.
 """
 
+import base64
+import hashlib
+import hmac
 import json
 import time
-import requests
 import traceback
+from typing import Dict, Tuple, Union
 
-
-from typing import Dict, Union
-
-
+import requests
 from netskope.common.utils import add_user_agent
-
+from requests.exceptions import ReadTimeout
 
 from .constants import (
     DEFAULT_WAIT_TIME,
     MAX_RETRY,
     MODULE_NAME,
+    PLATFORM_NAME,
     PLUGIN_NAME,
 )
 
 
 class ThreatConnectException(Exception):
     """ThreatConnect plugin custom exception class."""
+
     pass
 
 
@@ -70,8 +72,7 @@ class ThreatConnectPluginHelper(object):
         log_prefix: str,
         plugin_name: str,
         plugin_version: str,
-        ssl_validation,
-        proxy,
+        configuration: Dict,
     ):
         """ThreatConnectPluginHelper initializer.
         Args:
@@ -84,8 +85,7 @@ class ThreatConnectPluginHelper(object):
         self.log_prefix = log_prefix
         self.plugin_name = plugin_name
         self.plugin_version = plugin_version
-        self.verify = ssl_validation
-        self.proxies = proxy
+        self.configuration = configuration
 
     def _add_user_agent(self, headers: Union[Dict, None] = None) -> Dict:
         """Add User-Agent in the headers for third-party requests.
@@ -119,6 +119,9 @@ class ThreatConnectPluginHelper(object):
         json=None,
         is_handle_error_required=True,
         is_validation=False,
+        verify: bool = True,
+        regenerate_auth_token: bool = True,
+        proxies: Dict = {},
     ):
         """API Helper perform API request to ThirdParty platform
         and captures all the possible errors for requests.
@@ -137,7 +140,10 @@ class ThreatConnectPluginHelper(object):
             log_header = {
                 key: value
                 for key, value in headers.items()
-                if key not in {"Authorization", }
+                if key
+                not in {
+                    "Authorization",
+                }
             }
             debug_log_msg = (
                 f"{self.log_prefix}: API Request for {logger_msg}."
@@ -156,8 +162,8 @@ class ThreatConnectPluginHelper(object):
                     params=params,
                     data=data,
                     headers=headers,
-                    verify=self.verify,
-                    proxies=self.proxies,
+                    verify=verify,
+                    proxies=proxies,
                     json=json,
                 )
                 self.logger.debug(
@@ -165,6 +171,39 @@ class ThreatConnectPluginHelper(object):
                     f"{logger_msg}. Method={method}, "
                     f"Status Code={response.status_code}."
                 )
+                if (
+                    response.status_code == 401
+                    and regenerate_auth_token
+                    and not is_validation
+                ):
+                    self.logger.debug(
+                        f"{self.log_prefix}: Received exit code 401, "
+                        f"Unauthorized access. Regenerating API Token."
+                    )
+                    (base_url, access_id, secret_key) = self.get_credentials(
+                        self.configuration
+                    )
+                    auth_header = self.get_headers_for_auth(
+                        api_path=url.replace(base_url, ""),
+                        access_id=access_id,
+                        secret_key=secret_key,
+                        request_type=method,
+                    )
+                    headers.update(auth_header)
+                    return self.api_helper(
+                        logger_msg=logger_msg,
+                        url=url,
+                        method=method,
+                        params=params,
+                        headers=headers,
+                        json=json,
+                        is_handle_error_required=is_handle_error_required,
+                        is_validation=is_validation,
+                        verify=verify,
+                        regenerate_auth_token=False,
+                        proxies=proxies,
+                    )
+
                 if (
                     response.status_code == 429
                     or 500 <= response.status_code <= 600
@@ -182,7 +221,7 @@ class ThreatConnectPluginHelper(object):
                         )
                         self.logger.error(
                             message=f"{self.log_prefix}: {err_msg}",
-                            details=str(response.text),
+                            details=f"API Response: {response.text}",
                         )
                         raise ThreatConnectException(err_msg)
                     self.logger.error(
@@ -197,55 +236,92 @@ class ThreatConnectPluginHelper(object):
                                 MAX_RETRY - 1 - retry_counter,
                             )
                         ),
-                        details=str(response.text),
+                        details=f"API Response: {response.text}",
                     )
                     time.sleep(DEFAULT_WAIT_TIME)
                 else:
                     return (
                         self.handle_error(
-                            response, logger_msg, is_handle_error_required
+                            response,
+                            logger_msg,
+                            is_validation,
                         )
                         if is_handle_error_required
                         else response
                     )
 
-        except requests.exceptions.ProxyError as error:
-            err_msg = (
-                f"Proxy error occurred while {logger_msg}. Verify the "
-                "provided proxy configuration."
-            )
+        except ThreatConnectException:
+            raise
+        except ReadTimeout as error:
+            err_msg = f"Read Timeout error occurred while {logger_msg}."
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {error}",
                 details=str(traceback.format_exc()),
+            )
+            raise ThreatConnectException(err_msg)
+        except requests.exceptions.ProxyError as error:
+            err_msg = (
+                f"Proxy error occurred while {logger_msg}. Verify the"
+                " proxy configuration provided."
+            )
+            if is_validation:
+                err_msg = (
+                    "Proxy error occurred. Verify "
+                    "the proxy configuration provided."
+                )
+
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg} Error: {error}",
+                details=traceback.format_exc(),
             )
             raise ThreatConnectException(err_msg)
         except requests.exceptions.ConnectionError as error:
             err_msg = (
-                f"Unable to establish connection with {self.plugin_name} "
-                f"while {logger_msg}."
+                f"Unable to establish connection with {PLATFORM_NAME} "
+                f"platform while {logger_msg}. Proxy server or "
+                f"{PLATFORM_NAME} server is not reachable."
             )
+            if is_validation:
+                err_msg = (
+                    f"Unable to establish connection with {PLATFORM_NAME} "
+                    f"platform. Proxy server or {PLATFORM_NAME}"
+                    " server is not reachable."
+                )
+
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {error}",
-                details=str(traceback.format_exc()),
+                details=traceback.format_exc(),
             )
             raise ThreatConnectException(err_msg)
         except requests.HTTPError as err:
-            err_msg = f"HTTP Error occurred while {logger_msg}."
+            err_msg = f"HTTP error occurred while {logger_msg}."
+            if is_validation:
+                err_msg = (
+                    "HTTP error occurred. Verify"
+                    " configuration parameters provided."
+                )
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {err}",
-                details=str(traceback.format_exc()),
+                details=traceback.format_exc(),
             )
             raise ThreatConnectException(err_msg)
-        except ThreatConnectException:
-            raise
         except Exception as exp:
-            err_msg = (
-                f"Unexpected error occurred while {logger_msg}."
-                f" Error: {str(exp)}"
-            )
+            err_msg = f"Unexpected error occurred while {logger_msg}."
+            if is_validation:
+                err_msg = (
+                    "Unexpected error while performing "
+                    f"API call to {PLATFORM_NAME}."
+                )
+                self.logger.error(
+                    message=f"{self.log_prefix}: {err_msg} Error: {exp}",
+                    details=traceback.format_exc(),
+                )
+                raise ThreatConnectException(
+                    f"{err_msg} Check logs for more details."
+                )
             self.logger.error(
-                message=f"{self.log_prefix}: {err_msg}",
-                details=str(traceback.format_exc()),
+                message=f"{self.log_prefix}: {err_msg} Error: {exp}",
+                details=traceback.format_exc(),
             )
             raise ThreatConnectException(err_msg)
 
@@ -313,6 +389,7 @@ class ThreatConnectPluginHelper(object):
             HTTPError: When the response code is not 200.
         """
         status_code = resp.status_code
+
         validation_msg = (
             "Verify the Base URL, Access ID, Secret Key "
             " provided in configuration parameters."
@@ -336,7 +413,7 @@ class ThreatConnectPluginHelper(object):
                     f"{self.log_prefix}: Received exit code {status_code}, "
                     f"{err_msg} while {logger_msg}."
                 ),
-                details=str(resp.text),
+                details=f"API Response: {resp.text}",
             )
             if is_validation:
                 err_msg = err_msg + "." + validation_msg
@@ -352,8 +429,54 @@ class ThreatConnectPluginHelper(object):
                     f"{self.log_prefix}: Received exit code {status_code}, "
                     f"{err_msg} while {logger_msg}."
                 ),
-                details=str(resp.text),
+                details=f"API Response: {resp.text}",
             )
             if is_validation:
                 err_msg = err_msg + "." + validation_msg
             raise ThreatConnectException(err_msg)
+
+    def get_credentials(self, configuration: Dict) -> Tuple:
+        """Get API Credentials.
+        Args:
+            configuration (Dict): Configuration Dictionary.
+        Returns:
+            Tuple: Tuple containing Base URL, Access ID, Secret Key.
+        """
+        return (
+            configuration.get("base_url", "").strip().strip("/"),
+            configuration.get("access_id", "").strip(),
+            configuration.get("secret_key", ""),
+        )
+
+    def get_headers_for_auth(
+        self, api_path: str, access_id: str, secret_key: str, request_type: str
+    ) -> Dict:
+        """Return header for authentication.
+
+        Args:
+            - api_path (str): API path.
+            - access_id (str): Access ID.
+            - secret_key (str): Secret key.
+            - request_type (str): Request type.
+
+        Returns:
+            - dict: Header for authentication.
+        """
+        unix_epoch_time = int(time.time())
+        api_path = f"{api_path}:{request_type}:{unix_epoch_time}"
+        bytes_api_path = bytes(api_path, "utf-8")
+        bytes_secret_key = bytes(secret_key, "utf-8")
+
+        # HMAC-SHA256
+        dig = hmac.new(
+            bytes_secret_key, msg=bytes_api_path, digestmod=hashlib.sha256
+        ).digest()
+
+        # BASE64 ENCODE
+        hmac_sha256 = base64.b64encode(dig).decode()
+        signature = f"TC {access_id}:{hmac_sha256}"
+        header = {
+            "Authorization": str(signature),
+            "Timestamp": str(unix_epoch_time),
+        }
+        return header

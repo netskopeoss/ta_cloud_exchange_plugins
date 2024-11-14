@@ -1,0 +1,33 @@
+{
+  "name": "Rubrik",
+  "id": "rubrik",
+  "version": "1.0.0",
+  "description": "This plugin is used to push IOCs of type MD5, and SHA256 to the Threat Hunt page, and doesn't support pulling of IOCs from Rubrik. This plugin supports performing 'Start Threat Hunt' action.",
+  "patch_supported": true,
+  "configuration": [
+    {
+      "label": "Base URL",
+      "key": "base_url",
+      "type": "text",
+      "default": "",
+      "mandatory": true,
+      "description": "Base URL of your Rubrik instance - e.g. https://rubrik01.rubrikdemo.com"
+    },
+    {
+      "label": "Client ID",
+      "key": "client_id",
+      "type": "text",
+      "default": "",
+      "mandatory": true,
+      "description": "Client ID generated from the Rubrik platform. To obtain the Client ID, a Service Account JSON needs to be generated. Navigate to Apps > Settings > Users and Access to generate it."
+    },
+    {
+      "label": "Client Secret",
+      "key": "client_secret",
+      "type": "password",
+      "default": "",
+      "mandatory": true,
+      "description": "Client Secret generated from the Rubrik platform. To obtain the Client Secret, a Service Account JSON needs to be generated. Navigate to Apps > Settings > Users and Access to generate it."
+    }
+  ]
+}

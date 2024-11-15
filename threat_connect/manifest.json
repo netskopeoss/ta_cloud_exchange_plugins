@@ -1,7 +1,7 @@
 {
   "name": "ThreatConnect",
   "id": "threat_connect",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "The ThreatConnect plugin is used to pull IoCs of type File (MD5 and SHA256), URL, Host and Address (IPv4 and IPv6) from the Indicators under the Intelligence Requirements from ThreatConnect. This plugin also supports sharing File (MD5 and SHA256), URL, Host and Address (IPv4 and IPv6) to the ThreatConnect's Group under the Intelligence Requirements using the Add to Group action.",
   "patch_supported": true,
   "push_supported": true,

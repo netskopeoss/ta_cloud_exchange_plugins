@@ -33,20 +33,20 @@ ThreatConnect Plugin implementation to pull the data from
 ThreatConnect Platform.
 """
 
-import base64
 import datetime
 import hashlib
-import hmac
 import json
 import re
-import time
 import traceback
 from ipaddress import IPv4Address, ip_address
 from typing import Dict, List, Tuple, Union
 from urllib.parse import quote, urlparse
 
 from netskope.integrations.cte.models import Indicator, IndicatorType, TagIn
-from netskope.integrations.cte.models.business_rule import Action, ActionWithoutParams
+from netskope.integrations.cte.models.business_rule import (
+    Action,
+    ActionWithoutParams,
+)
 from netskope.integrations.cte.plugin_base import (
     PluginBase,
     PushResult,
@@ -55,12 +55,15 @@ from netskope.integrations.cte.plugin_base import (
 from netskope.integrations.cte.utils import TagUtils
 
 from .utils.constants import (
+    BIFURCATE_INDICATOR_TYPES,
+    DATE_FORMAT,
     DEFAULT_CONFIDENCE,
     INDICATOR_TYPES,
     INTEGER_THRESHOLD,
     LIMIT,
     MODULE_NAME,
     PAGE_LIMIT,
+    PLATFORM_NAME,
     PLUGIN_NAME,
     PLUGIN_VERSION,
     PUSH_INDICATOR_FAILURE,
@@ -68,7 +71,6 @@ from .utils.constants import (
     SEVERITY_TO_RATING,
     TAG_NAME,
     THREAT_CONNECT_URLS,
-    BIFURCATE_INDICATOR_TYPES
 )
 from .utils.helper import ThreatConnectException, ThreatConnectPluginHelper
 
@@ -96,8 +98,7 @@ class ThreatConnectPlugin(PluginBase):
             log_prefix=self.log_prefix,
             plugin_name=self.plugin_name,
             plugin_version=self.plugin_version,
-            ssl_validation=self.ssl_validation,
-            proxy=self.proxy,
+            configuration=self.configuration,
         )
 
     def _get_plugin_info(self) -> Tuple[str, str]:
@@ -121,25 +122,14 @@ class ThreatConnectPlugin(PluginBase):
             )
         return PLUGIN_NAME, PLUGIN_VERSION
 
-    def _get_credentials(self, configuration: Dict) -> Tuple:
-        """Get API Credentials.
-        Args:
-            configuration (Dict): Configuration Dictionary.
-        Returns:
-            Tuple: Tuple containing Base URL, Access ID, Secret Key.
-        """
-        return (
-            configuration.get("base_url", "").strip().strip("/"),
-            configuration.get("access_id", "").strip(),
-            configuration.get("secret_key", ""),
-        )
-
     def check_url_domain_ip(self, ioc_value):
         """Categorize URL as Domain, IP or URL.
         This method is used for mapping the Netskope supported indicator type
         with ThreatConnect supported indicator type.
         """
-        regex_domain = "^((?!-)[A-Za-z0-9-]" + "{1,63}(?<!-)\\.)" + "+[A-Za-z]{2,6}"
+        regex_domain = (
+            "^((?!-)[A-Za-z0-9-]" + "{1,63}(?<!-)\\.)" + "+[A-Za-z]{2,6}"
+        )
         try:
             ip_address(ioc_value)
             return "Address"
@@ -148,39 +138,6 @@ class ThreatConnectPlugin(PluginBase):
                 return "Host"
             else:
                 return "URL"
-
-    def _get_headers_for_auth(
-        self, api_path: str, access_id: str, secret_key: str, request_type: str
-    ) -> Dict:
-        """Return header for authentication.
-
-        Args:
-            - api_path (str): API path.
-            - access_id (str): Access ID.
-            - secret_key (str): Secret key.
-            - request_type (str): Request type.
-
-        Returns:
-            - dict: Header for authentication.
-        """
-        unix_epoch_time = int(time.time())
-        api_path = f"{api_path}:{request_type}:{unix_epoch_time}"
-        bytes_api_path = bytes(api_path, "utf-8")
-        bytes_secret_key = bytes(secret_key, "utf-8")
-
-        # HMAC-SHA256
-        dig = hmac.new(
-            bytes_secret_key, msg=bytes_api_path, digestmod=hashlib.sha256
-        ).digest()
-
-        # BASE64 ENCODE
-        hmac_sha256 = base64.b64encode(dig).decode()
-        signature = f"TC {access_id}:{hmac_sha256}"
-        header = {
-            "Authorization": str(signature),
-            "Timestamp": str(unix_epoch_time),
-        }
-        return header
 
     def get_reputation(self, confidence: int = DEFAULT_CONFIDENCE) -> int:
         """Get reputation value based on confidence score.
@@ -210,28 +167,30 @@ class ThreatConnectPlugin(PluginBase):
         result_start = 0
         if self.last_run_at:
             last_run_time = self.last_run_at
-            last_run_time = last_run_time.strftime("%Y-%m-%dT%H:%M:%SZ")
+            last_run_time = last_run_time.strftime(DATE_FORMAT)
         else:
             last_run_time = datetime.datetime.now() - datetime.timedelta(
                 days=self.configuration.get("days")
             )
-            last_run_time = last_run_time.strftime("%Y-%m-%dT%H:%M:%SZ")
+            last_run_time = last_run_time.strftime(DATE_FORMAT)
         query = f"typeName IN {tuple(threat_type)}"
         query += f" AND lastModified >= '{last_run_time}'"
 
         filtered_string = "tql=" + quote(query)
-        api_url = f"{api_path}?sorting=lastModified%20asc&fields=tags&{filtered_string}"
+        fields_filter = "fields=tags&fields=associatedGroups&fields=associatedArtifacts&fields=associatedCases&fields=securityLabels"  # noqa
+        api_url = f"{api_path}?sorting=lastModified%20asc&{fields_filter}&{filtered_string}"  # noqa
         api_url += f"&resultStart={result_start}&resultLimit={LIMIT}"
         return api_url
 
-    def _create_tags(self, tags: List[dict]) -> (List[str], List[str]):
+    def _create_tags(self, tags: List[dict]) -> Union[List[str], List[str]]:
         """Create new tag(s) in database if required."""
         utils = TagUtils()
         tag_names, skipped_tags_val_err, skipped_tags = [], [], []
         for tag in tags:
             try:
-                if tag is not None and not utils.exists(tag.strip()):
-                    utils.create_tag(TagIn(name=tag.strip(), color="#ED3347"))
+                tag = tag.strip()
+                if tag and not utils.exists(tag):
+                    utils.create_tag(TagIn(name=tag, color="#ED3347"))
             except ValueError:
                 skipped_tags_val_err.append(tag)
             except Exception:
@@ -258,12 +217,14 @@ class ThreatConnectPlugin(PluginBase):
             query_endpoint = base_url + api_path
 
             # Get Headers.
-            headers = self._get_headers_for_auth(api_path, access_id, secret_key, "GET")
+            headers = self._api_helper.get_headers_for_auth(
+                api_path, access_id, secret_key, "GET"
+            )
 
             # Logger message
             logger_msg = (
-                f"Validating {PLUGIN_NAME} Access ID and Secret Key "
-                "configuration parameters."
+                f"validating {PLUGIN_NAME} Access ID and Secret Key "
+                "configuration parameters"
             )
             response = self._api_helper.api_helper(
                 logger_msg=logger_msg,
@@ -272,10 +233,15 @@ class ThreatConnectPlugin(PluginBase):
                 headers=headers,
                 is_handle_error_required=False,
                 is_validation=True,
+                verify=self.ssl_validation,
+                proxies=self.proxy,
             )
             resp_json = self._api_helper.parse_response(response)
             if response.status_code == 200:
-                msg = f"Successfully validated configuration for {PLUGIN_NAME} plugin."
+                msg = (
+                    f"Successfully validated configuration for {PLUGIN_NAME}"
+                    " plugin."
+                )
                 return True, msg
             elif response.status_code == 401:
                 err_msg = (
@@ -283,11 +249,12 @@ class ThreatConnectPlugin(PluginBase):
                     f"Verify {PLUGIN_NAME} Access ID, Secret Key or Base URL "
                     "provided in the configuration parameters."
                 )
-                return False, msg
+                return False, err_msg
             else:
                 err_msg = (
                     f"Received exit code {str(response.status_code)}, "
-                    "Please check logs for more details."
+                    f"while {logger_msg} Please check logs for"
+                    " more details."
                 )
                 self.logger.error(
                     message=f"{self.log_prefix}: {err_msg}",
@@ -304,7 +271,7 @@ class ThreatConnectPlugin(PluginBase):
             )
             return False, str(tc_err)
         except Exception as exp:
-            err_msg = "Unexpected error occurred. Please check logs for more details."
+            err_msg = "Unexpected error occurred while validating credentials."
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {str(exp)}",
                 details=str(traceback.format_exc()),
@@ -336,7 +303,9 @@ class ThreatConnectPlugin(PluginBase):
         Returns:
             - ValidationResult: Valid configuration fields or not.
         """
-        (base_url, access_id, secret_key) = self._get_credentials(configuration)
+        (base_url, access_id, secret_key) = self._api_helper.get_credentials(
+            configuration
+        )
         threat_types = configuration.get("threat_type", [])
         enable_tagging = configuration.get("enable_tagging")
         is_pull_required = configuration.get("is_pull_required")
@@ -347,45 +316,70 @@ class ThreatConnectPlugin(PluginBase):
         # Base URL
         if not bool(base_url):
             err_msg = "Base URL is a required configuration parameter."
-            self.logger.error(f"{self.log_prefix}: {validation_err_msg} {err_msg}")
+            self.logger.error(
+                f"{self.log_prefix}: {validation_err_msg} {err_msg}"
+            )
             return ValidationResult(success=False, message=err_msg)
         elif (
             not isinstance(base_url, str)
             or not self._validate_url(base_url)
             or "threatconnect" not in base_url
         ):
-            err_msg = "Invalid Base URL provided in the configuration parameter."
-            self.logger.error(f"{self.log_prefix}: {validation_err_msg} {err_msg}")
+            err_msg = (
+                "Invalid Base URL provided in the configuration parameter."
+            )
+            self.logger.error(
+                f"{self.log_prefix}: {validation_err_msg} {err_msg}"
+            )
             return ValidationResult(success=False, message=err_msg)
 
         # Access ID
         if not bool(access_id):
             err_msg = "Access ID is a required configuration parameter."
-            self.logger.error(f"{self.log_prefix}: {validation_err_msg} {err_msg}")
+            self.logger.error(
+                f"{self.log_prefix}: {validation_err_msg} {err_msg}"
+            )
             return ValidationResult(success=False, message=err_msg)
         elif not isinstance(access_id, str):
-            err_msg = "Invalid Access ID Provided in the configuration parameter."
-            self.logger.error(f"{self.log_prefix}: {validation_err_msg} {err_msg}")
+            err_msg = (
+                "Invalid Access ID Provided in the configuration parameter."
+            )
+            self.logger.error(
+                f"{self.log_prefix}: {validation_err_msg} {err_msg}"
+            )
             return ValidationResult(success=False, message=err_msg)
 
         # Secret Key
         if not bool(secret_key):
             err_msg = "Secret Key is a required configuration parameter."
-            self.logger.error(f"{self.log_prefix}: {validation_err_msg} {err_msg}")
+            self.logger.error(
+                f"{self.log_prefix}: {validation_err_msg} {err_msg}"
+            )
             return ValidationResult(success=False, message=err_msg)
         elif not isinstance(secret_key, str):
-            err_msg = "Invalid Secret Key is Provided in the configuration parameter."
-            self.logger.error(f"{self.log_prefix}: {validation_err_msg} {err_msg}")
+            err_msg = (
+                "Invalid Secret Key is Provided in the configuration"
+                " parameter."
+            )
+            self.logger.error(
+                f"{self.log_prefix}: {validation_err_msg} {err_msg}"
+            )
             return ValidationResult(success=False, message=err_msg)
 
         # Type of Threat Indicator(s) to pull
         if not bool(threat_types):
-            err_msg = "Type of Threat Indicator is required configuration parameter."
-            self.logger.error(f"{self.log_prefix}: {validation_err_msg} {err_msg}")
+            err_msg = (
+                "Type of Threat Indicator is required configuration parameter."
+            )
+            self.logger.error(
+                f"{self.log_prefix}: {validation_err_msg} {err_msg}"
+            )
             return ValidationResult(success=False, message=err_msg)
         elif not isinstance(threat_types, list):
             err_msg = "Invalid value provided for Type of Threat Indicator."
-            self.logger.error(f"{self.log_prefix}: {validation_err_msg} {err_msg}")
+            self.logger.error(
+                f"{self.log_prefix}: {validation_err_msg} {err_msg}"
+            )
             return ValidationResult(success=False, message=err_msg)
         elif not set(threat_types).issubset(INDICATOR_TYPES):
             available_types = ", ".join(INDICATOR_TYPES)
@@ -393,44 +387,60 @@ class ThreatConnectPlugin(PluginBase):
                 "Invalid value provided for Type of Threat Indicator. "
                 f"Available Values are: {available_types}"
             )
-            self.logger.error(f"{self.log_prefix}: {validation_err_msg} {err_msg}")
+            self.logger.error(
+                f"{self.log_prefix}: {validation_err_msg} {err_msg}"
+            )
             return ValidationResult(success=False, message=err_msg)
 
         # Enable Tagging
         if not bool(enable_tagging):
             err_msg = "Enable Tagging is a required configuration parameter."
-            self.logger.error(f"{self.log_prefix}: {validation_err_msg} {err_msg}")
+            self.logger.error(
+                f"{self.log_prefix}: {validation_err_msg} {err_msg}"
+            )
             return ValidationResult(success=False, message=err_msg)
         elif enable_tagging not in {"Yes", "No"}:
             err_msg = (
-                "Invalid value provided for Enable Tagging configuration parameter."
+                "Invalid value provided for Enable Tagging "
+                "configuration parameter."
             )
-            self.logger.error(f"{self.log_prefix}: {validation_err_msg} {err_msg}")
+            self.logger.error(
+                f"{self.log_prefix}: {validation_err_msg} {err_msg}"
+            )
             return ValidationResult(success=False, message=err_msg)
 
         # Enable Polling
         if not bool(is_pull_required):
             err_msg = "Enable Polling is a required configuration parameter."
-            self.logger.error(f"{self.log_prefix}: {validation_err_msg} {err_msg}")
+            self.logger.error(
+                f"{self.log_prefix}: {validation_err_msg} {err_msg}"
+            )
             return ValidationResult(success=False, message=err_msg)
         elif is_pull_required not in {"Yes", "No"}:
             err_msg = (
-                "Invalid value provided for Enable Polling configuration parameter."
+                "Invalid value provided for Enable Polling configuration"
+                " parameter."
             )
-            self.logger.error(f"{self.log_prefix}: {validation_err_msg} {err_msg}")
+            self.logger.error(
+                f"{self.log_prefix}: {validation_err_msg} {err_msg}"
+            )
             return ValidationResult(success=False, message=err_msg)
 
         # Initial Range
         if not bool(initial_range):
             err_msg = "Initial Range is a required configuration parameter."
-            self.logger.error(f"{self.log_prefix}: {validation_err_msg} {err_msg}")
+            self.logger.error(
+                f"{self.log_prefix}: {validation_err_msg} {err_msg}"
+            )
             return ValidationResult(success=False, message=err_msg)
         elif not isinstance(initial_range, int):
             err_msg = (
                 "Invalid Initial Range provided in the "
                 "configuration parameters."
             )
-            self.logger.error(f"{self.log_prefix}: {validation_err_msg} {err_msg}")
+            self.logger.error(
+                f"{self.log_prefix}: {validation_err_msg} {err_msg}"
+            )
             return ValidationResult(success=False, message=err_msg)
         elif initial_range < 0 or initial_range > INTEGER_THRESHOLD:
             err_msg = (
@@ -449,12 +459,15 @@ class ThreatConnectPlugin(PluginBase):
         """Create a MD5 Digest of configurations.
 
         Args:
-            - configuration (Dict): A dictionary containing configuration parameters.
+            - configuration (Dict): A dictionary containing configuration
+                parameters.
 
         Returns:
             - A string representation of MD5 hexdigest of configuration.
         """
-        base_url, access_id, secret_key = self._get_credentials(configuration)
+        base_url, access_id, secret_key = self._api_helper.get_credentials(
+            configuration
+        )
         threat_types = configuration.get("threat_type", [])
 
         config = {
@@ -492,8 +505,12 @@ class ThreatConnectPlugin(PluginBase):
             )
 
         if "Address" in threat_types:
-            indicator_types["ipv4"] = getattr(IndicatorType, "IPV4", IndicatorType.URL)
-            indicator_types["ipv6"] = getattr(IndicatorType, "IPV6", IndicatorType.URL)
+            indicator_types["ipv4"] = getattr(
+                IndicatorType, "IPV4", IndicatorType.URL
+            )
+            indicator_types["ipv6"] = getattr(
+                IndicatorType, "IPV6", IndicatorType.URL
+            )
 
         return indicator_types
 
@@ -505,7 +522,9 @@ class ThreatConnectPlugin(PluginBase):
             - Returns bool flag. True or False
         """
         # Create current configuration digest
-        current_config_digest = self._create_configuration_digest(self.configuration)
+        current_config_digest = self._create_configuration_digest(
+            self.configuration
+        )
 
         # Fetch previous configuration digest from storage
         config_digest = self.storage.get("config_digest")
@@ -557,6 +576,15 @@ class ThreatConnectPlugin(PluginBase):
             )
             return []
 
+    def _get_data_from_fields(
+        self, response_object: List[str], field
+    ) -> List[Dict]:
+        return [
+            object.get(field)
+            for object in response_object
+            if object.get(field)
+        ]
+
     def make_indicators(
         self,
         ioc_data: List[Dict],
@@ -567,13 +595,15 @@ class ThreatConnectPlugin(PluginBase):
 
         Args:
             - ioc_data (List[Dict]): List of Dictionary containing ioc details.
-            - indicator_types: A mapping of Indicator Types supported by netskope CE.
+            - indicator_types: A mapping of Indicator Types supported by
+                netskope CE.
             - enable_tagging (Bool): A boolean flag for enable/disable tagging.
 
         Returns:
             - indicators (List[Indicator]): List of Indicator model objects.
             - total_ioc (int): Total number of IoCs pulled.
-            - skipped_ioc (int): Total number of IoCs skipped while creating them.
+            - skipped_ioc (int): Total number of IoCs skipped while
+              creating them.
         """
         ioc_counts = {ioc_type: 0 for ioc_type in indicator_types}
         skipped_ioc_counts = {ioc_type: 0 for ioc_type in indicator_types}
@@ -584,6 +614,69 @@ class ThreatConnectPlugin(PluginBase):
 
         for indicator in ioc_data:
             try:
+                security_labels = []
+                associated_groups = []
+                associated_cases = []
+                associated_artifacts = []
+                private_tags = []
+                owner_tags = []
+                if enable_tagging:
+                    created_security_labels = self._get_data_from_fields(
+                        indicator.get("securityLabels", {}).get("data", []),
+                        "name",
+                    )
+                    security_labels = [
+                        f"Security Label-{label}"
+                        for label in created_security_labels
+                    ]
+                    created_associated_groups = self._get_data_from_fields(
+                        indicator.get("associatedGroups", {}).get("data", []),
+                        "name",
+                    )
+                    associated_groups = [
+                        f"Associated Group-{group}"
+                        for group in created_associated_groups
+                    ]
+                    created_associated_cases = self._get_data_from_fields(
+                        indicator.get("associatedCases", {}).get("data", []),
+                        "name",
+                    )
+
+                    associated_cases = [
+                        f"Associated Case-{case}"
+                        for case in created_associated_cases
+                    ]
+                    created_associated_artifacts = self._get_data_from_fields(
+                        indicator.get("associatedArtifacts", {}).get(
+                            "data", []
+                        ),
+                        "summary",
+                    )
+                    associated_artifacts = [
+                        f"Associated Artifact-{art}"
+                        for art in created_associated_artifacts
+                    ]
+
+                    private_flag = indicator.get("privateFlag")
+
+                    if private_flag:
+                        private_tags.append("Private")
+                    else:
+                        private_tags.append("Public")
+
+                    owner_name = indicator.get("ownerName", "")
+
+                    if owner_name:
+                        owner_name = f"Owner-{owner_name}"
+                        owner_tags.append(owner_name)
+                add_tags = (
+                    security_labels
+                    + associated_groups
+                    + associated_cases
+                    + associated_artifacts
+                    + owner_tags
+                    + private_tags
+                )
                 indicator_attr = {
                     "active": indicator.get("active", True),
                     "severity": RATING_TO_SEVERITY[indicator.get("rating", 0)],
@@ -605,7 +698,11 @@ class ThreatConnectPlugin(PluginBase):
                     continue
 
                 if enable_tagging:
-                    created, val_err, skipped = self._create_tags(tags)
+                    add_tags.extend(tags)
+                    created_tags, val_err, skipped = self._create_tags(
+                        add_tags
+                    )
+                    skipped_tags_due_to_val_err.extend(val_err)
                     skipped_tags.extend(skipped)
 
                 indicator_type = indicator["type"]
@@ -615,44 +712,74 @@ class ThreatConnectPlugin(PluginBase):
                     if "md5" in indicator:
                         try:
                             created, val_err, skipped = self._create_tags(
-                                ["ThreatConnect-File-MD5"]
+                                [f"{PLATFORM_NAME}-File-MD5"]
                             )
                             created_tags.extend(created)
                             skipped_tags.extend(skipped)
                             skipped_tags_due_to_val_err.extend(val_err)
 
                             indicators.append(
-                                Indicator(**{
-                                    "value": indicator["md5"],
-                                    "type": indicator_types["md5"],
-                                    "tags": created_tags,
-                                    **indicator_attr
-                                })
+                                Indicator(
+                                    **{
+                                        "value": indicator["md5"],
+                                        "type": indicator_types["md5"],
+                                        "tags": created_tags,
+                                        **indicator_attr,
+                                    }
+                                )
                             )
                             ioc_counts["md5"] += 1
-                        except Exception:
+                        except Exception as exp:
                             skipped_ioc_counts["md5"] += 1
+                            skipped_ioc += 1
+                            err_msg = (
+                                "Error occurred while creating the indicator "
+                                f"having Id {indicator.get('id')} hence this "
+                                "record will be skipped."
+                            )
+                            self.logger.error(
+                                message=(
+                                    f"{self.log_prefix}: {err_msg} Error:"
+                                    f" {exp}"
+                                ),
+                                details=traceback.format_exc(),
+                            )
 
                     if "sha256" in indicator:
                         try:
                             created, val_err, skipped = self._create_tags(
-                                ["ThreatConnect-File-SHA256"]
+                                [f"{PLATFORM_NAME}-File-SHA256"]
                             )
                             created_tags.extend(created)
                             skipped_tags.extend(skipped)
                             skipped_tags_due_to_val_err.extend(val_err)
 
                             indicators.append(
-                                Indicator(**{
-                                    "value": indicator["sha256"],
-                                    "type": indicator_types["sha256"],
-                                    "tags": created_tags,
-                                    **indicator_attr,
-                                })
+                                Indicator(
+                                    **{
+                                        "value": indicator["sha256"],
+                                        "type": indicator_types["sha256"],
+                                        "tags": created_tags,
+                                        **indicator_attr,
+                                    }
+                                )
                             )
                             ioc_counts["sha256"] += 1
-                        except Exception:
+                        except Exception as exp:
                             skipped_ioc_counts["sha256"] += 1
+                            skipped_ioc += 1
+                            err_msg = (
+                                "Error occurred while creating the indicator "
+                                f"having Id {indicator.get('id')} hence this "
+                                "record will be skipped."
+                            )
+                            self.logger.error(
+                                message=(
+                                    f"{self.log_prefix}: {err_msg} Error:"
+                                    f" {exp}"
+                                ),
+                                details=traceback.format_exc(),
+                            )
 
                 # IP Addresses (IPV4 & IPv6)
                 elif indicator_type == "Address":
@@ -660,10 +787,10 @@ class ThreatConnectPlugin(PluginBase):
                         if isinstance(
                             ip_address(indicator["ip"]), IPv4Address
                         ):
-                            tag_name = "ThreatConnect-Address-IPV4"
+                            tag_name = f"{PLATFORM_NAME}-Address-IPV4"
                             ioc_type = "ipv4"
                         else:
-                            tag_name = "ThreatConnect-Address-IPV6"
+                            tag_name = f"{PLATFORM_NAME}-Address-IPV6"
                             ioc_type = "ipv6"
 
                         created, val_err, skipped = self._create_tags(
@@ -686,33 +813,37 @@ class ThreatConnectPlugin(PluginBase):
                         ioc_counts[ioc_type] += 1
                     except Exception:
                         skipped_ioc_counts[ioc_type] += 1
+                        raise
 
                 # Domain
                 elif indicator_type == "Host":
                     try:
                         created, val_err, skipped = self._create_tags(
-                            ["ThreatConnect-Host"]
+                            [f"{PLATFORM_NAME}-Host"]
                         )
                         created_tags.extend(created)
                         skipped_tags.extend(skipped)
                         skipped_tags_due_to_val_err.extend(val_err)
 
                         indicators.append(
-                            Indicator(**{
-                                "value": indicator["hostName"],
-                                "type": indicator_types["hostname"],
-                                "tags": created_tags,
-                                **indicator_attr,
-                            })
+                            Indicator(
+                                **{
+                                    "value": indicator["hostName"],
+                                    "type": indicator_types["hostname"],
+                                    "tags": created_tags,
+                                    **indicator_attr,
+                                }
+                            )
                         )
                         ioc_counts["hostname"] += 1
                     except Exception:
                         skipped_ioc_counts["hostname"] += 1
+                        raise
 
                 # URL
                 elif indicator_type == "URL":
                     created, val_err, skipped = self._create_tags(
-                        ["ThreatConnect-URL"]
+                        [f"{PLATFORM_NAME}-URL"]
                     )
                     created_tags.extend(created)
                     skipped_tags.extend(skipped)
@@ -733,6 +864,7 @@ class ThreatConnectPlugin(PluginBase):
                             ioc_counts["url"] += 1
                         except Exception:
                             skipped_ioc_counts["url"] += 1
+                            raise
 
                 # Other types of Indicators supported by ThreatConnect
                 else:
@@ -758,24 +890,6 @@ class ThreatConnectPlugin(PluginBase):
                 skipped_ioc += 1
                 continue
 
-        if len(skipped_tags_due_to_val_err) > 0:
-            self.logger.info(
-                message=(
-                    f"{self.log_prefix}: {len(skipped_tags_due_to_val_err)} "
-                    "tag(s) skipped as they were longer than expected size: "
-                    f"({', '.join(set(skipped_tags_due_to_val_err))})"
-                )
-            )
-
-        if len(set(skipped_tags)) > 0:
-            self.logger.info(
-                message=(
-                    f"{self.log_prefix}: {len(skipped_tags)} tag(s) skipped "
-                    "as some failure occurred while creating these tags."
-                ),
-                details=f"Skipped Tags: ({', '.join(set(skipped_tags))})",
-            )
-
         pull_stats = ", ".join(
             [f"{key.upper()} = {str(val)}" for key, val in ioc_counts.items()]
         )
@@ -794,12 +908,15 @@ class ThreatConnectPlugin(PluginBase):
 
         total_ioc = sum(ioc_counts.values())
         total_skipped_ioc = sum(skipped_ioc_counts.values()) + skipped_ioc
-        total_skipped_tags = len(skipped_tags) + len(skipped_tags_due_to_val_err)
-        return indicators, total_ioc, total_skipped_ioc, total_skipped_tags
+        return (
+            indicators,
+            total_ioc,
+            total_skipped_ioc,
+            skipped_tags_due_to_val_err,
+            skipped_tags,
+        )
 
-    def _pull(
-        self, is_config_modified: bool
-    ) -> Union[List[Indicator], Dict]:
+    def _pull(self, is_config_modified: bool):
         """Fetch Data from ThreatConnect API.
 
         Args:
@@ -816,8 +933,9 @@ class ThreatConnectPlugin(PluginBase):
         next_page = True
         total_created_ioc = 0
         total_skipped_ioc = 0
-        total_skipped_tag = 0
+
         api_path = THREAT_CONNECT_URLS["indicators"]
+        skipped_tags, skipped_tags_val_err = set(), set()
 
         # Set enable_tagging flag.
         if self.configuration.get("enable_tagging") == "Yes":
@@ -825,9 +943,9 @@ class ThreatConnectPlugin(PluginBase):
         else:
             enable_tagging = False
 
-        (
-            base_url, access_id, secret_key
-        ) = self._get_credentials(self.configuration)
+        (base_url, access_id, secret_key) = self._api_helper.get_credentials(
+            self.configuration
+        )
 
         threat_types = self.configuration.get("threat_type", [])
         indicator_types = self._get_indicator_types(threat_types)
@@ -844,19 +962,16 @@ class ThreatConnectPlugin(PluginBase):
 
         if is_config_modified or not api_url:
             api_url = self.get_api_url(api_path, threat_types)
-
         while next_page:
             try:
                 logger_msg = (
-                    f"Pulling indicator(s) from page {page} for "
-                    f"{PLUGIN_NAME} plugin."
+                    f"pulling indicator(s) from page {page} for "
+                    f"{PLUGIN_NAME} plugin"
                 )
-
                 # Prepare headers
-                headers = self._get_headers_for_auth(
+                headers = self._api_helper.get_headers_for_auth(
                     api_url, access_id, secret_key, "GET"
                 )
-
                 # Update Indicator API Endpoint.
                 query_endpoint = base_url + api_url
                 ioc_response = self._api_helper.api_helper(
@@ -865,23 +980,30 @@ class ThreatConnectPlugin(PluginBase):
                     method="GET",
                     headers=headers,
                     is_handle_error_required=True,
+                    verify=self.ssl_validation,
+                    proxies=self.proxy,
                 )
                 ioc_data = ioc_response.get("data", [])
                 if ioc_data:
                     (
-                        indicators, created_ioc, skipped_ioc, skipped_tag
+                        indicators,
+                        created_ioc,
+                        skipped_ioc,
+                        page_skipped_tag_val_err,
+                        page_skipped_tag,
                     ) = self.make_indicators(
                         ioc_data, indicator_types, enable_tagging
                     )
 
                     total_created_ioc += created_ioc
                     total_skipped_ioc += skipped_ioc
-                    total_skipped_tag += skipped_tag
+                    skipped_tags_val_err.update(page_skipped_tag_val_err)
+                    skipped_tags.update(page_skipped_tag)
 
                     self.logger.info(
-                        f"{self.log_prefix}: Successfully fetched {created_ioc}"
-                        f" indicator(s) for page {page}. Total indicator(s) "
-                        f"fetched {total_created_ioc}."
+                        f"{self.log_prefix}: Successfully fetched "
+                        f"{created_ioc} indicator(s) for page {page}."
+                        f" Total indicator(s) fetched {total_created_ioc}."
                     )
 
                     # Set api_url for next page.
@@ -893,7 +1015,7 @@ class ThreatConnectPlugin(PluginBase):
                     if len(ioc_data) < LIMIT:
                         # Last page of the pull cycle.
                         next_page = False
-                        if self.storage and 'next_uri' in self.storage:
+                        if self.storage and "next_uri" in self.storage:
                             del self.storage["next_uri"]
                 else:
                     # case: status -> Success, return -> []
@@ -914,19 +1036,38 @@ class ThreatConnectPlugin(PluginBase):
                     )
 
                 if not next_page:
+                    if len(skipped_tags_val_err) > 0:
+                        self.logger.info(
+                            f"{self.log_prefix}: Skipped "
+                            f" {len(skipped_tags_val_err)} tag(s) as they"
+                            " were longer than expected size: "
+                            f"({', '.join(skipped_tags_val_err)})"
+                        )
+
+                    if len(set(skipped_tags)) > 0:
+                        self.logger.info(
+                            f"{self.log_prefix}: Skipped {len(skipped_tags)}"
+                            "  tag(s) as some failure occurred while "
+                            "creating these tags. Skipped Tags: "
+                            f"({', '.join(skipped_tags)})"
+                        )
                     message = (
                         f"{self.log_prefix}: Completed fetching indicators "
                         f"for the {PLUGIN_NAME} plugin. Total fetched "
                         f"{total_created_ioc} indicator(s), Total skipped "
                         f"{total_skipped_ioc} indicator(s), Total skipped "
-                        f"{total_skipped_tag} Tag(s)."
+                        f"{len(skipped_tags_val_err)+len(skipped_tags)}"
+                        " Tag(s)."
                     )
                     self.logger.info(message)
 
                 if hasattr(self, "sub_checkpoint"):
-                    yield indicators, {"next_uri": self.storage.get("next_uri")}
+                    yield indicators, {
+                        "next_uri": self.storage.get("next_uri")
+                    }
                 else:
                     yield indicators
+
             except ThreatConnectException as tc_err:
                 self.storage["next_uri"] = api_url
                 self.logger.error(
@@ -948,8 +1089,7 @@ class ThreatConnectPlugin(PluginBase):
                     f"resumed in the next pull cycle. Error: {exp}."
                 )
                 self.logger.error(
-                    message=err_msg,
-                    details=traceback.format_exc()
+                    message=err_msg, details=traceback.format_exc()
                 )
 
                 if not hasattr(self, "sub_checkpoint"):
@@ -967,14 +1107,17 @@ class ThreatConnectPlugin(PluginBase):
             str: Return group id.
         """
         group_names = self.get_group_names()
-        (base_url, access_id, secret_key) = self._get_credentials(self.configuration)
+        (base_url, access_id, secret_key) = self._api_helper.get_credentials(
+            self.configuration
+        )
 
         action_params = action_dict.get("parameters", {})
         if action_params.get("group_name", "") != "create_group":
             if action_params.get("group_name", "") not in group_names.values():
                 err_msg = (
                     "The group selected in the sharing configuration "
-                    f"no longer exists on {PLUGIN_NAME}, sharing will be skipped."
+                    f"no longer exists on {PLUGIN_NAME}, sharing "
+                    "will be skipped."
                 )
                 self.logger.error(f"{self.log_prefix}: {err_msg}")
                 raise ThreatConnectException(err_msg)
@@ -983,10 +1126,13 @@ class ThreatConnectPlugin(PluginBase):
         # Creating New Group
         api_path = THREAT_CONNECT_URLS["groups"]
         create_group_api = base_url + api_path
-        headers = self._get_headers_for_auth(api_path, access_id, secret_key, "POST")
-        if action_params.get("new_group_name", "").strip() not in group_names:
+        headers = self._api_helper.get_headers_for_auth(
+            api_path, access_id, secret_key, "POST"
+        )
+        new_group_name = action_params.get("new_group_name", "").strip()
+        if new_group_name not in group_names:
             data = {
-                "name": action_params.get("new_group_name", "").strip(),
+                "name": new_group_name,
                 "type": action_params.get("new_group_type", "").strip(),
                 "tags": {
                     "data": [
@@ -997,13 +1143,15 @@ class ThreatConnectPlugin(PluginBase):
             try:
                 response = self._api_helper.api_helper(
                     logger_msg=(
-                        f"Creating groups on {PLUGIN_NAME} platform using."
+                        f"creating groups on {PLUGIN_NAME} platform using"
                     ),
                     url=create_group_api,
                     method="POST",
                     headers=headers,
                     json=data,
                     is_handle_error_required=True,
+                    verify=self.ssl_validation,
+                    proxies=self.proxy,
                 )
 
                 status = response.get("status", "")
@@ -1012,34 +1160,40 @@ class ThreatConnectPlugin(PluginBase):
                     and "name" in response.get("data", {})
                     and "id" in response.get("data", {})
                 ):
-                    action_dict["parameters"]["group_name"] = response["data"]["name"]
-                    return response["data"]["id"]
+                    return response.get("data", {}).get("id")
                 else:
-                    err_msg = f"{self.log_prefix}: Error while creating a group."
-                    resp_msg = response.get("message", "Error message not available.")
-                    self.logger.error(
-                        message=err_msg, details=f"Error Message: {resp_msg}"
+                    err_msg = (
+                        f"Unable to created new group {new_group_name}"
+                        f" on {PLUGIN_NAME}."
                     )
+                    resp_msg = response.get(
+                        "message", "Error message not available."
+                    )
+                    self.logger.error(
+                        message=(
+                            f"{self.log_prefix}: {err_msg} "
+                            f"Error: {resp_msg}"
+                        ),
+                        details=f"API Response: {response}",
+                    )
+                    raise ThreatConnectException(err_msg)
             except ThreatConnectException as tc_err:
                 err_msg = (
                     f"Error occurred while creating group {data['name']} on "
                     f"{PLUGIN_NAME} platform."
                 )
                 self.logger.error(
-                    message=(
-                        f"{self.log_prefix}: {err_msg} "
-                        f"Exception: {str(tc_err)}"
-                    ),
-                    details=f"Traceback: {str(traceback.format_exc())}",
+                    message=f"{self.log_prefix}: {err_msg} Error: {tc_err}",
+                    details=str(traceback.format_exc()),
                 )
                 raise ThreatConnectException(err_msg)
             except Exception as exp:
                 err_msg = (
-                    f"Unexpected Error occurred while creating group "
+                    "Unexpected Error occurred while creating group "
                     f"{data['name']} on {PLUGIN_NAME} platform."
                 )
                 self.logger.error(
-                    message=f"{self.log_prefix}: {err_msg} Error: {str(exp)}",
+                    message=f"{self.log_prefix}: {err_msg} Error: {exp}",
                     details=str(traceback.format_exc()),
                 )
                 raise ThreatConnectException(err_msg)
@@ -1103,14 +1257,10 @@ class ThreatConnectPlugin(PluginBase):
             successful or not.
         """
         api_path = THREAT_CONNECT_URLS["update_indicators"].format(value=value)
-        (base_url, access_id, secret_key) = self._get_credentials(self.configuration)
-        url = base_url + api_path
-        headers = self._get_headers_for_auth(
-            api_path,
-            access_id,
-            secret_key,
-            "PUT",
+        (base_url, access_id, secret_key) = self._api_helper.get_credentials(
+            self.configuration
         )
+        url = base_url + api_path
         update_data = {
             "associatedGroups": {
                 "data": [
@@ -1121,8 +1271,14 @@ class ThreatConnectPlugin(PluginBase):
         }
         try:
             logger_msg = (
-                f"Updating indicator(s) on {PLUGIN_NAME} platform for "
+                f"updating indicator(s) on {PLUGIN_NAME} platform for "
                 f"Indicator Value: {value} and Group Id: {group_id}"
+            )
+            headers = self._api_helper.get_headers_for_auth(
+                api_path,
+                access_id,
+                secret_key,
+                "PUT",
             )
             response = self._api_helper.api_helper(
                 logger_msg=logger_msg,
@@ -1131,6 +1287,8 @@ class ThreatConnectPlugin(PluginBase):
                 headers=headers,
                 json=update_data,
                 is_handle_error_required=True,
+                verify=self.ssl_validation,
+                proxies=self.proxy,
             )
             status = response.get("status", "")
             return True if status == "Success" else False
@@ -1164,137 +1322,227 @@ class ThreatConnectPlugin(PluginBase):
         """
         try:
             existing_group_id = self.get_group_id(action_dict)
-            (base_url, access_id, secret_key) = self._get_credentials(
-                self.configuration
+        except ThreatConnectException:
+            raise
+        except Exception as exp:
+            err_msg = "Unexpected error occurred while getting group id."
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg} Error: {str(exp)}",
+                details=str(traceback.format_exc()),
+            )
+            raise ThreatConnectException(err_msg)
+
+        indicator_payloads = {}
+        invalid_ioc, indicator_pushed = 0, 0
+        skip_count, already_exists = 0, 0
+        total_ioc_received = 0
+        for indicator in indicators:
+            ioc_value = indicator.value
+            total_ioc_received += 1
+            if (
+                str(indicator.type.value) in BIFURCATE_INDICATOR_TYPES
+                and len(ioc_value) > 500
+            ):
+                invalid_ioc += 1
+                continue
+            try:
+                # Try to push indicator.
+                data, is_invalid_ioc = self.prepare_payload(
+                    indicator, existing_group_id
+                )
+                if is_invalid_ioc:
+                    invalid_ioc += 1
+                    continue
+                indicator_payloads.update({ioc_value: data})
+            except ThreatConnectException:
+                invalid_ioc += 1
+            except Exception as exp:
+                err_msg = (
+                    "Unexpected error occurred while preparing payload for "
+                    f"indicator value {ioc_value}. Hence skipping this value."
+                )
+                self.logger.error(
+                    message=f"{self.log_prefix}: {err_msg} Error: {str(exp)}",
+                    details=str(traceback.format_exc()),
+                )
+                invalid_ioc += 1
+        log_msg = (
+            f"Successfully created payload "
+            f"for {len(indicator_payloads)} indicator(s) out of "
+            f"{total_ioc_received} indicator(s) received from business "
+            f"rule for push/update to {PLATFORM_NAME} platform."
+        )
+        if invalid_ioc > 0:
+            log_msg += (
+                f" {invalid_ioc} indicator(s) were skipped because either the "
+                "indicator value exceeded the length limit of 500 characters "
+                " or the type of indicator is not supported by the platform."
+            )
+        self.logger.info(f"{self.log_prefix}: {log_msg}")
+
+        try:
+            (base_url, access_id, secret_key) = (
+                self._api_helper.get_credentials(self.configuration)
             )
             api_path = THREAT_CONNECT_URLS["indicators"]
             query_endpoint = base_url + api_path
-            invalid_ioc, indicator_pushed = 0, 0
-            already_exists = 0
-            self.logger.debug(
-                f"{self.log_prefix}: API URL to share the indicators: {query_endpoint}."
+            headers = self._api_helper.get_headers_for_auth(
+                api_path, access_id, secret_key, "POST"
             )
-            total_ioc_received = 0
-
-            for indicator in indicators:
-                total_ioc_received += 1
-                if (
-                    str(indicator.type.value) in BIFURCATE_INDICATOR_TYPES
-                    and len(indicator.value) > 500
-                ):
-                    invalid_ioc += 1
-                    continue
+            for ioc_value, ioc_payload in indicator_payloads.items():
                 try:
-                    # Try to push indicator.
-                    data, is_invalid_ioc = self.prepare_payload(
-                        indicator, existing_group_id
-                    )
-                    if is_invalid_ioc:
-                        invalid_ioc += 1
-                        continue
-                    headers = self._get_headers_for_auth(
-                        api_path, access_id, secret_key, "POST"
-                    )
                     logger_msg = (
-                        f"Pushing indicator on {PLUGIN_NAME} platform "
-                        f"having indicator value: {indicator.value}"
+                        f"pushing indicator with value '{ioc_value}' to "
+                        f"group ID '{existing_group_id}' on {PLATFORM_NAME}"
                     )
                     response = self._api_helper.api_helper(
                         logger_msg=logger_msg,
                         url=query_endpoint,
                         method="POST",
                         headers=headers,
-                        json=data,
-                        is_handle_error_required=True,
+                        json=ioc_payload,
+                        is_handle_error_required=False,
+                        verify=self.ssl_validation,
+                        proxies=self.proxy,
                     )
-
-                    resp_msg = response.get("message", "")
-                    # Push Successful
-                    if (
-                        response.get("status", "") == "Success"
-                        and resp_msg == "Created"
-                    ):
-                        indicator_pushed += 1
-                    # Already exists hence, update indicator
-                    elif resp_msg.endswith("already exists"):
-                        is_successful = self.update_ioc(
-                            indicator.value.upper(),
-                            data["associatedGroups"]["data"][0]["id"],
-                        )
-                        if is_successful:
-                            already_exists += 1
+                    if response.status_code in [200, 201]:
+                        resp_json = self._api_helper.parse_response(response)
+                        resp_msg = resp_json.get("message", "")
+                        # Push Successful
+                        if (
+                            resp_json.get("status", "") == "Success"
+                            and resp_msg == "Created"
+                        ):
+                            indicator_pushed += 1
+                        # Already exists hence, update indicator
+                        elif resp_msg.endswith("already exists"):
+                            is_successful = self.update_ioc(
+                                indicator.value.upper(),
+                                data["associatedGroups"]["data"][0]["id"],
+                            )
+                            if is_successful:
+                                already_exists += 1
+                            else:
+                                invalid_ioc += 1
+                        # Handling Push resp_json error message.
+                        elif (
+                            resp_msg.startswith("Please enter a valid")
+                            or resp_msg == PUSH_INDICATOR_FAILURE
+                        ):
+                            err_msg = (
+                                f"{self.log_prefix}: Failed to push indicator"
+                                f" with value {indicator.value} to group ID"
+                                f" '{PLATFORM_NAME}' Error: {resp_msg}."
+                            )
+                            self.logger.error(
+                                message=err_msg,
+                                details=f"API Response: {resp_json}",
+                            )
+                            invalid_ioc += 1
+                        # In case of Unknown response message,
+                        # mark it as failure.
+                        else:
+                            err_msg = (
+                                f"{self.log_prefix}: Failed to push indicator"
+                                f" with value '{indicator.value}' to group ID "
+                                f"'{existing_group_id}' on {PLATFORM_NAME}."
+                                f" Error: {resp_msg}."
+                            )
+                            self.logger.error(
+                                message=err_msg,
+                                details=f"API Response: {resp_json}",
+                            )
+                            invalid_ioc += 1
+                    elif response.status_code == 400:
+                        resp_json = self._api_helper.parse_response(response)
+                        if "already exists" in resp_json.get("message", ""):
+                            is_successful = self.update_ioc(
+                                indicator.value.upper(),
+                                data["associatedGroups"]["data"][0]["id"],
+                            )
+                            if is_successful:
+                                already_exists += 1
+                                continue
+                            else:
+                                invalid_ioc += 1
+                                self.logger.error(
+                                    message=(
+                                        f"{self.log_prefix}: Failed to push "
+                                        f"indicator with value "
+                                        f"'{indicator.value}' to group ID "
+                                        f"'{existing_group_id}' on "
+                                        f"{PLATFORM_NAME}. Error: {resp_msg}."
+                                    ),
+                                    details=f"API Response: {resp_json}",
+                                )
+                                continue
                         else:
                             invalid_ioc += 1
-                    # Handling Push response error message.
-                    elif (
-                        resp_msg.startswith("Please enter a valid")
-                        or resp_msg == PUSH_INDICATOR_FAILURE
-                    ):
-                        err_msg = (
-                            f"{self.log_prefix}: Failed to push indicator - "
-                            f"{indicator.value} to {PLUGIN_NAME}."
-                        )
-                        self.logger.error(
-                            message=err_msg,
-                            details=f"Failed to push indicator. Error: {resp_msg}",
-                        )
-                        invalid_ioc += 1
-                    # In case of Unknown response message, mark it as failure.
+                            continue
+                    elif response.status_code == 403:
+                        resp_json = self._api_helper.parse_response(response)
+                        if PUSH_INDICATOR_FAILURE in resp_json.get(
+                            "message", ""
+                        ):
+                            skip_count += 1
+                            continue
+                        else:
+                            self.logger.error(
+                                message=(
+                                    f"{self.log_prefix}: Failed to push "
+                                    f"indicator with value "
+                                    f"'{indicator.value}' to group ID "
+                                    f"'{existing_group_id}' on "
+                                    f"{PLATFORM_NAME}. Error: {resp_msg}."
+                                ),
+                                details=f"API Response: {resp_json}",
+                            )
+                            invalid_ioc += 1
                     else:
-                        err_msg = (
-                            f"{self.log_prefix}: Failed to push indicator - "
-                            f"{indicator.value} to {PLUGIN_NAME}."
-                        )
-                        self.logger.error(
-                            message=err_msg,
-                            details=f"Failed to push indicator. Error: {resp_msg}",
-                        )
-                        invalid_ioc += 1
-                except ThreatConnectException as error_msg:
-                    return PushResult(
-                        success=False,
-                        message=f"{error_msg}",
-                    )
+                        self._api_helper.handle_error(response, logger_msg)
+
+                except ThreatConnectException:
+                    invalid_ioc += 1
+                    continue
                 except Exception as err:
                     error_msg = (
-                        f"{self.log_prefix}: Error Ocurred while ingesting "
-                        f"indicators to {PLUGIN_NAME}. Error: {err}"
+                        "Unexpected error ocurred while ingesting"
+                        f" indicator with value {ioc_value} to group "
+                        f"ID {existing_group_id} on {PLATFORM_NAME}."
                     )
-                    self.logger.error(message=error_msg, details=traceback.format_exc())
-                    return PushResult(
-                        success=False,
-                        message=error_msg,
+                    self.logger.error(
+                        message=f"{self.log_prefix}: {error_msg} Error: {err}",
+                        details=traceback.format_exc(),
                     )
+                    invalid_ioc += 1
+                    continue
+
             # Push stats
             self.logger.info(
                 f"{self.log_prefix}: Push Stats: "
                 f"indicator(s) received - {total_ioc_received}, "
                 f"indicator(s) successfully pushed - {indicator_pushed}, "
                 f"indicator(s) already exists(modified) - {already_exists}, "
-                f"indicator(s) failed to share: {invalid_ioc}."
+                f"indicator(s) skipped due to system-wide exclusion list - "
+                f"{skip_count}, indicator(s) failed to share - {invalid_ioc}."
             )
-
-            # return PushResult
             return PushResult(
                 success=True,
                 message=f"Indicators pushed successfully to {PLUGIN_NAME}.",
             )
-
-        except ThreatConnectException as error_msg:
-            return PushResult(
-                success=False,
-                message=f"{error_msg}",
-            )
+        except ThreatConnectException:
+            raise
         except Exception as err:
             error_msg = (
-                f"{self.log_prefix}: Error Occurred while fetching group IDs. "
-                f"Error: {err}"
+                f"Unexpected error occurred while sharing indicators"
+                f"to {PLATFORM_NAME}."
             )
-            self.logger.error(message=error_msg, details=traceback.format_exc())
-            return PushResult(
-                success=False,
-                message=error_msg,
+            self.logger.error(
+                message=f"{self.log_prefix}: {error_msg} Error: {err}",
+                details=str(traceback.format_exc()),
             )
+
+            raise ThreatConnectException(error_msg)
 
     def get_actions(self) -> List[ActionWithoutParams]:
         """Get available Actions.
@@ -1302,7 +1550,9 @@ class ThreatConnectPlugin(PluginBase):
         Returns:
             List[ActionWithoutParams]: Return list of actions.
         """
-        return [ActionWithoutParams(label="Add to Group", value="add_to_group")]
+        return [
+            ActionWithoutParams(label="Add to Group", value="add_to_group")
+        ]
 
     def get_owner(self):
         """Get owner information from given API credentials.
@@ -1311,18 +1561,26 @@ class ThreatConnectPlugin(PluginBase):
             str: Name of owner.
         """
         api_path = THREAT_CONNECT_URLS["owners_mine"]
-        (base_url, access_id, secret_key) = self._get_credentials(self.configuration)
-        headers = self._get_headers_for_auth(api_path, access_id, secret_key, "GET")
+        (base_url, access_id, secret_key) = self._api_helper.get_credentials(
+            self.configuration
+        )
+        headers = self._api_helper.get_headers_for_auth(
+            api_path, access_id, secret_key, "GET"
+        )
         endpoint = base_url + api_path
         # Fetching owner_name
         try:
-            logger_msg = "Fetching Owners information using given API Credentials."
+            logger_msg = (
+                "fetching Owners information using given API Credentials"
+            )
             response = self._api_helper.api_helper(
                 logger_msg=logger_msg,
                 url=endpoint,
                 method="GET",
                 headers=headers,
                 is_handle_error_required=True,
+                verify=self.ssl_validation,
+                proxies=self.proxy,
             )
             status = response.get("status", "")
             name = response.get("data", {}).get("owner", {}).get("name")
@@ -1330,21 +1588,28 @@ class ThreatConnectPlugin(PluginBase):
                 return name
 
             # Not able to fetch Owner.
-            err_msg = f"{self.log_prefix}: Error while fetching owner information."
-            self.logger.error(
-                message=err_msg,
-                details=f"Error: {response.get('message', 'Error message not available.')}",
+            err_msg = (
+                "Unable to fetch owner information for provided Client"
+                f" ID and Client Secret from {PLATFORM_NAME}."
             )
-            return None
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg}",
+                details=f"API Response: {response}",
+            )
+            raise ThreatConnectException(err_msg)
         except ThreatConnectException:
-            return None
+            raise
         except Exception as err:
             err_msg = (
-                f"{self.log_prefix}: Error while fetching owner information. "
-                f"Error: {err}"
+                "Unexpected error ocurred while fetching owner"
+                f" information from {PLATFORM_NAME}."
             )
-            self.logger.error(message=err_msg, details=traceback.format_exc())
-            return None
+
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg} Error: {err}",
+                details=traceback.format_exc(),
+            )
+            raise ThreatConnectException(err_msg)
 
     def get_group_names(self) -> Dict:
         """Get names of available group along with id.
@@ -1358,27 +1623,36 @@ class ThreatConnectPlugin(PluginBase):
             query = quote(f"ownerName == '{owner_name}'")
             api_path = f"/api/v3/groups?tql={query}&resultLimit={LIMIT}"
 
-            (base_url, access_id, secret_key) = self._get_credentials(
-                self.configuration
+            (base_url, access_id, secret_key) = (
+                self._api_helper.get_credentials(self.configuration)
             )
             url = base_url + api_path
-
+            headers = self._api_helper.get_headers_for_auth(
+                api_path, access_id, secret_key, "GET"
+            )
             next_page = True
             while next_page:
-                headers = self._get_headers_for_auth(
-                    api_path, access_id, secret_key, "GET"
-                )
+
                 # Fetching group Name based on owner name.
                 try:
-                    logger_msg = "Fetching the group details based on owner."
+                    logger_msg = (
+                        "fetching the group details based on owner name"
+                    )
                     response = self._api_helper.api_helper(
-                        logger_msg=logger_msg, url=url, method="GET", headers=headers
+                        logger_msg=logger_msg,
+                        url=url,
+                        method="GET",
+                        headers=headers,
+                        verify=self.ssl_validation,
+                        proxies=self.proxy,
                     )
                     if response.get("status", "") == "Success":
-                        group_names.update({
-                            group.get("name", ""): str(group.get("id", ""))
-                            for group in response.get("data", [])
-                        })
+                        group_names.update(
+                            {
+                                group.get("name", ""): str(group.get("id", ""))
+                                for group in response.get("data", [])
+                            }
+                        )
 
                         if response.get("next", None):
                             api_path = response.get("next").replace(
@@ -1390,27 +1664,31 @@ class ThreatConnectPlugin(PluginBase):
                     else:
                         # Not able to fetch Groups.
                         err_msg = (
-                            f"{self.log_prefix}: Error while fetching group details."
+                            "Error occurred while fetching group details."
                         )
                         resp_msg = response.get(
                             "message", "Error message not available."
                         )
                         self.logger.error(
-                            message=err_msg, details=f"Error: {resp_msg}"
+                            message=(
+                                f"{self.log_prefix}: {err_msg} "
+                                f"Error: {resp_msg}"
+                            ),
+                            details=f"API Response: {response}",
                         )
-                        next_page = False
+                        raise ThreatConnectException(err_msg)
                 except ThreatConnectException:
-                    next_page = False
+                    raise
                 except Exception as err:
                     err_msg = (
-                        f"{self.log_prefix}: Error while fetching group details. "
-                        f"Error: {err}"
+                        "Unexpected error occurred while fetching "
+                        "group details."
                     )
                     self.logger.error(
-                        message=err_msg,
-                        details=traceback.format_exc()
+                        message=f"{self.log_prefix}: {err_msg} Error: {err}",
+                        details=str(traceback.format_exc()),
                     )
-                    next_page = False
+                    raise ThreatConnectException(err_msg)
         return group_names
 
     def get_action_fields(self, action: Action) -> List[Dict]:
@@ -1486,7 +1764,9 @@ class ThreatConnectPlugin(PluginBase):
             ValidationResult: Valid configuration or not for action.
         """
         if action.value not in ["add_to_group"]:
-            return ValidationResult(success=False, message="Invalid Action Provided.")
+            return ValidationResult(
+                success=False, message="Invalid Action Provided."
+            )
         if (
             action.value in ["add_to_group"]
             and action.parameters["group_name"] == "create_group"
@@ -1498,7 +1778,7 @@ class ThreatConnectPlugin(PluginBase):
                     "'Name of New Group' is a required field when "
                     "'Create New Group' is selected in the "
                     "'Add to Existing Group' parameter."
-                )
+                ),
             )
         if (
             action.value in ["add_to_group"]
@@ -1511,7 +1791,7 @@ class ThreatConnectPlugin(PluginBase):
                     "'Type of New Group' is a required field when "
                     "'Create New Group' is selected in the "
                     "'Add to Existing Group' parameter."
-                )
+                ),
             )
         return ValidationResult(
             success=True,

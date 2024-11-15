@@ -1,83 +1,69 @@
 {
-    "name": "Rapid7",
-    "id": "rapid7",
-    "version": "3.1.0",
-    "mapping": "Rapid7 Default Mappings",
-    "types": [
-        "alerts",
-        "events",
-        "webtx",
-        "logs"
-    ],
-    "description": "This plugin is used to ingest data to Rapid7 platform. To access the plugin, you would need the credentials of Rapid7 platform .",
-    "configuration": [
+  "name": "Rapid7",
+  "id": "rapid7",
+  "version": "3.1.1",
+  "mapping": "Rapid7 Default Mappings",
+  "types": [
+    "alerts",
+    "events",
+    "webtx",
+    "logs"
+  ],
+  "description": "This plugin supports ingestion of Alerts (Anomaly, DLP, Malware, Policy, Compromised Credential, Legal Hold, Malsite, Quarantine, Remediation, Security Assessment, Watchlist, UBA, CTEP), Events (Page, Application, Audit, Infrastructure, Network, Incident), WebTx and Logs (Debug, Information, Error, Warning). The data will be ingested in SIEM platform. This plugin supports ingestion in CEF and JSON format. To access the plugin, you would need the credentials of Rapid7 platform.",
+  "configuration": [
+    {
+      "label": "Rapid7 Server",
+      "key": "rapid7_server",
+      "type": "text",
+      "default": "",
+      "mandatory": true,
+      "description": "IP address/FQDN of Rapid7 server in which data will be ingested."
+    },
+    {
+      "label": "Rapid7 Protocol",
+      "key": "rapid7_protocol",
+      "type": "choice",
+      "choices": [
         {
-            "label": "Rapid7 Server",
-            "key": "rapid7_server",
-            "type": "text",
-            "default": "",
-            "mandatory": true,
-            "description": "IP address/FQDN of Rapid7 server in which data will be ingested."
+          "key": "TLS",
+          "value": "TLS"
         },
         {
-            "label": "Rapid7 Format",
-            "key": "rapid7_format",
-            "type": "choice",
-            "choices": [
-                {
-                    "key": "CEF",
-                    "value": "CEF"
-                }
-            ],
-            "default": "CEF",
-            "mandatory": true,
-            "description": "Data format required to ingest data."
+          "key": "UDP",
+          "value": "UDP"
         },
         {
-            "label": "Rapid7 Protocol",
-            "key": "rapid7_protocol",
-            "type": "choice",
-            "choices": [
-                {
-                    "key": "TLS",
-                    "value": "TLS"
-                },
-                {
-                    "key": "UDP",
-                    "value": "UDP"
-                },
-                {
-                    "key": "TCP",
-                    "value": "TCP"
-                }
-            ],
-            "default": "UDP",
-            "mandatory": true,
-            "description": "Protocol to be used while ingesting data."
-        },
-        {
-            "label": "Rapid7 Port",
-            "key": "rapid7_port",
-            "type": "number",
-            "default": "",
-            "mandatory": true,
-            "description": "Rapid7 port"
-        },
-        {
-            "label": "Rapid7 Certificate",
-            "key": "rapid7_certificate",
-            "type": "textarea",
-            "default": "",
-            "mandatory": false,
-            "description": "certificate is required only for TLS protocol."
-        },
-        {
-            "label": "Log Source Identifier",
-            "key": "log_source_identifier",
-            "type": "text",
-            "default": "netskopece",
-            "mandatory": true,
-            "description": "This will be added as prefix to all the logs. (The log source identifier should not contain the whitespace)."
+          "key": "TCP",
+          "value": "TCP"
         }
-    ]
+      ],
+      "default": "UDP",
+      "mandatory": true,
+      "description": "Protocol to be used while ingesting data."
+    },
+    {
+      "label": "Rapid7 Port",
+      "key": "rapid7_port",
+      "type": "number",
+      "default": "",
+      "mandatory": true,
+      "description": "The port used while creating the Event source on Rapid7."
+    },
+    {
+      "label": "Rapid7 Certificate",
+      "key": "rapid7_certificate",
+      "type": "textarea",
+      "default": "",
+      "mandatory": false,
+      "description": "Certificate is required only for TLS protocol."
+    },
+    {
+      "label": "Log Source Identifier",
+      "key": "log_source_identifier",
+      "type": "text",
+      "default": "netskopece",
+      "mandatory": true,
+      "description": "This will be added as prefix to all the logs."
+    }
+  ]
 }

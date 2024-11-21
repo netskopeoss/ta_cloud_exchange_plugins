@@ -1,0 +1,1 @@
+"""LDAP CRE Plugin."""

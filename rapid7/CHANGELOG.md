@@ -1,3 +1,7 @@
+# 3.1.1
+## Added
+- Enhancement in the error handling.
+
 # 3.1.0
 ## Added
 - Added support for webtx JSON format to send specific fields to SIEM platform.

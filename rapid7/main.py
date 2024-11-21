@@ -37,8 +37,10 @@ import logging
 import logging.handlers
 import threading
 import socket
-import os
+import json
 import traceback
+import time
+from typing import List
 from jsonpath import jsonpath
 from netskope.common.utils import AlertsHelper
 from netskope.integrations.cls.plugin_base import (
@@ -47,8 +49,10 @@ from netskope.integrations.cls.plugin_base import (
     PushResult,
 )
 from .utils.rapid7_constants import (
-    SYSLOG_FORMATS,
-    SYSLOG_PROTOCOLS,
+    RAPID7_PROTOCOLS,
+    PLUGIN_VERSION,
+    PLATFORM_NAME,
+    MODULE_NAME,
 )
 from .utils.rapid7_validator import (
     Rapid7Validator,
@@ -60,15 +64,12 @@ from .utils.rapid7_exceptions import (
     MappingValidationError,
     EmptyExtensionError,
     FieldNotFoundError,
+    Rapid7PluginError,
 )
 from .utils.rapid7_cef_generator import (
     CEFGenerator,
 )
 from .utils.rapid7_ssl import SSLSysLogHandler
-
-PLATFORM_NAME = "Rapid7"
-MODULE_NAME = "CLS"
-PLUGIN_VERSION = "3.0.0"
 
 
 class Rapid7Plugin(PluginBase):
@@ -80,7 +81,7 @@ class Rapid7Plugin(PluginBase):
         *args,
         **kwargs,
     ):
-        """Initialize SyslogPlugin class."""
+        """Initialize Rapid7 class."""
         super().__init__(
             name,
             *args,
@@ -95,22 +96,17 @@ class Rapid7Plugin(PluginBase):
             tuple: Tuple of plugin's name and version fetched from manifest.
         """
         try:
-            file_path = os.path.join(
-                str(os.path.dirname(os.path.abspath(__file__))),
-                "manifest.json",
-            )
-            with open(file_path, "r") as manifest:
-                manifest_json = json.load(manifest)
-                plugin_name = manifest_json.get("name", "Rapid7")
-                plugin_version = manifest_json.get("version", "3.0.0")
-                return (plugin_name, plugin_version)
+            manifest_json = Rapid7Plugin.metadata
+            plugin_name = manifest_json.get("name", PLATFORM_NAME)
+            plugin_version = manifest_json.get("version", PLUGIN_VERSION)
+            return (plugin_name, plugin_version)
         except Exception as exp:
-            self.logger.info(
+            self.logger.error(
                 message=(
-                    f"{MODULE_NAME} {PLATFORM_NAME}: Error occurred while"
-                    " getting plugin details. Error: {}".format(exp)
+                    f"{self.log_prefix}: Error occurred while"
+                    f" getting plugin details. Error: {exp}"
                 ),
-                details=traceback.format_exc(),
+                details=str(traceback.format_exc()),
             )
         return (PLATFORM_NAME, PLUGIN_VERSION)
 
@@ -143,13 +139,13 @@ class Rapid7Plugin(PluginBase):
         )
 
     def get_subtype_mapping(self, mappings, subtype):
-        """To Retrieve subtype mappings (mappings for subtypes
-        of alerts/events) case insensitively.
+        """To Retrieve subtype mappings (mappings for subtypes of \
+            alerts/events) case insensitively.
 
         Args:
             mappings: Mapping JSON from which subtypes are to be retrieved
-            subtype: Subtype (e.g. DLP for alerts) for which
-            the mapping is to be fetched
+            subtype: Subtype (e.g. DLP for alerts) for which the \
+                mapping is to be fetched
 
         Returns:
             Fetched mapping JSON object
@@ -161,8 +157,8 @@ class Rapid7Plugin(PluginBase):
             return mappings[subtype.upper()]
 
     def get_headers(self, header_mappings, data, data_type, subtype):
-        """To Create a dictionary of CEF headers from given header
-        mappings for given Netskope alert/event record.
+        """To Create a dictionary of CEF headers from given header mappings\
+              for given Netskope alert/event record.
 
         Args:
             subtype: Subtype for which the headers are being transformed
@@ -248,16 +244,16 @@ class Rapid7Plugin(PluginBase):
     def get_field_value_from_data(
         self, extension_mapping, data, data_type, subtype, is_json_path=False
     ):
-        """To Fetch the value of extension based on
-        "mapping" and "default" fields.
+        """To Fetch the value of extension based on "mapping" \
+            and "default" fields.
 
         Args:
             extension_mapping: Dict containing "mapping" and "default" fields
             data: Data instance retrieved from Netskope
             subtype: Subtype for which the extension are being transformed
             data_type: Data type for which the headers are being transformed
-            is_json_path: Whether the mapped value is
-            JSON path or direct field name
+            is_json_path: Whether the mapped value is \
+                JSON path or direct field name
 
         Returns:
             Fetched values of extension
@@ -285,8 +281,9 @@ class Rapid7Plugin(PluginBase):
             and extension_mapping["mapping_field"]
         ):
             if is_json_path:
-                # If mapping field specified by JSON path is present in data,
-                # map that field, else skip by raising exception:
+                # If mapping field specified by JSON path is present in data,\
+                #  map that field, else skip by raising
+                # exception:
                 value = self.get_mapping_value_from_json_path(
                     data, extension_mapping["mapping_field"]
                 )
@@ -319,8 +316,8 @@ class Rapid7Plugin(PluginBase):
                         data, extension_mapping["mapping_field"]
                     )
                 elif "default_value" in extension_mapping:
-                    # If mapped value is not found in response and default
-                    # is mapped, map the default value (case #2)
+                    # If mapped value is not found in response and default is \
+                    # mapped, map the default value (case #2)
                     return extension_mapping["default_value"], mapped_field
                 else:  # case #6
                     raise FieldNotFoundError(
@@ -331,7 +328,7 @@ class Rapid7Plugin(PluginBase):
             # because of validation (case #3 and case #5)
             return extension_mapping["default_value"], mapped_field
 
-    def map_json_data(self, mappings, data, data_type, subtype):
+    def map_json_data(self, mappings, data):
         """Filter the raw data and returns the filtered data.
 
         :param mappings: List of fields to be pushed
@@ -363,70 +360,97 @@ class Rapid7Plugin(PluginBase):
             list: Transformed data.
         """
         count = 0
+        log_source_identifier = self.configuration.get(
+            "log_source_identifier", "netskopece"
+        )
         if not self.configuration.get("transformData", True):
             try:
                 delimiter, cef_version, rapid7_mappings = get_rapid7_mappings(
-                    self.mappings, "json"
+                    self.mappings, "json", self.name
                 )
             except KeyError as err:
-                self.logger.error(
-                    "{}: Error in rapid7 mapping file. Error: {}.".format(
-                        self.log_prefix, err
-                    )
+                error_msg = (
+                    f"[{data_type}][{subtype}] "
+                    "An error occurred while fetching the mappings."
                 )
-                raise
+                self.logger.error(
+                    message=(f"{self.log_prefix}: {error_msg} Error: {err}"),
+                    details=str(traceback.format_exc()),
+                )
+                raise Rapid7PluginError(error_msg)
             except MappingValidationError as err:
-                self.logger.error(
-                    "{}: Mapping Validation Failed. Cause: {}.".format(
-                        self.log_prefix, err
-                    )
+                error_msg = (
+                    f"[{data_type}][{subtype}] "
+                    "An error occurred while validating the mapping file."
                 )
-                raise
+                self.logger.error(
+                    message=(f"{self.log_prefix}: {error_msg} {err}"),
+                    details=str(traceback.format_exc()),
+                )
+                raise Rapid7PluginError(error_msg)
             except Exception as err:
-                self.logger.error(
-                    "{}: An error occurred while mapping data\
-                        using given json mappings. Error: {}".format(
-                        self.log_prefix, err
-                    )
+                error_msg = (
+                    f"[{data_type}][{subtype}] "
+                    "An error occurred while mapping "
+                    "data using given json mappings."
                 )
-                raise
+                self.logger.error(
+                    message=(f"{self.log_prefix}: {error_msg} Error: {err}"),
+                    details=str(traceback.format_exc()),
+                )
+                raise Rapid7PluginError(error_msg)
 
             try:
                 subtype_mapping = self.get_subtype_mapping(
                     rapid7_mappings["json"][data_type], subtype
                 )
                 if subtype_mapping == []:
-                    return raw_data
-            except KeyError:
-                self.logger.warn(
-                    f"{self.log_prefix}: Subtype {subtype} is not present "
-                    "in the configured mapping file. "
-                    "Transformation of current record will be skipped."
-                )
-                return []
-            except Exception as exp:
-                self.logger.error(
-                    message="{}: Error occurred while fetching mapping for "
-                    "data type {} and subtype {}".format(
-                        self.log_prefix, data_type, subtype
-                    ),
-                    details=str(exp),
-                )
+                    transformed_data = []
+                    for data in raw_data:
+                        if data:
+                            result = "{} {} {}".format(
+                                time.strftime(
+                                    "%b %d %H:%M:%S",
+                                    time.localtime(time.time()),
+                                ),
+                                log_source_identifier,
+                                json.dumps(data),
+                            )
+                            transformed_data.append(result)
+                        else:
+                            count += 1
+                    return transformed_data
+            except Rapid7PluginError:
                 raise
+            except Exception as err:
+                error_msg = (
+                    f"[{data_type}][{subtype}] "
+                    "Error occurred while retrieving "
+                    f"mappings."
+                )
+                self.logger.error(
+                    message=(f"{self.log_prefix}: {error_msg} Error: {err}"),
+                    details=str(traceback.format_exc()),
+                )
+                raise Rapid7PluginError(error_msg)
 
             transformed_data = []
-
             for data in raw_data:
-                mapped_dict = self.map_json_data(
-                    subtype_mapping, data, data_type, subtype
-                )
+                mapped_dict = self.map_json_data(subtype_mapping, data)
                 if mapped_dict:
-                    transformed_data.append(mapped_dict)
+                    result = "{} {} {}".format(
+                        time.strftime(
+                            "%b %d %H:%M:%S", time.localtime(time.time())
+                        ),
+                        log_source_identifier,
+                        json.dumps(mapped_dict),
+                    )
+                    transformed_data.append(result)
                 else:
                     count += 1
 
-            if count >= 0:
-                self.logger.debug(
+            if count > 0:
+                self.logger.info(
                     "{}: Plugin couldn't process {} records because they "
                     "either had no data or contained invalid/missing "
                     "fields according to the configured JSON mapping. "
@@ -438,27 +462,40 @@ class Rapid7Plugin(PluginBase):
         else:
             try:
                 delimiter, cef_version, rapid7_mappings = get_rapid7_mappings(
-                    self.mappings, data_type
+                    self.mappings, data_type, self.name
                 )
             except KeyError as err:
-                self.logger.error(
-                    f"{self.log_prefix}: Error in rapid7 mapping file. "
-                    f"Error: {err}"
+                error_msg = (
+                    f"[{data_type}][{subtype}] "
+                    "An error occurred while "
+                    "fetching the mappings."
                 )
-                raise
+                self.logger.error(
+                    message=(f"{self.log_prefix}: {error_msg} Error: {err}"),
+                    details=str(traceback.format_exc()),
+                )
+                raise Rapid7PluginError(error_msg)
             except MappingValidationError as err:
-                self.logger.error(
-                    "{}: Mapping Validation Failed. Cause: {}".format(
-                        self.log_prefix, err
-                    )
+                error_msg = (
+                    f"[{data_type}][{subtype}] "
+                    "An error occurred while validating the mapping file."
                 )
-                raise
+                self.logger.error(
+                    message=(f"{self.log_prefix}: {error_msg} {err}"),
+                    details=str(traceback.format_exc()),
+                )
+                raise Rapid7PluginError(error_msg)
             except Exception as err:
-                self.logger.error(
-                    f"{self.log_prefix}: An error occurred while mapping data "
-                    f"using given json mappings. Error: {err}"
+                error_msg = (
+                    f"[{data_type}]:[{subtype}] "
+                    "An error occurred while mapping "
+                    "data using given json mappings."
                 )
-                raise
+                self.logger.error(
+                    message=(f"{self.log_prefix}: {error_msg} Error: {err}"),
+                    details=str(traceback.format_exc()),
+                )
+                raise Rapid7PluginError(error_msg)
 
             cef_generator = CEFGenerator(
                 self.mappings,
@@ -473,20 +510,25 @@ class Rapid7Plugin(PluginBase):
                 subtype_mapping = self.get_subtype_mapping(
                     rapid7_mappings[data_type], subtype
                 )
-            except KeyError:
-                self.logger.warn(
-                    f"{self.log_prefix}: Subtype {subtype} is not present "
-                    "in the configured mapping file. "
-                    "Transformation of current batch will be skipped."
+            except KeyError as err:
+                error_msg = (
+                    f"[{data_type}][{subtype}] Unable to find the "
+                    "mappings in the mapping file."
                 )
-                return []
-            except Exception:
+                self.logger.info(
+                    f"{self.log_prefix}: {error_msg}" f"Error: {err}"
+                )
+                raise Rapid7PluginError(error_msg)
+            except Exception as err:
+                error_msg = (
+                    f"[{data_type}]:[{subtype}] Error occurred while"
+                    f" retrieving mappings for subtype {subtype}."
+                )
                 self.logger.error(
-                    "{}: Error occurred while retrieving mappings "
-                    'for subtype "{}". Transformation of current batch '
-                    "will be skipped.".format(self.log_prefix, subtype)
+                    message=(f"{self.log_prefix}: {error_msg} Error: {err}"),
+                    details=str(traceback.format_exc()),
                 )
-                return []
+                raise Rapid7PluginError(error_msg)
 
             transformed_data = []
             for data in raw_data:
@@ -501,12 +543,14 @@ class Rapid7Plugin(PluginBase):
                     )
                 except Exception as err:
                     self.logger.error(
-                        "{}([{}][{}]): Error occurred while creating CEF "
-                        "header: {}. Transformation of "
-                        "current record will be skipped.".format(
-                            self.log_prefix, data_type, subtype, err
-                        )
+                        message=(
+                            f"{self.log_prefix}: [{data_type}][{subtype}] "
+                            f"Error occurred while creating CEF header: {err}."
+                            " Transformation of current record will be skipped."
+                        ),
+                        details=str(traceback.format_exc()),
                     )
+                    count += 1
                     continue
 
                 try:
@@ -515,12 +559,15 @@ class Rapid7Plugin(PluginBase):
                     )
                 except Exception as err:
                     self.logger.error(
-                        "{}([{}][{}]): Error occurred while creating CEF "
-                        "extension: {}. Transformation of "
-                        "the current record will be skipped".format(
-                            self.log_prefix, data_type, subtype, err
-                        )
+                        message=(
+                            f"{self.log_prefix}: [{data_type}][{subtype}]"
+                            f" Error occurred while creating CEF extension:"
+                            f" {err}. Transformation of the current record "
+                            "will be skipped."
+                        ),
+                        details=str(traceback.format_exc()),
                     )
+                    count += 1
                     continue
 
                 try:
@@ -533,29 +580,32 @@ class Rapid7Plugin(PluginBase):
                         extension,
                         data_type,
                         subtype,
-                        self.configuration.get(
-                            "log_source_identifier", "netskopece"
-                        ),
+                        log_source_identifier,
                     )
                     if cef_generated_event:
                         transformed_data.append(cef_generated_event)
                 except EmptyExtensionError:
                     self.logger.error(
-                        "{}([{}][{}]): Got empty extension during "
-                        "transformation. Transformation of current record "
-                        "will be skipped".format(
-                            self.log_prefix, data_type, subtype
-                        )
+                        message=(
+                            f"{self.log_prefix}: [{data_type}][{subtype}] Got"
+                            " empty extension during transformation. "
+                            "Transformation of current record will be skipped."
+                        ),
+                        details=str(traceback.format_exc()),
                     )
+                    count += 1
                 except Exception as err:
                     self.logger.error(
-                        "{}([{}][{}]): An error occurred during "
-                        "transformation. Error: {}".format(
-                            self.log_prefix, data_type, subtype, err
-                        )
+                        message=(
+                            f"{self.log_prefix}: [{data_type}][{subtype}] An "
+                            f"error occurred during transformation."
+                            f" Error: {err}"
+                        ),
+                        details=str(traceback.format_exc()),
                     )
+                    count += 1
 
-            if count >= 0:
+            if count > 0:
                 self.logger.debug(
                     "{}: Plugin couldn't process {} records because they "
                     "either had no data or contained invalid/missing "
@@ -576,34 +626,32 @@ class Rapid7Plugin(PluginBase):
         syslogger.handlers = []
         syslogger.propagate = False
 
-        if configuration["rapid7_protocol"] == "TLS":
+        if configuration.get("rapid7_protocol") == "TLS":
             tls_handler = SSLSysLogHandler(
-                configuration.get("transformData", True),
-                configuration["rapid7_protocol"],
+                configuration.get("rapid7_protocol"),
                 address=(
-                    configuration["rapid7_server"],
-                    configuration["rapid7_port"],
+                    configuration.get("rapid7_server"),
+                    configuration.get("rapid7_port"),
                 ),
-                certs=configuration["rapid7_certificate"],
+                certs=configuration.get("rapid7_certificate"),
             )
             syslogger.addHandler(tls_handler)
         else:
             socktype = socket.SOCK_DGRAM  # Set protocol to UDP by default
-            if configuration["rapid7_protocol"] == "TCP":
+            if configuration.get("rapid7_protocol") == "TCP":
                 socktype = socket.SOCK_STREAM
 
             # Create a rapid7 handler with given configuration parameters
             handler = SSLSysLogHandler(
-                configuration.get("transformData", True),
-                configuration["rapid7_protocol"],
+                configuration.get("rapid7_protocol"),
                 address=(
-                    configuration["rapid7_server"],
-                    configuration["rapid7_port"],
+                    configuration.get("rapid7_server").strip(),
+                    configuration.get("rapid7_port"),
                 ),
                 socktype=socktype,
             )
 
-            if configuration["rapid7_protocol"] == "TCP":
+            if configuration.get("rapid7_protocol") == "TCP":
                 # This will add a line break to the message before
                 # it is 'emitted' which ensures that the messages are
                 # split up over multiple lines,
@@ -617,82 +665,118 @@ class Rapid7Plugin(PluginBase):
 
         return syslogger
 
+    def log_success_msg(
+        self, data_type, subtype, successful_log_push_counter, skipped_logs
+    ):
+        """Log the success message."""
+        log_msg = ""
+        if successful_log_push_counter > 0:
+            log_msg = (
+                f"[{data_type}] [{subtype}] Successfully "
+                f"ingested {successful_log_push_counter} log(s)"
+                f" to {self.plugin_name} server."
+            )
+        if log_msg and skipped_logs:
+            log_msg += (
+                " Received empty transformed data for "
+                f"{skipped_logs} log(s) hence ingestion of those log(s) "
+                "will be skipped."
+            )
+        if log_msg:
+            self.logger.info(f"{self.log_prefix}: {log_msg}")
+        return log_msg
+
     def push(self, transformed_data, data_type, subtype) -> PushResult:
         """Push the transformed_data to the 3rd party platform."""
+        self.logger.debug(
+            f"{self.log_prefix}: "
+            f"Initializing the sharing of {len(transformed_data)} "
+            f"[{data_type}]:[{subtype}] logs "
+            f"to the {PLATFORM_NAME} server."
+        )
         successful_log_push_counter, skipped_logs = 0, 0
         try:
             syslogger = self.init_handler(self.configuration)
-        except Exception as err:
+        except (TimeoutError, ConnectionRefusedError, Exception) as err:
+            error_msg = {
+                TimeoutError: (
+                    "Timeout error occurred during initializing "
+                    "connection with Rapid7 server."
+                ),
+                ConnectionRefusedError: (
+                    "Connection refused during initializing "
+                    "connection with Rapid7 server."
+                ),
+            }.get(type(err), "Error occurred during initializing connection.")
             self.logger.error(
-                f"{self.log_prefix}: Error occurred during initializing "
-                f"connection. Error: {err}"
+                message=f"{self.log_prefix}: {error_msg} Error: {err}.",
+                details=str(traceback.format_exc()),
             )
-            raise
+            raise Rapid7PluginError(error_msg)
 
-        # Log the transformed data to given rapid7 server
-        for data in transformed_data:
-            try:
+        try:
+            for data in transformed_data:
                 if data:
                     syslogger.info(
                         json.dumps(data) if isinstance(data, dict) else data
                     )
-                    successful_log_push_counter += 1
                     syslogger.handlers[0].flush()
+                    successful_log_push_counter += 1
                 else:
                     skipped_logs += 1
-            except Exception as err:
-                self.logger.error(
-                    "{}: Error occurred during data ingestion. "
-                    "Error: {}. Record will be skipped".format(
-                        self.log_prefix, err
-                    )
-                )
 
-        # Clean up
-        try:
-            syslogger.handlers[0].close()
-            del syslogger.handlers[:]
-            del syslogger
-            if skipped_logs > 0:
-                self.logger.debug(
-                    "{}: Received empty transformed data for {} log(s) hence "
-                    "ingestion of those log(s) will be skipped.".format(
-                        self.log_prefix,
-                        skipped_logs,
-                    )
-                )
-            log_msg = (
-                "[{}] [{}] Successfully ingested {} log(s)"
-                " to {} server.".format(
-                    data_type,
-                    subtype,
-                    successful_log_push_counter,
-                    self.plugin_name,
-                )
+            log_msg = self.log_success_msg(
+                data_type, subtype, successful_log_push_counter, skipped_logs
             )
-            self.logger.info(f"{self.log_prefix}: {log_msg}")
             return PushResult(
                 success=True,
                 message=log_msg,
             )
         except Exception as err:
-            self.logger.error(
-                "{}: Error occurred during Clean up. Error: {}".format(
-                    self.log_prefix, err
-                )
+            failed_logs = len(transformed_data) - successful_log_push_counter
+            _ = self.log_success_msg(
+                data_type, subtype, successful_log_push_counter, skipped_logs
             )
+            # Remove the data already been ingested
+            del transformed_data[:successful_log_push_counter]
+            error_msg = (
+                "Error occurred while ingesting "
+                f"data to Rapid7 server. {failed_logs} log(s) "
+                "failed to be ingested."
+            )
+            self.logger.error(
+                message=(f"{self.log_prefix}: {error_msg} Error: {err}"),
+                details=str(traceback.format_exc()),
+            )
+            raise Rapid7PluginError(error_msg)
+
+        # Clean up
+        finally:
+            try:
+                syslogger.handlers[0].close()
+                del syslogger.handlers[:]
+                del syslogger
+            except Exception as err:
+                error_msg = "Error occurred while cleaning up Rapid7 handler."
+                self.logger.debug(
+                    f"{self.log_prefix}: {error_msg} Error: {err}"
+                )
 
     def test_server_connectivity(self, configuration):
         """Tests whether the configured rapid7 server is reachable or not."""
         try:
             syslogger = self.init_handler(configuration)
         except Exception as err:
-            self.logger.error(
-                f"{self.log_prefix}: Error occurred while establishing "
-                "connection with rapid7 server. Make sure you have provided "
-                "correct rapid7 server and port."
+            error_msg = (
+                "Error occurred while establishing "
+                "connection with Rapid7 server. Make sure "
+                "you have provided correct Rapid7 server and port."
             )
-            raise err
+            self.logger.error(
+                message=(f"{self.log_prefix}: {error_msg} Error: {err}"),
+                details=str(traceback.format_exc()),
+            )
+            raise Rapid7PluginError(error_msg)
         else:
             # Clean up for further use
             syslogger.handlers[0].flush()
@@ -702,180 +786,157 @@ class Rapid7Plugin(PluginBase):
 
     def validate(self, configuration: dict) -> ValidationResult:
         """Validate the configuration parameters dict."""
+
         rapid7_validator = Rapid7Validator(self.logger, self.log_prefix)
-        if (
-            "rapid7_server" not in configuration
-            or not configuration["rapid7_server"].strip()
-        ):
-            err_msg = "Rapid7 Server IP/FQDN is a required field"
-            self.logger.error(
-                f"{self.log_prefix}: Validation error occurred. Error: "
-                f"{err_msg} in the "
-                "configuration parameters."
-            )
-            return ValidationResult(success=False, message=err_msg)
-        elif type(configuration["rapid7_server"]) != str:
-            self.logger.error(
-                f"{self.log_prefix}: Validation error occurred. Error: "
-                "Invalid Rapid7 Server IP/FQDN found in the "
-                "configuration parameters."
-            )
+        validation_err_msg = f"{self.log_prefix}: Validation error occurred."
+
+        rapid7_server = configuration.get("rapid7_server", "").strip()
+        if not rapid7_server:
+            err_msg = "Rapid7 Server is a required configuration parameter."
+            self.logger.error(f"{validation_err_msg} {err_msg}")
             return ValidationResult(
-                success=False, message="Invalid Rapid7 Server provided."
+                success=False,
+                message=err_msg,
             )
-        if (
-            "rapid7_format" not in configuration
-            or not configuration["rapid7_format"].strip()
-        ):
-            err_msg = "Rapid7 Format is a required field"
-            self.logger.error(
-                f"{self.log_prefix}: Validation error occurred. Error: "
-                f"{err_msg} in the "
-                "configuration parameters."
+        elif not isinstance(rapid7_server, str):
+            err_msg = (
+                "Invalid Rapid7 Server provided in configuration parameters."
             )
-            return ValidationResult(success=False, message=err_msg)
+            self.logger.error(f"{validation_err_msg} {err_msg}")
+            return ValidationResult(
+                success=False,
+                message=err_msg,
+            )
+
+        rapid7_protocol = configuration.get("rapid7_protocol", "").strip()
+        if not rapid7_protocol:
+            err_msg = "Rapid7 Protocol is a required configuration parameter."
+            self.logger.error(f"{validation_err_msg} {err_msg}")
+            return ValidationResult(
+                success=False,
+                message=err_msg,
+            )
         elif (
-            type(configuration["rapid7_format"]) != str
-            or configuration["rapid7_format"] not in SYSLOG_FORMATS
+            not isinstance(rapid7_protocol, str)
+            or rapid7_protocol not in RAPID7_PROTOCOLS
         ):
-            self.logger.error(
-                f"{self.log_prefix}: Validation error occurred. Error: "
-                "Invalid Rapid7 Format found in the configuration parameters."
+            err_msg = (
+                "Invalid Rapid7 Protocol provided in configuration parameters."
             )
+            self.logger.error(f"{validation_err_msg} {err_msg}")
             return ValidationResult(
-                success=False, message="Invalid Rapid7 Format provided."
+                success=False,
+                message=err_msg,
             )
-        if (
-            "rapid7_protocol" not in configuration
-            or not configuration["rapid7_protocol"].strip()
-        ):
-            err_msg = "Rapid7 Protocol is a required field"
-            self.logger.error(
-                f"{self.log_prefix}: Validation error occurred. Error: "
-                f"{err_msg} in the "
-                "configuration parameters."
-            )
-            return ValidationResult(success=False, message=err_msg)
-        elif (
-            type(configuration["rapid7_protocol"]) != str
-            or configuration["rapid7_protocol"] not in SYSLOG_PROTOCOLS
-        ):
-            self.logger.error(
-                f"{self.log_prefix}: Validation error occurred. Error: "
-                "Invalid Rapid7 Protocol provided in the "
-                "configuration parameters."
-            )
+
+        rapid7_port = configuration.get("rapid7_port")
+        if not rapid7_port:
+            err_msg = "Rapid7 Port is a required configuration parameter."
+            self.logger.error(f"{validation_err_msg} {err_msg}")
             return ValidationResult(
-                success=False, message="Invalid Rapid7 Protocol provided."
+                success=False,
+                message=err_msg,
             )
-        if (
-            "rapid7_port" not in configuration
-            or not configuration["rapid7_port"]
-        ):
-            err_msg = "Rapid7 Port is a required field"
-            self.logger.error(
-                f"{self.log_prefix}: Validation error occurred. Error: "
-                f"{err_msg} in the "
-                "configuration parameters."
+        elif not isinstance(rapid7_port, int):
+            err_msg = (
+                "Invalid Rapid7 Port provided in configuration parameters."
             )
-            return ValidationResult(success=False, message=err_msg)
-        elif not rapid7_validator.validate_rapid7_port(
-            configuration["rapid7_port"]
-        ):
-            self.logger.error(
-                f"{self.log_prefix}: Validation error occurred. Error: "
-                "Invalid Rapid7 Port found in the configuration parameters."
-            )
+            self.logger.error(f"{validation_err_msg} {err_msg}")
             return ValidationResult(
-                success=False, message="Invalid Rapid7 Port provided."
+                success=False,
+                message=err_msg,
             )
+        elif not rapid7_validator.validate_rapid7_port(rapid7_port):
+            err_msg = (
+                "Invalid Rapid7 Port provided in configuration "
+                "parameters. it should be in range 0-65535."
+            )
+            self.logger.error(f"{validation_err_msg} {err_msg}")
+            return ValidationResult(
+                success=False,
+                message=err_msg,
+            )
+
         mappings = self.mappings.get("jsonData", None)
         mappings = json.loads(mappings)
-        if not (
-            isinstance(mappings, dict)
-            and rapid7_validator.validate_rapid7_map(mappings)
-        ):
-            err_msg = "Invalid Rapid7 attribute mapping"
-            self.logger.error(
-                f"{self.log_prefix}: Validation error occurred. Error: "
-                f"{err_msg} found in the "
-                "configuration parameters."
-            )
-            return ValidationResult(
-                success=False,
-                message=f"{err_msg} provided.",
-            )
-        if configuration["rapid7_protocol"].upper() == "TLS" and (
-            "rapid7_certificate" not in configuration
-            or not configuration["rapid7_certificate"].strip()
-        ):
-            err_msg = "Rapid7 Certificate mapping is a "
-            "required field when TLS is provided"
-            self.logger.error(
-                f"{self.log_prefix}: Validation error occurred. Error: "
-                f"{err_msg} in the configuration parameters."
-            )
+        if not isinstance(
+            mappings, dict
+        ) or not rapid7_validator.validate_rapid7_map(mappings):
+            err_msg = "Invalid attribute mapping provided."
+            self.logger.error(f"{validation_err_msg} {err_msg}")
             return ValidationResult(
                 success=False,
                 message=err_msg,
             )
-        elif (
-            configuration["rapid7_protocol"].upper() == "TLS"
-            and type(configuration["rapid7_certificate"]) != str
-        ):
-            err_msg = "Invalid Rapid7 Certificate mapping"
-            self.logger.error(
-                f"{self.log_prefix}: Validation error occurred. Error: "
-                f"{err_msg} found in the "
-                "configuration parameters."
-            )
-            return ValidationResult(
-                success=False,
-                message=f"{err_msg} provided.",
-            )
-        if (
-            "log_source_identifier" not in configuration
-            or not configuration["log_source_identifier"].strip()
-        ):
-            err_msg = "Log Source Identifier is a required field"
-            self.logger.error(
-                f"{self.log_prefix}: Validation error occurred. Error: "
-                f"{err_msg} in the "
-                "configuration parameters."
-            )
-            return ValidationResult(
-                success=False,
-                message=err_msg,
-            )
-        elif (
-            type(configuration["log_source_identifier"]) != str
-            or " " in configuration["log_source_identifier"].strip()
-        ):
-            err_msg = "Invalid Log Source Identifier provided in "
-            "the configuration parameters."
-            self.logger.error(
-                "{}: Validation error occurred. Error: {}".format(
-                    self.log_prefix, err_msg
+
+        rapid7_certificate = configuration.get(
+            "rapid7_certificate", ""
+        ).strip()
+        if rapid7_protocol.upper() == "TLS":
+            if not rapid7_certificate:
+                err_msg = (
+                    "Rapid7 Certificate is a required configuration "
+                    "parameter when TLS is provided in the "
+                    "configuration parameters."
                 )
+                self.logger.error(f"{validation_err_msg} {err_msg}")
+                return ValidationResult(
+                    success=False,
+                    message=err_msg,
+                )
+            elif not isinstance(rapid7_certificate, str):
+                err_msg = (
+                    "Invalid Rapid7 Certificate provided in "
+                    "configuration parameters."
+                )
+                self.logger.error(f"{validation_err_msg} {err_msg}")
+                return ValidationResult(
+                    success=False,
+                    message=err_msg,
+                )
+
+        log_source_identifier = configuration.get(
+            "log_source_identifier", ""
+        ).strip()
+        if not log_source_identifier:
+            err_msg = (
+                "Log Source Identifier is a required configuration parameter."
             )
+            self.logger.error(f"{validation_err_msg} {err_msg}")
             return ValidationResult(
                 success=False,
-                message="Invalid Log Source Identifier provided.",
+                message=err_msg,
+            )
+        elif not isinstance(log_source_identifier, str):
+            err_msg = (
+                "Invalid Log Source Identifier provided in "
+                "configuration parameters."
+            )
+            self.logger.error(f"{validation_err_msg} {err_msg}")
+            return ValidationResult(
+                success=False,
+                message=err_msg,
             )
         # Validate Server connection.
         try:
             self.test_server_connectivity(configuration)
-        except Exception:
-            self.logger.error(
-                f"{self.log_prefix}: Validation error occurred. Error: "
-                "Connection to SIEM platform is not established."
-            )
+        except Rapid7PluginError as err:
             return ValidationResult(
                 success=False,
-                message="Error occurred while establishing connection with  "
-                "Rapid7 Server. Make sure you have provided correct Rapid7 "
-                "Server, Port and Rapid7 Certificate(if required).",
+                message=str(err),
             )
+        except Exception:
+            err_msg = (
+                "Error occurred while establishing connection with Rapid7 "
+                "Server. Make sure you have provided correct Rapid7 Server"
+                ", Port and Rapid7 Certificate(if required)."
+            )
+            self.logger.error(f"{validation_err_msg} {err_msg}")
+            return ValidationResult(
+                success=False,
+                message=err_msg,
+            )
+
         return ValidationResult(success=True, message="Validation successful.")
 
     def chunk_size(self):

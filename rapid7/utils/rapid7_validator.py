@@ -35,6 +35,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import io
 import csv
+import traceback
 from jsonschema import validate
 from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
 
@@ -65,6 +66,11 @@ class Rapid7Validator(object):
                     return False
                 return True
             except ValueError:
+                err_msg = "Validation error occurred."
+                self.logger.error(
+                    message=f"{self.log_prefix}: {err_msg}",
+                    details=str(traceback.format_exc()),
+                )
                 return False
         else:
             return False
@@ -186,12 +192,13 @@ class Rapid7Validator(object):
         try:
             if self.validate_mapping_schema(mappings):
                 return True
-        except Exception as err:
+        except Exception:
+            err_msg = "Validation error occurred."
             self.logger.error(
-                "{}: Validation error occurred. Error: {}".format(
-                    self.log_prefix, err
-                )
+                message=f"{self.log_prefix}: {err_msg}",
+                details=str(traceback.format_exc()),
             )
+            return False
 
         return False
 
@@ -217,6 +224,11 @@ class Rapid7Validator(object):
             ):
                 return True
         except Exception:
+            err_msg = "Validation error occurred."
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg}",
+                details=str(traceback.format_exc()),
+            )
             return False
 
         return False

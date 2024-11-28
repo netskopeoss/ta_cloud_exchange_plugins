@@ -1,0 +1,58 @@
+{
+  "name": "LDAP",
+  "description": "LDAP plugin fetches users from provided Search Base path. It also supports Add to group and Remove from group action on users.",
+  "id": "ldap_ztre",
+  "minimum_version": "5.1.0",
+  "version": "1.0.0",
+  "module": "CRE",
+  "configuration": [
+    {
+      "label": "Server Address",
+      "key": "server",
+      "type": "text",
+      "default": "",
+      "mandatory": true,
+      "description": "LDAP Server Address IP or DNS. e.g. ldaptest.ldap.local, 197.207.132.170"
+    },
+    {
+      "label": "Port",
+      "key": "port",
+      "type": "number",
+      "default": "",
+      "mandatory": true,
+      "description": "LDAP Server Port."
+    },
+    {
+      "label": "LDAP Server Username",
+      "key": "username",
+      "type": "text",
+      "default": "",
+      "mandatory": true,
+      "description": "Username for LDAP server."
+    },
+    {
+      "label": "LDAP Server Password",
+      "key": "password",
+      "type": "password",
+      "default": "",
+      "mandatory": true,
+      "description": "Password for LDAP server."
+    },
+    {
+      "label": "Search Base",
+      "key": "search_base",
+      "type": "text",
+      "default": "",
+      "mandatory": true,
+      "description": "Base path for searching users and groups. e.g. CN=Users,DC=ldap,DC=local"
+    },
+    {
+      "label": "LDAP Certificate",
+      "key": "ldap_certificate",
+      "type": "textarea",
+      "default": "",
+      "mandatory": false,
+      "description": "Certificate is only required for TLS protocol."
+    }
+  ]
+}

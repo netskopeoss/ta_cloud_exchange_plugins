@@ -36,7 +36,33 @@ DEFAULT_WAIT_TIME = 60
 MAX_RETRY_COUNT = 4
 PLATFORM_NAME = "Okta"
 MODULE_NAME = "CRE"
-PLUGIN_VERSION = "1.0.0"
+PLUGIN_VERSION = "1.1.0"
 EVENTS_PROVIDER = "Netskope Security Events Provider"
 ALLOWED_SCORE_LEVELS = ["none", "low", "medium", "high"]
 PAGE_LIMIT_APP = 200
+INTEGER_THRESHOLD = 4611686018427387904
+OKTA_DATE_FORMAT = r"%Y-%m-%dT%H:%M:%S.%fZ"
+USERS_ENTITY = "Users"
+APPLICATIONS_ENTITY = "Applications"
+USERS_FIELD_MAPPING = {
+    "User ID": {"key": "id"},
+    "Primary Email": {"key": "profile.email"},
+    "Login Username (email)": {"key": "profile.login"},
+    "Second Email": {"key": "profile.secondEmail"},
+    "First Name": {"key": "profile.firstName"},
+    "Last Name": {"key": "profile.lastName"},
+    "Status": {"key": "status"}
+}
+APPLICATION_FIELD_MAPPING = {
+    "ID": {"key": "id"},
+    "Name": {"key": "name"},
+    "Label": {"key": "label"},
+    "Status": {"key": "status"},
+    "SignOnMode": {"key": "signOnMode"},
+}
+NORMALIZATION_MAPPING = {
+    "NONE": None,
+    "LOW": 875,
+    "MEDIUM": 625,
+    "HIGH": 375,
+}

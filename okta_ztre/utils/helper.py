@@ -32,12 +32,12 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 CTE Okta Plugin helper module.
 """
 
-
 import traceback
 import time
 from typing import Dict, Union
 import json
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse
+from requests.exceptions import ReadTimeout
 
 import requests
 from netskope.common.utils import add_user_agent
@@ -46,12 +46,18 @@ from .constants import (
     DEFAULT_WAIT_TIME,
     MAX_RETRY_COUNT,
     MODULE_NAME,
-    PLATFORM_NAME
+    PLATFORM_NAME,
 )
 
 
 class OktaPluginException(Exception):
-    """OktaPluginExcetion plugin custom exception class."""
+    """OktaPluginException plugin custom exception class."""
+
+    pass
+
+
+class OktaRiskLevelException(Exception):
+    """OktaRiskLevelException plugin custom exception class."""
 
     pass
 
@@ -64,11 +70,7 @@ class OktaPluginHelper(object):
     """
 
     def __init__(
-        self,
-        logger,
-        log_prefix: str,
-        plugin_name: str,
-        plugin_version: str
+        self, logger, log_prefix: str, plugin_name: str, plugin_version: str
     ):
         """Okta Plugin Helper initializer.
 
@@ -91,6 +93,9 @@ class OktaPluginHelper(object):
         Returns:
             Dict: Dictionary after adding User-Agent.
         """
+        if headers and "User-Agent" in headers:
+            return headers
+
         headers = add_user_agent(headers)
         ce_added_agent = headers.get("User-Agent", "netskope-ce")
         user_agent = "{}-{}-{}-v{}".format(
@@ -181,7 +186,7 @@ class OktaPluginHelper(object):
                         )
                         self.logger.error(
                             message=f"{self.log_prefix}: {err_msg}",
-                            details=err_msg,
+                            details=f"API response: {response.text}",
                         )
                         raise OktaPluginException(err_msg)
                     retry_after = int(
@@ -199,15 +204,19 @@ class OktaPluginHelper(object):
                             f"returning status code {status_code}."
                         )
                         self.logger.error(
-                            message=f"{self.log_prefix}: {err_msg}"
+                            message=f"{self.log_prefix}: {err_msg}",
+                            details=f"API response: {response.text}",
                         )
                         raise OktaPluginException(err_msg)
                     self.logger.error(
                         message=(
-                            f"{self.log_prefix}: Received exit code 429, API rate limit"
-                            f" exceeded while {logger_msg}. Retrying after {retry_after} "
-                            f"seconds. {MAX_RETRY_COUNT - 1 - retry_counter} retries remaining."
-                        )
+                            f"{self.log_prefix}: Received exit code 429, "
+                            f"API rate limit exceeded while {logger_msg}. "
+                            f"Retrying after {retry_after} "
+                            f"seconds. {MAX_RETRY_COUNT - 1 - retry_counter} "
+                            "retries remaining."
+                        ),
+                        details=f"API response: {response.text}",
                     )
                     time.sleep(retry_after)
                 elif (500 <= status_code <= 600) and not is_validation:
@@ -220,7 +229,7 @@ class OktaPluginHelper(object):
                         )
                         self.logger.error(
                             message=f"{self.log_prefix}: {err_msg}",
-                            details=err_msg,
+                            details=f"API response: {response.text}",
                         )
                         raise OktaPluginException(err_msg)
 
@@ -232,6 +241,7 @@ class OktaPluginHelper(object):
                             f" seconds. {MAX_RETRY_COUNT - 1 - retry_counter}"
                             " retries remaining."
                         ),
+                        details=f"API response: {response.text}",
                     )
                     time.sleep(DEFAULT_WAIT_TIME)
 
@@ -243,6 +253,13 @@ class OktaPluginHelper(object):
                     )
         except OktaPluginException:
             raise
+        except ReadTimeout as error:
+            err_msg = f"Read Timeout error occurred while {logger_msg}."
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg} Error: {error}",
+                details=str(traceback.format_exc()),
+            )
+            raise OktaPluginException(err_msg)
         except requests.exceptions.ProxyError as error:
             err_msg = (
                 f"Proxy error occurred while {logger_msg}. Verify the"
@@ -332,31 +349,44 @@ class OktaPluginHelper(object):
         validation_msg = "Validation error occurred, "
         error_dict = {
             400: "Received exit code 400, HTTP client error",
+            401: "Received exit code 401, Unauthorized.",
             403: "Received exit code 403, Forbidden",
             404: "Received exit code 404, Resource not found",
         }
         if is_validation:
             error_dict = {
                 400: (
-                    "Received exit code 400, Bad Request, Verify the "
-                    " Website URL provided in the configuration parameters."
+                    "Received exit code 400, Bad Request, Verify the"
+                    " Okta Domain and the API Token provided in "
+                    "the configuration parameters."
+                ),
+                401: (
+                    "Received exit code 401, Unauthorized, "
+                    "Verify the API Token provided in the configuration "
+                    "parameters."
                 ),
                 403: (
-                    "Received exit code 403, Forbidden, Verify the"
-                    " Website URL provided in the configuration parameters."
+                    "Received exit code 403, Forbidden, Verify that "
+                    "the user has the required 'User', 'Group', "
+                    "and 'Application' permissions."
                 ),
                 404: (
-                    "Received exit code 404, Resource not found, Verify "
-                    "Website URL provided in the configuration parameters."
+                    "Received exit code 404, Resource not found, Verify the "
+                    "Okta Domain and the API Token provided in the "
+                    "configuration parameters."
                 ),
             }
 
         if status_code in [200, 201]:
-            return self.parse_response(resp, logger_msg)
+            return self.parse_response(
+                resp, logger_msg, is_validation=is_validation
+            )
         elif status_code == 204:
             return {}
         elif status_code in error_dict:
-            resp_json = self.parse_response(resp, logger_msg)
+            resp_json = self.parse_response(
+                resp, logger_msg, is_validation=is_validation
+            )
             error_msg = error_dict[status_code]
             error_summary = resp_json.get("errorSummary", "")
             error_msg = f"Received error code {resp.status_code}."
@@ -371,7 +401,9 @@ class OktaPluginHelper(object):
                 error_msg += f" Error: {error}."
             if error_description:
                 error_msg += f" Error Description: {error_description}."
-            if not (error_summary or error_causes or error or error_description):
+            if not (
+                error_summary or error_causes or error or error_description
+            ):
                 error_msg += " Unexpected error occurred."
             if is_validation:
                 log_err_msg = validation_msg + error_msg
@@ -390,9 +422,11 @@ class OktaPluginHelper(object):
 
         else:
             err_msg = (
-                "HTTP Server Error"
+                f"Received exit code {status_code} - "
+                f"HTTP Server Error while {logger_msg}."
                 if (status_code >= 500 and status_code <= 600)
-                else "HTTP Error"
+                else f"Received exit code {status_code} - "
+                f"HTTP Error while {logger_msg}."
             )
             self.logger.error(
                 message=(
@@ -402,9 +436,12 @@ class OktaPluginHelper(object):
                 details=f"API response: {resp.text}",
             )
             raise OktaPluginException(err_msg)
-        
+
     def parse_response(
-        self, response: requests.models.Response, logger_msg, is_validation: bool = False
+        self,
+        response: requests.models.Response,
+        logger_msg,
+        is_validation: bool = False,
     ):
         """Parse Response will return JSON from response object.
 
@@ -418,7 +455,8 @@ class OktaPluginHelper(object):
             return response.json()
         except json.JSONDecodeError as err:
             err_msg = (
-                f"Invalid JSON response received from API while {logger_msg}. Error: {str(err)}"
+                "Invalid JSON response received from API while "
+                f"{logger_msg}. Error: {str(err)}"
             )
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg}",
@@ -446,14 +484,30 @@ class OktaPluginHelper(object):
                     "configuration parameters. Check logs for more details."
                 )
             raise OktaPluginException(err_msg)
-        
+
     def _validate_url(self, url: str) -> bool:
-        """Validate the given URL."""
+        """
+        Validate the URL.
+
+        Args:
+            url (str): URL to validate.
+
+        Returns:
+            bool: True if the URL is valid, False otherwise.
+        """
         parsed = urlparse(url.strip())
         return parsed.scheme.strip() != "" and parsed.netloc.strip() != ""
-    
+
     def validate_okta_domain(self, url: str):
-        """Validate okta domain."""
+        """
+        Validate the Okta domain.
+
+        Args:
+            url (str): URL to validate.
+
+        Returns:
+            bool: True if the URL is valid, False otherwise.
+        """
         valid_domains = [".oktapreview.com", ".okta.com", ".okta-emea.com"]
         for domain in valid_domains:
             if domain in url:

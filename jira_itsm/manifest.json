@@ -1,10 +1,12 @@
 {
-  "name": "Jira ITSM",
-  "description": "This Plugin is used to create issues/tickets on Jira cloud Platform.",
+  "name": "Jira",
+  "description": "This plugin is used to create tickets for selected Jira projects on the Jira Cloud Platform. It also supports updating tickets and syncing their status.",
   "id": "jira_itsm",
   "pulling_supported": false,
   "receiving_supported": true,
-  "version": "1.1.0",
+  "version": "2.0.0",
+  "module": "CTO",
+  "minimum_version": "5.1.0",
   "configuration": [
     {
       "label": "Authentication",
@@ -17,7 +19,7 @@
           "type": "text",
           "default": "",
           "mandatory": true,
-          "description": "Jira Cloud Instance URL. e.g. https://<your-domain>.atlassian.net."
+          "description": "Jira Cloud instance URL. e.g. https://<your-domain>.atlassian.net."
         },
         {
           "label": "Email Address",
@@ -25,7 +27,7 @@
           "type": "text",
           "default": "",
           "mandatory": true,
-          "description": "The Email address of the Jira user having access to read Projects and Create/Update issues on Jira Cloud Instance."
+          "description": "Email address of the Jira user. User should have access to read Projects and Create/Update issues on Jira Cloud Platform."
         },
         {
           "label": "API Token",
@@ -33,12 +35,12 @@
           "type": "password",
           "default": "",
           "mandatory": true,
-          "description": "The Jira account's API token."
+          "description": "API token of the Jira user. API token for user can be generated from Account > Manage account > Security > API Tokens > Create and manage API tokens."
         }
       ]
     },
     {
-      "label": "Configuration parameter",
+      "label": "Configuration Parameter",
       "name": "params",
       "type": "step",
       "fields": [
@@ -49,6 +51,65 @@
           "default": "Task",
           "mandatory": true,
           "description": "Enter comma separated values of Jira issue types (values are case sensitive)."
+        }
+      ]
+    },
+    {
+      "label": "Mapping Configurations",
+      "name": "mapping_config",
+      "type": "step",
+      "fields": [
+        {
+          "label": "Status Mapping",
+          "key": "status_mapping",
+          "type": "mapping_table",
+          "value_type": "text",
+          "destination_label": "Jira Status",
+          "fields": [
+            {
+              "label": "New",
+              "value": "new",
+              "multi": false,
+              "mandatory": false
+            },
+            {
+              "label": "In Progress",
+              "value": "in_progress",
+              "multi": false,
+              "mandatory": false
+            },
+            {
+              "label": "On Hold",
+              "value": "on_hold",
+              "multi": false,
+              "mandatory": false
+            },
+            {
+              "label": "Closed",
+              "value": "closed",
+              "multi": false,
+              "mandatory": false
+            },
+            {
+              "label": "Deleted",
+              "value": "deleted",
+              "multi": false,
+              "mandatory": false
+            },
+            {
+              "label": "Other",
+              "value": "other",
+              "multi": false,
+              "mandatory": false
+            }
+          ],
+          "mandatory": false,
+          "default": {
+            "new": "New",
+            "in_progress": "In Progress",
+            "closed": "Closed"
+          },
+          "description": "Status Mapping will be used to map the ticket status from Cloud Exchange to the Jira ticket status. This mapping will also be used to transform the status while creating the ticket on Jira platform."
         }
       ]
     }

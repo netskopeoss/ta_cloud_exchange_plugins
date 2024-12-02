@@ -1,1 +1,1 @@
-"""Jira ITSM package."""
+"""CTO Jira Plugin."""

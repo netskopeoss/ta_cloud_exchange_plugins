@@ -1,0 +1,156 @@
+{
+  "name": "Maltiverse",
+  "id": "maltiverse",
+  "version": "1.0.0",
+  "description": "This plugin is used to fetch indicators of type SHA256, IP Addresses (IPv4 and IPv6), URLs and Hostnames from Intelligence > Feeds from Maltiverse platform. This plugin does not support pushing indicators to Maltiverse.",
+  "patch_supported": false,
+  "push_supported": false,
+  "configuration": [
+    {
+      "label": "API Key",
+      "key": "api_key",
+      "type": "password",
+      "mandatory": true,
+      "default": "",
+      "description": "Maltiverse API Key. API Key can be found from Profile > User > Plan on the Maltiverse platform."
+    },
+    {
+      "label": "Classifications",
+      "key": "classifications",
+      "type": "multichoice",
+      "choices": [
+        {
+          "value": "malicious",
+          "key": "Malicious"
+        },
+        {
+          "value": "suspicious",
+          "key": "Suspicious"
+        },
+        {
+          "value": "neutral",
+          "key": "Neutral"
+        }
+      ],
+      "mandatory": false,
+      "default": [
+        "malicious",
+        "suspicious",
+        "neutral"
+      ],
+      "description": "Indicators from the selected Classifications will be fetched. Leave blank to fetched indicators from all Classifications."
+    },
+    {
+      "label": "Feeds",
+      "key": "feed_ids",
+      "type": "multichoice",
+      "choices": [
+        {
+          "value": "RbSs1YUBYAdeK0KL3rUf",
+          "key": "Advanced Persistent Threats"
+        },
+        {
+          "value": "xXPAOoUBqd_8q-E2ZH4Z",
+          "key": "Cobalt Strike"
+        },
+        {
+          "value": "VdhZV34B4jHUXfKt_gDi",
+          "key": "Command and Controls"
+        },
+        {
+          "value": "04xeknEB8jmkCY9eOoUv",
+          "key": "Cybercrime"
+        },
+        {
+          "value": "kskDSoEB4jHUXfKtb4IZ",
+          "key": "Emotet"
+        },
+        {
+          "value": "VFveEXsBGb1u75L8tCaY",
+          "key": "Industrial Control Systems"
+        },
+        {
+          "value": "3DyIvYAB4jHUXfKt9SQL",
+          "key": "IoT"
+        },
+        {
+          "value": "QthpV34B4jHUXfKtOw--",
+          "key": "Known Attackers"
+        },
+        {
+          "value": "xKWKangBN4Q8MD8oRYd-",
+          "key": "Malicious Hostvalues"
+        },
+        {
+          "value": "uYxZknEB8jmkCY9eQoUJ",
+          "key": "Malicious IP"
+        },
+        {
+          "value": "H4yrknEB8jmkCY9eb4aN",
+          "key": "Malicious URL"
+        },
+        {
+          "value": "WZ0XJHIB8jmkCY9eLpr0",
+          "key": "Malware"
+        },
+        {
+          "value": "ZtjCV34B4jHUXfKtjWdD",
+          "key": "Malware Distribution"
+        },
+        {
+          "value": "EIAO4HAB8jmkCY9e8HoL",
+          "key": "Phishing"
+        },
+        {
+          "value": "Ryjs1n0BGb1u75L8KpjZ",
+          "key": "TOR Nodes"
+        }
+      ],
+      "mandatory": false,
+      "default": [
+        "RbSs1YUBYAdeK0KL3rUf",
+        "xXPAOoUBqd_8q-E2ZH4Z",
+        "VdhZV34B4jHUXfKt_gDi",
+        "04xeknEB8jmkCY9eOoUv",
+        "kskDSoEB4jHUXfKtb4IZ",
+        "VFveEXsBGb1u75L8tCaY",
+        "3DyIvYAB4jHUXfKt9SQL",
+        "QthpV34B4jHUXfKtOw--",
+        "xKWKangBN4Q8MD8oRYd-",
+        "uYxZknEB8jmkCY9eQoUJ",
+        "H4yrknEB8jmkCY9eb4aN",
+        "WZ0XJHIB8jmkCY9eLpr0",
+        "ZtjCV34B4jHUXfKtjWdD",
+        "EIAO4HAB8jmkCY9e8HoL",
+        "Ryjs1n0BGb1u75L8KpjZ"
+      ],
+      "description": "Indicators from the selected Feeds will be fetched."
+    },
+    {
+      "label": "Other Feeds",
+      "key": "other_feeds",
+      "type": "text",
+      "mandatory": false,
+      "default": "",
+      "description": "Comma Separated list of Other Feed IDs to import."
+    },
+    {
+      "label": "Enable Tagging",
+      "key": "enable_tagging",
+      "type": "choice",
+      "choices": [
+        {
+          "key": "Yes",
+          "value": "yes"
+        },
+        {
+          "key": "No",
+          "value": "no"
+        }
+      ],
+      "default": "yes",
+      "mandatory": true,
+      "description": "Enable/Disable tagging functionality."
+    }
+  ]
+}

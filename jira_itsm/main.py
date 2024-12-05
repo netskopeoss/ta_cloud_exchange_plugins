@@ -28,16 +28,15 @@ SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
 CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-"""
 
-"""Jira ITSM plugin."""
-import traceback
-from typing import List, Dict
-import requests
+CTO Jira plugin.
+"""
 import json
-from requests.auth import HTTPBasicAuth
-import os
-import time
+import re
+import traceback
+from typing import List, Dict, Tuple, Union
+from urllib.parse import urlparse
+
 from netskope.integrations.itsm.plugin_base import (
     PluginBase,
     ValidationResult,
@@ -49,31 +48,24 @@ from netskope.integrations.itsm.models import (
     Task,
     TaskStatus,
     Alert,
+    Event,
+    UpdatedTaskValues
 )
-from netskope.common.utils import add_user_agent
 
-# TODO: States are dynamic per project in Jira
-STATE_MAPPINGS = {
-    "in progress": TaskStatus.IN_PROGRESS,
-    "new": TaskStatus.NEW,
-    "on hold": TaskStatus.ON_HOLD,
-    "closed": TaskStatus.CLOSED,
-}
-PLATFORM_NAME = "Jira ITSM"
-MODULE_NAME = "CTO"
-PLUGIN_VERSION = "1.1.0"
-MAX_RETRY_COUNT = 4
-LIMIT = 50
-
-
-class JiraITSMException(Exception):
-    """JiraITSMException exception class."""
-
-    pass
+from .utils.constants import (
+    LIMIT,
+    PLATFORM_NAME,
+    PLUGIN_VERSION,
+    MODULE_NAME,
+)
+from .utils.helper import (
+    JiraITSMPluginHelper,
+    JiraITSMPluginException,
+)
 
 
 class JiraPlugin(PluginBase):
-    """Jira plugin implementation."""
+    """Jira CTO plugin implementation."""
 
     def __init__(
         self,
@@ -81,7 +73,11 @@ class JiraPlugin(PluginBase):
         *args,
         **kwargs,
     ):
-        """Initialize ServiceNow plugin class."""
+        """Jira plugin initializer.
+
+        Args:
+            name (str): Plugin configuration name.
+        """
         super().__init__(
             name,
             *args,
@@ -89,98 +85,85 @@ class JiraPlugin(PluginBase):
         )
         self.plugin_name, self.plugin_version = self._get_plugin_info()
         self.log_prefix = f"{MODULE_NAME} {self.plugin_name} [{name}]"
+        self.jira_helper = JiraITSMPluginHelper(
+            logger=self.logger,
+            log_prefix=self.log_prefix,
+            plugin_name=self.plugin_name,
+            plugin_version=self.plugin_version,
+        )
 
-    def _get_plugin_info(self) -> tuple:
+    def _get_plugin_info(self) -> Tuple:
         """Get plugin name and version from manifest.
+
         Returns:
             tuple: Tuple of plugin's name and version fetched from manifest.
         """
         try:
-            file_path = os.path.join(
-                str(os.path.dirname(os.path.abspath(__file__))),
-                "manifest.json",
-            )
-            with open(file_path, "r") as manifest:
-                manifest_json = json.load(manifest)
-                plugin_name = manifest_json.get("name", PLATFORM_NAME)
-                plugin_version = manifest_json.get("version", PLUGIN_VERSION)
-                return (plugin_name, plugin_version)
+            manifest_json = JiraPlugin.metadata
+            plugin_name = manifest_json.get("name", PLATFORM_NAME)
+            plugin_version = manifest_json.get("version", PLUGIN_VERSION)
+            return plugin_name, plugin_version
         except Exception as exp:
-            self.logger.info(
+            self.logger.error(
                 message=(
-                    f"{MODULE_NAME} {PLATFORM_NAME}: Error occurred while"
-                    " getting plugin details. Error: {}".format(exp)
+                    f"{MODULE_NAME} {PLATFORM_NAME}: Error occurred while "
+                    f"getting plugin details. Error: {exp}"
                 ),
                 details=traceback.format_exc(),
             )
         return (PLATFORM_NAME, PLUGIN_VERSION)
 
-    def _add_user_agent(self, headers=None) -> str:
-        """Add Client Name to request plugin make.
+    def _get_issue(self, issue_id):
+        """Fetch the issue details with given ID from Jira.
+
+        Args:
+            issue_id (str): ID of the issue.
 
         Returns:
-            str: String containing the Client Name.
+            dict: Dictionary containing issue details.
         """
-        headers = add_user_agent(headers)
-        ce_added_agent = headers.get("User-Agent", "netskope-ce")
-        user_agent_str = "{}-{}-{}-v{}".format(
-            ce_added_agent,
-            MODULE_NAME.lower(),
-            self.plugin_name.lower(),
-            self.plugin_version,
+        url, email_address, api_token = self.jira_helper.get_auth_params(self.configuration)
+        endpoint = f"{url}/rest/api/3/issue/{issue_id}"
+        headers = self.jira_helper.basic_auth(
+            email=email_address, api_token=api_token
         )
-
-        headers["User-Agent"] = user_agent_str
-        return headers
-
-    def _get_issue(self, issue_id):
-        """Fetch the issue with given ID from Jira."""
-        params = self.configuration.get("auth", {})
-        url = params.get("url")
-        email = params.get("email")
-        api_token = params.get("api_token")
-        response = self._api_helper(
-            lambda: requests.get(
-                "{}/rest/api/3/issue/{}".format(
-                    url.strip("/").strip(), issue_id
-                ),
-                auth=HTTPBasicAuth(email.strip(), api_token),
-                headers=self._add_user_agent(),
+        log_msg = f"details of the ticket with ID '{issue_id}' from {PLATFORM_NAME}"
+        self.logger.info(
+            f"{self.log_prefix}: Fetching {log_msg}."
+        )
+        try:
+            response = self.jira_helper.api_helper(
+                url=endpoint,
+                method="GET",
+                headers=headers,
+                verify=self.ssl_validation,
                 proxies=self.proxy,
-            ),
-            "fetching issue details",
-            False,
-        )
-        if response.status_code == 200:
-            return self.parse_response(response)
-        elif response.status_code == 404:
+                logger_msg=f"fetching {log_msg}",
+            )
+            return response
+        except JiraITSMPluginException:
+            raise
+        except Exception as error:
+            error_message = "Unexpected error occurred"
             err_msg = (
-                "Could not fetch status of issue: {}. "
-                "Either it does not exist or configured "
-                "user does not have permission to access it.".format(issue_id),
+                f"{error_message} while getting mapping "
+                f"fields from {PLATFORM_NAME}."
             )
             self.logger.error(
-                message=f"{self.log_prefix}: {err_msg}",
-                details=f"Received response: {response.text}",
+                message=f"{self.log_prefix}: {err_msg} Error: {error}"
             )
-            raise JiraITSMException(err_msg)
-
-        else:
-            err_msg = (
-                "Could not fetch status of issue with ID {} from Jira.".format(
-                    issue_id
-                )
-            )
-            self.logger.error(
-                message=f"{self.log_prefix}: {err_msg}",
-                details=f"Received response: {response.text}",
-            )
-
-            response.raise_for_status()
-            raise JiraITSMException(err_msg)
+            raise JiraITSMPluginException(err_msg)
 
     def _get_atlassian_document(self, text):
-        """Return Atlassian document format."""
+        """
+        Return Atlassian document format.
+
+        Args:
+            text (str): Text to be converted into Atlassian document format.
+
+        Returns:
+            dict: Dictionary containing Atlassian document format.
+        """
         return {
             "type": "doc",
             "version": 1,
@@ -192,64 +175,83 @@ class JiraPlugin(PluginBase):
             ],
         }
 
-    def _get_createmeta(self, configuration, query_params):
-        """Get metadata for creating an issue on Jira."""
-        params = configuration.get("auth", {})
-        url = params.get("url")
-        email = params.get("email")
-        api_token = params.get("api_token")
-        msg = "fetching create-metadata"
-        err_msg = "Could not fetch create-metadata for Jira issue."
+    def _get_project_issues(self, log_msg: str, configuration: dict):
+        """Get issues of all projects from Jira.
 
-        response = self._api_helper(
-            lambda: requests.get(
-                "{}/rest/api/3/issue/createmeta".format(
-                    url.strip("/").strip()
-                ),
-                auth=HTTPBasicAuth(email.strip(), api_token),
-                headers=self._add_user_agent(),
-                params=query_params,
-                proxies=self.proxy,
-            ),
-            msg,
-            False,
+        Args:
+            log_msg (str): Log message.
+            configuration (dict): Configuration parameters dictionary.
+
+        Returns:
+            list: List of projects with issues.
+        """
+        start_at, is_last = 0, False
+        projects = []
+
+        url, email_address, api_token = self.jira_helper.get_auth_params(configuration)
+        endpoint = f"{url}/rest/api/3/project/search"
+        headers = self.jira_helper.basic_auth(
+            email=email_address, api_token=api_token
         )
-        if response.status_code == 200:
-            return self.parse_response(response)
-        elif response.status_code == 400:
-            resp_json = self.parse_response(response)
-            errors = list(resp_json.get("errors", {}).values())
-            errorMessages = list(resp_json.get("errorMessages", []))
-            errors.extend(errorMessages)
-            self.logger.error(
-                message="{}: Error occurred while {}. Error: {}".format(
-                    self.log_prefix, msg, "; ".join(errors)
-                ),
-                details=f"Received response: {response.text}",
-            )
-            raise JiraITSMException(err_msg)
-        else:
-            self.logger.error(
-                message=f"{self.log_prefix}: {err_msg}",
-                details=f"Received response: {response.text}",
-            )
-            response.raise_for_status()
-            raise JiraITSMException(err_msg)
 
-    def _filter_mappings(self, create_meta, mappings):
-        """Filter mappings based on project and issue type."""
+        params = {"startAt": start_at, "maxResults": LIMIT, "expand": "issueTypes"}
+        while not is_last:
+            try:
+                response = self.jira_helper.api_helper(
+                    url=endpoint,
+                    method="GET",
+                    headers=headers,
+                    params=params,
+                    verify=self.ssl_validation,
+                    proxies=self.proxy,
+                    logger_msg=log_msg,
+                    is_validation=True
+                )
+                page_projects = response.get("values", [])
+                projects.extend(page_projects)
+
+                is_last = response.get("isLast", False)
+                start_at += LIMIT
+            except JiraITSMPluginException:
+                raise
+            except Exception as error:
+                err_msg = (
+                    f"Error occurred while {log_msg}."
+                )
+                self.logger.error(
+                    message=f"{self.log_prefix}: {err_msg} Error: {error}",
+                    details=str(traceback.format_exc())
+                )
+                raise JiraITSMPluginException(err_msg)
+        self.logger.info(
+            f"{self.log_prefix}: Successfully fetched "
+            f"{len(projects)} project(s) from the {PLATFORM_NAME}."
+        )
+        return projects
+
+    def _filter_mappings(self, issue_fields, mappings):
+        """
+        Filter mappings based on project and issue type.
+
+        Args:
+            issue_fields (list): List of issue fields returned by Jira.
+            mappings (dict): Dictionary of the mapped fields.
+
+        Returns:
+            dict: Filtered mappings which only contains the on-screen attributes.
+        """
         # First get screen fields for given project and issue type
         fields = []
-        for _, field_meta in create_meta.get("fields", {}).items():
-            fields.append(field_meta.get("key"))
+        for field in issue_fields:
+            fields.append(field.get("key", ""))
 
         # Create new mapping which only contains the on-screen attributes
         # That implies removing mappings which are not available in given
         # project and issue type create screen
 
         filtered_mappings = {}
-        for attr in fields:
-            if attr in mappings:
+        for attr in mappings.keys():
+            if attr in fields:
                 try:
                     filtered_mappings[attr] = json.loads(mappings[attr])
                 except json.decoder.JSONDecodeError:
@@ -257,385 +259,946 @@ class JiraPlugin(PluginBase):
 
         return filtered_mappings
 
-    def create_task(self, alert: Alert, mappings: Dict, queue: Queue) -> Task:
-        """Create an issue/ticket on Jira platform."""
-        params = self.configuration.get("auth", {})
-        url = params.get("url")
-        email = params.get("email")
-        api_token = params.get("api_token")
-        project_id, issue_type = queue.value.split(":")
-        msg = "creating task/issue"
-        err_msg = "Could not create the Jira ticket."
-        jira_comment = {}
-        if "comment" in mappings:
-            jira_comment["comment_while_create"] = mappings.get("comment")
-        # Filter out the mapped attributes based on
-        # given project and issue_type
-        create_meta = self._get_createmeta(
-            self.configuration,
-            {
-                "expand": "projects.issuetypes.fields",
-                "projectIds": project_id,
-                # This will return a list of single project
-                "issuetypeNames": issue_type,
-                # This will return a list of single issue type
-            },
-        )
-        if not create_meta.get("projects", []) or not create_meta.get(
-            "projects", [{}]
-        )[0].get("issuetypes"):
-            self.logger.error(
-                "{}: Project or issue type {} "
-                "may no longer exist.".format(self.log_prefix, queue.label)
-            )
-            raise JiraITSMException(
-                "{}: Could not create the Jira ticket.".format(self.log_prefix)
-            )
-        create_meta = create_meta.get("projects", [{}])[0].get(
-            "issuetypes", [{}]
-        )[0]
-        mappings = self._filter_mappings(create_meta, mappings)
+    def _make_body(self, mappings, project_id="", issue_type_id="", is_update=False):
+        """Create body for Jira issue creation/update.
 
+        Args:
+            mappings (dict): Dictionary of the mapped fields.
+            project_id (str): Project id.
+            issue_type_id (str): Issue type id.
+            is_update (bool): True if update else False.
+
+        Returns:
+            dict: Body for Jira issue creation/update.
+        """
         body = {"fields": mappings}
         # Set fields with nested structure
-        body["fields"]["issuetype"] = {"name": issue_type}
-        body["fields"]["project"] = {"id": project_id}
+        if not is_update:
+            body["fields"]["issuetype"] = {"id": issue_type_id}
+            body["fields"]["project"] = {"id": project_id}
+
         if "summary" in mappings:
             body["fields"]["summary"] = (
-                body.get("fields", {}).get("summary").replace("\n", " ")
+                body.get("fields", {}).get("summary", "").replace("\n", " ")
             )
         if "description" in mappings and not isinstance(
             mappings["description"], dict
         ):
             body["fields"]["description"] = self._get_atlassian_document(
-                str(mappings.get("description"))
+                str(mappings.get("description", ""))
             )
         if "labels" in mappings:
-            labels = mappings.get("labels")
+            labels = mappings.get("labels", "")
             if isinstance(labels, str):
                 body["fields"]["labels"] = [
                     label.strip() for label in labels.split(",")
                 ]
             elif not isinstance(labels, list):
-                self.logger.warn(
-                    "{}: invalid input provided for Labels. "
+                self.logger.error(
+                    f"{self.log_prefix}: invalid input provided for Labels. "
                     "Valid input: comma-separated values or a list of values "
-                    '(e.g., label1, label2 or ["label1", "label2"])'.format(
-                        self.log_prefix
-                    )
+                    '(e.g., label1, label2 or ["label1", "label2"])'
                 )
 
-        headers = {
-            "Accept": "application/json",
-            "Content-Type": "application/json",
+        return body
+
+    def _ce_to_jira_status_mappings(self, jira_status: dict):
+        """Get status mappings.
+
+        Args:
+            mapping_config (Dict): Mapping config.
+            mappings (Dict): Mappings.
+
+        Returns:
+            dict: mappings with updated status mappings.
+        """
+        mapping_config = self.configuration.get("mapping_config", {})
+        ce_to_jira_status = mapping_config.get("status_mapping", {})
+        status_to_set = ce_to_jira_status.get(jira_status, "to do")
+
+        return status_to_set
+
+    def _get_status_mapping(self):
+        """Get status mapping.
+
+        Returns:
+            dict: Status mapping.
+        """
+        mapping_config = self.configuration.get("mapping_config", {})
+        jira_to_ce_status = {
+            value.lower(): key for key, value in mapping_config.get("status_mapping", {}).items()
+        }
+        return {
+            "status": jira_to_ce_status
         }
 
-        response = self._api_helper(
-            lambda: requests.post(
-                f"{url.strip('/').strip()}/rest/api/3/issue",
-                json=body,
-                auth=HTTPBasicAuth(email.strip(), api_token),
-                headers=self._add_user_agent(headers),
-                proxies=self.proxy,
-            ),
-            msg,
-            False,
-        )
-        if response.status_code == 201:
-            resp_json = self.parse_response(response)
+    def _update_task_details(self, task: Task, jira_data: dict):
+        """Update task fields with ServiceNow data.
 
-            # Fetch the recently created issue
-            issue_key = resp_json.get("key")
-            issue = self._get_issue(issue_key)
-            issue_status = str(
-                issue.get("fields", {}).get("status", {}).get("name")
-            ).lower()
-            task = Task(
-                id=issue_key,
-                status=STATE_MAPPINGS.get(issue_status, TaskStatus.OTHER),
-                link="{}/browse/{}".format(
-                    url.strip("/").strip(),
-                    issue_key,
-                ),
-            )
-            if jira_comment:
-                self.update_task(task, alert, jira_comment, queue)
-            return task
-        elif response.status_code == 400:
-            resp_json = self.parse_response(response)
-            errors = list(resp_json.get("errors", {}).values())
-            errorMessages = list(resp_json.get("errorMessages", []))
-            errors.extend(errorMessages)
-
-            self.logger.error(
-                message="{}: Error occurred while {}. Error: {}".format(
-                    self.log_prefix, msg, "; ".join(errors)
-                ),
-                details=f"Received response: {response.text}",
-            )
-            raise JiraITSMException(err_msg)
-        else:
-            self.logger.error(
-                message=f"{self.log_prefix}: {err_msg}",
-                details=f"Received response: {response.text}",
-            )
-            response.raise_for_status()
-            raise JiraITSMException(err_msg)
-
-    def chunks(self, lst, n):
-        """Yield successive n-sized chunks from lst."""
-        for i in range(0, len(lst), n):
-            yield lst[i : i + n]
-
-    def sync_states(self, tasks: List[Task]) -> List[Task]:
-        """Sync all task states."""
-        params = self.configuration.get("auth", {})
-        url = params.get("url")
-        email = params.get("email")
-        api_token = params.get("api_token")
-        msg = "syncing task states"
-        task_ids = [task.id for task in tasks]
-        task_statuses = {}
-        count = 0
-        for total in self.chunks(task_ids, 10000):
-            body = {
-                "jql": f"key IN ({','.join(total)})",
-                "maxResults": 100,
-                "fields": ["status"],  # We only need status of Jira tickets
-                "startAt": 0,
-                "validateQuery": "none",
-            }
-            issue_count = 0
-
-            while True:
-                json_res = self._api_helper(
-                    lambda: requests.post(
-                        "{}/rest/api/3/search".format(url.strip("/").strip()),
-                        headers=self._add_user_agent(),
-                        json=body,
-                        auth=HTTPBasicAuth(email.strip(), api_token),
-                        proxies=self.proxy,
-                    ),
-                    msg,
+        Args:
+            task (Task): CE task.
+            jira_data (dict): Updated data from Jira.
+        """
+        if task.dataItem and task.dataItem.rawData:
+            old_status = task.dataItem.rawData.get("status", TaskStatus.OTHER)
+            if task.updatedValues:
+                task.updatedValues.oldStatus = (
+                    old_status if old_status.upper() in TaskStatus.__members__ else TaskStatus.OTHER
                 )
-
-                body["startAt"] += json_res.get("maxResults")
-
-                for issue in json_res.get("issues", []):
-                    task_statuses[issue.get("key")] = (
-                        issue.get("fields", {})
-                        .get("status", {})
-                        .get("name", "")
-                    ).lower()
-                issue_count = len(json_res.get("issues", []))
-
-                self.logger.info(
-                    "{}: Successfully synced {} ticket(s) from Jira ITSM "
-                    "in current page. Total {} Tickets(s) synced so far "
-                    "in the current sync cycle.".format(
-                        self.log_prefix,
-                        issue_count,
-                        issue_count + count,
-                    )
-                )
-                count += issue_count
-                if issue_count == 0 or body.get("startAt", len(total)) >= len(
-                    total
-                ):
-                    break
-
-        for task in tasks:
-            if task_statuses.get(task.id):
-                task.status = STATE_MAPPINGS.get(
-                    task_statuses.get(task.id), TaskStatus.OTHER
+                task.updatedValues.oldAssignee = task.dataItem.rawData.get(
+                    "assignee", None
                 )
             else:
+                task.updatedValues = UpdatedTaskValues(
+                    status=None,
+                    oldStatus=(
+                        old_status if old_status.upper() in TaskStatus.__members__
+                        else TaskStatus.OTHER
+                    ),
+                    assignee=None,
+                    oldAssignee=task.dataItem.rawData.get("assignee", None),
+                )
+        mapping_config = self._get_status_mapping()
+        STATUS_MAPPINGS = mapping_config.get("status", {})
+
+        if task.updatedValues:
+            task.updatedValues.status = STATUS_MAPPINGS.get(
+                jira_data.get("status"), TaskStatus.OTHER
+            )
+
+        if jira_data["assignee"]:
+            task.updatedValues.assignee = jira_data["assignee"]
+
+        task.status = STATUS_MAPPINGS.get(
+            jira_data.get("status"), TaskStatus.OTHER
+        )
+        return task
+
+    def _set_jira_status(self, task_id: str, jira_status: str):
+        """Set Jira ticket status(transition).
+
+        Args:
+            task_id (str): Jira ticket id.
+            jira_status (str): Jira status.
+        """
+        logger_message = f"Jira ticket '{task_id}'"
+        jira_status_to_set = self._ce_to_jira_status_mappings(jira_status.lower())
+
+        url, email_address, api_token = self.jira_helper.get_auth_params(self.configuration)
+        endpoint = f"{url}/rest/api/3/issue/{task_id}/transitions"
+        headers = self.jira_helper.basic_auth(
+            email=email_address, api_token=api_token
+        )
+
+        try:
+            response = self.jira_helper.api_helper(
+                url=endpoint,
+                method="GET",
+                headers=headers,
+                verify=self.ssl_validation,
+                proxies=self.proxy,
+                logger_msg=(
+                    f"fetching available transitions for {logger_message}"
+                ),
+            )
+            transitions = response.get("transitions", [])
+            if not transitions:
+                self.logger.info(
+                    f"{self.log_prefix}: Transitions are not found for {logger_message}. "
+                    f"Hence, skipping setting status for {logger_message}."
+                )
+                return
+            for transition in transitions:
+                if transition.get("name", "").lower() == jira_status_to_set.lower():
+                    payload = {
+                        "transition": {
+                            "id": transition.get("id", "")
+                        }
+                    }
+                    response = self.jira_helper.api_helper(
+                        url=endpoint,
+                        method="POST",
+                        headers=headers,
+                        json=payload,
+                        verify=self.ssl_validation,
+                        proxies=self.proxy,
+                        logger_msg=(
+                            f"setting '{jira_status}' status for {logger_message}"
+                        ),
+                        is_handle_error_required=False
+                    )
+                    if response.status_code == 204:
+                        self.logger.info(
+                            f"{self.log_prefix}: Successfully set '{jira_status}' "
+                            f"status for {logger_message}."
+                        )
+                        return
+                    else:
+                        self.jira_helper.handle_error(
+                            response=response,
+                            logger_msg=(
+                                f"setting status for {logger_message}."
+                            )
+                        )
+        except JiraITSMPluginException:
+            raise
+        except Exception as exp:
+            err_msg = (
+                f"Error occurred while setting status for {logger_message}."
+            )
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg} Error: {exp}",
+                details=str(traceback.format_exc()),
+            )
+            raise JiraITSMPluginException(err_msg)
+
+        return jira_status_to_set
+
+    def _get_issue_fields(
+        self,
+        project_id,
+        project_name,
+        issue_type,
+        issue_name,
+        base_url,
+        auth_headers
+    ):
+        """Get issue fields for a given project and issue type.
+
+        Args:
+            project_id (str): Project id.
+            project_name (str): Project name.
+            issue_type (str): Issue type.
+            issue_name (str): Issue name.
+            base_url (str): Base URL.
+            auth_headers (dict): Authentication headers.
+
+        Returns:
+            list: List of issue fields.
+        """
+        logger_message = (
+            f"fields for project '{project_name}' and issue type '{issue_name}' "
+            f"from {PLATFORM_NAME} platform"
+        )
+        self.logger.info(
+            f"{self.log_prefix}: Fetching {logger_message}."
+        )
+        endpoint = f"{base_url}/rest/api/3/issue/createmeta/{project_id}/issuetypes/{issue_type}"
+        max_results = 200
+        params = {"startAt": 0, "maxResults": max_results}
+        total_fields = []
+
+        while True:
+            try:
+                response = self.jira_helper.api_helper(
+                    url=endpoint,
+                    method="GET",
+                    params=params,
+                    headers=auth_headers,
+                    verify=self.ssl_validation,
+                    proxies=self.proxy,
+                    logger_msg=(
+                        f"fetching {logger_message}"
+                    ),
+                    is_handle_error_required=False
+                )
+                if response.status_code == 200:
+                    resp_json = self.jira_helper.parse_response(
+                        response, f"fetching {logger_message}"
+                    )
+                    fields = resp_json.get("fields", [{}])
+                    total_fields.extend(fields)
+                    if len(fields) < max_results:
+                        break
+                    params["startAt"] += max_results
+                elif response.status_code == 404:
+                    err_msg = (
+                        f"Could not create {PLATFORM_NAME} ticket. "
+                        f"Project '{project_name}' or issue type '{issue_name}' "
+                        f"may not exist on {PLATFORM_NAME} platform."
+                    )
+                    self.logger.error(
+                        f"{self.log_prefix}: {err_msg}"
+                    )
+                    raise JiraITSMPluginException(err_msg)
+                else:
+                    self.jira_helper.handle_error(
+                        response=response,
+                        logger_msg=f"fetching {logger_message}",
+                    )
+            except JiraITSMPluginException:
+                raise
+            except Exception as exp:
+                err_msg = (
+                    f"Error occurred while fetching {logger_message}."
+                )
+                self.logger.error(
+                    message=f"{self.log_prefix}: {err_msg} Error: {exp}",
+                    details=str(traceback.format_exc()),
+                )
+                raise JiraITSMPluginException(err_msg)
+
+        self.logger.info(
+            f"{self.log_prefix}: Successfully fetched {len(total_fields)} {logger_message}."
+        )
+        return total_fields
+
+    def _get_edit_issue_fields(self, issue_id):
+        """Get edit issue fields for given issue id.
+
+        Args:
+            issue_id (str): Issue id.
+
+        Returns:
+            list: List of issue fields.
+        """
+        logger_message = (
+            f"edit fields for ticket '{issue_id}' "
+            f"from {PLATFORM_NAME} platform"
+        )
+        self.logger.info(
+            f"{self.log_prefix}: Fetching {logger_message}."
+        )
+        url, email_address, api_token = self.jira_helper.get_auth_params(self.configuration)
+        endpoint = f"{url}/rest/api/3/issue/{issue_id}/editmeta"
+        headers = self.jira_helper.basic_auth(
+            email=email_address, api_token=api_token
+        )
+
+        try:
+            response = self.jira_helper.api_helper(
+                url=endpoint,
+                method="GET",
+                headers=headers,
+                verify=self.ssl_validation,
+                proxies=self.proxy,
+                logger_msg=(
+                    f"fetching {logger_message}"
+                ),
+                is_handle_error_required=False
+            )
+            if response.status_code == 200:
+                resp_json = self.jira_helper.parse_response(response, f"fetching {logger_message}")
+                fields = resp_json.get("fields", {})
+                edit_fields = list(fields.values())
+
+            elif response.status_code == 404:
+                return []
+            else:
+                self.jira_helper.handle_error(
+                    response=response,
+                    logger_msg=f"fetching {logger_message}",
+                )
+        except JiraITSMPluginException:
+            raise
+        except Exception as exp:
+            err_msg = (
+                f"Error occurred while fetching {logger_message}."
+            )
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg} Error: {exp}",
+                details=str(traceback.format_exc()),
+            )
+            raise JiraITSMPluginException(err_msg)
+
+        return edit_fields
+
+    def create_task(self, alert, mappings: Dict, queue: Queue) -> Task:
+        """Create an incident/issue on ServiceNow platform.
+
+        Args:
+            alert (Alert/Event): Alert/Event object.
+            mappings (Dict): Field mappings.
+            queue (Queue): Queue object.
+
+        Returns:
+            Task: Task object.
+        """
+        if not mappings:
+            err_msg = (
+                "No mappings found in Queue Configuration."
+            )
+            self.logger.error(
+                f"{self.log_prefix}: {err_msg} Queue mapping "
+                f"is required to create a ticket on {PLATFORM_NAME}."
+            )
+            raise JiraITSMPluginException(err_msg)
+
+        event_type = "Alert"
+        if "eventType" in alert.model_dump():
+            event_type = "Event"
+
+        logger_message = (
+            f"a Jira ticket for {event_type} ID '{alert.id}' on {PLATFORM_NAME} platform"
+        )
+        self.logger.info(
+            f"{self.log_prefix}: Creating {logger_message}."
+        )
+
+        project_id, issue_type_id = queue.value.split(":")
+        project_name, issue_name = re.match(r"(.*) - (.*)$", queue.label).groups()
+
+        jira_comment = {}
+        jira_status = ""
+        if "comment" in mappings:
+            jira_comment["comment_while_create"] = mappings.get("comment", "")
+        if "status" in mappings:
+            jira_status = mappings.get("status", "")
+
+        url, email_address, api_token = self.jira_helper.get_auth_params(self.configuration)
+        endpoint = f"{url}/rest/api/3/issue"
+        headers = self.jira_helper.basic_auth(
+            email=email_address, api_token=api_token
+        )
+        issue_fields = self._get_issue_fields(
+            project_id,
+            project_name,
+            issue_type_id,
+            issue_name,
+            url,
+            headers
+        )
+
+        mappings = self._filter_mappings(issue_fields, mappings)
+        body = self._make_body(mappings, project_id, issue_type_id)
+
+        headers.update({
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        })
+
+        try:
+            response = self.jira_helper.api_helper(
+                url=endpoint,
+                method="POST",
+                json=body,
+                headers=headers,
+                verify=self.ssl_validation,
+                proxies=self.proxy,
+                logger_msg=(
+                    f"creating {logger_message}"
+                ),
+                is_handle_error_required=False
+            )
+            if response.status_code == 201:
+                resp_json = self.jira_helper.parse_response(response, f"creating {logger_message}")
+
+                issue_key = resp_json.get("key", "")
+                status = getattr(alert, "rawData").get("status", TaskStatus.OTHER)
+                task = Task(
+                    id=issue_key,
+                    status=status if status.upper() in TaskStatus.__members__ else TaskStatus.OTHER,
+                    link=f"{url.strip('/').strip()}/browse/{issue_key}",
+                    dataItem=alert
+                )
+                if jira_comment:
+                    self.update_task(task, alert, jira_comment, queue)
+                if jira_status:
+                    self._set_jira_status(task.id, jira_status)
+                # Fetch the recently created issue
+                issue = self._get_issue(issue_key)
+                issue_status = str(
+                    issue.get("fields", {}).get("status", {}).get("name", "")
+                ).lower()
+                assignee = issue.get("fields", {}).get("assignee", {})
+                if isinstance(assignee, dict):
+                    issue_assignee = assignee.get("emailAddress", "")
+                else:
+                    issue_assignee = None
+                task = self._update_task_details(task, {
+                    "status": issue_status,
+                    "assignee": issue_assignee
+                })
+                self.logger.info(
+                    f"{self.log_prefix}: Successfully created a Jira ticket with ID "
+                    f"'{issue_key}' for {event_type} ID '{alert.id}' on {PLATFORM_NAME}."
+                )
+                return task
+            elif response.status_code == 400:
+                resp_json = self.jira_helper.parse_response(response, f"creating {logger_message}")
+                errors = list(resp_json.get("errors", {}).values())
+                errorMessages = list(resp_json.get("errorMessages", []))
+                errors.extend(errorMessages)
+
+                self.logger.error(
+                    message=(
+                        f"{self.log_prefix}: Error occurred while creating {logger_message}. "
+                        f"Error: {'; '.join(errors)}"
+                    ),
+                    details=f"Received response: {response.text}",
+                )
+                raise JiraITSMPluginException(f"Error occurred while creating {logger_message}.")
+            else:
+                _ = self.jira_helper.handle_error(response, f"creating {logger_message}")
+        except JiraITSMPluginException:
+            raise
+        except Exception as exp:
+            err_msg = (
+                f"Error occurred while creating {logger_message}."
+            )
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg} Error: {exp}",
+                details=str(traceback.format_exc()),
+            )
+            raise JiraITSMPluginException(err_msg)
+
+    def sync_states(self, tasks: List[Task]) -> List[Task]:
+        """Sync States.
+
+        Args:
+            tasks (List[Task]): Task list received from Core.
+
+        Returns:
+            List[Task]: Task List with updated status.
+        """
+        self.logger.info(
+            f"{self.log_prefix}: Syncing status for {len(tasks)} "
+            f"ticket(s) with {PLATFORM_NAME}."
+        )
+        url, email_address, api_token = self.jira_helper.get_auth_params(self.configuration)
+        endpoint = f"{url}/rest/api/3/search"
+        headers = self.jira_helper.basic_auth(
+            email=email_address, api_token=api_token
+        )
+
+        task_ids = [task.id for task in tasks]
+        task_statuses = {}
+        skip, size = 0, 100
+        batch_count = 1
+        total_count = 0
+        while True:
+            log_msg = (
+                f"getting ticket(s) for batch {batch_count} from {PLATFORM_NAME}"
+            )
+            try:
+                ids = task_ids[skip:skip + size]
+                if not ids:
+                    break
+
+                body = {
+                    "jql": f"key IN ({','.join(ids)})",
+                    "maxResults": size,
+                    "fields": ["status", "assignee"],
+                    "startAt": 0,
+                    "validateQuery": "none",
+                }
+
+                response = self.jira_helper.api_helper(
+                    url=endpoint,
+                    method="POST",
+                    json=body,
+                    headers=headers,
+                    verify=self.ssl_validation,
+                    proxies=self.proxy,
+                    logger_msg=log_msg,
+                )
+                issues = response.get("issues", [])
+
+                for issue in issues:
+                    assignee = issue.get("fields", {}).get("assignee", {})
+                    if isinstance(assignee, dict):
+                        issue_assignee = assignee.get("emailAddress", "")
+                    else:
+                        issue_assignee = None
+                    task_statuses[issue.get("key", "")] = {
+                        "status": (
+                            issue.get("fields", {}).get("status", {}).get("name", "").lower()
+                        ),
+                        "assignee": issue_assignee
+                    }
+
+                issue_count = len(issues)
+                total_count += issue_count
+                self.logger.info(
+                    f"{self.log_prefix}: Successfully synced {issue_count} ticket(s) "
+                    f"from {PLATFORM_NAME} in batch {batch_count}. "
+                    f"Total ticket(s) synced: {total_count}."
+                )
+
+                skip += size
+                batch_count += 1
+                if issue_count < size:
+                    break
+            except JiraITSMPluginException:
+                raise
+            except Exception as exp:
+                err_msg = (
+                    "Error occurred while syncing status for ticket(s) "
+                    f"from {PLATFORM_NAME}."
+                )
+                self.logger.error(
+                    message=f"{self.log_prefix}: {err_msg} Error: {exp}",
+                    details=str(traceback.format_exc()),
+                )
+                raise JiraITSMPluginException(err_msg)
+
+        for task in tasks:
+            if task_statuses.get(task.id, ""):
+                task = self._update_task_details(task, task_statuses.get(task.id))
+            else:
+                if task.updatedValues.status and task.updatedValues.status != TaskStatus.DELETED:
+                    task.updatedValues.oldStatus, task.updatedValues.status = (
+                        task.updatedValues.status, TaskStatus.DELETED
+                    )
+                else:
+                    task.updatedValues.oldStatus, task.updatedValues.status = (
+                        TaskStatus.DELETED, TaskStatus.DELETED
+                    )
                 task.status = TaskStatus.DELETED
+        self.logger.info(
+            f"{self.log_prefix}: Successfully synced "
+            f"{len(tasks)} ticket(s) with the {PLATFORM_NAME}."
+        )
         return tasks
 
     def update_task(
-        self, task: Task, alert: Alert, mappings: Dict, queue: Queue
+        self,
+        task: Task,
+        alert: Union[Alert, Event],
+        mappings: Dict,
+        queue: Queue,
+        upsert_task=False
     ) -> Task:
-        """Add a comment in existing Jira issue."""
-        params = self.configuration.get("auth", {})
-        url = params.get("url")
-        email = params.get("email")
-        api_token = params.get("api_token")
+        """Add a comment in existing Jira incident/issue.
+
+        Args:
+            task (Task): Existing task/ticket created in Tickets page.
+            alert (Union[Alert, Event]): Alert or Event received from tenant.
+            mappings (Dict): Dictionary of the mapped fields.
+            queue (Queue): Selected queue configuration.
+
+        Returns:
+            Task: Task containing ticket ID and status.
+        """
+        body = {"fields": {}}
+        jira_status = ""
+        event_type = "Alert"
+        if "eventType" in alert.model_dump():
+            event_type = "Event"
+
         if mappings.get("comment_while_create", None):
-            data = mappings.get("comment_while_create")
+            comment_data = mappings.pop("comment_while_create")
         elif mappings.get("comment", None):
-            data = mappings.get("comment")
-        else:  # default
-            data = f"New alert received at {str(alert.timestamp)}."
+            comment_data = mappings.pop("comment")
+        else:
+            comment_data = (
+                f"New {event_type.lower()} with ID '{alert.id}' received "
+                f"at {str(alert.timestamp)}."
+            )
+
+        if upsert_task:
+            if "issuekey" in mappings:
+                mappings.pop("issuekey")  # special field; do not allow overriding
+            for key, value in list(mappings.items()):
+                if type(value) is not str:
+                    mappings[key] = str(value)
+            if "status" in mappings:
+                jira_status = mappings.pop("status")
+
+            edit_issue_fields = self._get_edit_issue_fields(issue_id=task.id)
+            mappings = self._filter_mappings(edit_issue_fields, mappings)
+            body = self._make_body(mappings, is_update=True)
 
         try:
-            data = json.loads(data)
+            comment_data = json.loads(comment_data)
         except json.decoder.JSONDecodeError:
             pass
-        if not isinstance(data, dict):
-            comment = {"body": self._get_atlassian_document(str(data))}
-        else:
-            comment = {"body": data}
-        response = self._api_helper(
-            lambda: requests.post(
-                "{}/rest/api/3/issue/{}/comment".format(
-                    url.strip("/").strip(), task.id
-                ),
-                headers=self._add_user_agent(),
-                json=comment,
-                auth=HTTPBasicAuth(email.strip(), api_token),
-                proxies=self.proxy,
-            ),
-            "updating task with id {}".format(task.id),
-            False,
-        )
-        if response.status_code == 201:
-            return task
-        elif response.status_code == 404:
-            self.logger.warn(
-                "{}: Issue with ID {} no longer exists on Jira "
-                "or the configured user does not have permission to add"
-                "comment(s).".format(self.log_prefix, task.id)
+        if not isinstance(comment_data, dict):
+            body.update(
+                {
+                    "update": {
+                        "comment": [
+                            {
+                                "add": {"body": self._get_atlassian_document(str(comment_data))}
+                            }
+                        ]
+                    }
+                }
             )
-            return task
         else:
-            err_msg = (
-                "Could not add comment the existing issue on "
-                "Jira with ID {}."
-            ).format(task.id)
+            body.update(
+                {
+                    "update": {
+                        "comment": [
+                            {
+                                "add": {"body": comment_data}
+                            }
+                        ]
+                    }
+                }
+            )
 
-            self.logger.error(
-                message="{}: {}.".format(self.log_prefix, err_msg),
-                details=f"Received response: {response.text}",
+        url, email_address, api_token = self.jira_helper.get_auth_params(self.configuration)
+        endpoint = f"{url}/rest/api/3/issue/{task.id}"
+        headers = self.jira_helper.basic_auth(
+            email=email_address, api_token=api_token
+        )
+        log_msg = f"updating ticket with ID '{task.id}' on {PLATFORM_NAME} platform"
+
+        try:
+            response = self.jira_helper.api_helper(
+                url=endpoint,
+                method="PUT",
+                json=body,
+                headers=headers,
+                verify=self.ssl_validation,
+                proxies=self.proxy,
+                is_handle_error_required=False,
+                logger_msg=log_msg,
             )
-            response.raise_for_status()
-            raise JiraITSMException(err_msg)
+
+            if response.status_code in [200, 201, 204]:
+                if jira_status:
+                    self._set_jira_status(task.id, jira_status)
+                # Fetch the recently created issue
+                issue = self._get_issue(task.id)
+                issue_status = str(
+                    issue.get("fields", {}).get("status", {}).get("name", "")
+                ).lower()
+                assignee = issue.get("fields", {}).get("assignee", {})
+                if isinstance(assignee, dict):
+                    issue_assignee = assignee.get("emailAddress", "")
+                else:
+                    issue_assignee = None
+                task.dataItem = alert
+                task = self._update_task_details(task, {
+                    "status": issue_status,
+                    "assignee": issue_assignee
+                })
+                self.logger.info(
+                    f"{self.log_prefix}: Successfully updated ticket with "
+                    f"ID {task.id} on {PLATFORM_NAME} platform."
+                )
+                return task
+            elif response.status_code == 404:
+                if task.updatedValues.status and task.updatedValues.status != TaskStatus.DELETED:
+                    task.updatedValues.oldStatus, task.updatedValues.status = (
+                        task.updatedValues.status, TaskStatus.DELETED
+                    )
+                else:
+                    task.updatedValues.oldStatus, task.updatedValues.status = (
+                        TaskStatus.DELETED, TaskStatus.DELETED
+                    )
+                task.status = TaskStatus.DELETED
+                self.logger.info(
+                    f"{self.log_prefix}: Ticket with ID '{task.id}' "
+                    f"no longer exists on {PLATFORM_NAME} platform."
+                )
+                return task
+            else:
+                self.jira_helper.handle_error(
+                    response,
+                    log_msg,
+                    False
+                )
+        except JiraITSMPluginException:
+            raise
+        except Exception as exp:
+            err_msg = f"Error occurred while {log_msg}."
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg} Error: {exp}",
+                details=str(traceback.format_exc()),
+            )
+            raise JiraITSMPluginException(err_msg)
+
+    def _validate_connectivity(
+        self,
+        url: str,
+        email_address: str,
+        api_token: str,
+    ) -> ValidationResult:
+        """Validate connectivity with Jira server.
+
+        Args:
+            url (str): Jira Cloud Instance URL.
+            email_address (str): Jira Cloud Instance Email.
+            api_token (str): Jira Cloud Instance API Token.
+
+        Returns:
+            ValidationResult: Validation Result.
+        """
+        try:
+            logger_msg = (
+                f"connectivity with {PLATFORM_NAME} server"
+            )
+            self.logger.debug(
+                f"{self.log_prefix}: Validating {logger_msg}."
+            )
+            headers = self.jira_helper.basic_auth(
+                email=email_address, api_token=api_token
+            )
+
+            api_endpoint = f"{url}/rest/api/3/myself"
+            self.jira_helper.api_helper(
+                url=api_endpoint,
+                method="GET",
+                headers=headers,
+                verify=self.ssl_validation,
+                proxies=self.proxy,
+                logger_msg=(
+                    f"validating {logger_msg}"
+                ),
+                is_validation=True,
+            )
+
+            self.logger.debug(
+                f"{self.log_prefix}: Successfully validated "
+                f"{logger_msg}."
+            )
+            return ValidationResult(
+                success=True,
+                message=(
+                    f"Validation successful for {MODULE_NAME} "
+                    f"{self.plugin_name} plugin configuration."
+                ),
+            )
+        except JiraITSMPluginException as exp:
+            return ValidationResult(
+                success=False,
+                message=f"{str(exp)}"
+            )
+        except Exception as exp:
+            err_msg = f"Unexpected validation error occurred while validating {logger_msg}."
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg} Error: {exp}",
+                details=str(traceback.format_exc()),
+            )
+            return ValidationResult(
+                success=False,
+                message=f"{err_msg} Check logs for more details.",
+            )
+
+    def _validate_url(self, url: str) -> bool:
+        """Validate the given URL.
+
+        Args:
+            url (str): URL to validate.
+
+        Returns:
+            bool: True if URL is valid else False.
+        """
+        parsed = urlparse(url.strip())
+        return parsed.scheme and parsed.netloc
 
     def _validate_auth(self, configuration):
-        """Validate the authentication step."""
-        try:
-            params = configuration.get("auth", {})
-            url = params.get("url")
-            email = params.get("email")
-            api_token = params.get("api_token")
-            if "url" not in params or type(url) != str or not url.strip():
-                err_msg = "Jira Cloud Instance URL is required field."
-                self.logger.error(
-                    "{}: Validation error occurred, Error: {}".format(
-                        self.log_prefix, err_msg
-                    )
-                )
-                return ValidationResult(success=False, message=err_msg)
+        """Validate plugin authentication parameters.
 
-            elif url.strip().lower()[:8] != "https://":
-                return ValidationResult(
-                    success=False,
-                    message=(
-                        "Format of Jira URL should be "
-                        '"https://<your-domain>.atlassian.net"'
-                    ),
-                )
+        Args:
+            configuration (Dict): Configuration dictionary.
 
-            if (
-                "email" not in params
-                or type(email) != str
-                or not email.strip()
-            ):
-                err_msg = "Email Address is required field."
-                self.logger.error(
-                    "{}: Validation error occurred, Error: {}".format(
-                        self.log_prefix, err_msg
-                    )
-                )
-                return ValidationResult(success=False, message=err_msg)
+        Returns:
+            ValidationResult: Validation result.
+        """
+        auth_params = configuration.get("auth", {})
+        validation_error = "Validation error occurred."
 
-            if (
-                "api_token" not in params
-                or type(api_token) != str
-                or not api_token
-            ):
-                err_msg = "API Token is required field."
-                self.logger.error(
-                    "{}: Validation error occurred, Error: {}".format(
-                        self.log_prefix, err_msg
-                    )
-                )
-                return ValidationResult(success=False, message=err_msg)
-            header = {"Accept": "application/json"}
-            response = self._api_helper(
-                lambda: requests.get(
-                    "{}/rest/api/3/myself".format(url.strip("/").strip()),
-                    auth=HTTPBasicAuth(email.strip(), api_token),
-                    headers=self._add_user_agent(header),
-                    proxies=self.proxy,
-                ),
-                " validating credentials",
-                False,
-            )
-            if response.status_code == 200:
-                return ValidationResult(
-                    success=True, message="Validation successful."
-                )
-            elif response.status_code == 401:
-                err_msg = "Invalid Email Address or API Token provided."
-                self.logger.error(f"{self.log_prefix}: {err_msg}")
-                return ValidationResult(success=False, message=err_msg)
-            elif response.status_code == 403:
-                err_msg = (
-                    "The requested operation is not permitted for this user."
-                )
-                self.logger.error(f"{self.log_prefix}: {err_msg}")
-                return ValidationResult(success=False, message=err_msg)
-            else:
-                response.raise_for_status()
-                resp_json = self.parse_response(response)
-                msg = "Authentication Failed. Check logs for more details."
-
-                err_msg = (
-                    f"Validation error occurred with response {resp_json}"
-                )
-                self.logger.error(
-                    message=f"{self.log_prefix}: Validation error occurred.",
-                    details=f"Error Details: {err_msg}",
-                )
-                return ValidationResult(success=False, message=msg)
-
-        except JiraITSMException as exp:
+        # Validate URL
+        url = auth_params.get("url", "").strip().strip("/")
+        if not url:
+            err_msg = "Jira Cloud Instance URL is required Authentication parameter."
             self.logger.error(
-                message=f"{self.log_prefix}: Validation error occurred. {exp}",
-                details=traceback.format_exc(),
+                f"{self.log_prefix}: {validation_error} {err_msg}"
             )
-            return ValidationResult(success=False, message=str(exp))
-        except Exception as exp:
+            return ValidationResult(success=False, message=err_msg)
+        elif not (
+            isinstance(url, str) and self._validate_url(url)
+        ):
+            err_msg = "Invalid Jira Cloud Instance URL provided in Authentication parameters."
             self.logger.error(
-                message=f"{self.log_prefix}: Validation error occurred. {exp}",
-                details=traceback.format_exc(),
+                f"{self.log_prefix}: {validation_error} {err_msg}"
             )
-            return ValidationResult(success=False, message=str(exp))
+            return ValidationResult(success=False, message=err_msg)
+
+        # Validate Email Address
+        email_address = auth_params.get("email", "").strip()
+        if not email_address:
+            err_msg = "Email Address is required Authentication parameter."
+            self.logger.error(
+                f"{self.log_prefix}: {validation_error} {err_msg}"
+            )
+            return ValidationResult(success=False, message=err_msg)
+        elif not isinstance(email_address, str):
+            err_msg = "Invalid Email Address provided in Authentication parameters."
+            self.logger.error(
+                f"{self.log_prefix}: {validation_error} {err_msg}"
+            )
+            return ValidationResult(success=False, message=err_msg)
+
+        # Validate API Token
+        api_token = auth_params.get("api_token")
+        if not api_token:
+            err_msg = "API Token is required Authentication parameter."
+            self.logger.error(
+                f"{self.log_prefix}: {validation_error} {err_msg}"
+            )
+            return ValidationResult(success=False, message=err_msg)
+        elif not isinstance(api_token, str):
+            err_msg = "Invalid API Token provided in Authentication parameters."
+            self.logger.error(
+                f"{self.log_prefix}: {validation_error} {err_msg}"
+            )
+            return ValidationResult(success=False, message=err_msg)
+
+        # Validate connectivity with ServiceNow server.
+        return self._validate_connectivity(
+            url=url,
+            email_address=email_address,
+            api_token=api_token,
+        )
 
     def _get_valid_issue_types(self, configuration):
-        """Fetch valid issue types for all projects for
-        configured Jira instance."""
-        create_meta = self._get_createmeta(configuration, {})
-        valid_issue_types = []
-        for project in create_meta.get("projects", []):
-            for issue_type in project.get("issuetypes", []):
-                valid_issue_types.append(issue_type.get("name"))
+        """Fetch valid issue types for all projects for configured Jira instance.
+
+        Args:
+            configuration (Dict): Configuration dictionary.
+
+        Returns:
+            List[str]: List of valid issue types.
+        """
+        log_msg = f"fetching list of valid issue types from {PLATFORM_NAME} platform"
+        projects_issues = self._get_project_issues(log_msg=log_msg, configuration=configuration)
+        valid_issue_types = [
+            issue_type.get("name", "") for project in projects_issues
+            for issue_type in project.get("issueTypes", [])
+        ]
         return valid_issue_types
 
     def _validate_params(self, configuration):
-        """Validate plugin configuration parameters."""
+        """Validate plugin configuration parameters.
+
+        Args:
+            configuration (Dict): Configuration dictionary.
+
+        Returns:
+            ValidationResult: Validation result with success flag and message.
+        """
+        logger_msg = (
+            "Jira Issue Type(s) provided in Configuration parameters"
+        )
+        self.logger.debug(
+            f"{self.log_prefix}: Validating {logger_msg}."
+        )
         params = configuration.get("params", {})
-        issue_type = params.get("issue_type")
-        if "issue_type" not in params or len(issue_type) == 0:
-            return ValidationResult(
-                success=False,
-                message="Jira issue type(s) can not be empty.",
+        validation_error = "Validation error occurred."
+
+        # Validate Issue Type
+        issue_type = params.get("issue_type", "").strip()
+        if not issue_type:
+            err_msg = "Jira Issue Type is required Configuration parameter."
+            self.logger.error(
+                f"{self.log_prefix}: {validation_error} {err_msg}"
             )
+            return ValidationResult(success=False, message=err_msg)
+        elif not isinstance(issue_type, str):
+            err_msg = "Invalid Jira Issue Type provided in Configuration parameters."
+            self.logger.error(
+                f"{self.log_prefix}: {validation_error} {err_msg}"
+            )
+            return ValidationResult(success=False, message=err_msg)
 
         # split the CSVs
         configured_issue_types = [x.strip() for x in issue_type.split(",")]
-        valid_issue_types = self._get_valid_issue_types(configuration)
+        valid_issue_types = self._get_valid_issue_types(configuration=configuration)
         invalid_issue_types = list(
             set(configured_issue_types) - set(valid_issue_types)
         )
@@ -643,16 +1206,25 @@ class JiraPlugin(PluginBase):
         if invalid_issue_types:
             return ValidationResult(
                 success=False,
-                message="Found invalid Jira issue type(s): {}".format(
-                    ", ".join(invalid_issue_types)
-                ),
+                message=f"Invalid Jira issue type(s) found: {', '.join(invalid_issue_types)}",
             )
+        self.logger.debug(
+            f"{self.log_prefix}: Successfully validated {logger_msg}."
+        )
         return ValidationResult(success=True, message="Validation successful.")
 
     def validate_step(
         self, name: str, configuration: dict
     ) -> ValidationResult:
-        """Validate a given configuration step."""
+        """Validate a given configuration step.
+
+        Args:
+            name (str): Configuration step name.
+            configuration (dict): Configuration parameters dictionary.
+
+        Returns:
+            ValidationResult: Validation result with success flag and message.
+        """
         if name == "auth":
             return self._validate_auth(configuration)
         elif name == "params":
@@ -663,331 +1235,134 @@ class JiraPlugin(PluginBase):
             )
 
     def get_available_fields(self, configuration: dict) -> List[MappingField]:
-        """Get list of all the available fields for issues/tickets."""
-        params = configuration.get("auth", {})
-        url = params.get("url")
-        email = params.get("email")
-        api_token = params.get("api_token")
+        """Get list of all the available fields for tickets.
 
-        response = self._api_helper(
-            lambda: requests.get(
-                "{}/rest/api/3/field".format(url.strip("/").strip()),
-                auth=HTTPBasicAuth(email.strip(), api_token),
-                headers=self._add_user_agent(),
+        Args:
+            configuration (dict): Configuration parameters dictionary.
+
+        Returns:
+            List[MappingField]: List of mapping fields.
+        """
+        url, email_address, api_token = self.jira_helper.get_auth_params(self.configuration)
+        endpoint = f"{url}/rest/api/3/field"
+        headers = self.jira_helper.basic_auth(
+            email=email_address, api_token=api_token
+        )
+        log_msg = f"fetching list of all the available fields for tickets from {PLATFORM_NAME}"
+        try:
+            response = self.jira_helper.api_helper(
+                url=endpoint,
+                method="GET",
+                headers=headers,
+                verify=self.ssl_validation,
                 proxies=self.proxy,
-            ),
-            "fetching all available fields for issues/tickets",
-        )
-
-        return list(
-            map(
-                lambda item: MappingField(
-                    label=item.get("name"), value=item.get("id")
-                )
-                if item.get("id") not in ["comment"]
-                else MappingField(
-                    label=item.get("name"),
-                    value=item.get("id"),
-                    updateAble=True,
-                ),
-                response,
+                logger_msg=log_msg,
+                is_validation=True
             )
-        )
+        except JiraITSMPluginException:
+            raise
+        except Exception as error:
+            err_msg = (
+                f"Unexpected error occurred while getting mapping "
+                f"fields from {PLATFORM_NAME}."
+            )
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg} Error: {error}"
+            )
+            raise JiraITSMPluginException(err_msg)
 
-    def get_default_mappings(
-        self, configuration: dict
-    ) -> Dict[str, List[FieldMapping]]:
-        """Get default mappings."""
+        if response:
+            return list(
+                map(
+                    lambda item: MappingField(
+                        label=item.get("name", ""), value=item.get("id", ""),
+                    )
+                    if item.get("id") not in ["comment"]
+                    else MappingField(
+                        label=item.get("name", ""),
+                        value=item.get("id", ""),
+                        updateAble=True,
+                    ),
+                    response,
+                )
+            )
+        else:
+            err_msg = (
+                "Error occurred while getting "
+                f"fields from {PLATFORM_NAME}"
+            )
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg}.",
+            )
+            raise JiraITSMPluginException(err_msg)
+
+    def get_default_mappings(self, configuration: dict) -> Dict[str, List[FieldMapping]]:
+        """Get default mappings.
+
+        Args:
+            configuration (dict): Configuration parameters dictionary.
+
+        Returns:
+            dict: Default mappings.
+        """
         return {
             "mappings": [
                 FieldMapping(
                     extracted_field="custom_message",
                     destination_field="summary",
-                    custom_message="Netskope $appCategory alert: $alertName",
+                    custom_message=(
+                        "Netskope $appCategory alert name: $alertName, Event Name: $alert_name"
+                    )
                 ),
                 FieldMapping(
                     extracted_field="custom_message",
                     destination_field="description",
                     custom_message=(
-                        "Alert ID: $id\nApp: $app\nAlert Name: $alertName\n"
-                        "Alert Type: $alertType\nApp Category: $appCategory\n"
-                        "User: $user"
+                        "Alert/Event ID: $id\nAlert/Event App: $app\nAlert/Event User: $user\n\n"
+                        "Alert Name: $alertName\nAlert Type: $alertType\n"
+                        "Alert App Category: $appCategory\n\n"
+                        "Event Name: $alert_name\nEvent Type: $eventType"
                     ),
                 ),
             ],
-            "dedup": [],
+            "dedup": [
+                FieldMapping(
+                    extracted_field="custom_message",
+                    destination_field="comment",
+                    custom_message=(
+                        "Received new alert/event with Alert/Event ID: $id and "
+                        "Alert Name: $alertName, Event Name: $alert_name in Cloud Exchange."
+                    ),
+                ),
+            ],
         }
 
     def get_queues(self) -> List[Queue]:
-        """Get list of Jira projects as queues."""
-        params = self.configuration.get("auth", {})
-        url = params.get("url")
-        email = params.get("email")
-        api_token = params.get("api_token")
-        start_at, is_last = 0, False
-        projects = []
-        issue_types = self.configuration.get("params", {}).get("issue_type")
-        issue_types = list(map(lambda x: x.strip(), issue_types.split(",")))
-        total_ids = []
-
-        while not is_last:
-            response = self._api_helper(
-                lambda: requests.get(
-                    "{}/rest/api/3/project/search".format(
-                        url.strip("/").strip()
-                    ),
-                    params={"startAt": start_at, "maxResults": 50},
-                    headers=self._add_user_agent(),
-                    auth=HTTPBasicAuth(email.strip(), api_token),
-                    proxies=self.proxy,
-                ),
-                "fetching projects from Jira as queues",
-            )
-
-            is_last = response.get("isLast")
-            start_at += response.get("maxResults")
-            # Create combination of projects and issue types
-            for project in response.get("values", []):
-                total_ids.append(project.get("id"))
-            # batches of 650 Project ids if we pass more than that
-            # it will throw 500 server error
-            if is_last or (start_at % 650) == 0:
-                total_project_ids = ",".join(total_ids)
-                meta = self._get_createmeta(
-                    self.configuration,
-                    {"projectIds": total_project_ids},
-                )
-                projects_list = meta.get("projects")
-                for project in projects_list:
-                    if not project:
-                        continue
-                    for issue_type in project.get("issuetypes"):
-                        # Issue type is defined as a "key:value" string
-                        # Value of queue is defined
-                        # as "project_id:issue_type" string
-                        if issue_type.get("name") not in issue_types:
-                            continue
-                        projects.append(
-                            Queue(
-                                label="{} - {}".format(
-                                    project.get("name"),
-                                    issue_type.get("name"),
-                                ),
-                                value="{}:{}".format(
-                                    project.get("id"),
-                                    issue_type.get("name"),
-                                ),
-                            )
-                        )
-                total_ids = []  # restart the batch ids
-
-        return projects
-
-    def parse_response(self, response):
-        """Parse Response will return JSON from response object.
-
-        Args:
-            response (response): Response object.
+        """Get list of Jira projects as queues.
 
         Returns:
-            json: Response Json.
+            List[Queue]: List of queues.
         """
-        try:
-            return response.json()
-        except json.JSONDecodeError as err:
-            err_msg = "Invalid JSON response received. Error: {}".format(err)
-            self.logger.error(
-                message=f"{self.log_prefix}: {err_msg}",
-                details=traceback.format_exc(),
-            )
-            raise JiraITSMException(err_msg)
-        except Exception as exp:
-            err_msg = (
-                "Unexpected error occurred while parsing"
-                " json response. Error: {}".format(exp)
-            )
-            self.logger.error(
-                message=f"{self.log_prefix}: {err_msg}",
-                details=traceback.format_exc(),
-            )
-            raise JiraITSMException(err_msg)
+        log_msg = f"fetching list of {PLATFORM_NAME} projects as queues"
+        queues = []
 
-    def handle_error(self, response, logger_msg):
-        """Handle API Status code errors.
+        projects_list = self._get_project_issues(log_msg=log_msg, configuration=self.configuration)
 
-        Args:
-            response (Requests response object): Response object of requests.
-        """
-        resp_json = self.parse_response(response)
+        issue_types = self.configuration.get("params", {}).get("issue_type", "")
+        issue_types = [x.strip() for x in issue_types.split(",")]
 
-        if response.status_code in [200, 201]:
-            return resp_json
-        elif response.status_code == 401:
-            err_msg = (
-                "Received exit code {} while {}. Verify "
-                "Username or Password provided in "
-                "configuration parameters.".format(
-                    response.status_code, logger_msg
-                )
-            )
-        elif response.status_code == 403:
-            err_msg = (
-                "Received exit code {} while {}. This error may "
-                "occur if configured user does not have access "
-                "to perform this operation.".format(
-                    response.status_code, logger_msg
-                )
-            )
-        elif response.status_code >= 400 and response.status_code < 500:
-            err_msg = (
-                "Received exit code {}, HTTP Client error while {}.".format(
-                    response.status_code, logger_msg
-                )
-            )
-        elif response.status_code >= 500 and response.status_code < 600:
-            err_msg = (
-                "Received exit code {}. HTTP Server Error while {}.".format(
-                    response.status_code, logger_msg
-                )
-            )
-        else:
-            err_msg = "Received exit code {}, HTTP error while {}.".format(
-                response.status_code, logger_msg
-            )
-        resp_err_msg = resp_json.get(
-            "error",
-            {"message": "No error details found in response."},
-        )
-        self.logger.error(
-            message=f"{self.log_prefix}: {err_msg}",
-            details=str(resp_err_msg),
-        )
-        raise JiraITSMException(err_msg)
-
-    def _api_helper(self, request, logger_msg, is_handle_error_required=True):
-        """Helper function for api call."""
-
-        try:
-            for retry_counter in range(MAX_RETRY_COUNT):
-                response = request()
-                if response.status_code == 429:
-                    resp_json = self.parse_response(response)
-                    resp_err_msg = resp_json.get(
-                        "error",
-                        {"message": "No error details found in response."},
+        for project in projects_list:
+            if not project:
+                continue
+            for issue_type in project.get("issueTypes", []):
+                # Value of queue is defined as "project_id:issue_type_id" string
+                if issue_type.get("name", "") not in issue_types:
+                    continue
+                queues.append(
+                    Queue(
+                        label=f"{project.get('name', '')} - {issue_type.get('name', '')}",
+                        value=f"{project.get('id', '')}:{issue_type.get('id', '')}",
                     )
-                    if retry_counter == MAX_RETRY_COUNT - 1:
-                        err_msg = (
-                            "Received exit code 429, API rate limit "
-                            "exceeded while {}. Max retries for rate limit "
-                            "handler exceeded hence returning status"
-                            " code 429.".format(logger_msg)
-                        )
-                        self.logger.error(
-                            message=f"{self.log_prefix}: {err_msg}",
-                            details=resp_err_msg,
-                        )
-                        raise JiraITSMException(err_msg)
-                    retry_after = response.headers.get("Retry-After")
-                    if retry_after is None:
-                        self.logger.info(
-                            "{}: No Retry-After value received from"
-                            "API hence plugin will retry after 60 "
-                            "seconds.".format(self.log_prefix)
-                        )
-                        time.sleep(60)
-                        continue
-                    retry_after = int(retry_after)
-                    diff_retry_after = abs(retry_after - time.time())
-                    if diff_retry_after > 300:
-                        err_msg = (
-                            "'Retry-After' value received from "
-                            "response headers while {} is greater than 5  "
-                            "minutes hence returning status code 429.".format(
-                                logger_msg
-                            )
-                        )
-                        self.logger.error(
-                            message=f"{self.log_prefix}: {err_msg}"
-                        )
-                        raise JiraITSMException(err_msg)
-                    self.logger.error(
-                        message=(
-                            "{}: Received exit code 429, API rate limit"
-                            " exceeded while {}. Retrying after {} "
-                            "seconds. {} retries remaining.".format(
-                                self.log_prefix,
-                                logger_msg,
-                                diff_retry_after,
-                                MAX_RETRY_COUNT - 1 - retry_counter,
-                            )
-                        ),
-                        details=resp_err_msg,
-                    )
-                    time.sleep(diff_retry_after)
+                )
 
-                else:
-                    return (
-                        self.handle_error(response, logger_msg)
-                        if is_handle_error_required
-                        else response
-                    )
-        except requests.exceptions.ProxyError as exp:
-            err_msg = (
-                "ProxyError occurred while {}. "
-                "Verify proxy configuration. Error: {}".format(logger_msg, exp)
-            )
-            toast_msg = "Invalid Proxy configuration."
-            self.logger.error(
-                message=f"{self.log_prefix}: {err_msg}",
-                details=traceback.format_exc(),
-            )
-            raise JiraITSMException(toast_msg)
-        except requests.exceptions.ConnectionError as exp:
-            err_msg = (
-                "Unable to establish connection with {} "
-                "platform while {}. Proxy server or {} "
-                "is not reachable or Invalid Jira Cloud "
-                "Instance URL provided. Error: {}".format(
-                    PLATFORM_NAME, logger_msg, PLATFORM_NAME, exp
-                )
-            )
-            toast_msg = (
-                "Proxy server or {} is not reachable or "
-                "Invalid Jira Cloud Instance URL provided.".format(
-                    PLATFORM_NAME
-                )
-            )
-            self.logger.error(
-                message=f"{self.log_prefix}: {err_msg}",
-                details=traceback.format_exc(),
-            )
-            raise JiraITSMException(toast_msg)
-        except requests.exceptions.RequestException as exp:
-            err_msg = (
-                "Error occurred while requesting"
-                " to {} server for {}. Error: {}".format(
-                    PLATFORM_NAME, logger_msg, exp
-                )
-            )
-            toast_msg = (
-                "Request exception occurred. Check logs for more details"
-            )
-            self.logger.error(
-                message=f"{self.log_prefix}: {err_msg}",
-                details=traceback.format_exc(),
-            )
-            raise JiraITSMException(toast_msg)
-        except Exception as exp:
-            err_msg = (
-                "Exception occurred while making API call to"
-                " {} server while {}. Error: {}".format(
-                    PLATFORM_NAME, logger_msg, exp
-                )
-            )
-            toast_msg = "Exception occurred. Check logs for more details"
-            self.logger.error(
-                message=f"{self.log_prefix}: {err_msg}",
-                details=traceback.format_exc(),
-            )
-            raise JiraITSMException(toast_msg)
+        return queues

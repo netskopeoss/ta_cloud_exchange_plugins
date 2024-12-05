@@ -68,6 +68,7 @@ from .utils.crowdstrike_constants import (
     DEFAULT_NETSKOPE_TAG,
     ENDPOINT_DETECTION,
     ENDPOINT_DETECTION_DETAILS_BATCH_SIZE,
+    INTEGER_THRESHOLD,
     INTERNAL_TYPES_TO_CROWDSTRIKE,
     IOC_MANAGEMENT,
     IOC_MANAGEMENT_INDICATORS_LIMIT,
@@ -83,9 +84,10 @@ from .utils.crowdstrike_constants import (
     PLATFORM_NAME,
     PLUGIN_NAME,
     PLUGIN_VERSION,
+    PREFIX_IOC_SOURCE_TAG,
+    RETRACTION,
     THREAT_MAPPING,
     THREAT_TYPES,
-    PREFIX_IOC_SOURCE_TAG,
 )
 from .utils.crowdstrike_helper import (
     CrowdstrikePluginException,
@@ -115,6 +117,7 @@ class CrowdStrikePlugin(PluginBase):
         )
         self.plugin_name, self.plugin_version = self._get_plugin_info()
         self.log_prefix = f"{MODULE_NAME} {self.plugin_name}"
+        self.config_name = name
         if name:
             self.log_prefix = f"{self.log_prefix} [{name}]"
         self.crowdstrike_helper = CrowdStrikePluginHelper(
@@ -169,21 +172,26 @@ class CrowdStrikePlugin(PluginBase):
             return SeverityType.CRITICAL
         return SeverityType.UNKNOWN
 
-    def _filter_indicators(self, indicators: List, action_dict: Dict) -> Dict:
+    def _filter_indicators(
+        self, indicators: List, action_dict: Dict, plugin_name: str
+    ) -> Dict:
         """Filter indicators and create payloads from it.
 
         Args:
             indicators (indicators): Indicators received from business rule.
             action_dict (Dict): Action parameter dictionary.
+
+        Returns:
+            Dict: Payload dictionary.
         """
-        source = self.configuration.get("source", "").strip()
-        if not source:
-            source = PREFIX_IOC_SOURCE_TAG
-        else:
-            source = PREFIX_IOC_SOURCE_TAG + " | " + source
+        source = f"{PREFIX_IOC_SOURCE_TAG}"
+        if plugin_name:
+            source = source + " | " + plugin_name
         action_params = action_dict.get("parameters", {})
         action = action_params.get("action", "").strip()
-        platforms = action_params.get("platforms", ["windows", "mac", "linux"])
+        platforms = action_params.get(
+            "platforms", ["windows", "mac", "linux"]
+        )
 
         generated_payload = {}
         skipped_count = 0
@@ -358,7 +366,8 @@ class CrowdStrikePlugin(PluginBase):
         threat_types_to_pull: List[str],
         detection_ids: List[str],
         headers: Dict,
-    ) -> List[Indicator]:
+        is_retraction: bool = False,
+    ) -> Tuple:
         """Get detailed information by Detection IDs.
 
         Args:
@@ -368,8 +377,8 @@ class CrowdStrikePlugin(PluginBase):
             headers (dict): Header dict having Auth token as bearer header.
 
         Returns:
-            List[cte.models.Indicators]: List of indicators fetched from
-            Endpoint detection details.
+            Tuple: Tuple containing indicator_list or set, page_ioc_counts,
+               ioc_counts, skip_count and checkpoint
         """
         base_url = self.configuration.get("base_url", "").strip()
         indicator_endpoint = f"{base_url}/detects/entities/summaries/GET/v1"
@@ -388,11 +397,13 @@ class CrowdStrikePlugin(PluginBase):
         }
         skip_count = 0
         indicator_list = []
+        checkpoint = datetime.datetime.now().strftime(DATE_FORMAT)
+
+        fetched_iocs = set()  # Only used for retraction
         for ioc_chunks in self.divide_in_chunks(
             detection_ids, ENDPOINT_DETECTION_DETAILS_BATCH_SIZE
         ):
             json_payload = {"ids": list(ioc_chunks)}
-
             resp_json = self.crowdstrike_helper.api_helper(
                 url=indicator_endpoint,
                 method="POST",
@@ -417,6 +428,7 @@ class CrowdStrikePlugin(PluginBase):
                     ioc_type = behavior_info.get("ioc_type")
                     ioc_value_list = ioc_value.split(",")
                     for value in ioc_value_list:
+
                         try:
                             if (
                                 ioc_type
@@ -427,6 +439,15 @@ class CrowdStrikePlugin(PluginBase):
                                 # Condition to check whether to pull or not.
                                 and ioc_type in threat_types_to_pull
                             ):
+                                if is_retraction:
+                                    fetched_iocs.add(value)
+                                    for threat_type in page_ioc_counts:
+                                        if ioc_type in THREAT_MAPPING.get(
+                                            threat_type
+                                        ):
+                                            page_ioc_counts[threat_type] += 1
+                                            ioc_type_counts[threat_type] += 1
+                                    continue
                                 confidence = round(
                                     int(behavior_info.get("confidence", 10))
                                     / 10
@@ -442,6 +463,9 @@ class CrowdStrikePlugin(PluginBase):
                                     "ioc_description", ""
                                 )
                                 timestamp = behavior_info.get("timestamp")
+                                checkpoint = (
+                                    timestamp if timestamp else checkpoint
+                                )
                                 firstseen = (
                                     datetime.datetime.strptime(
                                         timestamp, DATE_FORMAT_FOR_IOCS
@@ -488,6 +512,7 @@ class CrowdStrikePlugin(PluginBase):
                                         page_ioc_counts,
                                         ioc_type_counts,
                                         skip_count,
+                                        checkpoint,
                                     )
                             else:
                                 skip_count += 1
@@ -503,8 +528,14 @@ class CrowdStrikePlugin(PluginBase):
                                 f"detection id {detection_id} Hence "
                                 f"skipping this indicator. Error: {error}"
                             )
-
-        return indicator_list, page_ioc_counts, ioc_type_counts, skip_count
+                            skip_count += 1
+        return (
+            fetched_iocs if is_retraction else indicator_list,
+            page_ioc_counts,
+            ioc_type_counts,
+            skip_count,
+            checkpoint,
+        )
 
     def create_tags(self, tags: List) -> tuple:
         """Create Tags.
@@ -522,7 +553,9 @@ class CrowdStrikePlugin(PluginBase):
             tag_name = tag.strip()
             try:
                 if not tag_utils.exists(tag_name):
-                    tag_utils.create_tag(TagIn(name=tag_name, color="#ED3347"))
+                    tag_utils.create_tag(
+                        TagIn(name=tag_name, color="#ED3347")
+                    )
                 created_tags.add(tag_name)
             except ValueError:
                 skipped_tags.add(tag_name)
@@ -540,48 +573,12 @@ class CrowdStrikePlugin(PluginBase):
 
         return list(created_tags), list(skipped_tags)
 
-    def _get_checkpoint(self, detection_id: str, headers: Dict):
-        """Get checkpoint for the pagination.
-
-        Args:
-            detection_id (str): Detection id of the detection.
-            headers (Dict): Headers containing auth token.
-        """
-        base_url = self.configuration.get("base_url", "").strip()
-        indicator_endpoint = f"{base_url}/detects/entities/summaries/GET/v1"
-        self.logger.debug(
-            f"{self.log_prefix}: Performing API call to get the last_behavior"
-            f' timestamp for the detection id "{detection_id}".'
-        )
-        json_payload = {"ids": [detection_id]}
-        resp_json = self.crowdstrike_helper.api_helper(
-            url=indicator_endpoint,
-            method="POST",
-            json=json_payload,
-            headers=headers,
-            is_handle_error_required=True,
-            logger_msg=(
-                "fetching details from detection"
-                f" id(s) from {ENDPOINT_DETECTION}"
-            ),
-            configuration=self.configuration,
-        )
-        resources_list = resp_json.get("resources", [])
-        if resources_list:
-            last_resource = resources_list[-1]
-            last_behavior = last_resource.get("last_behavior")
-            self.logger.debug(
-                f"{self.log_prefix}: Successfully fetched last behavior"
-                f' timestamp for detection id "{detection_id}". last '
-                f'behavior timestamp: "{last_behavior}"'
-            )
-            return last_behavior
-
     def _pull_iocs_from_endpoint_detections(
         self,
         threat_data_type: List,
         initial_check_point: str,
         storage: Dict,
+        is_retraction: bool = False,
     ) -> Union[Generator[Indicator, bool, None], Dict]:
         """Get a list of Detection IDs from the Endpoint detection.
 
@@ -595,6 +592,8 @@ class CrowdStrikePlugin(PluginBase):
             objects representing the retrieved indicators.
             - Dict: A dictionary containing the checkpoint details.
         """
+        if is_retraction and RETRACTION not in self.log_prefix:
+            self.log_prefix = self.log_prefix + f" [{RETRACTION}] "
         self.logger.debug(
             f"{self.log_prefix}: Pulling indicators from {ENDPOINT_DETECTION}"
             f" using checkpoint {initial_check_point}."
@@ -603,7 +602,7 @@ class CrowdStrikePlugin(PluginBase):
             self.crowdstrike_helper.get_credentials(self.configuration)
         )
         headers = self.crowdstrike_helper.get_auth_header(
-            client_id, client_secret, base_url
+            client_id, client_secret, base_url, is_retraction=is_retraction
         )
         query_endpoint = f"{base_url}/detects/queries/detects/v1"
 
@@ -627,7 +626,7 @@ class CrowdStrikePlugin(PluginBase):
         skip_count, page_count = 0, 0
         total_detection_ids = 0
         checkpoint, offset = None, 0
-        indicators = []
+        indicators = set() if is_retraction else []
         next_page = True
         while next_page:
             page_count += 1
@@ -644,20 +643,21 @@ class CrowdStrikePlugin(PluginBase):
                 "filter": filter_query,
                 "sort": "last_behavior|asc",
             }
-
             self.logger.debug(
                 f"{self.log_prefix}: Pulling detection id(s) of threat "
                 f"type(s) {', '.join(threat_types_to_pull)} from "
                 f"{ENDPOINT_DETECTION}."
             )
-
             resp_json = self.crowdstrike_helper.api_helper(
                 url=query_endpoint,
                 method="GET",
                 params=query_params,
                 headers=headers,
                 is_handle_error_required=True,
-                logger_msg=f"pulling detection ids from {PLATFORM_NAME}",
+                logger_msg=(
+                    f"pulling detection ids for page {page_count}"
+                    f" from {PLATFORM_NAME}"
+                ),
                 configuration=self.configuration,
             )
             current_detection_ids = resp_json.get("resources", [])
@@ -677,11 +677,13 @@ class CrowdStrikePlugin(PluginBase):
                     current_page_ioc_counts,
                     ioc_type_counts,
                     current_page_skip_count,
+                    checkpoint,
                 ) = self._get_detection_detailed(
                     ioc_type_counts=ioc_type_counts,
                     threat_types_to_pull=threat_types_to_pull,
                     detection_ids=current_detection_ids,
                     headers=headers,
+                    is_retraction=is_retraction,
                 )
                 skip_count += current_page_skip_count
                 self.total_indicators += len(indicators)
@@ -702,12 +704,18 @@ class CrowdStrikePlugin(PluginBase):
                 f" indicator(s) fetched - {sum(ioc_type_counts.values())}."
             )
 
-            last_indicator_checkpoint = datetime.datetime.now()
             if (
                 self.total_indicators >= MAX_INDICATOR_THRESHOLD
-                and not hasattr(self, "sub_checkpoint")
+                and not is_retraction  # Check for retraction.
             ):
-                last_indicator_checkpoint = indicators[-1].lastSeen
+                last_indicator_checkpoint = (
+                    checkpoint
+                    if checkpoint
+                    else datetime.datetime.now().strftime(DATE_FORMAT)
+                )
+                storage["checkpoints"][
+                    "endpoint_detection_checkpoint"
+                ] = last_indicator_checkpoint
                 self.logger.debug(
                     f"{self.log_prefix}: Maximum limit for"
                     f" {MAX_INDICATOR_THRESHOLD} indicators "
@@ -718,24 +726,8 @@ class CrowdStrikePlugin(PluginBase):
                 )
                 next_page = False
 
-            if self.last_run_at:
-                last_indicator_checkpoint = self.last_run_at
-            elif indicators:
-                if indicators[-1].lastSeen is not None:
-                    last_indicator_checkpoint = indicators[-1].lastSeen
-
-            # Update the checkpoint of detection endpoint in the storage.
-            storage["checkpoints"][
-                "endpoint_detection_checkpoint"
-            ] = last_indicator_checkpoint
-
             if len(current_detection_ids) < PAGE_SIZE:
                 next_page = False
-            else:
-                last_record_id = current_detection_ids[-1]
-                checkpoint = self._get_checkpoint(
-                    detection_id=last_record_id, headers=headers
-                )
 
             if not next_page:
                 if skip_count > 0:
@@ -766,16 +758,38 @@ class CrowdStrikePlugin(PluginBase):
                     f"{ENDPOINT_DETECTION}."
                 )
 
-            if hasattr(self, "sub_checkpoint"):
-                yield indicators, storage.get("checkpoints")
-            else:
-                yield indicators
+                if (
+                    not is_retraction
+                    and self.total_indicators < MAX_INDICATOR_THRESHOLD
+                ):
+                    # Store checkpoint for next sync interval if request
+                    # is not for retraction and indicator count is less
+                    # than threshold.
+                    storage["checkpoints"][
+                        "endpoint_detection_checkpoint"
+                    ] = datetime.datetime.now().strftime(DATE_FORMAT)
+            elif (
+                next_page
+                and hasattr(self, "sub_checkpoint")
+                and not is_retraction
+            ):
+                # Keep adding the checkpoints to avoid the duplication of
+                # indicators in case of failure scenarios.
+                storage["checkpoints"][
+                    "endpoint_detection_checkpoint"
+                ] = checkpoint
+            if indicators:
+                if hasattr(self, "sub_checkpoint") and not is_retraction:
+                    yield indicators, storage.get("checkpoints")
+                else:
+                    yield indicators
 
     def _extract_ioc_management_iocs(
         self,
         ioc_payload: Dict,
         fetched_ioc_counts: int,
         skipped_tags: set,
+        is_retraction: bool = False,
     ):
         """Extract IOC Management Indicators.
 
@@ -785,9 +799,9 @@ class CrowdStrikePlugin(PluginBase):
             skipped_tags (set): Skipped tags tag.
 
         Returns:
-            Tuple: Indicators,ioc_counts,skipped_tags
+            Tuple: Indicators,ioc_counts,skipped_tags, checkpoint
         """
-        indicators = []
+        indicators = set() if is_retraction else []
         current_page_ioc_counts = {
             "sha256": 0,
             "md5": 0,
@@ -796,10 +810,16 @@ class CrowdStrikePlugin(PluginBase):
             "ipv6": 0,
         }
         page_ioc_count = 0
+        checkpoint = datetime.datetime.now().strftime(DATE_FORMAT)
         for resource in ioc_payload:
             try:
                 ioc_value = resource.get("value")
                 ioc_type = resource.get("type")
+                if is_retraction:
+                    indicators.add(ioc_value)
+                    current_page_ioc_counts[ioc_type] += 1
+                    page_ioc_count += 1
+                    continue
                 resource_tag = resource.get("tags", [])
                 resource_tag.append(NON_CROWDSTRIKE_DISCOVERED)
 
@@ -814,7 +834,11 @@ class CrowdStrikePlugin(PluginBase):
                     f"Platforms: {resource.get('platforms')}, "
                     f"Description: {resource.get('description')}"
                 )
-
+                checkpoint = (
+                    resource.get("modified_on")
+                    if resource.get("modified_on")
+                    else checkpoint
+                )
                 indicator = Indicator(
                     value=ioc_value,
                     type=CROWDSTRIKE_TO_INTERNAL_TYPE[ioc_type],
@@ -834,7 +858,12 @@ class CrowdStrikePlugin(PluginBase):
                     fetched_ioc_counts + page_ioc_count
                     >= MAX_INDICATOR_THRESHOLD
                 ):
-                    return indicators, current_page_ioc_counts, skipped_tags
+                    return (
+                        indicators,
+                        current_page_ioc_counts,
+                        skipped_tags,
+                        checkpoint,
+                    )
 
             except (ValidationError, Exception) as error:
                 error_message = (
@@ -847,13 +876,14 @@ class CrowdStrikePlugin(PluginBase):
                     f"creating indicator. Hence {ioc_value} indicator "
                     f"will be skipped. Error: {error}, Record: {resource}"
                 )
-        return indicators, current_page_ioc_counts, skipped_tags
+        return indicators, current_page_ioc_counts, skipped_tags, checkpoint
 
     def _pull_iocs_from_ioc_management(
         self,
         threat_data_type: List,
         initial_check_point: str,
         storage: Dict,
+        is_retraction: bool = False,
     ) -> Union[Generator[Indicator, bool, None], Dict]:
         """Pull indicators from IOC Management Page.
 
@@ -862,11 +892,14 @@ class CrowdStrikePlugin(PluginBase):
             - initial_check_point (string): A string representation of datetime
             object of the IOC Management checkpoint.
             - storage (Dict): A mutable copy of self.storage dictionary.
+
         Returns:
             - Generator[Indicator, bool, None]: A Generator of Indicator
             objects representing the retrieved indicators.
             - Dict: A dictionary containing the checkpoint details.
         """
+        if is_retraction and RETRACTION not in self.log_prefix:
+            self.log_prefix = self.log_prefix + f" [{RETRACTION}]"
         self.logger.debug(
             f"{self.log_prefix}: Pulling indicators from {IOC_MANAGEMENT}"
             f" using checkpoint {initial_check_point}."
@@ -878,21 +911,27 @@ class CrowdStrikePlugin(PluginBase):
         base_url = self.configuration.get("base_url", "")
         query_endpoint = f"{base_url}/iocs/combined/indicator/v1"
         headers = self.crowdstrike_helper.get_auth_header(
-            client_id, client_secret, base_url
+            client_id, client_secret, base_url, is_retraction=is_retraction
         )
-
         query_params = {
             "limit": IOC_MANAGEMENT_PULL_PAGE_LIMIT,
             "filter": f"type: {threat_data_type}+modified_on:>='{initial_check_point}'+tags:!'{DEFAULT_NETSKOPE_TAG}'",  # noqa
         }
         skipped_tags = set()
-        ioc_counts = {"sha256": 0, "md5": 0, "domain": 0, "ipv4": 0, "ipv6": 0}
+        ioc_counts = {
+            "sha256": 0,
+            "md5": 0,
+            "domain": 0,
+            "ipv4": 0,
+            "ipv6": 0,
+        }
         self.logger.debug(
             f"{self.log_prefix}: Indicator(s) of types "
             f"{', '.join(threat_data_type)} will be pulled from "
             f"{IOC_MANAGEMENT}."
         )
         next_page = True
+        checkpoint = initial_check_point
         while next_page:
             page_count += 1
             resp_json = self.crowdstrike_helper.api_helper(
@@ -911,15 +950,16 @@ class CrowdStrikePlugin(PluginBase):
             after = meta.get("pagination", {}).get("after")
             query_params["after"] = after
             resources = resp_json.get("resources", [])
-
             (
                 indicators,
                 current_page_ioc_counts,
                 skipped_tags,
+                checkpoint,
             ) = self._extract_ioc_management_iocs(
                 resources,
                 self.total_indicators,
                 skipped_tags,
+                is_retraction,
             )
             # Add the total count of indicators fetched so far from IOC
             # Management as well as Endpoint Detection.
@@ -945,12 +985,18 @@ class CrowdStrikePlugin(PluginBase):
                 f"indicator(s) fetched - {sum(ioc_counts.values())}."
             )
 
-            last_indicator_checkpoint = datetime.datetime.now()
             if (
                 self.total_indicators >= MAX_INDICATOR_THRESHOLD
-                and not hasattr(self, "sub_checkpoint")
+                and not is_retraction
             ):
-                last_indicator_checkpoint = indicators[-1].lastSeen
+                last_indicator_checkpoint = (
+                    checkpoint
+                    if checkpoint
+                    else datetime.datetime.now().strftime(DATE_FORMAT)
+                )
+                storage["checkpoints"][
+                    "ioc_management_checkpoint"
+                ] = last_indicator_checkpoint
                 self.logger.debug(
                     f"{self.log_prefix}: Maximum limit for"
                     f" {MAX_INDICATOR_THRESHOLD} indicators reached while "
@@ -959,16 +1005,6 @@ class CrowdStrikePlugin(PluginBase):
                     f"{last_indicator_checkpoint} for next sync interval."
                 )
                 next_page = False
-
-            if self.last_run_at:
-                last_indicator_checkpoint = self.last_run_at
-            elif indicators:
-                if indicators[-1].lastSeen is not None:
-                    last_indicator_checkpoint = indicators[-1].lastSeen
-            storage["checkpoints"][
-                "ioc_management_checkpoint"
-            ] = last_indicator_checkpoint
-
             if not after or (len(resources) < IOC_MANAGEMENT_PULL_PAGE_LIMIT):
                 next_page = False
 
@@ -996,10 +1032,31 @@ class CrowdStrikePlugin(PluginBase):
                     f"{IOC_MANAGEMENT} in total {page_count} pages."
                 )
 
-            if hasattr(self, "sub_checkpoint"):
-                yield indicators, storage.get("checkpoints", {})
-            else:
-                yield indicators
+                if (
+                    not is_retraction
+                    and self.total_indicators < MAX_INDICATOR_THRESHOLD
+                ):
+                    # Update the checkpoint to current time if not retraction
+                    # and total indicators are less than threshold.
+                    storage["checkpoints"][
+                        "ioc_management_checkpoint"
+                    ] = datetime.datetime.now().strftime(DATE_FORMAT)
+            elif (
+                next_page
+                and hasattr(self, "sub_checkpoint")
+                and not is_retraction
+            ):
+                # Keep adding the checkpoints to avoid the duplication of
+                # indicators in case of failure scenarios.
+                storage["checkpoints"][
+                    "ioc_management_checkpoint"
+                ] = checkpoint
+
+            if indicators:
+                if hasattr(self, "sub_checkpoint") and not is_retraction:
+                    yield indicators, storage.get("checkpoints", {})
+                else:
+                    yield indicators
 
     def pull(self) -> List[Indicator]:
         """Pull the Threat IoCs from CrowdStrike platform.
@@ -1011,58 +1068,17 @@ class CrowdStrikePlugin(PluginBase):
         is_pull_required = self.configuration.get(
             "is_pull_required", ""
         ).strip()
-        endpoint_detection_checkpoint = None
-        ioc_management_checkpoint = None
-        storage = self.storage if self.storage is not None else {}
-
-        sub_checkpoint = getattr(self, "sub_checkpoint", None)
-        if sub_checkpoint:
-            endpoint_detection_checkpoint = sub_checkpoint.get(
-                "endpoint_detection_checkpoint"
-            )
-            ioc_management_checkpoint = sub_checkpoint.get(
-                "ioc_management_checkpoint"
-            )
-        elif storage.get("checkpoints", {}):
-            endpoint_detection_checkpoint = storage.get("checkpoints", {}).get(
-                "endpoint_detection_checkpoint"
-            )
-            ioc_management_checkpoint = storage.get("checkpoints", {}).get(
-                "ioc_management_checkpoint"
-            )
-        elif self.last_run_at:
-            endpoint_detection_checkpoint = self.last_run_at
-            ioc_management_checkpoint = self.last_run_at
-
-        if not endpoint_detection_checkpoint or not ioc_management_checkpoint:
-            endpoint_detection_checkpoint = (
-                datetime.datetime.now()
-                - datetime.timedelta(days=self.configuration.get("days"))
-            )
-            ioc_management_checkpoint = (
-                datetime.datetime.now()
-                - datetime.timedelta(days=self.configuration.get("days"))
-            )
-
-        storage.update(
-            {
-                "checkpoints": {
-                    "endpoint_detection_checkpoint": endpoint_detection_checkpoint,  # noqa
-                    "ioc_management_checkpoint": ioc_management_checkpoint,
-                }
-            }
-        )
 
         if is_pull_required == "Yes":
             if hasattr(self, "sub_checkpoint"):
 
                 def wrapper(self):
-                    yield from self._pull(storage)
+                    yield from self._pull()
 
                 return wrapper(self)
             else:
                 indicators = []
-                for batch in self._pull(storage):
+                for batch in self._pull():
                     indicators.extend(batch)
                 return indicators
         else:
@@ -1073,23 +1089,91 @@ class CrowdStrikePlugin(PluginBase):
             )
             return []
 
-    def _pull(self, storage):
+    def _pull(self):
+        endpoint_detection_checkpoint = None
+        ioc_management_checkpoint = None
+        storage = self.storage if self.storage is not None else {}
+
+        sub_checkpoint = getattr(self, "sub_checkpoint", None)
+        if sub_checkpoint:
+            # Check if sub checkpoint is available.
+            # sub checkpoint will be available from CE 5.0.1 onwards.
+            endpoint_detection_checkpoint = sub_checkpoint.get(
+                "endpoint_detection_checkpoint"
+            )
+            ioc_management_checkpoint = sub_checkpoint.get(
+                "ioc_management_checkpoint"
+            )
+
+        elif storage.get("checkpoints", {}):
+            # Check if storage is available.
+            # Storage will be used for the older circuit breaker for CE < 5.0.1
+            endpoint_detection_checkpoint = storage.get(
+                "checkpoints", {}
+            ).get("endpoint_detection_checkpoint")
+            ioc_management_checkpoint = storage.get("checkpoints", {}).get(
+                "ioc_management_checkpoint"
+            )
+
+        elif self.last_run_at:
+            # Check if last run date is available.
+            endpoint_detection_checkpoint = self.last_run_at.strftime(
+                DATE_FORMAT
+            )
+            ioc_management_checkpoint = self.last_run_at.strftime(DATE_FORMAT)
+        else:
+            # Finally if nothing is there then set the values to
+            # Initial Range.
+            endpoint_detection_checkpoint = (
+                datetime.datetime.now()
+                - datetime.timedelta(days=self.configuration.get("days"))
+            )
+            endpoint_detection_checkpoint = (
+                endpoint_detection_checkpoint.strftime(DATE_FORMAT)
+            )
+            ioc_management_checkpoint = (
+                datetime.datetime.now()
+                - datetime.timedelta(days=self.configuration.get("days"))
+            )
+            ioc_management_checkpoint = ioc_management_checkpoint.strftime(
+                DATE_FORMAT
+            )
+        # Important: Handled upgrade of plugin.
+        # Check if checkpoints are of type datetime if so then convert it to
+        # string.
+        if isinstance(endpoint_detection_checkpoint, datetime.datetime):
+            endpoint_detection_checkpoint = (
+                endpoint_detection_checkpoint.strftime(DATE_FORMAT)
+            )
+        if isinstance(ioc_management_checkpoint, datetime.datetime):
+            ioc_management_checkpoint = ioc_management_checkpoint.strftime(
+                DATE_FORMAT
+            )
+
+        # Important: Update the storage.
+        # We need to update the storage to track the checkpoints for each run.
+        storage.update(
+            {
+                "checkpoints": {
+                    "endpoint_detection_checkpoint": endpoint_detection_checkpoint,  # noqa
+                    "ioc_management_checkpoint": ioc_management_checkpoint,
+                }
+            }
+        )
         threat_data_type = self.configuration.get("threat_data_type")
-        indicator_source_page = self.configuration.get("indicator_source_page")
+        indicator_source_page = self.configuration.get(
+            "indicator_source_page"
+        )
 
         pull_ioc_methods = {}
         if "endpoint_detections" in indicator_source_page:
             pull_ioc_methods[self._pull_iocs_from_endpoint_detections] = (
-                storage.get("checkpoints", {})
-                .get("endpoint_detection_checkpoint")
-                .strftime(DATE_FORMAT)
+                endpoint_detection_checkpoint
             )
 
         if "ioc_management" in indicator_source_page:
             pull_ioc_methods[self._pull_iocs_from_ioc_management] = (
-                storage.get("checkpoints", {})
-                .get("ioc_management_checkpoint")
-                .strftime(DATE_FORMAT)
+                ioc_management_checkpoint
             )
 
         for pull_method, check_point in pull_ioc_methods.items():
@@ -1474,7 +1558,14 @@ class CrowdStrikePlugin(PluginBase):
             f"action on {success} host(s)."
         )
 
-    def push(self, indicators: List[Indicator], action_dict: Dict):
+    def push(
+        self,
+        indicators: List[Indicator],
+        action_dict: Dict,
+        source: str = None,
+        business_rule: str = None,
+        plugin_name: str = None,
+    ):
         """Push the Indicator list to CrowdStrike.
 
         Args:
@@ -1521,7 +1612,9 @@ class CrowdStrikePlugin(PluginBase):
             # Step-1 Filter indicators received from business rule.
             # Verify existence of indicators on IOC Management.
             indicator_payloads = self._filter_indicators(
-                indicators=indicators, action_dict=action_dict
+                indicators=indicators,
+                action_dict=action_dict,
+                plugin_name=plugin_name,
             )
 
             # Step-2 Verify existence of indicators.
@@ -1741,8 +1834,11 @@ class CrowdStrikePlugin(PluginBase):
                         " Hence skipping this batch"
                     )
                     errors = resp_json.get("errors", [str(response.text)])[0]
-                    if "Limit of 1 million indicators reached." in errors.get(
-                        "message", "No error message received from API."
+                    if (
+                        "Limit of 1 million indicators reached."
+                        in errors.get(
+                            "message", "No error message received from API."
+                        )
                     ):
                         err_msg = (
                             f"Limit of 1 million indicators on "
@@ -1854,7 +1950,9 @@ class CrowdStrikePlugin(PluginBase):
                 message=err_msg,
             )
         elif not isinstance(client_id, str):
-            err_msg = "Invalid Client ID provided in configuration parameters."
+            err_msg = (
+                "Invalid Client ID provided in configuration parameters."
+            )
             self.logger.error(
                 f"{self.log_prefix}: {validation_err_msg}. " f"{err_msg}"
             )
@@ -1939,7 +2037,8 @@ class CrowdStrikePlugin(PluginBase):
             return ValidationResult(success=False, message=err_msg)
         elif not (
             all(
-                threat_type in THREAT_TYPES for threat_type in threat_data_type
+                threat_type in THREAT_TYPES
+                for threat_type in threat_data_type
             )
         ):
             err_msg = (
@@ -1958,28 +2057,46 @@ class CrowdStrikePlugin(PluginBase):
             self.logger.error(f"{self.log_prefix}: {err_msg}")
             return ValidationResult(success=False, message=err_msg)
 
-        elif not isinstance(batch_size, int) or batch_size <= 0:
+        elif (
+            not isinstance(batch_size, int)
+            or batch_size <= 0
+            or batch_size > INTEGER_THRESHOLD
+        ):
             err_msg = (
                 "Invalid value provided in Indicator Batch Size."
-                " It should be non-zero positive integer."
+                " Valid value should be an integer in range 1 to 2^62."
             )
             self.logger.error(f"{self.log_prefix}: {err_msg}")
             return ValidationResult(success=False, message=err_msg)
 
-        source = configuration.get("source", "").strip()
-        prefixed_source = f"{PREFIX_IOC_SOURCE_TAG} | {source}"
-        if source:
-            if not isinstance(source, str):
-                err_msg = "Invalid value provided in the IOC Source."
-                self.logger.error(f"{self.log_prefix}: {err_msg}")
-                return ValidationResult(success=False, message=err_msg)
-            elif len(prefixed_source) > 200:
+        retraction_days = configuration.get("retraction_interval")
+        if isinstance(retraction_days, int) and retraction_days is not None:
+            if int(retraction_days) <= 0:
                 err_msg = (
-                    "Invalid value provided in the IOC Source. "
-                    "Size of source string should be less than 200 characters."
+                    "Invalid Retraction Interval provided in configuration"
+                    " parameters. Valid value should be an integer "
+                    "greater than 0."
                 )
-                self.logger.error(f"{self.log_prefix}: {err_msg}")
-                return ValidationResult(success=False, message=err_msg)
+                self.logger.error(
+                    f"{self.log_prefix}: {validation_err_msg}. {err_msg}"
+                )
+                return ValidationResult(
+                    success=False,
+                    message=err_msg,
+                )
+            elif int(retraction_days) > INTEGER_THRESHOLD:
+                err_msg = (
+                    "Invalid Retraction Interval provided in configuration"
+                    " parameters. Valid value should be an integer "
+                    "greater than 0 and less than 2^62."
+                )
+                self.logger.error(
+                    f"{self.log_prefix}: {validation_err_msg}. {err_msg}"
+                )
+                return ValidationResult(
+                    success=False,
+                    message=err_msg,
+                )
 
         days = configuration.get("days")
         if days is None:
@@ -1989,10 +2106,12 @@ class CrowdStrikePlugin(PluginBase):
                 success=False,
                 message=err_msg,
             )
-
-        if not isinstance(days, int) or days < 0:
+        elif (
+            not isinstance(days, int) or days < 0 or days > INTEGER_THRESHOLD
+        ):
             err_msg = (
-                "Invalid Initial Range provided in configuration parameter."
+                "Invalid Initial Range provided in configuration parameters."
+                " Valid value should be an integer in range 0 to 2^62."
             )
             self.logger.error(f"{self.log_prefix}: {err_msg}")
             return ValidationResult(
@@ -2031,19 +2150,13 @@ class CrowdStrikePlugin(PluginBase):
             )
 
             if is_pull_required == "Yes":
-                validation_result = self._validate_permission(
+                return self._validate_permission(
                     base_url, headers, ioc_source_page
                 )
-                if validation_result.success:
-                    self.logger.debug(
-                        f"{self.log_prefix}: Validation successful."
-                    )
-                return validation_result
             else:
-                self.logger.debug(f"{self.log_prefix}: Validation successful.")
-                return ValidationResult(
-                    success=True, message="Validation successful."
-                )
+                log_msg = f"Validation successful for {PLUGIN_NAME} plugin."
+                self.logger.debug(f"{self.log_prefix}: {log_msg}")
+                return ValidationResult(success=True, message=log_msg)
         except CrowdstrikePluginException as exp:
             err_msg = f"Validation error occurred. Error: {exp}"
             self.logger.error(
@@ -2071,80 +2184,40 @@ class CrowdStrikePlugin(PluginBase):
         Args:
             base_url (str): Base URL of CrowdStrike.
         Returns:
-            Raise error if valid Base URL is not selected.
+            ValidationResult: ValidationResult object having validation
+            results after making an API call.
         """
         if "endpoint_detections" in ioc_source_page:
             query_endpoint = f"{base_url}/detects/queries/detects/v1?limit=1"
-            response = self.crowdstrike_helper.api_helper(
+            self.crowdstrike_helper.api_helper(
                 url=query_endpoint,
                 method="GET",
                 headers=headers,
                 logger_msg=(
                     f"verifying the connectivity with {ENDPOINT_DETECTION}"
                 ),
-                is_handle_error_required=False,
                 is_validation=True,
-                regenerate_auth_token=False,
                 configuration=self.configuration,
             )
-            result = self._verify_permission_helper(response)
-            if not result.success:
-                return result
 
         if "ioc_management" in ioc_source_page:
             query_endpoint = f"{base_url}/iocs/combined/indicator/v1"
-            response = self.crowdstrike_helper.api_helper(
+            self.crowdstrike_helper.api_helper(
                 url=query_endpoint,
                 method="GET",
                 headers=headers,
                 logger_msg=(
                     f"verifying the connectivity with {IOC_MANAGEMENT}"
                 ),
-                is_handle_error_required=False,
+                is_validation=True,
                 configuration=self.configuration,
             )
-            result = self._verify_permission_helper(response)
-            if not result.success:
-                return result
-
-        return ValidationResult(success=True, message="Validation successful.")
-
-    def _verify_permission_helper(self, response) -> ValidationResult:
-        """Helper method for verify permissions that takes
-        response and return the validation result.
-
-        Args:
-            response (response): API Response object.
-
-        Returns:
-            ValidationResult : Validation result.
-        """
-        if response.status_code == 200:
-            return ValidationResult(
-                success=True, message="Validation successful."
-            )
-        elif response.status_code == 403:
-            err_msg = (
-                f"Received exit code {response.status_code}, Forbidden. "
-                "Verify the API scopes provided to Client ID "
-                "and Client Secret."
-            )
-            resp_json = self.crowdstrike_helper.parse_response(response)
-            api_errors = resp_json.get(
-                "errors", "No error details received from API response."
-            )
-            self.logger.error(
-                message=(
-                    f"{self.log_prefix}: Validation "
-                    f"error occurred. {err_msg}"
-                ),
-                details=str(api_errors),
-            )
-            return ValidationResult(success=False, message=err_msg)
-
-        self.crowdstrike_helper.handle_error(
-            response, "validating the API permissions"
+        log_msg = (
+            f"{self.log_prefix}: Validation successful"
+            f" for {PLUGIN_NAME} plugin."
         )
+        self.logger.debug(log_msg)
+        return ValidationResult(success=True, message=log_msg)
 
     def get_actions(self):
         """Get available actions."""
@@ -2167,9 +2240,12 @@ class CrowdStrikePlugin(PluginBase):
         """
         action_value = action.value
         if action_value not in ["action", "isolate_remediate_action"]:
-            return ValidationResult(
-                success=False, message="Unsupported action provided."
+            err_msg = (
+                "Unsupported action provided. Plugin only "
+                "supports Perform Action and Isolate/Remediate Hosts actions."
             )
+            self.logger.error(f"{self.log_prefix}: {err_msg}")
+            return ValidationResult(success=False, message=err_msg)
         if action_value == "action":
             if action.parameters.get("action") not in [
                 "no_action",
@@ -2178,9 +2254,13 @@ class CrowdStrikePlugin(PluginBase):
                 "prevent_no_ui",
                 "allow",
             ]:
-                return ValidationResult(
-                    success=False, message="Unsupported action provided."
+                err_msg = (
+                    "Unsupported action provided. Plugin only "
+                    "supports No Action, Allow, Block, hide"
+                    " detection, Block and Detect only actions."
                 )
+                self.logger.error(f"{self.log_prefix}: {err_msg}")
+                return ValidationResult(success=False, message=err_msg)
 
             if action.parameters.get("platforms", []) is None:
                 err_msg = "Platforms should not be empty."
@@ -2198,7 +2278,9 @@ class CrowdStrikePlugin(PluginBase):
                 self.logger.error(f"{self.log_prefix}: {err_msg}")
                 return ValidationResult(success=False, message=err_msg)
 
-        return ValidationResult(success=True, message="Validation successful.")
+        log_msg = f"Validation successful for {action_value} action."
+        self.logger.debug(f"{self.log_prefix}: {log_msg}")
+        return ValidationResult(success=True, message=log_msg)
 
     def get_action_fields(self, action: Action):
         """Get fields required for an action."""
@@ -2278,3 +2360,186 @@ class CrowdStrikePlugin(PluginBase):
                     ),
                 }
             ]
+
+    def get_modified_indicators(self, source_indicators: List[List[Dict]]):
+        """Get all modified indicators status.
+
+        Args:
+            source_indicators (List[List[Dict]]): Source Indicators.
+
+        Yields:
+            tuple: Modified Indicators and Status.
+        """
+        self.log_prefix = self.log_prefix + f" [{RETRACTION}]"
+        self.logger.info(
+            f"{self.log_prefix}: Getting all modified indicators status"
+            f" from {PLATFORM_NAME}."
+        )
+        retraction_interval = self.configuration.get("retraction_interval")
+        if not (retraction_interval and isinstance(retraction_interval, int)):
+            log_msg = (
+                "Retraction Interval is not available for the configuration"
+                f' "{self.config_name}". Skipping retraction of IoC(s)'
+                f" from {PLATFORM_NAME}."
+            )
+            self.logger.info(f"{self.log_prefix}: {log_msg}")
+            yield [], True
+        retraction_interval = int(retraction_interval)
+        threat_data_type = self.configuration.get("threat_data_type")
+        indicator_source_page = self.configuration.get(
+            "indicator_source_page"
+        )
+        end_time = datetime.datetime.now()
+        for source_ioc_list in source_indicators:
+            try:
+                management_iocs = set()
+                endpoint_ioc = set()
+                for ioc in source_ioc_list:
+                    if NON_CROWDSTRIKE_DISCOVERED in ioc.tags:
+                        management_iocs.add(ioc.value)
+                    else:
+                        endpoint_ioc.add(ioc.value)
+
+                start_time = end_time - datetime.timedelta(
+                    days=retraction_interval
+                )
+
+                if (
+                    endpoint_ioc
+                    and "endpoint_detections" in indicator_source_page
+                ):
+                    endpoint_detection_pulled_iocs = (
+                        self._pull_iocs_from_endpoint_detections(
+                            threat_data_type=threat_data_type,
+                            initial_check_point=start_time.strftime(
+                                DATE_FORMAT
+                            ),
+                            storage={},
+                            is_retraction=True,
+                        )
+                    )
+                    for iocs in endpoint_detection_pulled_iocs:
+                        endpoint_ioc = endpoint_ioc - iocs
+
+                if (
+                    management_iocs
+                    and "ioc_management" in indicator_source_page
+                ):
+                    ioc_management_pulled_iocs = (
+                        self._pull_iocs_from_ioc_management(
+                            threat_data_type=threat_data_type,
+                            initial_check_point=start_time.strftime(
+                                DATE_FORMAT
+                            ),
+                            storage={},
+                            is_retraction=True,
+                        )
+                    )
+                    for iocs in ioc_management_pulled_iocs:
+                        management_iocs = management_iocs - iocs
+
+                combined_ioc = endpoint_ioc.union(management_iocs)
+
+                self.logger.info(
+                    f"{self.log_prefix}: {len(combined_ioc)}"
+                    " indicator(s) will be marked as retracted "
+                    f"from total {len(source_ioc_list)} indicator(s)."
+                )
+                yield list(combined_ioc), False
+            except Exception as err:
+                err_msg = (
+                    f"Error while fetching modified indicators from"
+                    f" {PLATFORM_NAME}."
+                )
+                self.logger.error(
+                    message=(f"{self.log_prefix}: {err_msg} Error: {err}"),
+                    details=traceback.format_exc(),
+                )
+                raise CrowdstrikePluginException(err_msg)
+
+    def retract_indicators(
+        self,
+        retracted_indicators_lists: List[List[Indicator]],
+        list_action_dict: List[Action],
+    ):
+        """Retract/Delete Indicators from CrowdStrike IOC Management.
+
+        Args:
+            retracted_indicators_lists (List[List[Indicator]]):
+                Retract indicators list
+            list_action_dict (List[Action]): List of action dict
+
+        Yields:
+            ValidationResult: Validation result.
+        """
+        self.log_prefix = self.log_prefix + f" [{RETRACTION}]"
+        end_time = datetime.datetime.now()
+        retraction_interval = self.configuration.get("retraction_interval")
+        if not (retraction_interval and isinstance(retraction_interval, int)):
+            log_msg = (
+                "Retraction Interval is not available for the configuration"
+                f' "{self.config_name}". Skipping retraction of IoC(s)'
+                f" from {PLATFORM_NAME}."
+            )
+            self.logger.info(f"{self.log_prefix}: {log_msg}")
+            yield ValidationResult(
+                success=False,
+                disabled=True,
+                message=log_msg,
+            )
+
+        retraction_interval = int(retraction_interval)
+        start_time = end_time - datetime.timedelta(
+            days=int(retraction_interval)
+        )
+        date_filter = start_time.strftime(DATE_FORMAT)
+        self.logger.info(
+            f"{self.log_prefix}: Start time for this retract"
+            f' indicators cycle is "{start_time}".'
+        )
+        (base_url, client_id, client_secret) = (
+            self.crowdstrike_helper.get_credentials(self.configuration)
+        )
+        headers = self.crowdstrike_helper.get_auth_header(
+            client_id, client_secret, base_url, is_retraction=True
+        )
+        query_endpoint = f"{base_url}/iocs/entities/indicators/v1"
+        retraction_batch_count = 1
+        for retraction_batch in retracted_indicators_lists:
+            ioc_values = [ioc.value for ioc in retraction_batch]
+            page = 1
+            for batch in self.divide_in_chunks(
+                ioc_values, IOC_MANAGEMENT_PULL_PAGE_LIMIT
+            ):
+                chunk_size = len(batch)
+                query_params = {
+                    "limit": IOC_MANAGEMENT_PULL_PAGE_LIMIT,
+                    "filter": f"value: {batch}+modified_on:>='{date_filter}'",
+                }
+                self.crowdstrike_helper.api_helper(
+                    url=query_endpoint,
+                    method="DELETE",
+                    params=query_params,
+                    headers=headers,
+                    is_handle_error_required=True,
+                    logger_msg=(
+                        f"deleting indicator(s) for {chunk_size} IoC(s)"
+                        f" for page {page} from {IOC_MANAGEMENT}"
+                    ),
+                    configuration=self.configuration,
+                    show_params=False,
+                )
+                self.logger.info(
+                    f"{self.log_prefix}: Successfully retracted {chunk_size}"
+                    f" indicator(s) in page {page} from {IOC_MANAGEMENT}."
+                )
+                page += 1
+
+            yield ValidationResult(
+                success=True,
+                message=(
+                    f"Completed execution for batch {retraction_batch_count}"
+                    " for retraction."
+                ),
+            )
+            retraction_batch_count += 1

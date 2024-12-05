@@ -47,6 +47,7 @@ from .crowdstrike_constants import (
     MODULE_NAME,
     PLATFORM_NAME,
     PLUGIN_NAME,
+    RETRACTION,
 )
 
 
@@ -124,6 +125,8 @@ class CrowdStrikePluginHelper(object):
         is_handle_error_required=True,
         is_validation=False,
         regenerate_auth_token=True,
+        is_retraction: bool = False,
+        show_params: bool = True,
     ):
         """API Helper perform API request to ThirdParty platform
         and captures all the possible errors for requests.
@@ -151,13 +154,15 @@ class CrowdStrikePluginHelper(object):
             is_handle_error_required is True otherwise returns Response object.
         """
         try:
+            if is_retraction and RETRACTION not in self.log_prefix:
+                self.log_prefix = self.log_prefix + f" [{RETRACTION}] "
             headers = self._add_user_agent(headers)
 
             debug_log_msg = (
-                f"{self.log_prefix} : API Request for {logger_msg}."
+                f"{self.log_prefix}: API Request for {logger_msg}."
                 f" Endpoint: {method} {url}"
             )
-            if params:
+            if params and show_params:
                 debug_log_msg += f", params: {params}."
 
             self.logger.debug(debug_log_msg)
@@ -175,7 +180,7 @@ class CrowdStrikePluginHelper(object):
                 )
                 status_code = response.status_code
                 self.logger.debug(
-                    f"{self.log_prefix} : Received API Response for "
+                    f"{self.log_prefix}: Received API Response for "
                     f"{logger_msg}. Status Code={status_code}."
                 )
                 if (
@@ -187,7 +192,10 @@ class CrowdStrikePluginHelper(object):
                         configuration=configuration
                     )
                     auth_header = self.get_auth_header(
-                        client_id, client_secret, base_url
+                        client_id,
+                        client_secret,
+                        base_url,
+                        is_retraction=is_retraction,
                     )
                     headers.update(auth_header)
                     return self.api_helper(
@@ -202,6 +210,7 @@ class CrowdStrikePluginHelper(object):
                         is_validation=is_validation,
                         logger_msg=logger_msg,
                         regenerate_auth_token=False,
+                        is_retraction=is_retraction,
                     )
 
                 elif status_code == 429 and not is_validation:
@@ -506,6 +515,7 @@ class CrowdStrikePluginHelper(object):
         client_secret,
         base_url,
         is_validation=False,
+        is_retraction=False,
     ):
         """Get the OAUTH2 Json object with access token from CrowdStrike
         platform.
@@ -514,11 +524,14 @@ class CrowdStrikePluginHelper(object):
             client_id (str): Client ID required to generate OAUTH2 token.
             client_secret (str): Client Secret required to generate OAUTH2
             token.
-            base_url (str): Base URL of crowdstrike.
+            base_url (str): Base URL of CrowdStrike.
             is_validation (bool): Is this a validation call?
+            is_retraction (bool): Is this a retraction call?
         Returns:
             json: JSON response data in case of Success.
         """
+        if is_retraction and RETRACTION not in self.log_prefix:
+            self.log_prefix = self.log_prefix + f" [{RETRACTION}]"
         auth_endpoint = f"{base_url}/oauth2/token"
         auth_params = {
             "grant_type": "client_credentials",

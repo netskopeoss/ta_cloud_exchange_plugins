@@ -32,10 +32,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 CTE CrowdStrike plugin constants.
 """
 
-from netskope.integrations.cte.models import (
-    IndicatorType,
-    SeverityType,
-)
+from netskope.integrations.cte.models import IndicatorType, SeverityType
 
 BASE_URLS = [
     "https://api.crowdstrike.com",
@@ -47,7 +44,7 @@ PAGE_SIZE = 9999
 MODULE_NAME = "CTE"
 PLUGIN_NAME = "CrowdStrike"
 PLATFORM_NAME = "CrowdStrike"
-PLUGIN_VERSION = "2.1.1"
+PLUGIN_VERSION = "2.2.0"
 MAX_API_CALLS = 3
 DEFAULT_WAIT_TIME = 60
 DEFAULT_BATCH_SIZE = 200
@@ -75,6 +72,8 @@ THREAT_MAPPING = {
 DEFAULT_NETSKOPE_TAG = "netskope-ce"
 PREFIX_IOC_SOURCE_TAG = "Netskope - Cloud Threat Exchange"
 NON_CROWDSTRIKE_DISCOVERED = "non-CrowdStrike-discovered"
+INTEGER_THRESHOLD = 4611686018427387904
+RETRACTION = "Retraction"
 IOC_SOURCE_PAGES = ["endpoint_detections", "ioc_management"]
 IOC_MANAGEMENT_SEVERITY_MAPPING = {
     "": SeverityType.UNKNOWN,

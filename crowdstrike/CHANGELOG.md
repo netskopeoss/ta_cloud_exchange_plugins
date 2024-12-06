@@ -1,3 +1,8 @@
+# 2.2.0
+## Added
+- Added support for IoC(s) Retraction.
+- Added support for IoC Source Labelling.
+
 # 2.1.1
 ## Added
 - Added IOC source filter to prevent an IOC loop from endpoint detections.

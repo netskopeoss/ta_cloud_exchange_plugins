@@ -1,0 +1,35 @@
+{
+  "name": "CyberArk",
+  "description": "CyberArk plugin fetches users and their risk levels from the **Core Services > Users** page of the Identity Administration portal. To fetch the risk levels the user must have the Behavioral Analytics portal enabled for their CyberArk tenant. This plugin also performs action on CyberArk users like - Add users to a role and Remove users from a role.\n\nNetskope normalization score mapping => Risk Level Unknown: N/A, Risk Level Normal: 875, Risk Level Low: 625, Risk Level Medium: 375, Risk Level High: 125.",
+  "id": "cyberark_ztre",
+  "module": "CRE",
+  "netskope": false,
+  "version": "1.0.0",
+  "minimum_version": "5.1.0",
+  "configuration": [
+    {
+      "label": "Tenant URL",
+      "key": "url",
+      "type": "text",
+      "default": "",
+      "mandatory": true,
+      "description": "Tenant URL for CyberArk. Example - 'https://<Tenant_ID>.id.cyberark.cloud' or 'https://<Tenant_ID>.id.idaptive.com'."
+    },
+    {
+      "label": "Username",
+      "key": "service_user",
+      "type": "text",
+      "default": "",
+      "mandatory": true,
+      "description": "Username for CyberArk. Make sure to include the domain(suffix) example - user@domain."
+    },
+    {
+      "label": "Password",
+      "key": "service_password",
+      "type": "password",
+      "default": "",
+      "mandatory": true,
+      "description": "Password associated with your CyberArk username."
+    }
+  ]
+}

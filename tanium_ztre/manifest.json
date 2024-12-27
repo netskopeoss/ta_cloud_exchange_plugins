@@ -1,0 +1,26 @@
+{
+    "name": "Tanium",
+    "description": "This plugin is used to fetch devices from **Home > Total Endpoints** and their respective risk scores from **Modules > Benchmark > Tanium Risk Score 2.0 > Endpoints by Risk Score** page of the Tanium platform. This plugin does not support performing any actions on devices.\n\nNetskope normalization score calculation => (1000 - (Tanium Risk Score)).",
+    "id": "tanium_ztre",
+    "minimum_version": "5.1.0",
+    "version": "1.0.0",
+    "module": "CRE",
+    "netskope": false,
+    "configuration": [
+        {
+            "label": "API Base URL",
+            "key": "api_base_url",
+            "type": "text",
+            "mandatory": true,
+            "description": "API Base URL of Tanium instance. e.g. https://<domain>-api.titankube.com"
+        },
+        {
+            "label": "API Token",
+            "key": "api_token",
+            "type": "password",
+            "default": "",
+            "mandatory": true,
+            "description": "API Key generated from the Tanium instance. API Key can be generated from 'Administration > API Tokens > New API Token' page."
+        }
+    ]
+}

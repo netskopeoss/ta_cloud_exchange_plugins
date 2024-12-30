@@ -42,7 +42,7 @@ REGEX_HOST = (
 REGEX_EMAIL = r"[^@]+@[^@]+\.[^@]+"
 MODULE_NAME = "CRE"
 PLUGIN = "Netskope CRE"
-PLUGIN_VERSION = "1.0.0"
+PLUGIN_VERSION = "1.1.0"
 URLS = {
     "V2_PRIVATE_APP": "{}/api/v2/steering/apps/private",
     "V2_PRIVATE_APP_PATCH": "{}/api/v2/steering/apps/private/{}",
@@ -370,28 +370,44 @@ class NetskopePlugin(PluginBase):
     def _fetch_app_domains(self, applications):
         """Fetch the domain details for each application."""
         endpoint = "/services/cci/domain"
-        for application, application_details in applications.items():
-            params = {"appname": application}
-            response = self._api_call_helper(
-                endpoint=endpoint,
-                method="get",
-                params=params,
-                error_codes=["CRE_1026", "CRE_1027"],
-                message="Error occurred while fetching the domain details of the applications",
-            )
+        max_applications = 100
+        application_ids = []
+        last_element_counter = 0
+        total_event_len = len(applications.keys())
+        for _, application_details in applications.items():
+            application_ids.append(str(application_details["applicationId"]))
+            last_element_counter += 1
+            if (
+                len(application_ids) == max_applications
+                or last_element_counter >= total_event_len
+            ):
+                app_ids_req = ";".join(application_ids)
+                params = {"ids": app_ids_req}
 
-            if response.get("data"):
-                application_details["domain_details"] = {
-                    "id": response["data"].get("id"),
-                    "discovery_domains": response["data"].get(
-                        "discovery_domains"
-                    ),
-                    "steering_domains": response["data"].get(
-                        "steering_domains"
-                    ),
-                }
-            else:
-                application_details["domain_details"] = {}
+                response = self._api_call_helper(
+                    endpoint=endpoint,
+                    method="get",
+                    params=params,
+                    error_codes=["CRE_1026", "CRE_1027"],
+                    message="Error occurred while fetching the domain details of the applications",
+                )
+
+                if response.get("data"):
+                    for domain_details in response["data"]:
+                        app_name = domain_details.get("app_name", "").lower()
+                        if app_name not in applications:
+                            continue
+                        applications[app_name]["domain_details"] = {
+                            "id": domain_details.get("id", ""),
+                            "discovery_domains": domain_details.get(
+                                "discovery_domains", []
+                            ),
+                            "steering_domains": domain_details.get(
+                                "steering_domains", []
+                            ),
+                        }
+
+                application_ids = []
 
     def _fetch_app_tags(self, applications):
         """Fetch the tag details for each applications."""
@@ -516,6 +532,7 @@ class NetskopePlugin(PluginBase):
                         record["ubaScore"] = match[0]["confidences"][-1][
                             "confidenceScore"
                         ]
+                        record.pop("policyName")
                         out.append(record)
             except Exception:
                 pass
@@ -1029,18 +1046,28 @@ class NetskopePlugin(PluginBase):
                 )
             if (
                 action.parameters.get("private_app_name") == "create"
-                and (action.parameters.get("name") or "").strip() == ""
             ):
-                return ValidationResult(
-                    success=False,
-                    message="If you have selected 'Create new private app' in Private App Name,"
-                    " New Private App Name should not be empty.",
-                )
+                if (action.parameters.get("name") or "").strip() == "":
+                    return ValidationResult(
+                        success=False,
+                        message="If you have selected 'Create new private app' in Private App Name,"
+                        " New Private App Name should not be empty.",
+                    )
+
+                if "$" in (action.parameters.get("name") or "").strip():
+                    return ValidationResult(
+                        success=False,
+                        message=(
+                            "'Create New Private App' contains Source field value. "
+                            "Please provide new private app name in Static field only."
+                        ),
+                    )
+
             protocols = action.parameters.get("protocol", [])
-            if not protocols:
+            if action.parameters.get("private_app_name") == "create" and not protocols:
                 return ValidationResult(
                     success=False,
-                    message="Protocol is a required field.",
+                    message="Protocol is a required field to create a new private app.",
                 )
             if not all(protocol in ["TCP", "UDP"] for protocol in protocols):
                 return ValidationResult(
@@ -1104,13 +1131,26 @@ class NetskopePlugin(PluginBase):
                 )
 
             default_url = action.parameters.get("default_url", "")
-            if default_url is None or not re.compile(REGEX_HOST).match(
-                default_url.strip()
-            ):
-                return ValidationResult(
-                    success=False,
-                    message="Invalid Default Host.",
-                )
+            if action.parameters.get("private_app_name") == "create":
+                if not default_url:
+                    return ValidationResult(
+                        success=False,
+                        message="If you have selected 'Create new private app' in Private App Name,"
+                        " Default Host should not be empty.",
+                    )
+                if "$" in default_url:
+                    return ValidationResult(
+                        success=False,
+                        message=(
+                            "'Default Host' contains Source field value. "
+                            "Please provide default host in Static field only."
+                        ),
+                    )
+                if not re.compile(REGEX_HOST).match(default_url.strip()):
+                    return ValidationResult(
+                        success=False,
+                        message="Invalid Default Host provided.",
+                    )
             return ValidationResult(
                 success=True, message="Validation successful."
             )
@@ -1395,7 +1435,11 @@ class NetskopePlugin(PluginBase):
                     "default": "",
                     "placeholder": "i.e. 127.0.0.1",
                     "mandatory": True,
-                    "description": "Host address to append to the private app.",
+                    "description": (
+                        "Host address to append to the private app. "
+                        "Multiple comma-separated values are supported. "
+                        "Example: host-1, host-2"
+                    ),
                 },
                 {
                     "label": "Tags",
@@ -1406,7 +1450,9 @@ class NetskopePlugin(PluginBase):
                     "mandatory": False,
                     "description": (
                         "Tags to set for the private app. These tags will overwrite existing "
-                        "tags available on your tenant."
+                        "tags available on your tenant. "
+                        "Multiple comma-separated values are supported. "
+                        "Example: tag-1, tag-2"
                     ),
                 },
                 {
@@ -1420,7 +1466,7 @@ class NetskopePlugin(PluginBase):
                     + [{"key": "Create new private app", "value": "create"}],
                     "default": "",
                     "mandatory": True,
-                    "description": "Select a private app.",
+                    "description": "Select a private app from Static field dropdown.",
                 },
                 {
                     "label": "Create New Private App",
@@ -1429,7 +1475,7 @@ class NetskopePlugin(PluginBase):
                     "default": "",
                     "mandatory": False,
                     "description": "Create private app with given name. \
-(Only enter if you have selected 'Create new private app' in Private App Name.)",
+Provide private app name in Static field if you have selected 'Create new private app' in Private App Name.",
                 },
                 {
                     "label": "Protocol",
@@ -1440,8 +1486,8 @@ class NetskopePlugin(PluginBase):
                         {"key": "TCP", "value": "TCP"},
                     ],
                     "default": ["TCP", "UDP"],
-                    "mandatory": True,
-                    "description": "Protocol.",
+                    "mandatory": False,
+                    "description": "Select Protocol from Static field dropdown. Valid values are TCP and UDP.",
                 },
                 {
                     "label": "TCP Ports",
@@ -1449,8 +1495,8 @@ class NetskopePlugin(PluginBase):
                     "type": "text",
                     "default": "",
                     "mandatory": False,
-                    "description": "Comma-separated ports for the TCP protocol.\
-(Only enter if you have selected 'TCP' in Protocol.)",
+                    "description": "Comma-separated ports for the TCP protocol. \
+Only enter in Static field if you have selected 'TCP' in Protocol.",
                 },
                 {
                     "label": "UDP Ports",
@@ -1458,8 +1504,8 @@ class NetskopePlugin(PluginBase):
                     "type": "text",
                     "default": "",
                     "mandatory": False,
-                    "description": "Comma-separated ports for the UDP protocol.\
-(Only enter if you have selected 'UDP' in Protocol.)",
+                    "description": "Comma-separated ports for the UDP protocol. \
+Only enter in Static field if you have selected 'UDP' in Protocol.",
                 },
                 {
                     "label": "Publisher",
@@ -1475,7 +1521,7 @@ class NetskopePlugin(PluginBase):
                         else [list(existing_publishers.keys())[0]]
                     ),
                     "mandatory": False,
-                    "description": "Select publishers.",
+                    "description": "Select Publishers from Static field dropdown only.",
                 },
                 {
                     "label": "Use Publisher DNS",
@@ -1487,7 +1533,7 @@ class NetskopePlugin(PluginBase):
                     ],
                     "default": False,
                     "mandatory": True,
-                    "description": "Use publishers DNS.",
+                    "description": "Select Yes or No from Static field dropdown for Use Publishers DNS.",
                 },
                 {
                     "label": "Default Host",
@@ -1495,7 +1541,8 @@ class NetskopePlugin(PluginBase):
                     "type": "text",
                     "default": "cedefaultpush.io",
                     "mandatory": False,
-                    "description": "The default Host to be used when the private app is empty.",
+                    "description": "The default Host to be used when new private app is created. \
+Provide Default Host in Static field if you have selected 'Create new private app' in Private App Name.",
                 },
             ]
         elif action.value == "tag_app":
@@ -1687,10 +1734,11 @@ class NetskopePlugin(PluginBase):
                 data = {
                     "app_name": app_name_to_create,
                     "host": default_url,
-                    "protocols": protocols_list,
                     "publishers": publishers_list,
                     "use_publisher_dns": use_publisher_dns,
                 }
+                if protocols_list:
+                    data["protocols"] = protocols_list
                 success, create_private_app = handle_exception(
                     self.session.post,
                     error_code="CRE_1043",
@@ -1741,19 +1789,22 @@ class NetskopePlugin(PluginBase):
                     "hosts": [],
                 }
 
+            if host and isinstance(host, str):
+                host = list(map(lambda x: x.strip(), host.split(",")))
             data = {
                 "host": ",".join(
                     list(
                         set(
                             existing_private_apps[private_app_name]["hosts"]
-                        ).union([host])
+                        ).union(host)
                     )
                 ),
-                "tags": list(map(lambda t: {"tag_name": t}, tags)),
-                "protocols": protocols_list,
+                "tags": list(map(lambda t: {"tag_name": t}, tags)) if tags else [],
                 "publishers": publishers_list,
                 "use_publisher_dns": use_publisher_dns,
             }
+            if protocols_list:
+                data["protocols"] = protocols_list
             return self._patch_private_app(
                 tenant_name,
                 existing_private_apps[private_app_name]["id"],
@@ -2169,16 +2220,25 @@ class NetskopePlugin(PluginBase):
                 private_app_name = f"[{new_private_app_name}]"
             else:
                 private_app_name = existing_private_app_name
+            if not host:
+                self.logger.info(
+                    f"{self.log_prefix}: Host value not found in the "
+                    f"record for private app {private_app_name}. "
+                    "Hence, skipped execution of revert action."
+                )
+                return
             self.logger.info(
                 f"{self.log_prefix}: Attempting to remove the host {host} from private app {private_app_name}."
             )
             app = self._get_private_app(
                 prefix=private_app_name, has_host=action_dict["host"]
             )
-            if app is None:
+            if not app:
                 self.logger.info(
-                    f"{self.log_prefix}: Host {host} not found in {private_app_name}."
+                    f"{self.log_prefix}: Host {host} not found in {private_app_name}. "
+                    "Hence, skipped execution of revert action."
                 )
+                return
             data = {
                 "host": ",".join(
                     list(filter(lambda x: x != host, app["host"].split(",")))
@@ -2255,7 +2315,7 @@ class NetskopePlugin(PluginBase):
         helper = AlertsHelper()
         self.tenant = helper.get_tenant_crev2(self.name)
         action.parameters = get_latest_values(
-            action.parameters, exclude_keys=["tags", "protocol", "publishers"]
+            action.parameters, exclude_keys=["host", "tags", "protocol", "publishers"]
         )
         if action.value == "generate":
             return
@@ -2336,8 +2396,9 @@ class NetskopePlugin(PluginBase):
             if not action_dict.get("host"):
                 raise NetskopeException("Host can not be empty.")
             tags = action_dict.get("tags", [])
-            if isinstance(tags, str):
+            if tags and isinstance(tags, str):
                 tags = list(map(lambda x: x.strip(), tags.split(",")))
+
             return self._push_private_app(
                 action_dict["host"],
                 existing_private_app_name=action_dict.get(

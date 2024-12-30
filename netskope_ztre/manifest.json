@@ -1,37 +1,37 @@
 {
-  "name": "Netskope Risk Exchange",
-  "description": "READ/WRITE User and Application security context from Netskope based on UBA alerts and App Events. This plugin also supports 'Add user to group', 'Remove user from group', 'Update UCI score', 'Add host to Private App', 'Create or Update App Instance', 'Tag application' and 'No Action' actions. Refer to user guide for prerequisites.",
-  "id": "netskope_ztre",
-  "minimum_version": "5.1.0",
-  "minimum_provider_version": "1.0.0",
-  "provider_id": "netskope_provider",
-  "netskope": true,
-  "version": "1.0.0",
-  "module": "CRE",
-  "supported_subtypes": {
-    "alerts": [
-      "uba"
-    ],
-    "events": [
-      "application"
-    ]
-  },
-  "configuration": [
-    {
-      "label": "Initial Range for Events (in hours)",
-      "key": "initial_range",
-      "type": "number",
-      "mandatory": true,
-      "default": 1,
-      "description": "Number of hours to pull the app data for the initial run."
+    "name": "Netskope Risk Exchange",
+    "description": "READ/WRITE User and Application security context from Netskope based on UBA alerts and App Events. This plugin also supports 'Add user to group', 'Remove user from group', 'Update UCI score', 'Add host to Private App', 'Create or Update App Instance', 'Tag application' and 'No Action' actions. Refer to user guide for prerequisites.",
+    "id": "netskope_ztre",
+    "minimum_version": "5.1.0",
+    "minimum_provider_version": "1.0.0",
+    "provider_id": "netskope_provider",
+    "netskope": true,
+    "version": "1.1.0",
+    "module": "CRE",
+    "supported_subtypes": {
+        "alerts": [
+            "uba"
+        ],
+        "events": [
+            "application"
+        ]
     },
-    {
-      "label": "Initial Range for Alerts (in days)",
-      "key": "days",
-      "type": "number",
-      "mandatory": true,
-      "default": 7,
-      "description": "Number of days to pull the data for the initial run."
-    }
-  ]
+    "configuration": [
+        {
+            "label": "Initial Range for Events (in hours)",
+            "key": "initial_range",
+            "type": "number",
+            "mandatory": true,
+            "default": 1,
+            "description": "Number of hours to pull the app data for the initial run."
+        },
+        {
+            "label": "Initial Range for Alerts (in days)",
+            "key": "days",
+            "type": "number",
+            "mandatory": true,
+            "default": 7,
+            "description": "Number of days to pull the data for the initial run."
+        }
+    ]
 }

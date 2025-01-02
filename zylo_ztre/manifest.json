@@ -1,0 +1,27 @@
+{
+  "name": "Zylo",
+  "id": "zylo_ztre",
+  "version": "1.0.0",
+  "module": "CRE",
+  "minimum_version": "5.1.0",
+  "netskope": false,
+  "description": "This plugin is used to fetch applications from the **Zylo platform > Inventory > Applications** page. The plugin does not support performing any actions on applications in Zylo.",
+  "configuration": [
+    {
+      "label": "Token ID",
+      "key": "token_id",
+      "type": "text",
+      "mandatory": true,
+      "default": "",
+      "description": "Token ID generated from the Zylo platform. Token ID can be generated from the 'Admin > Company Tokens > Request Token'."
+    },
+    {
+      "label": "Token Secret",
+      "key": "token_secret",
+      "type": "password",
+      "mandatory": true,
+      "default": "",
+      "description": "Token Secret generated from the Zylo platform. Token Secret can be generated from the 'Admin > Company Tokens > Request Token'."
+    }
+  ]
+}

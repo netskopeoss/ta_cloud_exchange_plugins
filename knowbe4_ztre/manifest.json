@@ -1,0 +1,49 @@
+{
+  "name": "KnowBe4",
+  "id": "knowbe4_ztre",
+  "version": "1.0.0",
+  "module": "CRE",
+  "minimum_version": "5.1.0",
+  "netskope": false,
+  "description": "This plugin is used to fetch users from the PAB User Activity page of the KnowBe4 platform. The PAB User Activity page can be found at KnowBe4 platform > Account Settings > Account Integrations > Phish Alert > See PAB User Activity. The plugin does not support performing any actions on users in KnowBe4.\n\nNetskope normalization score calculation for users => (1000 - (KnowBe4's Current Risk Score) x 10).",
+  "configuration": [
+    {
+      "label": "Base URL",
+      "key": "base_url",
+      "type": "choice",
+      "choices": [
+        {
+          "key": "US Server (us.api.knowbe4.com)",
+          "value": "https://us.api.knowbe4.com"
+        },
+        {
+          "key": "EU Server (eu.api.knowbe4.com)",
+          "value": "https://eu.api.knowbe4.com"
+        },
+        {
+          "key": "CA Server (ca.api.knowbe4.com)",
+          "value": "https://ca.api.knowbe4.com"
+        },
+        {
+          "key": "UK Server (uk.api.knowbe4.com)",
+          "value": "https://uk.api.knowbe4.com"
+        },
+        {
+          "key": "DE Server (de.api.knowbe4.com)",
+          "value": "https://de.api.knowbe4.com"
+        }
+      ],
+      "default": "https://us.api.knowbe4.com",
+      "mandatory": true,
+      "description": "Base URL of KnowBe4 instance."
+    },
+    {
+      "label": "API Token",
+      "key": "api_key",
+      "type": "password",
+      "mandatory": true,
+      "default": "",
+      "description": "API Token can be generated from the 'Account Settings > Account Integrations > API > Reporting API > Create New API Token'."
+    }
+  ]
+}

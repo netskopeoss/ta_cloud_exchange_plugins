@@ -1,0 +1,1 @@
+"""CTE Maltiverse Plugin."""

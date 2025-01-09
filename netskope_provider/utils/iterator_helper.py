@@ -183,7 +183,10 @@ class NetskopeIteratorBuilder(NetskopeIterator):
                     error_code="CE_1032",
                 )
                 return {"success": False}
-            if self.epoch and self.index_name not in ITERATORS.values():
+            index_names = []
+            for sub_type_indexes in ITERATORS.values():
+                index_names.extend(sub_type_indexes)
+            if self.epoch and self.index_name not in index_names:
                 data = self.download(self.epoch)
             else:
                 data = self.next()

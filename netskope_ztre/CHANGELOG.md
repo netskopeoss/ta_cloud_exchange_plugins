@@ -1,3 +1,7 @@
+# 1.1.1
+## Changed
+- Updated authentication for V1 token.
+
 # 1.1.0
 ## Added
 - Added support for adding multiple hosts in the 'Add Host to Private App' action.

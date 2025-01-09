@@ -6,7 +6,7 @@
     "minimum_provider_version": "1.0.0",
     "provider_id": "netskope_provider",
     "netskope": true,
-    "version": "1.1.0",
+    "version": "1.1.1",
     "module": "CRE",
     "supported_subtypes": {
         "alerts": [

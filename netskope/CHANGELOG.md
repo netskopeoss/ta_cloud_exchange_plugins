@@ -1,3 +1,7 @@
+# 2.1.1
+## Changed
+- Updated authentication for V1 token.
+
 # 2.1.0
 ## Added
 - Added support for retraction of retracted IoCs. It does not support fetching retracted indicators from the Netskope tenant.

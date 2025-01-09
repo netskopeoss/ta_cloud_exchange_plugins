@@ -60,7 +60,7 @@ EVENTS = {
 }
 
 ITERATORS = {
-    key.lower(): value
+    key.lower(): list({x.strip() for x in value.split(',') if x.strip() != ""})
     for key, value in os.environ.items()
     if key.lower().startswith("iterator_")
 }
@@ -338,29 +338,22 @@ class NetskopeClient:
         self.headers = headers
 
     def get_iterator(
-        self, sub_type, is_historical=False
+        self, sub_type, iterator_name, is_historical=False
     ) -> NetskopeIteratorBuilder:
         """Return an iterator subtype."""
-        if not self.iterators.get(sub_type):
-            self.iterators[sub_type] = NetskopeIteratorBuilder(
+        if not self.iterators.get(iterator_name):
+            self.iterators[iterator_name] = NetskopeIteratorBuilder(
                 self.tenant,
                 self.type,
                 sub_type,
-                (
-                    (self.iterator_name % sub_type)
-                    if is_historical
-                    else (
-                        ITERATORS.get(f"iterator_{self.type.lower()}_{sub_type.lower().replace(' ', '_')}")
-                        or (self.iterator_name % sub_type)
-                    )
-                ),
+                iterator_name,
                 handle_forbidden=self.handle_forbidden,
                 source_configuration=self.source_configuration,
                 destination_configuration=self.destination_configuration,
                 business_rule=self.business_rule,
                 headers=self.headers,
             )
-        return self.iterators[sub_type]
+        return self.iterators[iterator_name]
 
     def get_target_function(self):
         """Get target function to pull the data."""
@@ -374,24 +367,43 @@ class NetskopeClient:
         """Return all sub_types."""
         return self._sub_types
 
+    def get_indexes(self, sub_types):
+        iterator_subtype_indexes = {}
+        iterator_indexes = []
+        for sub_type in set(sub_types):
+            indexes = (
+                [self.iterator_name % sub_type]
+                if self.pulling_type == NetskopeClient.HISTORICAL_PULLING
+                else (
+                    ITERATORS.get(f"iterator_{self.type.lower()}_{sub_type.lower().replace(' ', '_')}")
+                    or [self.iterator_name % sub_type]
+                )
+            )
+            iterator_subtype_indexes[sub_type] = indexes
+            iterator_indexes.extend(indexes)
+        return iterator_subtype_indexes, iterator_indexes
+
     @sub_types.setter
     def sub_types(self, sub_types):
         """Spawn dedicated thread for pulling."""
-        if set(sub_types) == self.threads:
-            self._sub_types = sub_types
+        iterator_subtype_indexes, iterator_indexes = self.get_indexes(sub_types)
+        if set(iterator_indexes) == self.threads:
+            self._sub_types = iterator_indexes
             return
-        self._sub_types = sub_types
-        for sub_type in sub_types:
-            if sub_type not in self.threads:
-                self.threads.add(sub_type)
-                thread_process = threading.Thread(
-                    target=self.get_target_function(), args=(sub_type,)
-                )
-                thread_process.start()
-                self.running_thread += 1
+        self._sub_types = iterator_indexes
+        for sub_type, iterator_names in iterator_subtype_indexes.items():
+            for iterator_name in iterator_names:
+                iterator_name = iterator_name.strip()
+                if iterator_name not in self.threads:
+                    self.threads.add(iterator_name)
+                    thread_process = threading.Thread(
+                        target=self.get_target_function(), args=(sub_type, iterator_name, )
+                    )
+                    thread_process.start()
+                    self.running_thread += 1
 
         for type_ in self.threads.copy():
-            if type_ not in sub_types:
+            if type_ not in iterator_indexes:
                 self.threads.remove(type_)
 
     def create_job(self):
@@ -440,11 +452,11 @@ class NetskopeClient:
             #     },
             # )
 
-    def load(self, sub_type: str):
+    def load(self, sub_type: str, iterator_name: str):
         """Pull mechanism."""
         try:
             start_time = datetime.now()
-            iterator = self.get_iterator(sub_type)
+            iterator = self.get_iterator(sub_type, iterator_name)
 
             tenant_dict_storage = self.tenant.get("storage", {})
             if tenant_dict_storage.get(f"first_{self.type}_pull", {}).get(
@@ -532,7 +544,7 @@ class NetskopeClient:
 
                     return {"success": True}
 
-                if sub_type not in self.sub_types:
+                if iterator_name not in self.sub_types:
                     return {"success": True}
 
                 self.pulling_started = True
@@ -550,7 +562,7 @@ class NetskopeClient:
                         response = response.splitlines()
                         logger.info(
                             f"Pulled {len(response)} {sub_type} {self.type}(s) for tenant "
-                            f"{self.tenant.get('name')} in CSV format."
+                            f"{self.tenant.get('name')} in CSV format using {iterator_name} index."
                         )
                         for key, header in schema_headers.items():
                             batch = b"\n".join(
@@ -569,7 +581,7 @@ class NetskopeClient:
                     else:
                         logger.info(
                             f"Pulled 0 {sub_type} {self.type}(s) for tenant "
-                            f"{self.tenant.get('name')}."
+                            f"{self.tenant.get('name')} in CSV format using {iterator_name} index."
                         )
                 else:
                     number_of_alerts = len(re.findall(ID_PATTERN, response))
@@ -599,7 +611,7 @@ class NetskopeClient:
                     )
                     logger.info(
                         f"Pulled {number_of_alerts} {sub_type} {self.type}(s) for tenant "
-                        f"{self.tenant.get('name')} in JSON format{pull_message}"
+                        f"{self.tenant.get('name')} in JSON format using {iterator_name} index{pull_message}"
                     )
                     content = gzip.compress(response, compresslevel=3)
                     self.message_queue.put(
@@ -653,9 +665,9 @@ class NetskopeClient:
             filtered.append(data[i])
         return filtered
 
-    def load_historical(self, sub_type: str):
+    def load_historical(self, sub_type: str, iterator_name: str):
         """Pull historical data from Netskope."""
-        iterator = self.get_iterator(sub_type, is_historical=True)
+        iterator = self.get_iterator(sub_type, iterator_name, is_historical=True)
         # registered = connector.collection(Collections.ITERATOR).find_one(
         #     {"name": self.iterator_name % sub_type}
         # )
@@ -731,14 +743,15 @@ class NetskopeClient:
                 ):
                     logger.info(
                         f"Pulled {len(filtered_data)} {sub_type} {self.type}(s) from historical "
-                        f"{self.type}s{pull_message}"
+                        f"{self.type}s in JSON format using {iterator_name} index{pull_message}"
                         f"for SIEM Mapping {self.source_configuration} to {self.destination_configuration} "
                         f"according to rule business rule {self.business_rule}."
                     )
                 else:
                     logger.info(
                         f"Pulled {len(filtered_data)} {sub_type} {self.type}(s) from historical "
-                        f"{self.type}s{pull_message}for configuration {self.source_configuration}."
+                        f"{self.type}s in JSON format using {iterator_name} index{pull_message}"
+                        f"for configuration {self.source_configuration}."
                     )
                 if self.compress_historical_data and filtered_data:
                     filtered_data = gzip.compress(json.dumps({RESULT: filtered_data}).encode('utf-8'), compresslevel=3)

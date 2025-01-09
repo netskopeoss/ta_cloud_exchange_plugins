@@ -1,42 +1,42 @@
 {
-  "name": "Netskope Tenant (Required)",
-  "id": "netskope_provider",
-  "type": "provider",
-  "data": [
-    "alerts",
-    "events",
-    "webtx"
-  ],
-  "netskope": true,
-  "version": "1.0.0",
-  "module": "Tenant",
-  "minimum_version": "5.1.0",
-  "description": "This plugin is required to configure Netskope Tenant in Cloud Exchange. The Netskope Tenant will be used by the Netskope plugins to fetch the required data for each module.",
-  "configuration": [
-    {
-      "label": "Tenant URL",
-      "key": "tenantName",
-      "type": "text",
-      "default": "",
-      "mandatory": true,
-      "description": "Enter Netskope Tenant URL (i.e. https://demo.goskope.com).",
-      "editable": false
-    },
-    {
-      "label": "V1 API Token (Optional)",
-      "key": "token",
-      "type": "password",
-      "default": "",
-      "mandatory": false,
-      "description": "Optional V1 API token to authenticate Netskope Tenant. V1 Token can be obtained from the Netskope Tenant Settings -> Tools -> REST API v1."
-    },
-    {
-      "label": "V2 API Token",
-      "key": "v2token",
-      "type": "password",
-      "default": "",
-      "mandatory": true,
-      "description": "V2 API token to authenticate Netskope Tenant. V2 Token can be obtained from the Netskope Tenant Settings -> Tools -> REST API v2."
-    }
-  ]
+    "name": "Netskope Tenant (Required)",
+    "id": "netskope_provider",
+    "type": "provider",
+    "data": [
+        "alerts",
+        "events",
+        "webtx"
+    ],
+    "netskope": true,
+    "version": "1.1.0",
+    "module": "Tenant",
+    "minimum_version": "5.1.0",
+    "description": "This plugin is required to configure Netskope Tenant in Cloud Exchange. The Netskope Tenant will be used by the Netskope plugins to fetch the required data for each module.",
+    "configuration": [
+        {
+            "label": "Tenant URL",
+            "key": "tenantName",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "Enter Netskope Tenant URL (i.e. https://demo.goskope.com).",
+            "editable": false
+        },
+        {
+            "label": "V1 API Token (Optional)",
+            "key": "token",
+            "type": "password",
+            "default": "",
+            "mandatory": false,
+            "description": "Optional V1 API token to authenticate Netskope Tenant. V1 Token can be obtained from the Netskope Tenant Settings -> Tools -> REST API v1."
+        },
+        {
+            "label": "V2 API Token",
+            "key": "v2token",
+            "type": "password",
+            "default": "",
+            "mandatory": true,
+            "description": "V2 API token to authenticate Netskope Tenant. V2 Token can be obtained from the Netskope Tenant Settings -> Tools -> REST API v2."
+        }
+    ]
 }

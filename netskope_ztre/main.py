@@ -1,15 +1,25 @@
 """Netskope CRE plugin."""
 
 import json
-import re
-import traceback
 import os
+import re
 import time
+import traceback
 from typing import Dict, List, Optional, Union
-import requests
-from requests.exceptions import ConnectionError
 
-from netskope.integrations.crev2.models import ActionWithoutParams, Action
+import requests
+from netskope.common.utils import (
+    AlertsHelper,
+    add_installation_id,
+    add_user_agent,
+    resolve_secret,
+)
+from netskope.common.utils.handle_exception import (
+    handle_exception,
+    handle_status_code,
+)
+from netskope.common.utils.plugin_provider_helper import PluginProviderHelper
+from netskope.integrations.crev2.models import Action, ActionWithoutParams
 from netskope.integrations.crev2.plugin_base import (
     Entity,
     EntityField,
@@ -17,20 +27,8 @@ from netskope.integrations.crev2.plugin_base import (
     PluginBase,
     ValidationResult,
 )
-
-from netskope.common.utils import (
-    AlertsHelper,
-    add_user_agent,
-    add_installation_id,
-    resolve_secret,
-)
-from netskope.common.utils.handle_exception import (
-    handle_exception,
-    handle_status_code,
-)
 from netskope.integrations.crev2.utils import get_latest_values
-from netskope.common.utils.plugin_provider_helper import PluginProviderHelper
-
+from requests.exceptions import ConnectionError
 
 MAX_RETRY_COUNT = 4
 PAGE_SIZE = 100
@@ -42,7 +40,7 @@ REGEX_HOST = (
 REGEX_EMAIL = r"[^@]+@[^@]+\.[^@]+"
 MODULE_NAME = "CRE"
 PLUGIN = "Netskope CRE"
-PLUGIN_VERSION = "1.1.0"
+PLUGIN_VERSION = "1.1.1"
 URLS = {
     "V2_PRIVATE_APP": "{}/api/v2/steering/apps/private",
     "V2_PRIVATE_APP_PATCH": "{}/api/v2/steering/apps/private/{}",
@@ -224,7 +222,9 @@ class NetskopePlugin(PluginBase):
         """Call the API helper for getting application related data."""
         request_func = getattr(requests, method)
 
-        tenant_name = self.tenant.parameters.get("tenantName").replace(" ", "")
+        tenant_name = self.tenant.parameters.get("tenantName").replace(
+            " ", ""
+        )
         token = resolve_secret(self.tenant.parameters.get("v2token"))
         url = f"{tenant_name}/api/v2{endpoint}"
         headers = {
@@ -248,7 +248,9 @@ class NetskopePlugin(PluginBase):
             if not success:
                 raise response
 
-            if response.status_code == 429 and attempt < (MAX_RETRY_COUNT - 1):
+            if response.status_code == 429 and attempt < (
+                MAX_RETRY_COUNT - 1
+            ):
                 self.logger.error(
                     f"{self.log_prefix}: Received Too Many Requests error. "
                     f"Performing retry for url {url}. "
@@ -774,7 +776,11 @@ class NetskopePlugin(PluginBase):
         body = {
             "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
             "Operations": [
-                {"op": "add", "path": "members", "value": [{"value": user_id}]}
+                {
+                    "op": "add",
+                    "path": "members",
+                    "value": [{"value": user_id}],
+                }
             ],
         }
         success, response = handle_exception(
@@ -957,7 +963,11 @@ class NetskopePlugin(PluginBase):
                 "events": ["application"],
                 "alerts": ["uba"],
             }
-            provider.permission_check(type_map, plugin_name=self.plugin_name, configuration_name=self.name)
+            provider.permission_check(
+                type_map,
+                plugin_name=self.plugin_name,
+                configuration_name=self.name,
+            )
             return ValidationResult(
                 success=True, message="Validation successful."
             )
@@ -1004,7 +1014,9 @@ class NetskopePlugin(PluginBase):
             )
         elif action.value == "app_instance":
             try:
-                self._process_params_for_app_instance_action(action.parameters)
+                self._process_params_for_app_instance_action(
+                    action.parameters
+                )
             except NetskopeException as ex:
                 return ValidationResult(success=False, message=str(ex))
             return ValidationResult(
@@ -1044,9 +1056,7 @@ class NetskopePlugin(PluginBase):
                 return ValidationResult(
                     success=False, message="Invalid private app provided."
                 )
-            if (
-                action.parameters.get("private_app_name") == "create"
-            ):
+            if action.parameters.get("private_app_name") == "create":
                 if (action.parameters.get("name") or "").strip() == "":
                     return ValidationResult(
                         success=False,
@@ -1064,7 +1074,10 @@ class NetskopePlugin(PluginBase):
                     )
 
             protocols = action.parameters.get("protocol", [])
-            if action.parameters.get("private_app_name") == "create" and not protocols:
+            if (
+                action.parameters.get("private_app_name") == "create"
+                and not protocols
+            ):
                 return ValidationResult(
                     success=False,
                     message="Protocol is a required field to create a new private app.",
@@ -1158,13 +1171,17 @@ class NetskopePlugin(PluginBase):
             groups = self._get_all_groups(
                 self.configuration, log_in_status_check=True
             )
-            if action.parameters.get("group") != "create" and len(groups) <= 0:
+            if (
+                action.parameters.get("group") != "create"
+                and len(groups) <= 0
+            ):
                 return ValidationResult(
                     success=False, message="No groups available."
                 )
             if action.parameters.get("group") != "create" and not any(
                 map(
-                    lambda g: g["id"] == action.parameters.get("group"), groups
+                    lambda g: g["id"] == action.parameters.get("group"),
+                    groups,
                 )
             ):
                 return ValidationResult(
@@ -1233,7 +1250,9 @@ class NetskopePlugin(PluginBase):
             custom_message="Error occurred while checking private apps",
             plugin=self.log_prefix,
             url=URLS["V2_PRIVATE_APP"].format(tenant_name),
-            params={"fields": "app_id,app_name,host"},  # we need only 3 fields
+            params={
+                "fields": "app_id,app_name,host"
+            },  # we need only 3 fields
         )
         if not success:
             raise private_app_netskope
@@ -1275,7 +1294,9 @@ class NetskopePlugin(PluginBase):
             custom_message="Error occurred while checking private apps",
             plugin=self.log_prefix,
             url=URLS["V2_PRIVATE_APP"].format(tenant_name),
-            params={"fields": "app_id,app_name,host"},  # we need only 3 fields
+            params={
+                "fields": "app_id,app_name,host"
+            },  # we need only 3 fields
         )
         if not success:
             raise private_app_netskope
@@ -1630,7 +1651,7 @@ Provide Default Host in Static field if you have selected 'Create new private ap
 
     def _push_private_app(
         self,
-        host: str,
+        host: Union[str, list[str]],
         existing_private_app_name: str,
         new_private_app_name: str,
         protocol_type: list[str],
@@ -1799,7 +1820,9 @@ Provide Default Host in Static field if you have selected 'Create new private ap
                         ).union(host)
                     )
                 ),
-                "tags": list(map(lambda t: {"tag_name": t}, tags)) if tags else [],
+                "tags": (
+                    list(map(lambda t: {"tag_name": t}, tags)) if tags else []
+                ),
                 "publishers": publishers_list,
                 "use_publisher_dns": use_publisher_dns,
             }
@@ -1899,7 +1922,12 @@ Provide Default Host in Static field if you have selected 'Create new private ap
                 )
 
     def _create_app_instance(
-        self, instance_id: str, instance_name: str, app: str, tags: list[str]
+        self,
+        instance_id: str,
+        instance_name: str,
+        app: str,
+        tags: list[str],
+        auth_token: str,
     ):
         """Create an app instance.
 
@@ -1908,10 +1936,11 @@ Provide Default Host in Static field if you have selected 'Create new private ap
             instance_name (str): Instance name.
             app (str): App name.
             tags (str): Tag.
+            auth_token (str): Auth token.
         """
         tenant_name = self.tenant.parameters["tenantName"].strip()
         list_instances_success, list_instances = handle_exception(
-            self.session.get,
+            self.session.post,
             error_code="CRE_1045",
             custom_message="Error occurred while listing app instances.",
             plugin=self.log_prefix,
@@ -1922,6 +1951,7 @@ Provide Default Host in Static field if you have selected 'Create new private ap
                 "instance_id": instance_id,
                 "instance_name": instance_name,
             },
+            data={"token": auth_token},
         )
         if not list_instances_success:
             raise NetskopeException(
@@ -1970,7 +2000,8 @@ Provide Default Host in Static field if you have selected 'Create new private ap
                         "app": app,
                         "tags": tags,
                     }
-                ]
+                ],
+                "token": auth_token,
             },
         )
         if not create_instance_success:
@@ -2085,12 +2116,12 @@ Provide Default Host in Static field if you have selected 'Create new private ap
         skip_score_validation = isinstance(score, str) and score.startswith(
             "$"
         )
-        skip_source_validation = isinstance(source, str) and source.startswith(
-            "$"
-        )
-        skip_reason_validation = isinstance(reason, str) and reason.startswith(
-            "$"
-        )
+        skip_source_validation = isinstance(
+            source, str
+        ) and source.startswith("$")
+        skip_reason_validation = isinstance(
+            reason, str
+        ) and reason.startswith("$")
 
         if not skip_user_validation:
             user = user.strip()
@@ -2213,7 +2244,9 @@ Provide Default Host in Static field if you have selected 'Create new private ap
                 )
             )
             action_dict = action.parameters
-            existing_private_app_name = action_dict.get("private_app_name", "")
+            existing_private_app_name = action_dict.get(
+                "private_app_name", ""
+            )
             new_private_app_name = action_dict.get("name", "")
             host = action_dict["host"]
             if existing_private_app_name == "create":
@@ -2310,12 +2343,56 @@ Provide Default Host in Static field if you have selected 'Create new private ap
         )
         return
 
+    def _execute_private_app_action(self, action_dict: dict):
+        """Execute action on the given parameters."""
+        self.session = requests.Session()
+        self.session.headers.update(
+            add_installation_id(
+                add_user_agent(
+                    {
+                        "Netskope-API-Token": resolve_secret(
+                            self.tenant.parameters["v2token"]
+                        ),
+                    }
+                )
+            )
+        )
+        protocols = action_dict.get("protocol", [])
+        tcp_port = action_dict.get("tcp_ports", "") or ""
+        tcp_port_list = [
+            port.strip() for port in tcp_port.split(",") if port.strip()
+        ]
+        udp_port = action_dict.get("udp_ports", "") or ""
+        udp_port_list = [
+            port.strip() for port in udp_port.split(",") if port.strip()
+        ]
+        use_publisher_dns = action_dict.get("use_publisher_dns", False)
+        if not action_dict.get("host"):
+            raise NetskopeException("Host can not be empty.")
+        tags = action_dict.get("tags", [])
+        if tags and isinstance(tags, str):
+            tags = list(map(lambda x: x.strip(), tags.split(",")))
+
+        return self._push_private_app(
+            action_dict["host"],
+            existing_private_app_name=action_dict.get("private_app_name", ""),
+            new_private_app_name=action_dict.get("name", ""),
+            protocol_type=protocols,
+            tcp_ports=tcp_port_list,
+            udp_ports=udp_port_list,
+            publishers=action_dict.get("publishers", []),
+            use_publisher_dns=use_publisher_dns,
+            default_url=action_dict.get("default_url", "").strip(),
+            tags=tags,
+        )
+
     def execute_action(self, action: Action):
         """Execute action on the user."""
         helper = AlertsHelper()
         self.tenant = helper.get_tenant_crev2(self.name)
         action.parameters = get_latest_values(
-            action.parameters, exclude_keys=["host", "tags", "protocol", "publishers"]
+            action.parameters,
+            exclude_keys=["host", "tags", "protocol", "publishers"],
         )
         if action.value == "generate":
             return
@@ -2370,49 +2447,7 @@ Provide Default Host in Static field if you have selected 'Create new private ap
                     f"{action.parameters.get('group')} successfully."
                 )
         elif action.value == "private_app":
-            action_dict = action.parameters
-            self.session = requests.Session()
-            self.session.headers.update(
-                add_installation_id(
-                    add_user_agent(
-                        {
-                            "Netskope-API-Token": resolve_secret(
-                                self.tenant.parameters["v2token"]
-                            ),
-                        }
-                    )
-                )
-            )
-            protocols = action_dict.get("protocol", [])
-            tcp_port = action_dict.get("tcp_ports", "") or ""
-            tcp_port_list = [
-                port.strip() for port in tcp_port.split(",") if port.strip()
-            ]
-            udp_port = action_dict.get("udp_ports", "") or ""
-            udp_port_list = [
-                port.strip() for port in udp_port.split(",") if port.strip()
-            ]
-            use_publisher_dns = action_dict.get("use_publisher_dns", False)
-            if not action_dict.get("host"):
-                raise NetskopeException("Host can not be empty.")
-            tags = action_dict.get("tags", [])
-            if tags and isinstance(tags, str):
-                tags = list(map(lambda x: x.strip(), tags.split(",")))
-
-            return self._push_private_app(
-                action_dict["host"],
-                existing_private_app_name=action_dict.get(
-                    "private_app_name", ""
-                ),
-                new_private_app_name=action_dict.get("name", ""),
-                protocol_type=protocols,
-                tcp_ports=tcp_port_list,
-                udp_ports=udp_port_list,
-                publishers=action_dict.get("publishers", []),
-                use_publisher_dns=use_publisher_dns,
-                default_url=action_dict.get("default_url", "").strip(),
-                tags=tags,
-            )
+            self._execute_private_app_action(action.parameters)
         elif action.value == "tag_app":
             self.session = requests.Session()
             self.session.headers.update(
@@ -2426,30 +2461,63 @@ Provide Default Host in Static field if you have selected 'Create new private ap
                     )
                 )
             )
-
             tags, apps, ids = self._process_params_for_add_tag_action(
                 action.parameters
             )
-
             self._tag_application(tags, apps, ids)
             self.logger.info(
                 f"{self.log_prefix}: Added tag(s) {','.join(tags)} to application(s) successfully."
             )
         elif action.value == "app_instance":
             instance_id, instance_name, app, tags = (
-                self._process_params_for_app_instance_action(action.parameters)
+                self._process_params_for_app_instance_action(
+                    action.parameters
+                )
             )
 
             self.session = requests.Session()
             self.session.headers.update(
                 add_installation_id(add_user_agent({}))
             )
-            self.session.params.update(
-                {"token": resolve_secret(self.tenant.parameters["token"])}
-            )
 
-            self._create_app_instance(instance_id, instance_name, app, tags)
+            token = resolve_secret(self.tenant.parameters["token"])
+
+            self._create_app_instance(
+                instance_id, instance_name, app, tags, token
+            )
 
             self.logger.info(
                 f"{self.log_prefix}: Created/updated app instance {instance_name} successfully."
             )
+
+    def execute_actions(self, actions: List[Action]):
+        """Execute actions in bulk."""
+        helper = AlertsHelper()
+        self.tenant = helper.get_tenant_crev2(self.name)
+        first_action = actions[0]
+        if first_action.value == "private_app":
+            private_apps = {}
+            for action in actions:
+                private_apps.setdefault(
+                    (
+                        action.parameters["private_app_name"]
+                        if action.parameters["private_app_name"] != "create"
+                        else action.parameters["name"]
+                    ),
+                    [],
+                ).append(action.parameters)
+
+            for _, batched_actions in private_apps.items():
+                params = first_action.parameters.copy()
+                params["host"] = [
+                    action["host"]
+                    for action in batched_actions
+                    if action["host"]
+                ]
+                params = get_latest_values(
+                    params,
+                    exclude_keys=["host", "tags", "protocol", "publishers"],
+                )
+                self._execute_private_app_action(params)
+        else:
+            raise NotImplementedError

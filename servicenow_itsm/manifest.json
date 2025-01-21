@@ -1,8 +1,8 @@
 {
   "name": "ServiceNow",
-  "description": "This plugin is used to create incidents on the **Incident > All** page, security incidents on the **Security Incident > Incidents > Show All Incidents** page and GRC issues on the **Policy and Compliance > Issues > All Issues** page of the ServiceNow platform. It also supports updating incidents/issues and syncing their status. This plugin is **NOT** the same as ServiceNow's DLP Incident Response product, nor does this plugin works with that solution.",
+  "description": "This plugin is used to create incidents on the Incident > All page, security incidents on the Security Incident > Incidents > Show All Incidents page, GRC issues on the Policy and Compliance > Issues > All Issues page and records on the Custom Table record page of the ServiceNow platform. It also supports updating incidents/issues and syncing their status. This plugin is NOT the same as ServiceNow's DLP Incident Response product, nor does this plugin works with that solution.",
   "id": "servicenow_itsm",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "module": "CTO",
   "minimum_version": "5.1.0",
   "pulling_supported": false,
@@ -36,14 +36,7 @@
           "default": "",
           "mandatory": true,
           "description": "Password of your ServiceNow instance. Password for the username can be set from 'System Security > Users and Groups > Users > Select User > Set Password' page of the ServiceNow instance."
-        }
-      ]
-    },
-    {
-      "label": "Configuration Parameters",
-      "name": "params",
-      "type": "step",
-      "fields": [
+        },
         {
           "label": "Destination Table",
           "key": "table",
@@ -60,142 +53,132 @@
             {
               "key": "GRC Issues",
               "value": "sn_grc_issue"
+            },
+            {
+              "key": "Custom Table",
+              "value": "custom_table"
             }
           ],
           "default": "sn_si_incident",
           "mandatory": true,
-          "description": "Select the ServiceNow table where incidents/issues will be created."
-        },
-        {
-          "label": "Use Default Mappings",
-          "key": "default_mappings",
-          "type": "choice",
-          "choices": [
-            {
-              "key": "Yes",
-              "value": "yes"
-            },
-            {
-              "key": "No",
-              "value": "no"
-            }
-          ],
-          "default": "no",
-          "mandatory": true,
-          "description": "Select 'No' if the user wants to configure the mapping fields while configuring the queue and select 'Yes' if the user wants to use the default mapping. Note: To configure the mapping fields while configuring the queue, the user should have read access to the 'sys_dictionary' table."
+          "description": "Select the ServiceNow table where incidents/issues will be created. Any changes in this parameter will affect all the created tickets by this plugin configuration in the Netskope CE."
         }
       ]
+    },
+    {
+      "label": "Configuration Parameters",
+      "name": "params",
+      "type": "dynamic_step"
     },
     {
       "label": "Mapping Configurations",
       "name": "mapping_config",
       "type": "step",
       "fields": [
-        {
-          "label": "Status Mapping",
-          "key": "status_mapping",
-          "type": "mapping_table",
-          "value_type": "text",
-          "destination_label": "ServiceNow Fields",
-          "fields": [
-            {
-              "label": "New",
-              "value": "new",
-              "multi": false,
-              "mandatory": false
-            },
-            {
-              "label": "In Progress",
-              "value": "in_progress",
-              "multi": false,
-              "mandatory": false
-            },
-            {
-              "label": "On Hold",
-              "value": "on_hold",
-              "multi": false,
-              "mandatory": false
-            },
-            {
-              "label": "Closed",
-              "value": "closed",
-              "multi": false,
-              "mandatory": false
-            },
-            {
-              "label": "Deleted",
-              "value": "deleted",
-              "multi": false,
-              "mandatory": false
-            },
-            {
-              "label": "Other",
-              "value": "other",
-              "multi": false
-            }
-          ],
-          "mandatory": true,
-          "default": {
-            "new": "1",
-            "in_progress": "2",
-            "on_hold": "3",
-            "closed": "7"
+          {
+              "label": "Status Mapping",
+              "key": "status_mapping",
+              "type": "mapping_table",
+              "value_type": "text",
+              "destination_label": "ServiceNow Fields",
+              "fields": [
+                  {
+                      "label": "New",
+                      "value": "new",
+                      "multi": false,
+                      "mandatory": false
+                  },
+                  {
+                      "label": "In Progress",
+                      "value": "in_progress",
+                      "multi": false,
+                      "mandatory": false
+                  },
+                  {
+                      "label": "On Hold",
+                      "value": "on_hold",
+                      "multi": false,
+                      "mandatory": false
+                  },
+                  {
+                      "label": "Closed",
+                      "value": "closed",
+                      "multi": false,
+                      "mandatory": false
+                  },
+                  {
+                      "label": "Deleted",
+                      "value": "deleted",
+                      "multi": false,
+                      "mandatory": false
+                  },
+                  {
+                      "label": "Other",
+                      "value": "other",
+                      "multi": false
+                  }
+              ],
+              "mandatory": true,
+              "default": {
+                  "new": "1",
+                  "in_progress": "2",
+                  "on_hold": "3",
+                  "closed": "7"
+              },
+              "description": "Status Mapping will be used to map the ticket status from Cloud Exchange to 'state' field of the ServiceNow incident/issue. This mapping will also be used to transform the status while creating the incident/issue on ServiceNow platform."
           },
-          "description": "Status Mapping will be used to map the ticket status from Cloud Exchange to the ServiceNow incident/issue status. This mapping will also be used to transform the status while creating the incident/issue on ServiceNow platform."
-        },
-        {
-          "label": "Severity Mapping",
-          "key": "severity_mapping",
-          "type": "mapping_table",
-          "value_type": "text",
-          "destination_label": "ServiceNow Fields",
-          "fields": [
-            {
-              "label": "Critical",
-              "value": "critical",
-              "multi": false,
-              "mandatory": true
-            },
-            {
-              "label": "High",
-              "value": "high",
-              "multi": false,
-              "mandatory": true
-            },
-            {
-              "label": "Medium",
-              "value": "medium",
-              "multi": false,
-              "mandatory": true
-            },
-            {
-              "label": "Low",
-              "value": "low",
-              "multi": false,
-              "mandatory": true
-            },
-            {
-              "label": "Informational",
-              "value": "informational",
-              "multi": false,
-              "mandatory": true
-            },
-            {
-              "label": "Other",
-              "value": "other",
-              "multi": false,
-              "mandatory": true
-            }
-          ],
-          "mandatory": true,
-          "default": {
-            "critical": "1",
-            "high": "1",
-            "medium": "2",
-            "low": "3"
-          },
-          "description": "Severity Mapping will be used to map the ticket severity from Cloud Exchange to the ServiceNow incident/issue severity. This mapping will also be used to transform severity while creating the incident/issue on ServiceNow platform."
-        }
+          {
+              "label": "Severity Mapping",
+              "key": "severity_mapping",
+              "type": "mapping_table",
+              "value_type": "text",
+              "destination_label": "ServiceNow Fields",
+              "fields": [
+                  {
+                      "label": "Critical",
+                      "value": "critical",
+                      "multi": false,
+                      "mandatory": true
+                  },
+                  {
+                      "label": "High",
+                      "value": "high",
+                      "multi": false,
+                      "mandatory": true
+                  },
+                  {
+                      "label": "Medium",
+                      "value": "medium",
+                      "multi": false,
+                      "mandatory": true
+                  },
+                  {
+                      "label": "Low",
+                      "value": "low",
+                      "multi": false,
+                      "mandatory": true
+                  },
+                  {
+                      "label": "Informational",
+                      "value": "informational",
+                      "multi": false,
+                      "mandatory": true
+                  },
+                  {
+                      "label": "Other",
+                      "value": "other",
+                      "multi": false,
+                      "mandatory": true
+                  }
+              ],
+              "mandatory": true,
+              "default": {
+                  "high": "1",
+                  "medium": "2",
+                  "low": "3"
+              },
+              "description": "Severity Mapping will be used to map the ticket severity from Cloud Exchange to 'severity' field of the ServiceNow incident and 'impact' field of the GRC issue. This mapping will also be used to transform severity while creating the incident/issue on ServiceNow platform."
+          }
       ]
     }
   ]

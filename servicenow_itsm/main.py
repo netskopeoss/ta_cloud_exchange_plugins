@@ -58,7 +58,8 @@ from .utils.servicenow_itsm_constants import (
     PLUGIN_VERSION,
     MODULE_NAME,
     LIMIT,
-    MAIN_ATTRS
+    MAIN_ATTRS,
+    CUSTOM_TABLE_CONFIG_FIELDS
 )
 from .utils.servicenow_itsm_helper import (
     ServiceNowITSMPluginHelper,
@@ -142,7 +143,8 @@ class ServiceNowITSMPlugin(PluginBase):
         )
 
     def map_values(self, alert, mappings):
-        """Generate a mapped dictionary based on the given alert and field mappings.
+        """Generate a mapped dictionary based on \
+            the given alert and field mappings.
 
         Args:
             alert (Alert): Alert object.
@@ -179,10 +181,14 @@ class ServiceNowITSMPlugin(PluginBase):
         """
         mapping_config = self.configuration.get("mapping_config", {})
         ns_to_ce_severity = {
-            value: key for key, value in mapping_config.get("severity_mapping", {}).items()
+            value: key for key, value in mapping_config.get(
+                "severity_mapping", {}
+            ).items()
         }
         ns_to_ce_status = {
-            value: key for key, value in mapping_config.get("status_mapping", {}).items()
+            value: key for key, value in mapping_config.get(
+                "status_mapping", {}
+            ).items()
         }
         return {
             "severity": ns_to_ce_severity,
@@ -192,30 +198,37 @@ class ServiceNowITSMPlugin(PluginBase):
     def ce_to_snow_state_severity_mappings(
         self,
         mapping_config: dict,
-        mappings: dict
+        mappings: dict,
+        status_field,
+        severity_field
     ):
         """Get state severity mappings.
 
         Args:
             mapping_config (Dict): Mapping config.
             mappings (Dict): Mappings.
+            status_field (str): Status field based on table.
+            severity_field (str): Severity field based on table.
 
         Returns:
             dict: mappings with updated state severity mappings.
         """
+        auth_params = self.configuration.get("auth", {})
         ce_to_snow_severity = mapping_config.get("severity_mapping", {})
         ce_to_snow_state = mapping_config.get("status_mapping", {})
-        severity_field = "severity"
-        if self.configuration.get("params", {}).get("table", "") == "sn_grc_issue":
+        if auth_params.get("table", "") == "sn_grc_issue":
             severity_field = "impact"
-        for k, v in {severity_field: ce_to_snow_severity, "state": ce_to_snow_state}.items():
-            if k == "severity" and k in mappings.keys():
+        for k, v in {
+            severity_field: ce_to_snow_severity,
+            status_field: ce_to_snow_state
+        }.items():
+            if k == severity_field and k in mappings.keys():
                 mappings.update(
                     {
                         k: v.get(mappings.get(k), "3")
                     }
                 )
-            elif k == "state" and k in mappings.keys():
+            elif k == status_field and k in mappings.keys():
                 mappings.update(
                     {
                         k: v.get(mappings.get(k), "1")
@@ -229,6 +242,40 @@ class ServiceNowITSMPlugin(PluginBase):
                 )
         return mappings
 
+    def _get_custom_table_fields(self, custom_fields):
+        """Get custom table fields.
+
+        Returns:
+            Tuple: Tuple of custom table fields.
+        """
+        table = custom_fields.get(
+            "custom_table_name", ""
+        ).strip()
+        status_field = custom_fields.get(
+            "custom_status", "state"
+        ).strip()
+        severity_field = custom_fields.get(
+            "custom_severity", "severity"
+        ).strip()
+        assignee_field = custom_fields.get(
+            "custom_assignee", "assignee"
+        ).strip()
+        assignment_group_field = custom_fields.get(
+            "custom_group", "assignment_group"
+        ).strip()
+        update_field = custom_fields.get(
+            "custom_update", "work_notes"
+        ).strip()
+
+        return (
+            table,
+            status_field,
+            severity_field,
+            assignee_field,
+            assignment_group_field,
+            update_field
+        )
+
     def create_task(self, alert, mappings, queue) -> Task:
         """Create an incident/issue on ServiceNow platform.
 
@@ -241,8 +288,23 @@ class ServiceNowITSMPlugin(PluginBase):
             Task: Task object.
         """
         config_params = self.configuration.get("params", {})
+        auth_params = self.configuration.get("auth", {})
         mapping_config = self.configuration.get("mapping_config", {})
-        table = config_params.get("table", "")
+        status_field = "state"
+        severity_field = "severity"
+        assignee_field = "assigned_to"
+        assignment_group_field = "assignment_group"
+
+        table = auth_params.get("table", "")
+        if table == "custom_table":
+            (
+                table,
+                status_field,
+                severity_field,
+                assignee_field,
+                assignment_group_field,
+                update_field
+            ) = self._get_custom_table_fields(config_params)
         event_type = "Alert"
         if "eventType" in alert.model_dump():
             event_type = "Event"
@@ -260,29 +322,37 @@ class ServiceNowITSMPlugin(PluginBase):
             )
             self.logger.error(
                 f"{self.log_prefix}: {err_msg} Queue mapping "
-                f"is required to create an {ticket_type} if 'Use Default Mappings' "
-                "is set to 'No' in Configuration Parameters."
+                f"is required to create an {ticket_type} if "
+                "'Use Default Mappings' is set to 'No' in "
+                "the Configuration Parameters."
             )
             raise ServiceNowITSMPluginException(err_msg)
 
-        mappings = self.ce_to_snow_state_severity_mappings(mapping_config, mappings)
+        mappings = self.ce_to_snow_state_severity_mappings(
+            mapping_config,
+            mappings,
+            status_field,
+            severity_field
+        )
         for key, value in list(mappings.items()):
             if type(value) is not str:
                 mappings[key] = str(value)
         values = (
             mappings
             if queue.value == "no_queue"
-            else {**mappings, "assignment_group": queue.value}
+            else {**mappings, assignment_group_field: queue.value}
         )
         if "sys_id" in values:
             values.pop("sys_id")  # special field; do not allow overriding
 
-        url, username, password = self.servicenow_helper.get_auth_params(self.configuration)
+        url, username, password = self.servicenow_helper.get_auth_params(
+            self.configuration
+        )
         endpoint = f"{url}/api/now/table/{table}"
 
         self.logger.info(
-            f"{self.log_prefix}: Creating an {ticket_type} for {event_type} ID {alert.id}"
-            f" on {PLATFORM_NAME}."
+            f"{self.log_prefix}: Creating an {ticket_type} for "
+            f"{event_type} ID {alert.id} on {PLATFORM_NAME}."
         )
         headers = self.servicenow_helper.basic_auth(username, password)
         headers.update({
@@ -298,15 +368,19 @@ class ServiceNowITSMPlugin(PluginBase):
                 verify=self.ssl_validation,
                 proxies=self.proxy,
                 logger_msg=(
-                    f"creating an {ticket_type} for {event_type} ID '{alert.id}' "
-                    f"on {PLATFORM_NAME} platform"
+                    f"creating an {ticket_type} for {event_type} "
+                    f"ID '{alert.id}' on {PLATFORM_NAME} platform"
                 ),
             )
 
             result = response.get("result", {})
             sys_id = result.get("sys_id", "")
-            severity = getattr(alert, "rawData").get("severity", Severity.OTHER)
-            state = getattr(alert, "rawData").get("status", TaskStatus.OTHER)
+            severity = getattr(alert, "rawData").get(
+                "severity", Severity.OTHER
+            )
+            state = getattr(alert, "rawData").get(
+                "status", TaskStatus.OTHER
+            )
             task = Task(
                 id=sys_id,
                 status=state if state.upper() in TaskStatus.__members__ else TaskStatus.OTHER,
@@ -321,16 +395,16 @@ class ServiceNowITSMPlugin(PluginBase):
                 f"with ID '{sys_id}' "
                 f"for {event_type} ID '{alert.id}' on {PLATFORM_NAME}."
             )
-            results = self.fetch_assignee_usernames([result])
+            results = self.fetch_assignee_usernames([result], assignee_field)
             result = results[0] if len(results) > 0 else {}
             task = self.update_task_details(task, {
-                "state": result.get("state", ""),
-                "severity": (
-                    result.get("severity", "") if table != "sn_grc_issue"
+                status_field: result.get(status_field, ""),
+                severity_field: (
+                    result.get(severity_field, "") if table != "sn_grc_issue"
                     else result.get("impact", "")
                 ),
-                "assignee": result.get("user_name", "")
-            })
+                assignee_field: result.get("user_name", "")
+            }, severity_field, status_field, assignee_field)
             return task
         except ServiceNowITSMPluginException:
             raise
@@ -345,25 +419,28 @@ class ServiceNowITSMPlugin(PluginBase):
             )
             raise ServiceNowITSMPluginException(err_msg)
 
-    def fetch_assignee_usernames(self, results: list):
+    def fetch_assignee_usernames(self, results: list, assignee_field):
         """Fetch assignee usernames from ServiceNow.
 
         Args:
             results (list): List of results.
+            assignee_field (str): Assignee field based on table.
         """
         usernames_ids = {}
         for result in results:
             usernames_ids[result["sys_id"]] = ""
-            assignee = result.get("assigned_to", {})
-            if assignee:
-                usernames_ids[result["sys_id"]] = assignee["value"]
+            assignee = result.get(assignee_field, {})
+            if assignee and isinstance(assignee, dict):
+                usernames_ids[result["sys_id"]] = assignee.get("value", "")
         ids = list(usernames_ids.values())
 
         self.logger.info(
             f"{self.log_prefix}: Fetching assignee usernames "
             f" from {PLATFORM_NAME}."
         )
-        url, username, password = self.servicenow_helper.get_auth_params(self.configuration)
+        url, username, password = self.servicenow_helper.get_auth_params(
+            self.configuration
+        )
         endpoint = f"{url}/api/now/table/sys_user"
         headers = self.servicenow_helper.basic_auth(username, password)
 
@@ -394,7 +471,8 @@ class ServiceNowITSMPlugin(PluginBase):
             raise
         except Exception as exp:
             err_msg = (
-                f"Error occurred while fetching usernames from {PLATFORM_NAME}."
+                "Error occurred while fetching usernames "
+                f"from {PLATFORM_NAME}."
             )
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {exp}",
@@ -411,16 +489,30 @@ class ServiceNowITSMPlugin(PluginBase):
             )
         return results
 
-    def update_task_details(self, task: dict, servicenow_data: dict):
+    def update_task_details(
+        self,
+        task: dict,
+        servicenow_data: dict,
+        severity_field,
+        status_field,
+        assignee_field
+    ):
         """Update task fields with ServiceNow data.
 
         Args:
             task (Task): CE task.
             servicenow_data (dict): Updated data from servicenow.
+            severity_field (str): Severity field based on table.
+            status_field (str): Status field based on table.
+            assignee_field (str): Assignee field based on table.
         """
         if task.dataItem and task.dataItem.rawData:
-            old_status = task.dataItem.rawData.get("status", TaskStatus.OTHER)
-            old_severity = task.dataItem.rawData.get("severity", Severity.OTHER)
+            old_status = task.dataItem.rawData.get(
+                "status", TaskStatus.OTHER
+            )
+            old_severity = task.dataItem.rawData.get(
+                "severity", Severity.OTHER
+            )
             if task.updatedValues:
                 task.updatedValues.oldSeverity = (
                     old_severity if old_severity.upper() in Severity.__members__ else Severity.OTHER
@@ -451,22 +543,22 @@ class ServiceNowITSMPlugin(PluginBase):
 
         if task.updatedValues:
             task.updatedValues.status = STATE_MAPPINGS.get(
-                servicenow_data.get("state"), TaskStatus.OTHER
+                servicenow_data.get(status_field), TaskStatus.OTHER
             )
 
-        if servicenow_data["severity"]:
+        if servicenow_data[severity_field]:
             task.updatedValues.severity = SEVERITY_MAPPING.get(
-                servicenow_data.get("severity"), Severity.OTHER
+                servicenow_data.get(severity_field), Severity.OTHER
             )
 
-        if servicenow_data["assignee"]:
-            task.updatedValues.assignee = servicenow_data["assignee"]
+        if servicenow_data[assignee_field]:
+            task.updatedValues.assignee = servicenow_data[assignee_field]
 
         task.status = STATE_MAPPINGS.get(
-            servicenow_data.get("state"), TaskStatus.OTHER
+            servicenow_data.get(status_field), TaskStatus.OTHER
         )
         task.severity = SEVERITY_MAPPING.get(
-            servicenow_data.get("severity"), Severity.OTHER
+            servicenow_data.get(severity_field), Severity.OTHER
         )
         return task
 
@@ -479,7 +571,21 @@ class ServiceNowITSMPlugin(PluginBase):
         Returns:
             List[Task]: Task List with updated status.
         """
-        table = self.configuration.get("params", {}).get("table", "")
+        status_field = "state"
+        severity_field = "severity"
+        assignee_field = "assigned_to"
+
+        table = self.configuration.get("auth", {}).get("table", "")
+        if table == "custom_table":
+            custom_fields = self.configuration.get("params", {})
+            (
+                table,
+                status_field,
+                severity_field,
+                assignee_field,
+                assignment_group_field,
+                update_field
+            ) = self._get_custom_table_fields(custom_fields)
         ticket_type = "incident"
         if table == "sn_grc_issue":
             ticket_type = "issue"
@@ -488,7 +594,9 @@ class ServiceNowITSMPlugin(PluginBase):
             f"tickets with {PLATFORM_NAME} {ticket_type}s."
         )
 
-        url, username, password = self.servicenow_helper.get_auth_params(self.configuration)
+        url, username, password = self.servicenow_helper.get_auth_params(
+            self.configuration
+        )
         endpoint = f"{url}/api/now/table/{table}"
         headers = self.servicenow_helper.basic_auth(username, password)
 
@@ -505,7 +613,8 @@ class ServiceNowITSMPlugin(PluginBase):
 
                 params = {
                     "sysparm_fields": (
-                        "sys_id,state,severity,assigned_to" + ",impact"
+                        f"sys_id,{status_field},{severity_field},"
+                        f"{assignee_field}" + ",impact"
                         if table == "sn_grc_issue" else "",
                     ),
                     "sysparm_query": (f"sys_idIN{','.join(ids)}"),
@@ -523,16 +632,19 @@ class ServiceNowITSMPlugin(PluginBase):
                     ),
                 )
                 results = response.get("result", [])
-                results = self.fetch_assignee_usernames(results)
+                results = self.fetch_assignee_usernames(
+                    results, assignee_field
+                )
 
                 for result in results:
                     data[result.get("sys_id", "")] = {
-                        "state": result.get("state", ""),
-                        "severity": (
-                            result.get("severity", "") if table != "sn_grc_issue"
+                        status_field: result.get(status_field, ""),
+                        severity_field: (
+                            result.get(severity_field, "")
+                            if table != "sn_grc_issue"
                             else result.get("impact", "")
                         ),
-                        "assignee": result.get("user_name", "")
+                        assignee_field: result.get("user_name", "")
                     }
                 skip += size
                 batch_count += 1
@@ -551,7 +663,13 @@ class ServiceNowITSMPlugin(PluginBase):
 
         for task in tasks:
             if data.get(task.id, ""):
-                task = self.update_task_details(task, data.get(task.id))
+                task = self.update_task_details(
+                    task,
+                    data.get(task.id),
+                    severity_field,
+                    status_field,
+                    assignee_field
+                )
             else:
                 if task.updatedValues.status and task.updatedValues.status != TaskStatus.DELETED:
                     task.updatedValues.oldStatus, task.updatedValues.status = (
@@ -569,7 +687,12 @@ class ServiceNowITSMPlugin(PluginBase):
         return tasks
 
     def update_task(
-        self, task: Task, alert: Union[Alert, Event], mappings, queue, upsert_task=False
+        self,
+        task: Task,
+        alert: Union[Alert, Event],
+        mappings,
+        queue,
+        upsert_task=False
     ) -> Task:
         """Add a comment in existing ServiceNow incident/issue.
 
@@ -578,19 +701,39 @@ class ServiceNowITSMPlugin(PluginBase):
             alert (Alert): Alert or Event received from tenant.
             mappings (Dict): Dictionary of the mapped fields.
             queue (Queue): Selected queue configuration.
+            upsert_task (bool): True if incident event.
 
         Returns:
             Task: Task containing ticket ID and status.
         """
         updates = {}
         config_params = self.configuration.get("params", {})
+        auth_params = self.configuration.get("auth", {})
         mapping_config = self.configuration.get("mapping_config", {})
+        status_field = "state"
+        severity_field = "severity"
+        assignee_field = "assigned_to"
+        update_field = "work_notes"
+
+        table = auth_params.get("table", "")
+        if table == "custom_table":
+            (
+                table,
+                status_field,
+                severity_field,
+                assignee_field,
+                assignment_group_field,
+                update_field
+            ) = self._get_custom_table_fields(config_params)
+
         event_type = "Alert"
         if "eventType" in alert.model_dump():
             event_type = "Event"
         if upsert_task:
             if config_params.get("default_mappings", "no") == "yes":
-                mappings_default = self.get_default_mappings(self.configuration)
+                mappings_default = self.get_default_mappings(
+                    self.configuration
+                )
                 mappings_list = mappings_default.get("mappings", [])
                 mappings = self.map_values(alert, mappings_list)
             if "sys_id" in mappings:
@@ -598,20 +741,29 @@ class ServiceNowITSMPlugin(PluginBase):
             for key, value in list(mappings.items()):
                 if type(value) is not str:
                     mappings[key] = str(value)
-            mappings = self.ce_to_snow_state_severity_mappings(mapping_config, mappings)
+            mappings = self.ce_to_snow_state_severity_mappings(
+                mapping_config,
+                mappings,
+                status_field,
+                severity_field
+            )
             updates = mappings
 
-        if mappings.get("work_notes", None):
-            data = mappings.get("work_notes", "")
+        if mappings.get(update_field, None):
+            data = mappings.get(update_field, "")
         else:
-            data = f"New {event_type.lower()} with ID '{alert.id}' received at {str(alert.timestamp)}."
-        updates["work_notes"] = data
+            data = (
+                f"New {event_type.lower()} with ID "
+                f"'{alert.id}' received at {str(alert.timestamp)}."
+            )
+        updates[update_field] = data
 
-        table = config_params.get("table", "")
         ticket_type = "incident"
         if table == "sn_grc_issue":
             ticket_type = "issue"
-        url, username, password = self.servicenow_helper.get_auth_params(self.configuration)
+        url, username, password = self.servicenow_helper.get_auth_params(
+            self.configuration
+        )
         endpoint = f"{url}/api/now/table/{table}/{task.id}"
 
         headers = self.servicenow_helper.basic_auth(username, password)
@@ -620,7 +772,8 @@ class ServiceNowITSMPlugin(PluginBase):
         })
         params = {
             "sysparm_fields": (
-                "sys_id,state,severity,assigned_to" + ",impact"
+                f"sys_id,{status_field},{severity_field},"
+                f"{assignee_field}" + ",impact"
                 if table == "sn_grc_issue" else "",
             )
         }
@@ -646,20 +799,23 @@ class ServiceNowITSMPlugin(PluginBase):
             if response.status_code in [200, 201]:
                 response = response.json()
                 result = response.get("result", {})
-                results = self.fetch_assignee_usernames([result])
+                results = self.fetch_assignee_usernames(
+                    [result], assignee_field
+                )
                 result = results[0] if len(results) > 0 else {}
                 task.dataItem = alert
                 task = self.update_task_details(task, {
-                    "state": result.get("state"),
-                    "severity": (
-                        result.get("severity") if table != "sn_grc_issue"
+                    status_field: result.get(status_field),
+                    severity_field: (
+                        result.get(severity_field) if table != "sn_grc_issue"
                         else result.get("impact", "")
                     ),
-                    "assignee": result.get("user_name", "")
-                })
+                    assignee_field: result.get("user_name", "")
+                }, severity_field, status_field, assignee_field)
                 self.logger.info(
-                    f"{self.log_prefix}: Successfully updated an {ticket_type} having"
-                    f" ID {task.id} on {PLATFORM_NAME} platform."
+                    f"{self.log_prefix}: Successfully updated an "
+                    f"{ticket_type} having ID {task.id} on "
+                    f"{PLATFORM_NAME} platform."
                 )
                 return task
             elif response.status_code == 404:
@@ -673,8 +829,9 @@ class ServiceNowITSMPlugin(PluginBase):
                     )
                 task.status = TaskStatus.DELETED
                 self.logger.info(
-                    f"{self.log_prefix}: {ticket_type.title()} with sys_id '{task.id}' "
-                    f"no longer exists on {PLATFORM_NAME} platform."
+                    f"{self.log_prefix}: {ticket_type.title()} "
+                    f"with sys_id '{task.id}' no longer exists on "
+                    f"{PLATFORM_NAME} platform."
                 )
                 return task
             else:
@@ -710,7 +867,8 @@ class ServiceNowITSMPlugin(PluginBase):
         url: str,
         username: str,
         password: str,
-        configuration: dict,
+        table_name: str,
+        configuration: dict
     ) -> ValidationResult:
         """Validate connectivity with ServiceNow server.
 
@@ -718,6 +876,7 @@ class ServiceNowITSMPlugin(PluginBase):
             url (str): Instance URL.
             username (str): Instance username.
             password (str): Instance password.
+            table_name (str): Selected destination table.
             configuration (dict): Configuration dictionary.
 
         Returns:
@@ -727,15 +886,23 @@ class ServiceNowITSMPlugin(PluginBase):
             logger_msg = (
                 f"connectivity with {PLATFORM_NAME} server"
             )
+
+            if table_name == "custom_table":
+                return ValidationResult(
+                    success=True,
+                    message=(
+                        f"Validation successful for {MODULE_NAME} "
+                        f"{self.plugin_name} plugin configuration."
+                    ),
+                )
+
             self.logger.debug(
                 f"{self.log_prefix}: Validating {logger_msg}."
             )
             headers = self.servicenow_helper.basic_auth(
                 username=username, password=password
             )
-            table = configuration.get("params", {}).get("table", "")
-
-            api_endpoint = f"{url}/api/now/table/{table}"
+            api_endpoint = f"{url}/api/now/table/{table_name}"
             params = {"sysparm_limit": 1}
             self.servicenow_helper.api_helper(
                 url=api_endpoint,
@@ -750,16 +917,15 @@ class ServiceNowITSMPlugin(PluginBase):
                 is_validation=True,
             )
 
+            validation_msg = (
+                f"Successfully validated {logger_msg}."
+            )
             self.logger.debug(
-                f"{self.log_prefix}: Successfully validated "
-                f"{logger_msg}."
+                f"{self.log_prefix}: {validation_msg}"
             )
             return ValidationResult(
                 success=True,
-                message=(
-                    f"Validation successful for {MODULE_NAME} "
-                    f"{self.plugin_name} plugin configuration."
-                ),
+                message=validation_msg,
             )
         except ServiceNowITSMPluginException as exp:
             return ValidationResult(
@@ -800,7 +966,9 @@ class ServiceNowITSMPlugin(PluginBase):
         elif not (
             isinstance(url, str) and self._validate_url(url)
         ):
-            err_msg = "Invalid Instance URL provided in Authentication parameters."
+            err_msg = (
+                "Invalid Instance URL provided in Authentication parameters."
+            )
             self.logger.error(
                 f"{self.log_prefix}: {validation_error} {err_msg}"
             )
@@ -815,7 +983,9 @@ class ServiceNowITSMPlugin(PluginBase):
             )
             return ValidationResult(success=False, message=err_msg)
         elif not isinstance(username, str):
-            err_msg = "Invalid username provided in Authentication parameters."
+            err_msg = (
+                "Invalid username provided in Authentication parameters."
+            )
             self.logger.error(
                 f"{self.log_prefix}: {validation_error} {err_msg}"
             )
@@ -830,7 +1000,33 @@ class ServiceNowITSMPlugin(PluginBase):
             )
             return ValidationResult(success=False, message=err_msg)
         elif not isinstance(password, str):
-            err_msg = "Invalid password provided in Authentication parameters."
+            err_msg = (
+                "Invalid password provided in Authentication parameters."
+            )
+            self.logger.error(
+                f"{self.log_prefix}: {validation_error} {err_msg}"
+            )
+            return ValidationResult(success=False, message=err_msg)
+
+        # Validate table field
+        table = auth_params.get("table", "")
+        if not table:
+            err_msg = "Destination Table is required Authentication parameter."
+            self.logger.error(
+                f"{self.log_prefix}: {validation_error} {err_msg}"
+            )
+            return ValidationResult(success=False, message=err_msg)
+        elif table not in [
+            "sn_si_incident",
+            "incident",
+            "sn_grc_issue",
+            "custom_table",
+        ]:
+            err_msg = (
+                "Invalid 'Destination Table' provided in Authentication "
+                "parameters. Valid selections are 'Security Incidents' "
+                "or 'Incidents' or 'GRC Issues' or 'Custom Table'."
+            )
             self.logger.error(
                 f"{self.log_prefix}: {validation_error} {err_msg}"
             )
@@ -841,8 +1037,137 @@ class ServiceNowITSMPlugin(PluginBase):
             url=url,
             username=username,
             password=password,
+            table_name=table,
             configuration=configuration,
         )
+
+    def _validate_custom_table(
+        self,
+        config_params: dict,
+        auth_params: dict,
+        validation_error: str
+    ):
+        """Check custom table and fields are available \
+            on the ServiceNow or not.
+
+        Args:
+            config_params (Dict): Configuration parameters dictionary.
+            auth_params (Dict): Authentication parameters dictionary.
+            validation_error (str): Validation error message.
+
+        Returns:
+            ValidationResult: Validation Result.
+        """
+        try:
+            custom_table_name = config_params.get("custom_table_name", "").strip()
+            if not custom_table_name:
+                err_msg = (
+                    "Custom Table Name is required Configuration Parameter."
+                )
+                self.logger.error(
+                    f"{self.log_prefix}: {validation_error} {err_msg}"
+                )
+                return ValidationResult(success=False, message=err_msg)
+
+            url = auth_params.get("url", "").strip().strip("/")
+            username = auth_params.get("username", "").strip()
+            password = auth_params.get("password")
+            logger_msg = (
+                f"custom table '{custom_table_name}' and its fields on "
+                f"the {PLATFORM_NAME}"
+            )
+            self.logger.debug(
+                f"{self.log_prefix}: Validating {logger_msg}."
+            )
+            headers = self.servicenow_helper.basic_auth(
+                username=username, password=password
+            )
+            custom_fields = []
+
+            endpoint = f"{url}/api/now/table/sys_dictionary"
+            params = {
+                "sysparm_query": f"name={custom_table_name}",
+                "sysparm_fields": "element",
+                "sysparm_offset": 0,
+                "sysparm_limit": LIMIT,
+            }
+            while True:
+                response = self.servicenow_helper.api_helper(
+                    url=endpoint,
+                    method="GET",
+                    headers=headers,
+                    params=params,
+                    verify=self.ssl_validation,
+                    proxies=self.proxy,
+                    logger_msg=(
+                        f"validating {logger_msg}"
+                    ),
+                    is_validation=True,
+                )
+
+                fields = response.get("result", [])
+                if not fields:
+                    err_msg = (
+                        f"Custom table '{custom_table_name}' is not "
+                        "present on the ServiceNow. Verify the custom "
+                        "table provided in Configuration Parameters."
+                    )
+                    self.logger.error(
+                        f"{self.log_prefix}: {validation_error} {err_msg}"
+                    )
+                    return ValidationResult(success=False, message=err_msg)
+                custom_fields.extend(fields)
+
+                if len(fields) < LIMIT:
+                    break
+                params["sysparm_offset"] += LIMIT
+
+            custom_table_fields = [item["element"] for item in fields]
+            for key, value in config_params.items():
+                if (
+                    key == "custom_table_name" or
+                    key not in CUSTOM_TABLE_CONFIG_FIELDS
+                ):
+                    continue
+                value = value.strip()
+                if value and value not in custom_table_fields:
+                    field_name = CUSTOM_TABLE_CONFIG_FIELDS.get(key, "")
+                    err_msg = (
+                        f"{field_name} '{value}' field is not present in "
+                        f"the table '{custom_table_name}' on "
+                        f"the {PLATFORM_NAME}. Verify the {field_name} "
+                        "provided in Configuration Parameters."
+                    )
+                    self.logger.error(
+                        f"{self.log_prefix}: {validation_error} {err_msg}"
+                    )
+                    return ValidationResult(success=False, message=err_msg)
+
+            validation_msg = (
+                f"Successfully validated {logger_msg}."
+            )
+            self.logger.debug(
+                f"{self.log_prefix}: {validation_msg}"
+            )
+            return ValidationResult(
+                success=True,
+                message=validation_msg
+            )
+        except ServiceNowITSMPluginException as exp:
+            return ValidationResult(
+                success=False,
+                message=f"{str(exp)}"
+            )
+        except Exception as exp:
+            err_msg = "Unexpected validation error occurred."
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg} Error: {exp}",
+                details=str(traceback.format_exc()),
+            )
+            return ValidationResult(
+                success=False,
+                message=f"{err_msg} Check logs for more details.",
+            )
 
     def _validate_params(self, configuration):
         """Validate plugin configuration parameters.
@@ -854,45 +1179,50 @@ class ServiceNowITSMPlugin(PluginBase):
             ValidationResult: Validation result with success flag and message.
         """
         params = configuration.get("params", {})
+        auth_params = configuration.get("auth", {})
         validation_error = "Validation error occurred."
+        table = auth_params.get("table", "")
 
-        # Validate table field
-        table = params.get("table", "")
-        if not table:
-            err_msg = "Destination Table is required Configuration parameter."
-            self.logger.error(
-                f"{self.log_prefix}: {validation_error} {err_msg}"
+        if table == "custom_table":
+            return self._validate_custom_table(
+                params,
+                auth_params,
+                validation_error
             )
-            return ValidationResult(success=False, message=err_msg)
-        elif table not in ["sn_si_incident", "incident", "sn_grc_issue"]:
-            err_msg = (
-                "Invalid 'Destination Table' provided in Configuration parameters. "
-                "Valid selections are 'Security Incidents' or 'Incidents' or 'GRC Issues'."
-            )
-            self.logger.error(
-                f"{self.log_prefix}: {validation_error} {err_msg}"
-            )
-            return ValidationResult(success=False, message=err_msg)
 
         # Validate use default mappings field
-        default_mappings = params.get("default_mappings", "")
-        if not default_mappings:
-            err_msg = "Use Default Mappings is required Configuration parameter."
-            self.logger.error(
-                f"{self.log_prefix}: {validation_error} {err_msg}"
-            )
-            return ValidationResult(success=False, message=err_msg)
-        elif default_mappings not in ["yes", "no"]:
-            err_msg = (
-                "Invalid 'Use Default Mappings' provided in Configuration parameters. "
-                "Valid selections are 'Yes' or 'No'."
-            )
-            self.logger.error(
-                f"{self.log_prefix}: {validation_error} {err_msg}"
-            )
-            return ValidationResult(success=False, message=err_msg)
+        if table != "custom_table":
+            default_mappings = params.get("default_mappings", "")
+            if not default_mappings:
+                err_msg = (
+                    "Use Default Mappings is required "
+                    "Configuration parameter."
+                )
+                self.logger.error(
+                    f"{self.log_prefix}: {validation_error} {err_msg}"
+                )
+                return ValidationResult(success=False, message=err_msg)
+            elif default_mappings not in ["yes", "no"]:
+                err_msg = (
+                    "Invalid 'Use Default Mappings' provided in "
+                    "Configuration parameters. "
+                    "Valid selections are 'Yes' or 'No'."
+                )
+                self.logger.error(
+                    f"{self.log_prefix}: {validation_error} {err_msg}"
+                )
+                return ValidationResult(success=False, message=err_msg)
 
-        return ValidationResult(success=True, message="Validation successful.")
+        validation_msg = (
+            f"Successfully validated Configuration Parameters"
+        )
+        self.logger.debug(
+            f"{self.log_prefix}: {validation_msg}."
+        )
+        return ValidationResult(
+            success=True,
+            message=validation_msg
+        )
 
     def _validate_mapping_param(self, configuration):
         """Validate mapping configuration parameters.
@@ -915,7 +1245,9 @@ class ServiceNowITSMPlugin(PluginBase):
             )
             return ValidationResult(success=False, message=err_msg)
         elif not isinstance(status_mapping, dict):
-            err_msg = "Invalid Status Mapping provided in Mapping Configurations."
+            err_msg = (
+                "Invalid Status Mapping provided in Mapping Configurations."
+            )
             self.logger.error(
                 f"{self.log_prefix}: {validation_error} {err_msg}"
             )
@@ -924,19 +1256,32 @@ class ServiceNowITSMPlugin(PluginBase):
         # Validate severity mapping
         severity_mapping = config.get("severity_mapping", {})
         if not severity_mapping:
-            err_msg = "Severity Mapping is required in Mapping Configurations."
+            err_msg = (
+                "Severity Mapping is required in Mapping Configurations."
+            )
             self.logger.error(
                 f"{self.log_prefix}: {validation_error} {err_msg}"
             )
             return ValidationResult(success=False, message=err_msg)
         elif not isinstance(severity_mapping, dict):
-            err_msg = "Invalid Severity Mapping provided in Mapping Configurations."
+            err_msg = (
+                "Invalid Severity Mapping provided in Mapping Configurations."
+            )
             self.logger.error(
                 f"{self.log_prefix}: {validation_error} {err_msg}"
             )
             return ValidationResult(success=False, message=err_msg)
 
-        return ValidationResult(success=True, message="Validation successful.")
+        validation_msg = (
+            f"Successfully validated Mapping Configurations"
+        )
+        self.logger.debug(
+            f"{self.log_prefix}: {validation_msg}."
+        )
+        return ValidationResult(
+            success=True,
+            message=validation_msg
+        )
 
     def validate_step(self, name, configuration):
         """Validate a given configuration step.
@@ -969,24 +1314,42 @@ class ServiceNowITSMPlugin(PluginBase):
             List[MappingField]: List of mapping fields.
         """
         config_params = configuration.get("params", {})
-        default_mappings = config_params.get(
-            "default_mappings", "no"
-        )
-        if default_mappings == "yes":
-            return []
+        auth_params = configuration.get("auth", {})
+        update_field = "work_notes"
+        table = auth_params.get("table", "")
+        if table != "custom_table":
+            default_mappings = config_params.get(
+                "default_mappings", "no"
+            )
+            if default_mappings == "yes":
+                return []
 
-        if config_params.get("table", "") == "sn_si_incident":
+        if table == "sn_si_incident":
             query = "name=sn_si_incident^ORname=task^internal_type!=collection"
-        elif config_params.get("table", "") == "incident":
+        elif table == "incident":
             query = "name=incident^ORname=task^internal_type!=collection"
+        elif table == "custom_table":
+            (
+                table,
+                status_field,
+                severity_field,
+                assignee_field,
+                assignment_group_field,
+                update_field
+            ) = self._get_custom_table_fields(config_params)
+            query = f"name={table}"
         else:
             query = "name=sn_grc_issue^ORname=task^internal_type!=collection"
 
         fields = []
-        url, username, password = self.servicenow_helper.get_auth_params(configuration)
+        url, username, password = self.servicenow_helper.get_auth_params(
+            configuration
+        )
         endpoint = f"{url}/api/now/table/sys_dictionary"
         headers = self.servicenow_helper.basic_auth(username, password)
-        log_msg = f"fetching list of all the available fields from {PLATFORM_NAME}"
+        log_msg = (
+            f"fetching list of all the available fields from {PLATFORM_NAME}"
+        )
 
         params = {
             "sysparm_query": query,
@@ -1026,21 +1389,18 @@ class ServiceNowITSMPlugin(PluginBase):
                 raise ServiceNowITSMPluginException(err_msg)
 
         if fields:
-            return list(
-                map(
-                    lambda item: MappingField(
-                        label=item.get("column_label", ""),
-                        value=item.get("element", ""),
-                    )
-                    if item.get("element", "") not in ["work_notes"]
-                    else MappingField(
-                        label=item.get("column_label", ""),
-                        value=item.get("element", ""),
-                        updateAble=True,
-                    ),
-                    fields,
+            return [
+                MappingField(
+                    label=item.get("column_label", ""),
+                    value=item.get("element", ""),
+                    updateAble=item.get("element", "") in [update_field]
                 )
-            )
+                for item in fields
+                if (
+                    not item.get("element", "").startswith("sys_") and
+                    item.get("element", "")
+                )
+            ]
         else:
             err_msg = (
                 "Error occurred while getting "
@@ -1060,21 +1420,50 @@ class ServiceNowITSMPlugin(PluginBase):
         Returns:
             dict: Default mappings.
         """
+        config_params = configuration.get("params", {})
+        auth_params = configuration.get("auth", {})
+        table = auth_params.get("table", "")
+        if table == "custom_table":
+            (
+                table,
+                status_field,
+                severity_field,
+                assignee_field,
+                assignment_group_field,
+                update_field
+            ) = self._get_custom_table_fields(config_params)
+            return {
+                "mappings": [],
+                "dedup": [
+                    FieldMapping(
+                        extracted_field="custom_message",
+                        destination_field=update_field,
+                        custom_message=(
+                            "Received new alert/event with Alert/Event ID: "
+                            "$id and Alert Name: $alertName, Event Name: "
+                            "$alert_name in Cloud Exchange."
+                        ),
+                    ),
+                ] if update_field else []
+            }
         return {
             "mappings": [
                 FieldMapping(
                     extracted_field="custom_message",
                     destination_field="short_description",
                     custom_message=(
-                        "Netskope $appCategory alert name: $alertName, Event Name: $alert_name"
+                        "Netskope $appCategory alert name: $alertName, "
+                        "Event Name: $alert_name"
                     ),
                 ),
                 FieldMapping(
                     extracted_field="custom_message",
                     destination_field="description",
                     custom_message=(
-                        "Alert/Event ID: $id\nAlert/Event App: $app\nAlert/Event User: $user\n\n"
-                        "Alert Name: $alertName\nAlert Type: $alertType\nAlert App Category: $appCategory\n\n"
+                        "Alert/Event ID: $id\nAlert/Event App: $app\n"
+                        "Alert/Event User: $user\n\n"
+                        "Alert Name: $alertName\nAlert Type: $alertType\n"
+                        "Alert App Category: $appCategory\n\n"
                         "Event Name: $alert_name\nEvent Type: $eventType"
                     ),
                 ),
@@ -1084,8 +1473,9 @@ class ServiceNowITSMPlugin(PluginBase):
                     extracted_field="custom_message",
                     destination_field="work_notes",
                     custom_message=(
-                        "Received new alert/event with Alert/Event ID: $id and "
-                        "Alert Name: $alertName, Event Name: $alert_name in Cloud Exchange."
+                        "Received new alert/event with Alert/Event ID: "
+                        "$id and Alert Name: $alertName, Event Name: "
+                        "$alert_name in Cloud Exchange."
                     ),
                 ),
             ],
@@ -1099,7 +1489,9 @@ class ServiceNowITSMPlugin(PluginBase):
         """
         no_queue_list = [Queue(label="No Queue", value="no_queue")]
         queue = []
-        url, username, password = self.servicenow_helper.get_auth_params(self.configuration)
+        url, username, password = self.servicenow_helper.get_auth_params(
+            self.configuration
+        )
         endpoint = f"{url}/api/now/table/sys_user_group"
         headers = self.servicenow_helper.basic_auth(username, password)
         log_msg = f"fetching list of {PLATFORM_NAME} groups as queues"
@@ -1158,3 +1550,144 @@ class ServiceNowITSMPlugin(PluginBase):
                 message=f"{self.log_prefix}: {err_msg}",
             )
             raise ServiceNowITSMPluginException(err_msg)
+
+    def get_fields(self, name: str, configuration: dict):
+        """Get dynamic configuration fields.
+
+        Args:
+            name (str): Stepper name
+            configuration (dict): Configuration parameters dictionary.
+
+        Returns:
+            dict: List of fields.
+        """
+        fields = []
+        if name == "params":
+            table = configuration.get("auth", {}).get(
+                "table", ""
+            )
+            if table == "custom_table":
+                fields.extend(
+                    [
+                        {
+                            "label": "Custom Table Name",
+                            "key": "custom_table_name",
+                            "type": "text",
+                            "default": "",
+                            "mandatory": True,
+                            "description": (
+                                "Provide name of your custom table. "
+                                "Custom table can be generated from "
+                                "System Definition > Tables > "
+                                "Click on New and provide Name."
+                            )
+                        },
+                        {
+                            "label": "Custom Status",
+                            "key": "custom_status",
+                            "type": "text",
+                            "default": "",
+                            "mandatory": False,
+                            "description": (
+                                "Status field Column name of your "
+                                "custom table. Go to System Definition > "
+                                "Tables > Select Custom Table > Columns > "
+                                "Status field Column name."
+                            ),
+                        },
+                        {
+                            "label": "Custom Severity",
+                            "key": "custom_severity",
+                            "type": "text",
+                            "default": "",
+                            "mandatory": False,
+                            "description": (
+                                "Severity field Column name of your "
+                                "custom table. Go to System Definition > "
+                                "Tables > Select Custom Table > Columns > "
+                                "Severity field Column name."
+                            ),
+                        },
+                        {
+                            "label": "Custom Assignee",
+                            "key": "custom_assignee",
+                            "type": "text",
+                            "default": "",
+                            "mandatory": False,
+                            "description": (
+                                "Assignee field Column name of your "
+                                "custom table if it reference to "
+                                "the 'sys_user' table of the ServiceNow. "
+                                "Go to System Definition > Tables > "
+                                "Select Custom Table > Columns > "
+                                "Assignee field Column name."
+                            ),
+                        },
+                        {
+                            "label": "Custom Group",
+                            "key": "custom_group",
+                            "type": "text",
+                            "default": "",
+                            "mandatory": False,
+                            "description": (
+                                "Group field Column name of your "
+                                "custom table if it reference to "
+                                "the 'sys_user_group' table of "
+                                "the ServiceNow. This field will be used "
+                                "as the queue in Queue configuration. "
+                                "Go to System Definition > "
+                                "Tables > Select Custom Table > Columns > "
+                                "Group field Column name."
+                            ),
+                        },
+                        {
+                            "label": "Custom Update",
+                            "key": "custom_update",
+                            "type": "text",
+                            "default": "",
+                            "mandatory": False,
+                            "description": (
+                                "Update field Column name of your "
+                                "custom table. This field will be "
+                                "used to add message when dedup "
+                                "rule is executed. Go to System Definition > "
+                                "Tables > Select Custom Table > Columns > "
+                                "Update field Column name."
+                            ),
+                        }
+                    ]
+                )
+            else:
+                fields.extend(
+                    [
+                        {
+                            "label": "Use Default Mappings",
+                            "key": "default_mappings",
+                            "type": "choice",
+                            "choices": [
+                                {
+                                    "key": "Yes",
+                                    "value": "yes"
+                                },
+                                {
+                                    "key": "No",
+                                    "value": "no"
+                                }
+                            ],
+                            "default": "no",
+                            "mandatory": True,
+                            "description": (
+                                "Select 'No' if the user wants to configure "
+                                "the mapping fields while configuring the "
+                                "queue and select 'Yes' if the user wants "
+                                "to use the default mapping. Note: To "
+                                "configure the mapping fields while "
+                                "configuring the queue, the user should "
+                                "have read access to the 'sys_dictionary' "
+                                "table. Refer plugin guide for "
+                                "default mapping."
+                            )
+                        }
+                    ]
+                )
+        return fields

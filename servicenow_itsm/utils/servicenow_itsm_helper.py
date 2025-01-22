@@ -218,7 +218,11 @@ class ServiceNowITSMPluginHelper(object):
                 f"Read Timeout error occurred while {logger_msg}."
             )
             if is_validation:
-                err_msg = "Read Timeout error occurred."
+                err_msg = (
+                    "Read Timeout error occurred. "
+                    "Verify the 'Instance URL' provided in the "
+                    "configuration parameters."
+                )
 
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {error}",
@@ -287,6 +291,7 @@ class ServiceNowITSMPluginHelper(object):
                 message=f"{self.log_prefix}: {err_msg} Error: {exp}",
                 details=traceback.format_exc(),
             )
+            raise ServiceNowITSMPluginException(err_msg)
 
     def parse_response(
         self, response: requests.models.Response, logger_msg, is_validation: bool = False

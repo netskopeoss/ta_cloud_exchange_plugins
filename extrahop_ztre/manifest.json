@@ -1,0 +1,43 @@
+{
+  "name": "ExtraHop Reveal(x) 360",
+  "id": "extrahop_ztre",
+  "version": "1.0.0",
+  "module": "CRE",
+  "minimum_version": "5.1.0",
+  "netskope": false,
+  "description": "This plugin is used to fetch Cloud Workloads (Devices) from the Detections of the ExtraHop Reveal(x) 360 platform. It does not support performing any actions on Cloud Workloads (Devices) in ExtraHop Reveal(x) 360.\n\nNetskope normalization score calculation => (100 - ExtraHop's Current Detection Risk Score) x 10.",
+  "configuration": [
+    {
+      "label": "Base URL",
+      "key": "base_url",
+      "type": "text",
+      "default": "",
+      "mandatory": true,
+      "description": "ExtraHop Reveal(x) 360 API Base URL. This Base URL is displayed in the Reveal(x) 360 API Access page under API Endpoint. The Base URL should not include the /oauth/token."
+    },
+    {
+      "label": "Client ID",
+      "key": "client_id",
+      "type": "text",
+      "default": "",
+      "mandatory": true,
+      "description": "ExtraHop Reveal(x) 360 API Client ID. Client Id can be generated from 'System Settings > API Access' page."
+    },
+    {
+      "label": "Client Secret",
+      "key": "client_secret",
+      "type": "password",
+      "default": "",
+      "mandatory": true,
+      "description": "ExtraHop Reveal(x) 360 API Client Secret. Client Secret can be generated from 'System Settings > API Access' page."
+    },
+    {
+      "label": "Initial Range (in days)",
+      "key": "days",
+      "type": "number",
+      "mandatory": false,
+      "default": 7,
+      "description": "Number of days to pull the data for the initial run."
+    }
+  ]
+}

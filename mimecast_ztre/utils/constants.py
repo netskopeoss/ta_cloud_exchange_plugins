@@ -34,17 +34,38 @@ CRE Mimecast Plugin constants.
 
 PLATFORM_NAME = "Mimecast"
 MODULE_NAME = "CRE"
-PLUGIN_VERSION = "1.0.0"
-MAX_USER_SCORE = 1000
-MIN_USER_SCORE = 1
-MIMECAST_SCORE_MAPPING = {"A": 800, "B": 600, "C": 400, "D": 200, "F": 1}
-MAX_API_CALLS = 4
+PLUGIN_VERSION = "2.0.0"
+DEFAULT_RETRY_AFTER_TIME = 60000
+MAX_PAYLOAD_CHUNK_SIZE_IN_BYTES = 2036
 MAX_PAGE_SIZE = 100
-DEFAULT_RETRY_AFTER_TIME = 60
+ADD_TO_GROUP_BATCH_SIZE = 10
+MAX_API_CALLS = 4
+MIMECAST_SCORE_MAPPING = {"A": 800, "B": 600, "C": 400, "D": 200, "F": 1}
+NETSKOPE_RISK_CATEGORY_MAPPING = {
+    "A": "Low",
+    "B": "Medium",
+    "C": "High",
+    "D": "Critical",
+    "F": "Critical",
+}
+
+EMAIL_ADDRESS_REGEX = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
+
+# Field mapping
 USER_FIELD_MAPPING = {
     "User Email": {"key": "emailAddress"},
     "User Name": {"key": "name"},
     "User Risk": {"key": "risk"},
 }
-EMAIL_ADDRESS_REGEX = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
-SECRET_KEY_REGEX = r"^([A-Za-z0-9+/]{4})*([A-Za-z0-9+/]{3}=|[A-Za-z0-9+/]{2}==)?$"
+
+# All the Endpoints
+BASE_URL = "https://api.services.mimecast.com"
+GET_BEARER_TOKEN_ENDPOINT = "oauth/token"
+FIND_GROUPS_ENDPOINT = "api/directory/find-groups"
+CREATE_GROUP_ENDPOINT = "api/directory/create-group"
+ADD_GROUP_MEMBER_ENDPOINT = "api/directory/add-group-member"
+REMOVE_GROUP_MEMBER_ENDPOINT = "api/directory/remove-group-member"
+GET_ACCOUNT_DETAILS_ENDPOINT = "api/account/get-account"
+GET_SAFE_SCORE_DETAILS_ENDPOINT = (
+    "api/awareness-training/company/get-safe-score-details"
+)

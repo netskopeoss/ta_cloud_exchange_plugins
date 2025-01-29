@@ -61,7 +61,7 @@ URLS = {
 }
 MODULE_NAME = "CTE"
 PLUGIN_NAME = "Netskope CTE"
-PLUGIN_VERSION = "2.1.1"
+PLUGIN_VERSION = "2.1.2"
 
 plugin_provider_helper = PluginProviderHelper()
 
@@ -150,6 +150,29 @@ class NetskopePlugin(PluginBase):
         except Exception:
             return datetime.now()
 
+    def create_indicator(
+        self, threat_value, threat_type, severity, timestamp, comment_str
+    ):
+        """Create the cte.models.Indicator object.
+
+        Args:
+            threat_value (str): Value of the indicator.
+            threat_type (str): Type of the indicator.
+            severity (str): Severity of the indicator.
+            timestamp (float): Timestamp of the indicator.
+            comment_str (str): Comment of the indicator.
+        Returns:
+            cte.models.Indicator: Indicator object.
+        """
+        return Indicator(
+            value=threat_value,
+            type=threat_type,
+            severity=severity,
+            firstSeen=self.convert_epoch_to_datetime(timestamp),
+            lastSeen=self.convert_epoch_to_datetime(timestamp),
+            comments=comment_str,
+        )
+
     def get_indicators_from_json(self, json_data):
         """Create the cte.models.Indicator object from the JSON object.
 
@@ -177,42 +200,103 @@ class NetskopePlugin(PluginBase):
                     comment_str = (
                         f"{comment_str}, Malware Type: {malware_type}"
                     )
-                if "MD5" in self.configuration.get(
-                    "malware_type", ["MD5"]
-                ) and threat.get("local_md5", None):
-                    current_page_ioc_counts["md5"] += 1
-                    indicator_list.append(
-                        Indicator(
-                            value=threat["local_md5"],
-                            type=IndicatorType.MD5,
-                            severity=severity,
-                            firstSeen=self.convert_epoch_to_datetime(
-                                threat.get("timestamp")
-                            ),
-                            lastSeen=self.convert_epoch_to_datetime(
-                                threat.get("timestamp")
-                            ),
-                            comments=comment_str,
+                # Check for MD5 in configuration
+                if "MD5" in self.configuration.get("malware_type", ["MD5"]):
+                    local_md5 = threat.get("local_md5")
+                    md5 = threat.get("md5")
+
+                    # Check if local_md5 matches md5 also they should
+                    # have some value
+                    if local_md5 == md5 and md5:
+                        # Increment the count and create an indicator
+                        # for md5
+                        current_page_ioc_counts["md5"] += 1
+                        indicator_list.append(
+                            self.create_indicator(
+                                threat["md5"],
+                                IndicatorType.MD5,
+                                severity,
+                                threat.get("timestamp"),
+                                comment_str,
+                            )
                         )
-                    )
+                    else:
+                        if local_md5:
+                            # Increment the count and create an indicator
+                            # for local_md5 if it is present
+                            current_page_ioc_counts["md5"] += 1
+                            indicator_list.append(
+                                self.create_indicator(
+                                    threat["local_md5"],
+                                    IndicatorType.MD5,
+                                    severity,
+                                    threat.get("timestamp"),
+                                    comment_str,
+                                )
+                            )
+                        if md5:
+                            # Increment the count and create an indicator
+                            # for md5 if it is present
+                            current_page_ioc_counts["md5"] += 1
+                            indicator_list.append(
+                                self.create_indicator(
+                                    threat["md5"],
+                                    IndicatorType.MD5,
+                                    severity,
+                                    threat.get("timestamp"),
+                                    comment_str,
+                                )
+                            )
+                # Check for SHA256 in configuration
                 if "SHA256" in self.configuration.get(
                     "malware_type", ["SHA256"]
-                ) and threat.get("local_sha256", None):
-                    current_page_ioc_counts["sha256"] += 1
-                    indicator_list.append(
-                        Indicator(
-                            value=threat["local_sha256"],
-                            type=IndicatorType.SHA256,
-                            severity=severity,
-                            firstSeen=self.convert_epoch_to_datetime(
-                                threat.get("timestamp")
-                            ),
-                            lastSeen=self.convert_epoch_to_datetime(
-                                threat.get("timestamp")
-                            ),
-                            comments=comment_str,
+                ):
+                    local_sha256 = threat.get("local_sha256")
+                    sha256 = threat.get("sha256")
+
+                    # Check if local_sha256 matches sha256 also they
+                    # should have some value
+                    if local_sha256 == sha256 and sha256:
+                        # Increment the count and create an indicator
+                        # for sha256
+                        current_page_ioc_counts["sha256"] += 1
+                        indicator_list.append(
+                            self.create_indicator(
+                                local_sha256,
+                                IndicatorType.SHA256,
+                                severity,
+                                threat.get("timestamp"),
+                                comment_str,
+                            )
                         )
-                    )
+                    else:
+                        if local_sha256:
+                            # Increment the count and create an indicator
+                            # for local_sha256 if it is present
+                            current_page_ioc_counts["sha256"] += 1
+                            indicator_list.append(
+                                self.create_indicator(
+                                    local_sha256,
+                                    IndicatorType.SHA256,
+                                    severity,
+                                    threat.get("timestamp"),
+                                    comment_str,
+                                )
+                            )
+                        if sha256:
+                            # Increment the count and create an indicator
+                            # for sha256 if it is present
+                            current_page_ioc_counts["sha256"] += 1
+                            indicator_list.append(
+                                self.create_indicator(
+                                    sha256,
+                                    IndicatorType.SHA256,
+                                    severity,
+                                    threat.get("timestamp"),
+                                    comment_str,
+                                )
+                            )
+
             elif threat.get(
                 "alert_type", ""
             ).lower() == "malsite" and threat.get("url", None):
@@ -222,17 +306,12 @@ class NetskopePlugin(PluginBase):
                 )
                 comment_str = f"{comment_str} - {malsite_category}"
                 indicator_list.append(
-                    Indicator(
-                        value=threat["url"],
-                        type=IndicatorType.URL,
-                        severity=severity,
-                        firstSeen=self.convert_epoch_to_datetime(
-                            threat.get("timestamp")
-                        ),
-                        lastSeen=self.convert_epoch_to_datetime(
-                            threat.get("timestamp")
-                        ),
-                        comments=comment_str,
+                    self.create_indicator(
+                        threat["url"],
+                        IndicatorType.URL,
+                        severity,
+                        threat.get("timestamp"),
+                        comment_str,
                     )
                 )
             comment_str = tenant_url

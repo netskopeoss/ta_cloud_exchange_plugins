@@ -1,0 +1,32 @@
+{
+    "name": "Netskope Borderless WAN Tenant",
+    "id": "netskope_bwan_tenant",
+    "type": "provider",
+    "data": [
+        "events"
+    ],
+    "netskope": true,
+    "version": "1.0.0",
+    "module": "Tenant",
+    "minimum_version": "5.1.0",
+    "description": "This plugin is required to configure Netskope Borderless WAN Tenant in Cloud Exchange. The Netskope Borderless WAN Tenant will be used by the Netskope Borderless WAN plugins to fetch the required data for each module.",
+    "configuration": [
+        {
+            "label": "Base URL",
+            "key": "tenantName",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "Netskope Borderless WAN Base URL.",
+            "editable": false
+        },
+        {
+            "label": "Auth Token",
+            "key": "v2token",
+            "type": "password",
+            "default": "",
+            "mandatory": true,
+            "description": "Auth Token of the Borderless WAN tenant."
+        }
+    ]
+}

@@ -1,0 +1,71 @@
+{
+    "name": "Netskope Borderless WAN",
+    "id": "netskope_bwan_cls",
+    "netskope": true,
+    "version": "1.0.0",
+    "module": "CLS",
+    "minimum_version": "5.1.0",
+    "minimum_provider_version": "1.0.0",
+    "provider_id": "netskope_bwan_tenant",
+    "patch_supported": true,
+    "types": [
+        "events"
+    ],
+    "mapping": "",
+    "description": "This plugin is used to fetch Events (Audit, Authentication, Client, Gateway, System) from the Monitor > Events page of Netskope Borderless WAN Tenant. The Plugin fetches the data in JSON format.",
+    "supported_subtypes": {
+        "events": [
+            "audit",
+            "authentication",
+            "client",
+            "gateway",
+            "system"
+        ]
+    },
+    "configuration": [
+        {
+            "label": "Event Types",
+            "key": "events_types",
+            "mandatory": false,
+            "description": "Selected types of events will be fetched. If kept empty, all event types will be fetched.",
+            "type": "multichoice",
+            "choices": [
+                {
+                    "key": "Audit",
+                    "value": "audit"
+                },
+                {
+                    "key": "Authentication",
+                    "value": "authentication"
+                },
+                {
+                    "key": "Client",
+                    "value": "client"
+                },
+                {
+                    "key": "Gateway",
+                    "value": "gateway"
+                },
+                {
+                    "key": "System",
+                    "value": "system"
+                }
+            ],
+            "default": [
+                "audit",
+                "authentication",
+                "client",
+                "gateway",
+                "system"
+            ]
+        },
+        {
+            "label": "Initial Range (in hours)",
+            "key": "hours",
+            "type": "number",
+            "mandatory": true,
+            "default": 1,
+            "description": "Number of hours to pull the event data for the initial run."
+        }
+    ]
+}

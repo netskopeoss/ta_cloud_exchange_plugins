@@ -1,3 +1,7 @@
+# 1.1.1
+## Fixed
+- Fixed Bugs in Pull Functionality.
+
 # 1.1.0
 ## Changed
 - Renamed plugin from 'External Website' to 'Web Page IOC Scraper'.

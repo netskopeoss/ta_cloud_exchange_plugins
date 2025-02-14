@@ -1,59 +1,59 @@
 {
-  "name": "Web Page IOC Scraper",
-  "id": "external_website",
-  "version": "1.1.0",
-  "description": "This plugin is used to pull IOCs of type URL, Domain, IPv4, IPv6, MD5 and SHA256 from any public website. This plugin does not support sharing of IOCs or performing any actions.",
-  "patch_supported": false,
-  "push_supported": false,
-  "configuration": [
-    {
-      "label": "Website URL",
-      "key": "url",
-      "type": "text",
-      "mandatory": true,
-      "default": "",
-      "description": "Add URL of public website from where you want to pull data."
-    },
-    {
-      "label": "Type of Threat data to pull",
-      "key": "type",
-      "type": "multichoice",
-      "choices": [
+    "name": "Web Page IOC Scraper",
+    "id": "external_website",
+    "version": "1.1.1",
+    "description": "This plugin is used to pull IOCs of type URL, Domain, IPv4, IPv6, MD5 and SHA256 from any public website. This plugin does not support sharing of IOCs or performing any actions.",
+    "patch_supported": false,
+    "push_supported": false,
+    "configuration": [
         {
-          "key": "SHA256",
-          "value": "sha256"
+            "label": "Website URL",
+            "key": "url",
+            "type": "text",
+            "mandatory": true,
+            "default": "",
+            "description": "Add URL of public website from where you want to pull data."
         },
         {
-          "key": "MD5",
-          "value": "md5"
-        },
-        {
-          "key": "URL",
-          "value": "url"
-        },
-        {
-          "key": "Domain",
-          "value": "domain"
-        },
-        {
-          "key": "IPv4",
-          "value": "ipv4"
-        },
-        {
-          "key": "IPv6",
-          "value": "ipv6"
+            "label": "Type of Threat data to pull",
+            "key": "type",
+            "type": "multichoice",
+            "choices": [
+                {
+                    "key": "SHA256",
+                    "value": "sha256"
+                },
+                {
+                    "key": "MD5",
+                    "value": "md5"
+                },
+                {
+                    "key": "URL",
+                    "value": "url"
+                },
+                {
+                    "key": "Domain",
+                    "value": "domain"
+                },
+                {
+                    "key": "IPv4",
+                    "value": "ipv4"
+                },
+                {
+                    "key": "IPv6",
+                    "value": "ipv6"
+                }
+            ],
+            "default": [
+                "sha256",
+                "md5",
+                "url",
+                "domain",
+                "ipv4",
+                "ipv6"
+            ],
+            "mandatory": true,
+            "description": "Type of Threat data to pull. Allowed values are SHA256, MD5, URL, Domain, IPv4, IPv6."
         }
-      ],
-      "default": [
-        "sha256",
-        "md5",
-        "url",
-        "domain",
-        "ipv4",
-        "ipv6"
-      ],
-      "mandatory": true,
-      "description": "Type of Threat data to pull. Allowed values are SHA256, MD5, URL, Domain, IPv4, IPv6."
-    }
-  ]
+    ]
 }

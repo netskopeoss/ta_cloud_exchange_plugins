@@ -1,3 +1,9 @@
+# 2.1.0
+## Added
+- Added support for the custom table.
+## Changed
+- Made Configuration Parameters stepper dynamic based on destination table value.
+
 # 2.0.0
 ## Added
 - Added support for GRC Issue table.

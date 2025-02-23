@@ -1,42 +1,52 @@
 {
-    "name": "SentinelOne",
-    "id": "sentinelone",
-    "version": "1.1.1",
-    "description": "The SentinelOne plugin fetches threats from the SentinelOne site. The threat data is processed and Indicators are reported to Netskope CTE. This plugin does support sharing of Indicators to SentinelOne.",
-    "patch_supported": true,
-    "push_supported": true,
-    "configuration": [
-        {
-            "label": "Management URL",
-            "key": "url",
-            "type": "text",
-            "default": "",
-            "mandatory": true,
-            "description": "The SentinelOne Management URL."
-        },
-        {
-            "label": "API Token",
-            "key": "token",
-            "type": "password",
-            "default": "",
-            "mandatory": true,
-            "description": "API token to authenticate SentinelOne."
-        },
-        {
-            "label": "Site Name",
-            "key": "site",
-            "type": "text",
-            "default": "",
-            "mandatory": false,
-            "description": "Name of the site to fetch alerts from. Leave blank to fetch data from all sites."
-        },
-        {
-            "label": "Initial Range (in days)",
-            "key": "days",
-            "type": "number",
-            "mandatory": true,
-            "default": 7,
-            "description": "Number of days to pull the data for the initial run."
-        }
-    ]
+  "name": "SentinelOne",
+  "id": "sentinelone",
+  "version": "1.2.0",
+  "description": "The SentinelOne plugin fetches SHA256 and MD5 file hash from Incidents page of SentinelOne platform from provided site. This plugin shares SHA256, MD5, URL, IPv4, IPv6 and DNS(Domain, Hostname, and FQDN) to Threat Intelligence. Note: The indicators shared via Netskope CE won't be shown to SentinelOne. One can verify the shared IoCs via endpoint **<SentinelOne Base URL>/web/api/v2.1/threat-intelligence/iocs**",
+  "push_supported": true,
+  "patch_supported": true,
+  "delete_supported": true,
+  "fetch_retraction_info": true,
+  "module": "CTE",
+  "configuration": [
+    {
+      "label": "Management URL",
+      "key": "url",
+      "type": "text",
+      "default": "",
+      "mandatory": true,
+      "description": "The SentinelOne Management URL. Example: https://user-partners.sentinelone.net"
+    },
+    {
+      "label": "API Token",
+      "key": "token",
+      "type": "password",
+      "default": "",
+      "mandatory": true,
+      "description": "API token to authenticate SentinelOne. API Token can be generated from My User > Actions > API Token Operations > Regenerate API Token page."
+    },
+    {
+      "label": "Site Name",
+      "key": "site",
+      "type": "text",
+      "default": "",
+      "mandatory": false,
+      "description": "Name of the site to fetch alerts from. Leave blank to fetch data from all sites."
+    },
+    {
+      "label": "Retraction Interval (in days)",
+      "key": "retraction_interval",
+      "type": "number",
+      "mandatory": false,
+      "description": "Retraction Interval days to run IoC(s) retraction for SentinelOne indicators. Note: This parameter will only be considered if \"IoC(s) Retraction\" is enabled in Threat Exchange Settings."
+    },
+    {
+      "label": "Initial Range (in days)",
+      "key": "days",
+      "type": "number",
+      "mandatory": true,
+      "default": 7,
+      "description": "Number of days to pull the data for the initial run."
+    }
+  ]
 }

@@ -1,33 +1,43 @@
 """Netskope Plugin implementation to push and pull the data from Netskope Tenant."""
 
-import gzip
-import requests
-import traceback
 import datetime
+import gzip
 import re
-import time
 import threading
-from typing import List, Dict
-
-from .utils.iterator_helper import NetskopeClient, EVENTS, NetskopeIteratorBuilder
-from .utils.webtx_parser import WebtxParser
-from .utils.webtx_metrics_collector import get_webtx_metrics_data
-from .utils.router_helper import get_all_subtypes
-
+import time
+import traceback
+from typing import Dict, List
 from urllib.parse import urlparse
 
+import requests
+from netskope.common.models import NetskopeFieldType
+from netskope.common.models.other import NotificationType
+from netskope.common.utils import (
+    Notifier,
+    add_user_agent,
+    get_sub_type_config_mapping,
+)
+from netskope.common.utils.handle_exception import (
+    handle_exception,
+    handle_status_code,
+)
+from netskope.common.utils.plugin_provider_helper import PluginProviderHelper
 from netskope.common.utils.provider_plugin_base import (
     PluginBase,
     ValidationResult,
 )
-from netskope.common.models import NetskopeFieldType
-from netskope.common.utils.handle_exception import handle_exception, handle_status_code
-from netskope.common.utils import add_user_agent, Notifier, get_sub_type_config_mapping
-from netskope.common.utils.plugin_provider_helper import PluginProviderHelper
-from netskope.common.models.other import NotificationType
+
+from .utils.iterator_helper import (
+    EVENTS,
+    NetskopeClient,
+    NetskopeIteratorBuilder,
+)
+from .utils.router_helper import get_all_subtypes
+from .utils.webtx_metrics_collector import get_webtx_metrics_data
+from .utils.webtx_parser import WebtxParser
 
 MODULE_NAME = "TENANT"
-PLUGIN_VERSION = "1.0.0"
+PLUGIN_VERSION = "1.1.0"
 PLATFORM_NAME = "Netskope"
 DOCS_URL = "https://docs.netskope.com/en/netskope-help/integrations-439794/netskope-cloud-exchange/get-started-with-cloud-exchange/configure-netskope-tenants/#v2-rest-api-scopes"  # NOQA
 
@@ -117,14 +127,26 @@ class NetskopeProviderPlugin(PluginBase):
 
     def transform(self, raw_data, data_type, subtype, **kwargs) -> List:
         """Transform the raw netskope target platform supported."""
-        if data_type == "webtx" and "fields" in kwargs and "allow_empty_values" in kwargs:
+        if (
+            data_type == "webtx"
+            and "fields" in kwargs
+            and "allow_empty_values" in kwargs
+        ):
             fields = kwargs.get("fields")
             allow_empty_values = kwargs.get("allow_empty_values", False)
-            return self._transform_webtx_data(raw_data, fields, allow_empty_values)
+            return self._transform_webtx_data(
+                raw_data, fields, allow_empty_values
+            )
         return raw_data
 
     def call_api_endpoint_for_validation(
-        self, tenant_name, type, sub_type, it_name, update_forbidden_data=False, additional_error_msg=""
+        self,
+        tenant_name,
+        type,
+        sub_type,
+        it_name,
+        update_forbidden_data=False,
+        additional_error_msg="",
     ):
         """Call Netskope api endpoint to check permissions."""
         try:
@@ -245,7 +267,9 @@ class NetskopeProviderPlugin(PluginBase):
                     NOTIFIER_TYPE_MAPPING[banner_details.get("type")](
                         id=banner_id, message=""
                     )
-                    notifier.update_banner_acknowledged(id=banner_id, acknowledged=True)
+                    notifier.update_banner_acknowledged(
+                        id=banner_id, acknowledged=True
+                    )
 
     def update_banner(self, tenant_name):
         """Remove tenant from banner."""
@@ -260,8 +284,8 @@ class NetskopeProviderPlugin(PluginBase):
         )
         new_message = (
             "Netskope API token of tenant **{}** has been revoked, deleted or has insufficient privileges "
-            "to continue pulling alerts and events from Netskope." +
-            f" Please check the **[required privileges]({DOCS_URL})** and ensure that your API token has "
+            "to continue pulling alerts and events from Netskope."
+            + f" Please check the **[required privileges]({DOCS_URL})** and ensure that your API token has "
             "the necessary permissions to access the required resources."
         )
         self.remove_tenant_from_banner(
@@ -281,18 +305,34 @@ class NetskopeProviderPlugin(PluginBase):
             tenant_name=tenant_name,
         )
 
-    def threaded_permissions_check(self, type, sub_type, it_name, forbidden_endpoints, additional_error_msg=""):
+    def threaded_permissions_check(
+        self,
+        type,
+        sub_type,
+        it_name,
+        forbidden_endpoints,
+        additional_error_msg="",
+    ):
         """Check permissions for the given type and sub_types."""
         try:
             success, uri = self.call_api_endpoint_for_validation(
-                self.name, type, sub_type, it_name, additional_error_msg=additional_error_msg
+                self.name,
+                type,
+                sub_type,
+                it_name,
+                additional_error_msg=additional_error_msg,
             )
             if not success:
                 forbidden_endpoints.append(uri)
         except Exception as e:
             threading.current_thread().exception = e
 
-    def permission_check(self, type_map: Dict[str, List[str]], plugin_name: str = None, configuration_name: str = None):
+    def permission_check(
+        self,
+        type_map: Dict[str, List[str]],
+        plugin_name: str = None,
+        configuration_name: str = None,
+    ):
         """Check permissions for the given type and sub_types.
 
         Parameters:
@@ -309,7 +349,11 @@ class NetskopeProviderPlugin(PluginBase):
         """
         additional_error_msg = ""
         if plugin_name:
-            additional_error_msg = f"for {plugin_name} [{configuration_name}]" if configuration_name else f"for {plugin_name}"
+            additional_error_msg = (
+                f"for {plugin_name} [{configuration_name}]"
+                if configuration_name
+                else f"for {plugin_name}"
+            )
         forbidden_endpoints = []
         threads = []
         for type, sub_types in type_map.items():
@@ -346,31 +390,46 @@ class NetskopeProviderPlugin(PluginBase):
     def _pull_webtx_data(self, configuration_name):
         """Pull indicators from Netskope."""
         from .utils import webtx_helper
+
         try:
-            self.logger.debug(f"{self.log_prefix}: Executing webtx task for {configuration_name}")
+            self.logger.debug(
+                f"{self.log_prefix}: Executing webtx task for {configuration_name}"
+            )
             ret_val = webtx_helper.main(configuration_name, self.log_prefix)
-            return {"message": f"WebTx task completed. Return value is {ret_val}."}
+            return {
+                "message": f"WebTx task completed. Return value is {ret_val}."
+            }
 
         except Exception:
-            self.logger.info(f"{self.log_prefix}: Soft time limit exceeded while "
-                             f"pulling the WebTx logs for {configuration_name}, Rescheduling the task..")
+            self.logger.info(
+                f"{self.log_prefix}: Soft time limit exceeded while "
+                f"pulling the WebTx logs for {configuration_name}, Rescheduling the task.."
+            )
             webtx_helper.handle_interrupt()
             for thread in webtx_helper.threads:
                 thread.join()
             return {
                 "message": f"Soft time limit exceeded while pulling the "
-                           f"WebTx logs for {self.name}, Rescheduling the task."
+                f"WebTx logs for {self.name}, Rescheduling the task."
             }
 
     def _pull_webtx_metrics(self):
         try:
-            existing_data = plugin_provider_helper.get_webtx_metrics(self.name)
+            existing_data = plugin_provider_helper.get_webtx_metrics(
+                self.name
+            )
             if existing_data and "latest_utc_hour" in existing_data:
                 try:
                     latest_datetime = existing_data["latest_utc_hour"]
-                    latest_datetime = datetime.datetime.strptime(latest_datetime, "%Y-%m-%dT%H:%M:%S.%fZ")
-                    latest_datetime = latest_datetime.replace(tzinfo=datetime.timezone.utc)
-                    if datetime.datetime.now(datetime.timezone.utc) - latest_datetime < datetime.timedelta(hours=1):
+                    latest_datetime = datetime.datetime.strptime(
+                        latest_datetime, "%Y-%m-%dT%H:%M:%S.%fZ"
+                    )
+                    latest_datetime = latest_datetime.replace(
+                        tzinfo=datetime.timezone.utc
+                    )
+                    if datetime.datetime.now(
+                        datetime.timezone.utc
+                    ) - latest_datetime < datetime.timedelta(hours=1):
                         return existing_data, 200
                 except ValueError:
                     pass
@@ -378,19 +437,21 @@ class NetskopeProviderPlugin(PluginBase):
                 self.log_prefix,
                 self.configuration["tenantName"],
                 self.configuration["v2token"],
-                self.proxy
+                self.proxy,
             )
             if data and status_code == 200:
-                plugin_provider_helper.replace_webtx_metrics(self.configuration["tenantName"], self.name, data)
+                plugin_provider_helper.replace_webtx_metrics(
+                    self.configuration["tenantName"], self.name, data
+                )
                 data = plugin_provider_helper.get_webtx_metrics(self.name)
             elif existing_data:
                 return existing_data, 200
             return data, status_code
         except Exception:
             self.logger.error(
-                f"{self.log_prefix}: Failed to pull webtx metrics", 
+                f"{self.log_prefix}: Failed to pull webtx metrics",
                 error_code="CE_1139",
-                details=traceback.format_exc()
+                details=traceback.format_exc(),
             )
             return {}, 500
 
@@ -446,7 +507,9 @@ class NetskopeProviderPlugin(PluginBase):
         if end_time:
             other_parameters["end_time"] = end_time
         if destination_configuration:
-            other_parameters["destination_configuration"] = destination_configuration
+            other_parameters["destination_configuration"] = (
+                destination_configuration
+            )
         if business_rule:
             other_parameters["business_rule"] = business_rule
         headers = add_user_agent({})
@@ -462,18 +525,28 @@ class NetskopeProviderPlugin(PluginBase):
             compress_historical_data=compress_historical_data,
         )
         if not override_subtypes:
-            sub_type_config_mapping, latest_checked = get_sub_type_config_mapping(
-                self.name, data_type
+            sub_type_config_mapping, latest_checked = (
+                get_sub_type_config_mapping(self.name, data_type)
             )
 
             client.sub_types = sub_type_config_mapping.keys()
         else:
             client.sub_types = override_subtypes
 
-        for data, sub_type, should_apply_expo_backoff, should_exec_lifecycle in client.create_job():
+        for (
+            data,
+            sub_type,
+            should_apply_expo_backoff,
+            should_exec_lifecycle,
+        ) in client.create_job():
             if not override_subtypes:
-                sub_type_config_mapping, latest_checked = get_sub_type_config_mapping(
-                    self.name, data_type, latest_checked, sub_type_config_mapping
+                sub_type_config_mapping, latest_checked = (
+                    get_sub_type_config_mapping(
+                        self.name,
+                        data_type,
+                        latest_checked,
+                        sub_type_config_mapping,
+                    )
                 )
                 client.sub_types = sub_type_config_mapping.keys()
                 if should_exec_lifecycle:
@@ -482,7 +555,10 @@ class NetskopeProviderPlugin(PluginBase):
                 yield data, sub_type, None, should_apply_expo_backoff
 
     def extract_and_store_fields(
-        self, items: List[dict], typeOfField=NetskopeFieldType.ALERT, sub_type=None
+        self,
+        items: List[dict],
+        typeOfField=NetskopeFieldType.ALERT,
+        sub_type=None,
     ):
         """Extract and store keys from list of dictionaries.
 
@@ -507,7 +583,10 @@ class NetskopeProviderPlugin(PluginBase):
                 if field in fields:
                     continue
                 field_obj = plugin_provider_helper.get_stored_field(field)
-                if typeOfField == NetskopeFieldType.WEBTX and field_obj is None:
+                if (
+                    typeOfField == NetskopeFieldType.WEBTX
+                    and field_obj is None
+                ):
                     self.logger.info(
                         f"{self.log_prefix}: The CE platform has detected new field '{field}' in the WebTx log"
                         f" with id {item_id}. Configure CLS to use this field if you wish to sent it to the SIEM."
@@ -550,20 +629,17 @@ class NetskopeProviderPlugin(PluginBase):
     def validate_token(self, token, tenant_name):
         """Validate v1 API Token."""
         alert_endpoint = f"{tenant_name}/api/v1/app_instances"
-        params = {
-            "token": token,
-            "op": "list",
-            "limit": 1
-        }
+        params = {"op": "list", "limit": 1}
         try:
             success, response = handle_exception(
-                requests.get,
+                requests.post,
                 error_code="CE_1025",
                 custom_message="Error occurred while validating v1 token",
                 url=alert_endpoint,
                 params=params,
                 headers=add_user_agent({}),
                 proxies=self.proxy,
+                data={"token": token},
             )
             if not success:
                 return success, str(response)
@@ -600,7 +676,9 @@ class NetskopeProviderPlugin(PluginBase):
         Returns:
             cte.plugin_base.ValidateResult: ValidateResult object with success flag and message.
         """
-        self.logger.debug(f"{self.log_prefix}: Netskope Executing validate method for Netskope plugin")
+        self.logger.debug(
+            f"{self.log_prefix}: Netskope Executing validate method for Netskope plugin"
+        )
 
         checkpoint = None
 
@@ -608,22 +686,35 @@ class NetskopeProviderPlugin(PluginBase):
 
         tenant_name = configuration.get("tenantName", "").strip()
         if not tenant_name:
-            err_msg = "Tenant must have a Tenant URL. Please provide a Tenant URL."
-            self.logger.error(f"{self.log_prefix}: {validation_err_msg} {err_msg}")
+            err_msg = (
+                "Tenant must have a Tenant URL. Please provide a Tenant URL."
+            )
+            self.logger.error(
+                f"{self.log_prefix}: {validation_err_msg} {err_msg}"
+            )
             return ValidationResult(
                 success=False, message=err_msg, checkpoint=checkpoint
             )
         elif not isinstance(tenant_name, str):
             err_msg = "Invalid Tenant URL provided."
-            self.logger.error(f"{self.log_prefix}: {validation_err_msg} {err_msg}")
+            self.logger.error(
+                f"{self.log_prefix}: {validation_err_msg} {err_msg}"
+            )
             return ValidationResult(
                 success=False, message=err_msg, checkpoint=checkpoint
             )
 
         parsedUrl = urlparse(tenant_name.strip().strip("/").strip())
-        if parsedUrl.path or parsedUrl.params or parsedUrl.query or parsedUrl.fragment:
+        if (
+            parsedUrl.path
+            or parsedUrl.params
+            or parsedUrl.query
+            or parsedUrl.fragment
+        ):
             err_msg = "Invalid Tenant URL provided. It should follow the format: https://demo.goskope.com."
-            self.logger.error(f"{self.log_prefix}: {validation_err_msg} {err_msg}")
+            self.logger.error(
+                f"{self.log_prefix}: {validation_err_msg} {err_msg}"
+            )
             return ValidationResult(
                 success=False, message=err_msg, checkpoint=checkpoint
             )
@@ -634,48 +725,60 @@ class NetskopeProviderPlugin(PluginBase):
             if not success:
                 self.logger.error(
                     re.sub(
-                        r'(token=)[^&]+',
-                        r'\1***************',
-                        f"{self.log_prefix}: {validation_err_msg} {message}"
-                    ), error_code="CE_1126"
+                        r"(token=)[^&]+",
+                        r"\1***************",
+                        f"{self.log_prefix}: {validation_err_msg} {message}",
+                    ),
+                    error_code="CE_1126",
                 )
                 return ValidationResult(
                     success=False,
-                    message=re.sub(r'(token=)[^&]+', r'\1***************', message),
-                    checkpoint=checkpoint
+                    message=re.sub(
+                        r"(token=)[^&]+", r"\1***************", message
+                    ),
+                    checkpoint=checkpoint,
                 )
 
         v2_token = configuration.get("v2token", "")
         if not v2_token:
             err_msg = "Tenant must have V2 token. Please provide V2 token."
-            self.logger.error(f"{self.log_prefix}: {validation_err_msg} {err_msg}")
+            self.logger.error(
+                f"{self.log_prefix}: {validation_err_msg} {err_msg}"
+            )
             return ValidationResult(
                 success=False, message=err_msg, checkpoint=checkpoint
             )
         elif not isinstance(tenant_name, str):
             err_msg = "Invalid v2 token provided."
-            self.logger.error(f"{self.log_prefix}: {validation_err_msg} {err_msg}")
+            self.logger.error(
+                f"{self.log_prefix}: {validation_err_msg} {err_msg}"
+            )
             return ValidationResult(
                 success=False, message=err_msg, checkpoint=checkpoint
             )
 
-        if not self.permission_check({"events": ["alert"]}, plugin_name=self.plugin_name, configuration_name=self.name):
+        if not self.permission_check(
+            {"events": ["alert"]},
+            plugin_name=self.plugin_name,
+            configuration_name=self.name,
+        ):
             message = "Error occurred while validating v2 token"
             self.logger.error(
-                f"{self.log_prefix}: {validation_err_msg} {message}", error_code="CE_1127"
+                f"{self.log_prefix}: {validation_err_msg} {message}",
+                error_code="CE_1127",
             )
             return ValidationResult(
                 success=False, message=message, checkpoint=checkpoint
             )
 
         tenant_creation = True
-        if self.storage and self.storage.get("existing_configuration", {}).get(
-            "tenantName"
-        ):
+        if self.storage and self.storage.get(
+            "existing_configuration", {}
+        ).get("tenantName"):
             tenant_creation = False
-            existing_tenant_name = self.storage.get("existing_configuration", {}).get(
-                "tenantName"
-            )
+            existing_tenant_name = self.storage.get(
+                "existing_configuration", {}
+            ).get("tenantName")
             if existing_tenant_name != tenant_name:
                 err_msg = (
                     f" Tenant URL '{tenant_name}' is mismatched with"
@@ -690,7 +793,9 @@ class NetskopeProviderPlugin(PluginBase):
                 "alerts": datetime.datetime.now(),
                 "events": datetime.datetime.now(),
             }
-            self.storage["existing_configuration"] = {"tenantName": tenant_name}
+            self.storage["existing_configuration"] = {
+                "tenantName": tenant_name
+            }
         else:
             self.update_banner(tenant_name)
 
@@ -715,6 +820,8 @@ class NetskopeProviderPlugin(PluginBase):
                 "BANNER_WARN_1000",
             ]
             for banner in banners:
-                notifier.update_banner_acknowledged(id=banner, acknowledged=True)
+                notifier.update_banner_acknowledged(
+                    id=banner, acknowledged=True
+                )
         else:
             self.update_banner(tenant_name)

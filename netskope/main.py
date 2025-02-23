@@ -1,40 +1,50 @@
 """Netskope Plugin implementation to push and pull the data from Netskope Tenant."""
 
-import requests
-import traceback
-import os
 import datetime
-import re
-import json
-from typing import Tuple
 import ipaddress
+import json
+import os
+import re
+import traceback
+from typing import Dict, List, Tuple
 
-from netskope.integrations.cte.plugin_base import (
-    PluginBase,
-    ValidationResult,
-    PushResult,
+import requests
+from netskope.common.utils import (
+    AlertsHelper,
+    add_installation_id,
+    add_user_agent,
+    resolve_secret,
 )
-from netskope.common.utils import AlertsHelper, resolve_secret
-from netskope.integrations.cte.models import TagIn, IndicatorGenerator
-from netskope.integrations.cte.utils import TagUtils
-from typing import Dict, List
-from netskope.integrations.cte.models import Indicator, IndicatorType, SeverityType
-from netskope.integrations.cte.models.business_rule import (
-    Action,
-    ActionWithoutParams,
-)
-from netskope.common.utils import add_user_agent, add_installation_id
-from netskope.common.utils.plugin_provider_helper import PluginProviderHelper
 from netskope.common.utils.handle_exception import (
     handle_exception,
     handle_status_code,
 )
+from netskope.common.utils.plugin_provider_helper import PluginProviderHelper
+from netskope.integrations.cte.models import (
+    Indicator,
+    IndicatorGenerator,
+    IndicatorType,
+    SeverityType,
+    TagIn,
+)
+from netskope.integrations.cte.models.business_rule import (
+    Action,
+    ActionWithoutParams,
+)
+from netskope.integrations.cte.plugin_base import (
+    PluginBase,
+    PushResult,
+    ValidationResult,
+)
+from netskope.integrations.cte.utils import TagUtils
 
 REGEX_FOR_MD5 = r"^[0-9a-fA-F]{32}$"
 REGEX_FOR_SHA256 = r"^[0-9a-fA-F]{64}$"
 REGEX_FOR_URL = r"^(\*.?)?(https?:\/\/)?[a-zA-Z0-9]+(\.[a-zA-Z0-9]+)*\.[a-zA-Z]+(\/[\w]*)*$"
-REGEX_HOST = r"^(?!:\/\/)([a-z0-9-]{1,63}\.)?[a-z0-9-]{1,63}(?:\.[a-z]{2,})?$|" \
+REGEX_HOST = (
+    r"^(?!:\/\/)([a-z0-9-]{1,63}\.)?[a-z0-9-]{1,63}(?:\.[a-z]{2,})?$|"
     r"^(?:(?:25[0-5]|(2[0-4]|1\d|[1-9]|)\d)\.){3}(?:25[0-5]|(?:2[0-4]|1\d|[1-9]|)\d)$"
+)
 BATCH_SIZE = 10000
 MAX_PUSH_INDICATORS = 300000
 MAX_PUSH_HOSTS = 500
@@ -51,7 +61,7 @@ URLS = {
 }
 MODULE_NAME = "CTE"
 PLUGIN_NAME = "Netskope CTE"
-PLUGIN_VERSION = "1.3.0"
+PLUGIN_VERSION = "2.1.2"
 
 plugin_provider_helper = PluginProviderHelper()
 
@@ -140,6 +150,29 @@ class NetskopePlugin(PluginBase):
         except Exception:
             return datetime.now()
 
+    def create_indicator(
+        self, threat_value, threat_type, severity, timestamp, comment_str
+    ):
+        """Create the cte.models.Indicator object.
+
+        Args:
+            threat_value (str): Value of the indicator.
+            threat_type (str): Type of the indicator.
+            severity (str): Severity of the indicator.
+            timestamp (float): Timestamp of the indicator.
+            comment_str (str): Comment of the indicator.
+        Returns:
+            cte.models.Indicator: Indicator object.
+        """
+        return Indicator(
+            value=threat_value,
+            type=threat_type,
+            severity=severity,
+            firstSeen=self.convert_epoch_to_datetime(timestamp),
+            lastSeen=self.convert_epoch_to_datetime(timestamp),
+            comments=comment_str,
+        )
+
     def get_indicators_from_json(self, json_data):
         """Create the cte.models.Indicator object from the JSON object.
 
@@ -152,11 +185,7 @@ class NetskopePlugin(PluginBase):
         tenant_name = self.tenant.parameters["tenantName"].replace(" ", "")
         tenant_url = tenant_name
         comment_str = tenant_url
-        current_page_ioc_counts = {
-            "sha256": 0,
-            "md5": 0,
-            "url": 0
-        }
+        current_page_ioc_counts = {"sha256": 0, "md5": 0, "url": 0}
         for threat in json_data:
             severity = SeverityType.UNKNOWN
             if threat.get("severity", "").lower() in list(SeverityType):
@@ -171,42 +200,103 @@ class NetskopePlugin(PluginBase):
                     comment_str = (
                         f"{comment_str}, Malware Type: {malware_type}"
                     )
-                if "MD5" in self.configuration.get(
-                    "malware_type", ["MD5"]
-                ) and threat.get("local_md5", None):
-                    current_page_ioc_counts["md5"] += 1
-                    indicator_list.append(
-                        Indicator(
-                            value=threat["local_md5"],
-                            type=IndicatorType.MD5,
-                            severity=severity,
-                            firstSeen=self.convert_epoch_to_datetime(
-                                threat.get("timestamp")
-                            ),
-                            lastSeen=self.convert_epoch_to_datetime(
-                                threat.get("timestamp")
-                            ),
-                            comments=comment_str,
+                # Check for MD5 in configuration
+                if "MD5" in self.configuration.get("malware_type", ["MD5"]):
+                    local_md5 = threat.get("local_md5")
+                    md5 = threat.get("md5")
+
+                    # Check if local_md5 matches md5 also they should
+                    # have some value
+                    if local_md5 == md5 and md5:
+                        # Increment the count and create an indicator
+                        # for md5
+                        current_page_ioc_counts["md5"] += 1
+                        indicator_list.append(
+                            self.create_indicator(
+                                threat["md5"],
+                                IndicatorType.MD5,
+                                severity,
+                                threat.get("timestamp"),
+                                comment_str,
+                            )
                         )
-                    )
+                    else:
+                        if local_md5:
+                            # Increment the count and create an indicator
+                            # for local_md5 if it is present
+                            current_page_ioc_counts["md5"] += 1
+                            indicator_list.append(
+                                self.create_indicator(
+                                    threat["local_md5"],
+                                    IndicatorType.MD5,
+                                    severity,
+                                    threat.get("timestamp"),
+                                    comment_str,
+                                )
+                            )
+                        if md5:
+                            # Increment the count and create an indicator
+                            # for md5 if it is present
+                            current_page_ioc_counts["md5"] += 1
+                            indicator_list.append(
+                                self.create_indicator(
+                                    threat["md5"],
+                                    IndicatorType.MD5,
+                                    severity,
+                                    threat.get("timestamp"),
+                                    comment_str,
+                                )
+                            )
+                # Check for SHA256 in configuration
                 if "SHA256" in self.configuration.get(
                     "malware_type", ["SHA256"]
-                ) and threat.get("local_sha256", None):
-                    current_page_ioc_counts["sha256"] += 1
-                    indicator_list.append(
-                        Indicator(
-                            value=threat["local_sha256"],
-                            type=IndicatorType.SHA256,
-                            severity=severity,
-                            firstSeen=self.convert_epoch_to_datetime(
-                                threat.get("timestamp")
-                            ),
-                            lastSeen=self.convert_epoch_to_datetime(
-                                threat.get("timestamp")
-                            ),
-                            comments=comment_str,
+                ):
+                    local_sha256 = threat.get("local_sha256")
+                    sha256 = threat.get("sha256")
+
+                    # Check if local_sha256 matches sha256 also they
+                    # should have some value
+                    if local_sha256 == sha256 and sha256:
+                        # Increment the count and create an indicator
+                        # for sha256
+                        current_page_ioc_counts["sha256"] += 1
+                        indicator_list.append(
+                            self.create_indicator(
+                                local_sha256,
+                                IndicatorType.SHA256,
+                                severity,
+                                threat.get("timestamp"),
+                                comment_str,
+                            )
                         )
-                    )
+                    else:
+                        if local_sha256:
+                            # Increment the count and create an indicator
+                            # for local_sha256 if it is present
+                            current_page_ioc_counts["sha256"] += 1
+                            indicator_list.append(
+                                self.create_indicator(
+                                    local_sha256,
+                                    IndicatorType.SHA256,
+                                    severity,
+                                    threat.get("timestamp"),
+                                    comment_str,
+                                )
+                            )
+                        if sha256:
+                            # Increment the count and create an indicator
+                            # for sha256 if it is present
+                            current_page_ioc_counts["sha256"] += 1
+                            indicator_list.append(
+                                self.create_indicator(
+                                    sha256,
+                                    IndicatorType.SHA256,
+                                    severity,
+                                    threat.get("timestamp"),
+                                    comment_str,
+                                )
+                            )
+
             elif threat.get(
                 "alert_type", ""
             ).lower() == "malsite" and threat.get("url", None):
@@ -216,17 +306,12 @@ class NetskopePlugin(PluginBase):
                 )
                 comment_str = f"{comment_str} - {malsite_category}"
                 indicator_list.append(
-                    Indicator(
-                        value=threat["url"],
-                        type=IndicatorType.URL,
-                        severity=severity,
-                        firstSeen=self.convert_epoch_to_datetime(
-                            threat.get("timestamp")
-                        ),
-                        lastSeen=self.convert_epoch_to_datetime(
-                            threat.get("timestamp")
-                        ),
-                        comments=comment_str,
+                    self.create_indicator(
+                        threat["url"],
+                        IndicatorType.URL,
+                        severity,
+                        threat.get("timestamp"),
+                        comment_str,
                     )
                 )
             comment_str = tenant_url
@@ -376,7 +461,7 @@ class NetskopePlugin(PluginBase):
             publishers_resp,
             error_code="CTE_1048",
             custom_message="Error occurred while fetching publishers",
-            plugin=self.log_prefix
+            plugin=self.log_prefix,
         )
 
         existing_publishers = publishers_json.get("data", {}).get(
@@ -598,17 +683,19 @@ class NetskopePlugin(PluginBase):
             total_hosts,
         ) = self._create_indicator_batch(
             indicators,
-            [IndicatorType.URL,
-             IndicatorType.FQDN,
-             IndicatorType.DOMAIN,
-             IndicatorType.HOSTNAME,
-             IndicatorType.IPV4,
-             IndicatorType.IPV6,],
+            [
+                IndicatorType.URL,
+                IndicatorType.FQDN,
+                IndicatorType.DOMAIN,
+                IndicatorType.HOSTNAME,
+                IndicatorType.IPV4,
+                IndicatorType.IPV6,
+            ],
             max_len=MAX_PUSH_HOSTS,
         )
 
         try:
-            if not indicators_to_push:
+            if not indicators_to_push and total_hosts > 0:
                 self.logger.info(
                     f"{self.log_prefix}: No host indicators to push."
                     " The private app's page will remain unchanged."
@@ -701,9 +788,11 @@ class NetskopePlugin(PluginBase):
                 ]:
                     self.logger.error(
                         f"{self.log_prefix}: Error occurred while creating private app.",
-                        details=repr(create_private_app)
-                        if not success
-                        else create_private_app.text,
+                        details=(
+                            repr(create_private_app)
+                            if not success
+                            else create_private_app.text
+                        ),
                     )
                     return PushResult(
                         success=False,
@@ -736,7 +825,11 @@ class NetskopePlugin(PluginBase):
             for tag in tags_to_push:
                 tags.append({"tag_name": tag})
             data = {
-                "host": ",".join(indicators_to_push),
+                "host": (
+                    ",".join(indicators_to_push)
+                    if total_hosts > 0
+                    else default_url
+                ),
                 "tags": tags,
                 "protocols": protocols_list,
                 "publishers": publishers_list,
@@ -857,25 +950,27 @@ class NetskopePlugin(PluginBase):
             Exception: If an error occurs while pushing the data to Netskope.
         """
         tenant_name = self.tenant.parameters["tenantName"].strip()
-        indicators_to_push, skip_count_invalid_urls, total_urls = self.make_batch(
-            indicators,
-            [
-                IndicatorType.URL,
-                IndicatorType.IPV4,
-                IndicatorType.IPV6,
-                IndicatorType.HOSTNAME,
-                IndicatorType.DOMAIN,
-                IndicatorType.FQDN,
-            ],
-            max_len=MAX_PUSH_INDICATORS,
-            max_size=max_size + JSON_DATA_OFFSET,
+        indicators_to_push, skip_count_invalid_urls, total_urls = (
+            self.make_batch(
+                indicators,
+                [
+                    IndicatorType.URL,
+                    IndicatorType.IPV4,
+                    IndicatorType.IPV6,
+                    IndicatorType.HOSTNAME,
+                    IndicatorType.DOMAIN,
+                    IndicatorType.FQDN,
+                ],
+                max_len=MAX_PUSH_INDICATORS,
+                max_size=max_size + JSON_DATA_OFFSET,
+            )
         )
 
         try:
             if (
                 "URL" not in self.configuration["threat_data_type"]
                 or not indicators_to_push
-            ):
+            ) and total_urls > 0:
                 return PushResult(
                     success=True, message="No malsite indicators to push."
                 )
@@ -913,9 +1008,11 @@ class NetskopePlugin(PluginBase):
                 ]:
                     self.logger.error(
                         f"{self.log_prefix}: Error occurred while creating urllist.",
-                        details=repr(create_urllist)
-                        if not success
-                        else create_urllist.text,
+                        details=(
+                            repr(create_urllist)
+                            if not success
+                            else create_urllist.text
+                        ),
                     )
                     return PushResult(
                         success=False,
@@ -925,7 +1022,11 @@ class NetskopePlugin(PluginBase):
             # append url to list
             data = {
                 "data": {
-                    "urls": indicators_to_push,
+                    "urls": (
+                        indicators_to_push
+                        if total_urls > 0
+                        else [default_url]
+                    ),
                     "type": list_type,
                 },
             }
@@ -951,12 +1052,18 @@ class NetskopePlugin(PluginBase):
                     success=False,
                     message="Could not share indicators.",
                 )
+            if total_urls == 0:
+                return PushResult(
+                    success=True,
+                    message="Successfully shared indicators.",
+                    should_run_cleanup=True,
+                )
             invalid_indicators = []
             ipv6_iocs = []
             if append_urllist_netskope.status_code == 400:
                 response_json = append_urllist_netskope.json()
-                invalid_indicators, ipv6_iocs = self._extract_invalid_indicators(
-                    response_json
+                invalid_indicators, ipv6_iocs = (
+                    self._extract_invalid_indicators(response_json)
                 )
                 indicators_to_push = list(
                     set(indicators_to_push) - set(invalid_indicators)
@@ -966,7 +1073,8 @@ class NetskopePlugin(PluginBase):
                         f"{self.log_prefix}: No URL(s) to share after excluding invalid URL(s)."
                     )
                     return PushResult(
-                        success=True, message="No URL(s) to share after excluding invalid URL(s)."
+                        success=True,
+                        message="No URL(s) to share after excluding invalid URL(s).",
                     )
                 data = {
                     "data": {
@@ -1043,7 +1151,9 @@ class NetskopePlugin(PluginBase):
                 f" Failed {len(invalid_indicators)} indicators due to being invalid value."
             )
             return PushResult(
-                success=True, message="Successfully shared indicators.", should_run_cleanup=True
+                success=True,
+                message="Successfully shared indicators.",
+                should_run_cleanup=True,
             )
         except Exception as e:
             self.notifier.error(
@@ -1098,9 +1208,12 @@ class NetskopePlugin(PluginBase):
             )
             return self._push_malsites(
                 indicators,
-                list_name=action_dict.get("list")
-                if self.tenant.parameters["v2token"] and action_dict.get("list") != "create"
-                else action_dict.get("name"),
+                list_name=(
+                    action_dict.get("list")
+                    if self.tenant.parameters["v2token"]
+                    and action_dict.get("list") != "create"
+                    else action_dict.get("name")
+                ),
                 list_type=action_dict.get("url_list_type").lower(),
                 max_size=action_dict.get("max_url_list_cap") * 10**6,
                 default_url=action_dict.get("default_url", "").strip(),
@@ -1123,8 +1236,6 @@ class NetskopePlugin(PluginBase):
                     success=False,
                     message="Could not share indicators.",
                 )
-            # add v1 related auth params
-            self.session.params.update({"token": token})
             return self._push_malwares(
                 indicators,
                 list_name=action_dict.get("file_list"),
@@ -1133,6 +1244,11 @@ class NetskopePlugin(PluginBase):
                     "enable_tagging", "no"
                 ).lower()
                 == "yes",
+                default_file_hash=action_dict.get(
+                    "default_file_hash",
+                    "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                ),
+                auth_token=token,
             )
         elif action_value == "private_app":
             self.session.headers.update(
@@ -1178,6 +1294,8 @@ class NetskopePlugin(PluginBase):
         list_name,
         max_size,
         enable_tagging: bool,
+        default_file_hash,
+        auth_token: str,
     ):
         """
         Pushes a list of malware indicators to Netskope.
@@ -1186,6 +1304,9 @@ class NetskopePlugin(PluginBase):
             indicators (List[Indicator]): The list of indicators to push.
             list_name (str): The name of the list to push the indicators to.
             max_size (int): The maximum size of the list.
+            enable_tagging (bool): Whether to enable tagging for the list.
+            default_file_hash (str): The default file hash to add to the list.
+            auth_token (str): The authentication token for the Netskope API.
 
         Returns:
             PushResult: The result of the push operation.
@@ -1194,18 +1315,22 @@ class NetskopePlugin(PluginBase):
             Exception: If an error occurs while pushing the indicators.
         """
         tenant_name = self.tenant.parameters["tenantName"].strip()
-        indicators_to_push, skip_count_invalid_hashes, total_hashes = self.make_batch(
-            indicators,
-            [IndicatorType.MD5, IndicatorType.SHA256],
-            max_len=MAX_PUSH_INDICATORS,
-            max_size=max_size + JSON_DATA_OFFSET,
+        indicators_to_push, skip_count_invalid_hashes, total_hashes = (
+            self.make_batch(
+                indicators,
+                [IndicatorType.MD5, IndicatorType.SHA256],
+                max_len=MAX_PUSH_INDICATORS,
+                max_size=max_size + JSON_DATA_OFFSET,
+            )
         )
         try:
             if (
-                ("SHA256" not in self.configuration["threat_data_type"]
-                and "MD5" not in self.configuration["threat_data_type"])
+                (
+                    "SHA256" not in self.configuration["threat_data_type"]
+                    and "MD5" not in self.configuration["threat_data_type"]
+                )
                 or not indicators_to_push
-            ):
+            ) and total_hashes > 0:
                 return PushResult(
                     success=True, message="No malware indicators to push."
                 )
@@ -1218,7 +1343,12 @@ class NetskopePlugin(PluginBase):
             )
             data = {
                 "name": list_name,
-                "list": ",".join(indicators_to_push),
+                "list": (
+                    ",".join(indicators_to_push)
+                    if total_hashes > 0
+                    else default_file_hash
+                ),
+                "token": auth_token,  # Authentication token
             }
             success, response = handle_exception(
                 self.session.post,
@@ -1340,8 +1470,10 @@ class NetskopePlugin(PluginBase):
             )
 
         THREAT_DATA_TYPES = ["SHA256", "MD5", "URL"]
-        if "threat_data_type" not in configuration or \
-            any(t not in THREAT_DATA_TYPES for t in configuration["threat_data_type"]):
+        if "threat_data_type" not in configuration or any(
+            t not in THREAT_DATA_TYPES
+            for t in configuration["threat_data_type"]
+        ):
             self.logger.error(
                 f"{self.log_prefix}: Netskope Invalid value for 'Types of Threat Data to Pull' provided. "
                 "Allowed values are SHA256, MD5, or URL.",
@@ -1354,15 +1486,24 @@ class NetskopePlugin(PluginBase):
             )
 
         types = []
-        if "SHA256" in configuration["threat_data_type"] or "MD5" in configuration["threat_data_type"]:
+        if (
+            "SHA256" in configuration["threat_data_type"]
+            or "MD5" in configuration["threat_data_type"]
+        ):
             types.append("Malware")
         if "URL" in configuration["threat_data_type"]:
             types.append("malsite")
         helper = AlertsHelper()
         if not tenant_name:
             tenant_name = helper.get_tenant_cte(self.name).name
-        provider = plugin_provider_helper.get_provider(tenant_name=tenant_name)
-        provider.permission_check({"alerts": types}, plugin_name=self.plugin_name, configuration_name=self.name)
+        provider = plugin_provider_helper.get_provider(
+            tenant_name=tenant_name
+        )
+        provider.permission_check(
+            {"alerts": types},
+            plugin_name=self.plugin_name,
+            configuration_name=self.name,
+        )
 
         return ValidationResult(
             success=True,
@@ -1583,7 +1724,9 @@ class NetskopePlugin(PluginBase):
                         success=False,
                         message="If you have selected 'TCP' in Protocols, TCP Port should not be empty.",
                     )
-                if not all(self.validate_port(port) for port in tcp_port_list):
+                if not all(
+                    self.validate_port(port) for port in tcp_port_list
+                ):
                     return ValidationResult(
                         success=False,
                         message="Invalid TCP Port provided. Valid values are between 0 and 65535.",
@@ -1594,7 +1737,9 @@ class NetskopePlugin(PluginBase):
                         success=False,
                         message="If you have selected 'UDP' in Protocols, UDP Port should not be empty.",
                     )
-                if not all(self.validate_port(port) for port in udp_port_list):
+                if not all(
+                    self.validate_port(port) for port in udp_port_list
+                ):
                     return ValidationResult(
                         success=False,
                         message="Invalid UDP Port provided. Valid values are between 0 and 65535.",
@@ -1646,7 +1791,9 @@ class NetskopePlugin(PluginBase):
                     success=False, message="Invalid List Size provided."
                 )
 
-        return ValidationResult(success=True, message="Validation successful.")
+        return ValidationResult(
+            success=True, message="Validation successful."
+        )
 
     def get_action_fields(self, action: Action):
         """Get fields required for an action."""
@@ -1754,6 +1901,14 @@ malware file hashes should be pushed.",
                     "description": "Size of allowed payload(In MBs) for File Hash List. \
 Maximum size of the list is 8MB.",
                 },
+                {
+                    "label": "Default File Hash",
+                    "key": "default_file_hash",
+                    "type": "text",
+                    "default": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                    "mandatory": False,
+                    "description": "The default MD5/SHA256 file hash to be used when the file hash list is empty.",
+                },
             ]
         if action.value == "private_app":
             existing_private_apps = self.get_private_apps()
@@ -1819,9 +1974,11 @@ Maximum size of the list is 8MB.",
                         {"key": key, "value": key}
                         for key in sorted(existing_publishers.keys())
                     ],
-                    "default": []
-                    if not existing_publishers.keys()
-                    else [list(existing_publishers.keys())[0]],
+                    "default": (
+                        []
+                        if not existing_publishers.keys()
+                        else [list(existing_publishers.keys())[0]]
+                    ),
                     "mandatory": False,
                     "description": "Select publishers.",
                 },

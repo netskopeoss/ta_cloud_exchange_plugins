@@ -110,8 +110,23 @@ class ElasticClient:
             raise ElasticPluginException(exp)
 
     def close(self):
-        """To Close socket connection."""
+        """To Close socket connection gracefully."""
         try:
+            # Graceful acknowledgement and closure can be facilitated by having
+            # the client close writes first, and read any available data before
+            # fully closing the connection. As discussed in:
+            # https://blog.netherlabs.nl/articles/2009/01/18/the-ultimate-so_linger-page-or-why-is-my-tcp-not-reliable
+
+            # Close writes
+            self.sock.shutdown(socket.SHUT_WR)
+
+            # Drain reads
+            while True:
+                data = self.sock.recv(1024)
+                if not data:
+                    break
+
+            # Close fully
             self.sock.close()
         except Exception as err:
             err_msg = "Error while closing socket connection."

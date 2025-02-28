@@ -1,3 +1,7 @@
+# 1.2.0
+## Added
+- Added support for device and content alerts.
+
 # 1.1.0
 ## Changed
 - Enhanced pulling workflow.

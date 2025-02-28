@@ -2,7 +2,7 @@
   "name": "Netskope Log Shipper",
   "id": "netskope_cls",
   "netskope": true,
-  "version": "2.0.0",
+  "version": "2.1.0",
   "module": "CLS",
   "minimum_version": "5.1.0",
   "minimum_provider_version": "1.0.0",
@@ -13,7 +13,7 @@
     "events"
   ],
   "mapping": "",
-  "description": "This plugin is used to fetch Alerts (DLP, Malware, Policy, Compromised Credential, Malsite, Quarantine, Remediation, Security Assessment, Watchlist, UBA, CTEP) and Events (Page, Application, Audit, Infrastructure, Network, Incident, Endpoint) from Netskope Tenant.",
+  "description": "This plugin is used to fetch Alerts (DLP, Malware, Policy, Compromised Credential, Malsite, Quarantine, Remediation, Security Assessment, Watchlist, UBA, CTEP, Device, and Content) and Events (Page, Application, Audit, Infrastructure, Network, Incident, and Endpoint) from Netskope Tenant.",
   "supported_subtypes": {
     "alerts": [
       "Compromised Credential",
@@ -29,8 +29,8 @@
       "ctep",
       "ips",
       "c2",
-      "anomaly",
-      "Legal Hold"
+      "Device",
+      "Content"
     ],
     "events": [
       "page",
@@ -93,6 +93,14 @@
         {
           "key": "CTEP",
           "value": "ctep"
+        },
+        {
+            "key": "Device",
+            "value": "Device"
+        },
+        {
+            "key": "Content",
+            "value": "Content"
         }
       ],
       "default": [
@@ -106,7 +114,9 @@
         "quarantine",
         "Remediation",
         "uba",
-        "ctep"
+        "ctep",
+        "Device",
+        "Content"
       ]
     },
     {

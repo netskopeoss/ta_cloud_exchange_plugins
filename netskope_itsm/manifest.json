@@ -1,12 +1,12 @@
 {
   "name": "Netskope Ticket Orchestrator",
-  "description": "Pull Alerts (DLP, Malware, Policy, Compromised Credential, Malsite, Quarantine, Remediation, Security Assessment, Watchlist, UBA, CTEP) and Events (Incident, Endpoint) from Netskope tenants. Supports updating incidents back to the Netskope Tenant.",
+  "description": "Pull Alerts (DLP, Malware, Policy, Compromised Credential, Malsite, Quarantine, Remediation, Security Assessment, Watchlist, UBA, CTEP, Device, and Content) and Events (Incident and Endpoint) from Netskope tenants. Supports updating incidents back to the Netskope Tenant.",
   "id": "netskope_itsm",
   "netskope": true,
   "pulling_supported": true,
   "receiving_supported": false,
   "sharing_supported": true,
-  "version": "2.0.0",
+  "version": "2.1.0",
   "module": "CTO",
   "minimum_version": "5.1.0",
   "minimum_provider_version": "1.0.0",
@@ -27,7 +27,9 @@
       "ips",
       "c2",
       "anomaly",
-      "Legal Hold"
+      "Legal Hold",
+      "Device",
+      "Content"
     ],
     "events": [
       "incident",
@@ -90,6 +92,14 @@
             {
               "key": "CTEP",
               "value": "ctep"
+            },
+            {
+                "key": "Device",
+                "value": "Device"
+            },
+            {
+                "key": "Content",
+                "value": "Content"
             }
           ],
           "default": [
@@ -103,7 +113,9 @@
             "quarantine",
             "Remediation",
             "uba",
-            "ctep"
+            "ctep",
+            "Device",
+            "Content"
           ]
         },
         {

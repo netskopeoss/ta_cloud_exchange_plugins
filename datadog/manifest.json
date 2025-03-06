@@ -1,65 +1,65 @@
 {
-  "name": "Datadog",
-  "id": "datadog",
-  "version": "1.0.0",
-  "mapping": "Datadog Default Mappings",
-  "types": [
-    "alerts",
-    "events",
-    "webtx",
-    "logs"
-  ],
-  "description": "This plugin is used to ingest Alerts, Events, Logs and Web transactions to the Datadog platform. This plugin provides support for the ingestion of JSON and CEF formatted logs.",
-  "configuration": [
-    {
-      "label": "Datadog Site",
-      "key": "dd_site",
-      "type": "choice",
-      "choices": [
+    "name": "Datadog",
+    "id": "datadog",
+    "version": "1.1.0",
+    "mapping": "Datadog Default Mappings",
+    "types": [
+        "alerts",
+        "events",
+        "webtx",
+        "logs"
+    ],
+    "description": "This plugin supports the ingestion of Alerts (DLP, Malware, Policy, Compromised Credential, Malsite, Quarantine, Remediation, Security Assessment, Watchlist, UBA, and CTEP), Events (Page, Application, Audit, Infrastructure, Network, Incident, and Endpoint), WebTx (Compressed), and Logs (Debug, Information, Error, and Warning) into the Datadog platform. It supports the ingestion of logs in both JSON and CEF formats.",
+    "configuration": [
         {
-          "key": "US-1 (datadoghq.com)",
-          "value": "datadoghq.com"
+            "label": "Datadog Site",
+            "key": "dd_site",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "US-1 (datadoghq.com)",
+                    "value": "datadoghq.com"
+                },
+                {
+                    "key": "US-3 (us3.datadoghq.com)",
+                    "value": "us3.datadoghq.com"
+                },
+                {
+                    "key": "US-5 (us5.datadoghq.com)",
+                    "value": "us5.datadoghq.com"
+                },
+                {
+                    "key": "EU-1 (datadoghq.eu)",
+                    "value": "datadoghq.eu"
+                },
+                {
+                    "key": "US1-FEED (ddog-gov.com)",
+                    "value": "ddog-gov.com"
+                },
+                {
+                    "key": "AP-1 (ap1.datadoghq.com)",
+                    "value": "ap1.datadoghq.com"
+                }
+            ],
+            "default": "datadoghq.com",
+            "mandatory": true,
+            "description": "The site associated with your Datadog account. For example: datadoghq.com."
         },
         {
-          "key": "US-3 (us3.datadoghq.com)",
-          "value": "us3.datadoghq.com"
+            "label": "API Key",
+            "key": "dd_api_key",
+            "type": "password",
+            "default": "",
+            "mandatory": true,
+            "description": "An API Key is required by the Datadog Agent to submit metrics and events to Datadog. Provide the Datadog API Key from 'Organization Settings > Access > API Keys' on the Datadog platform."
         },
         {
-          "key": "US-5 (us5.datadoghq.com)",
-          "value": "us5.datadoghq.com"
-        },
-        {
-          "key": "EU-1 (datadoghq.eu)",
-          "value": "datadoghq.eu"
-        },
-        {
-          "key": "US1-FEED (ddog-gov.com)",
-          "value": "ddog-gov.com"
-        },
-        {
-          "key": "AP-1 (ap1.datadoghq.com)",
-          "value": "ap1.datadoghq.com"
+            "label": "Datadog Tags",
+            "key": "dd_tags",
+            "type": "text",
+            "default": "",
+            "mandatory": false,
+            "description": "Tags associated with your logs. To add multiple tags, provide them as comma-separated values. For example: env:prod,region:us-east-1"
         }
-      ],
-      "default": "datadoghq.com",
-      "mandatory": true,
-      "description": "The site associated with your Datadog account. For example: datadoghq.com."
-    },
-    {
-      "label": "API Key",
-      "key": "dd_api_key",
-      "type": "password",
-      "default": "",
-      "mandatory": true,
-      "description": "An API Key is required by the Datadog Agent to submit metrics and events to Datadog. Provide the Datadog API Key from 'Organization Settings > Access > API Keys' on the Datadog platform."
-    },
-    {
-      "label": "Datadog Tags",
-      "key": "dd_tags",
-      "type": "text",
-      "default": "",
-      "mandatory": false,
-      "description": "Tags associated with your logs. For example: env:prod,region:us-east-1"
-    }
-  ]
+    ]
 }

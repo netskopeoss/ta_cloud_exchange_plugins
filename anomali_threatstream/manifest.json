@@ -1,217 +1,228 @@
 {
-  "name": "Anomali ThreatStream XDR",
-  "id": "anomali_threatstream",
-  "version": "1.2.0",
-  "description": "The Anomali ThreatStream XDR plugin is used to fetch the indicators of type URL, IP (IPv4), Domain, IPv6, SHA256 and MD5 from the Observables on Anomali ThreatStream (XDR). This plugin supports sharing MD5, SHA256, URL, Domain, IPv4 and IPv6 to Observables on the Anomali ThreatStream (XDR) platform using the Share Indicators action.",
-  "patch_supported": true,
-  "configuration": [
-    {
-      "label": "Base URL",
-      "key": "base_url",
-      "type": "text",
-      "default": "",
-      "mandatory": true,
-      "description": "ThreatStream API Base URL based on cloud or OnPrem setup."
-    },
-    {
-      "label": "Username",
-      "key": "username",
-      "type": "text",
-      "default": "",
-      "mandatory": true,
-      "description": "The Username associated with the ThreatStream account."
-    },
-    {
-      "label": "API Key",
-      "key": "api_key",
-      "type": "password",
-      "default": "",
-      "mandatory": true,
-      "description": "Provide the API Key from 'Settings > My Profile > API Key' on the Anomali ThreatStream XDR platform."
-    },
-    {
-      "label": "Remote observables",
-      "key": "remote_observables",
-      "type": "choice",
-      "choices": [
+    "name": "Anomali ThreatStream XDR",
+    "id": "anomali_threatstream",
+    "version": "1.3.0",
+    "description": "The Anomali ThreatStream XDR plugin is used to fetch the indicators of type URL, IP (IPv4), Domain, IPv6, SHA256 and MD5 from the Observables on Anomali ThreatStream (XDR). This plugin supports sharing MD5, SHA256, URL, Domain, IPv4 and IPv6 to Observables on the Anomali ThreatStream (XDR) platform using the Share Indicators action.",
+    "patch_supported": true,
+    "push_supported": true,
+    "fetch_retraction_info": true,
+    "delete_supported": false,
+    "module": "CTE",
+    "configuration": [
         {
-          "key": "Yes",
-          "value": "Yes"
+            "label": "Base URL",
+            "key": "base_url",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "Anomali ThreatStream XDR API Base URL based on cloud or On-Prem setup."
         },
         {
-          "key": "No",
-          "value": "No"
+            "label": "Username",
+            "key": "username",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "The Username associated with the Anomali ThreatStream XDR account."
+        },
+        {
+            "label": "API Key",
+            "key": "api_key",
+            "type": "password",
+            "default": "",
+            "mandatory": true,
+            "description": "Provide the API Key from 'Settings > My Profile > API Key' on the Anomali ThreatStream XDR platform."
+        },
+        {
+            "label": "Remote Observables",
+            "key": "remote_observables",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Yes",
+                    "value": "Yes"
+                },
+                {
+                    "key": "No",
+                    "value": "No"
+                }
+            ],
+            "default": "Yes",
+            "mandatory": false,
+            "description": "Retrieve remote observables from Anomali ThreatStream XDR."
+        },
+        {
+            "label": "Type of Threat data to pull",
+            "key": "indicator_type",
+            "type": "multichoice",
+            "choices": [
+                {
+                    "key": "Hash [SHA256]",
+                    "value": "sha256"
+                },
+                {
+                    "key": "Hash [MD5]",
+                    "value": "md5"
+                },
+                {
+                    "key": "Domain",
+                    "value": "domain"
+                },
+                {
+                    "key": "URL",
+                    "value": "url"
+                },
+                {
+                    "key": "IP",
+                    "value": "ip"
+                },
+                {
+                    "key": "IPv6",
+                    "value": "ipv6"
+                }
+            ],
+            "default": [
+                "sha256",
+                "md5",
+                "domain",
+                "url",
+                "ip",
+                "ipv6"
+            ],
+            "mandatory": false,
+            "description": "Type of Threat data to pull. Allowed values are Hash [SHA256], Hash [MD5], Domain, URL, IP, IPv6."
+        },
+        {
+            "label": "Minimum Confidence",
+            "key": "confidence",
+            "type": "number",
+            "default": 50,
+            "mandatory": false,
+            "description": "Enter the Minimum Confidence from the range 0 to 100. Only the indicators with confidence greater than or equal to the specified score will be fetched."
+        },
+        {
+            "label": "Severity",
+            "key": "severity",
+            "type": "multichoice",
+            "choices": [
+                {
+                    "key": "Low",
+                    "value": "low"
+                },
+                {
+                    "key": "Medium",
+                    "value": "medium"
+                },
+                {
+                    "key": "High",
+                    "value": "high"
+                },
+                {
+                    "key": "Very-High",
+                    "value": "very-high"
+                }
+            ],
+            "default": [
+                "very-high",
+                "high",
+                "medium",
+                "low"
+            ],
+            "mandatory": false,
+            "description": "Only indicators with matching severity will be fetched. If no specific value is chosen, indicators with all available severity levels will be retrieved."
+        },
+        {
+            "label": "Status",
+            "key": "status",
+            "type": "multichoice",
+            "choices": [
+                {
+                    "key": "Active",
+                    "value": "active"
+                },
+                {
+                    "key": "Inactive",
+                    "value": "inactive"
+                },
+                {
+                    "key": "False Positive",
+                    "value": "falsepos"
+                }
+            ],
+            "default": [
+                "active",
+                "inactive",
+                "falsepos"
+            ],
+            "mandatory": false,
+            "description": "Only indicators with matching status will be fetched. If no specific value is chosen, indicators with all available status will be retrieved."
+        },
+        {
+            "label": "Tags",
+            "key": "tags",
+            "type": "text",
+            "default": "",
+            "mandatory": false,
+            "description": "Only indicators with matching Tags will be fetched. Add multiple Tags separated by commas. Example: tag1,tag2,tag3. Keep blank to fetch indicators from all Tags."
+        },
+        {
+            "label": "Feed ID",
+            "key": "feed_id",
+            "type": "text",
+            "default": "",
+            "mandatory": false,
+            "description": "Only indicators with matching Feed ID will be fetched. Add one or more numeric Feed IDs, separated by commas. Example: 1,2,3. Keep blank to fetch indicators from all Feeds."
+        },
+        {
+            "label": "Enable Polling",
+            "key": "is_pull_required",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Yes",
+                    "value": "Yes"
+                },
+                {
+                    "key": "No",
+                    "value": "No"
+                }
+            ],
+            "default": "Yes",
+            "mandatory": true,
+            "description": "Enable/Disable polling data from Anomali ThreatStream XDR. Disable if you only need to push indicators to Anomali ThreatStream XDR."
+        },
+        {
+            "label": "Enable Tagging",
+            "key": "enable_tagging",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Yes",
+                    "value": "Yes"
+                },
+                {
+                    "key": "No",
+                    "value": "No"
+                }
+            ],
+            "default": "No",
+            "mandatory": true,
+            "description": "Enable/Disable tagging functionality."
+        },
+        {
+            "label": "Retraction Interval (in days)",
+            "key": "retraction_interval",
+            "type": "number",
+            "mandatory": false,
+            "description": "Specify the number of days for which IoC retraction should be run for Anomali ThreatStream XDR indicators. Note: This parameter is applicable only for Netskope CE version 5.1.0 or later, and if \"IoC(s) Retraction\" is enabled in Threat Exchange Settings."
+        },
+        {
+            "label": "Initial Range (in days)",
+            "key": "days",
+            "type": "number",
+            "mandatory": true,
+            "default": 7,
+            "description": "Number of days Threat IoCs to pull in the initial run."
         }
-      ],
-      "default": "Yes",
-      "mandatory": false,
-      "description": "Retrieve remote observables from Anomali ThreatStream XDR."
-    },
-    {
-      "label": "Type of Threat data to pull",
-      "key": "indicator_type",
-      "type": "multichoice",
-      "choices": [
-        {
-          "key": "Hash [SHA256]",
-          "value": "sha256"
-        },
-        {
-          "key": "Hash [MD5]",
-          "value": "md5"
-        },
-        {
-          "key": "Domain",
-          "value": "domain"
-        },
-        {
-          "key": "URL",
-          "value": "url"
-        },
-        {
-          "key": "IP",
-          "value": "ip"
-        },
-        {
-          "key": "IPv6",
-          "value": "ipv6"
-        }
-      ],
-      "default": [
-        "sha256",
-        "md5",
-        "domain",
-        "url",
-        "ip",
-        "ipv6"
-      ],
-      "mandatory": false,
-      "description": "Type of Threat data to pull. Allowed values are Hash [SHA256], Hash [MD5], Domain, URL, IP, IPv6."
-    },
-    {
-      "label": "Minimum Confidence",
-      "key": "confidence",
-      "type": "number",
-      "default": 50,
-      "mandatory": false,
-      "description": "Enter the Minimum Confidence from the range 0 to 100. Only the indicators with confidence greater than or equal to the specified score will be fetched."
-    },
-    {
-      "label": "Severity",
-      "key": "severity",
-      "type": "multichoice",
-      "choices": [
-        {
-          "key": "Low",
-          "value": "low"
-        },
-        {
-          "key": "Medium",
-          "value": "medium"
-        },
-        {
-          "key": "High",
-          "value": "high"
-        },
-        {
-          "key": "Very-High",
-          "value": "very-high"
-        }
-      ],
-      "default": [
-        "very-high",
-        "high",
-        "medium",
-        "low"
-      ],
-      "mandatory": false,
-      "description": "Only indicators with matching severity will be fetched. If no specific value is chosen, indicators with all available severity levels will be retrieved."
-    },
-    {
-      "label": "Status",
-      "key": "status",
-      "type": "multichoice",
-      "choices": [
-        {
-          "key": "Active",
-          "value": "active"
-        },
-        {
-          "key": "Inactive",
-          "value": "inactive"
-        },
-        {
-          "key": "False Positive",
-          "value": "falsepos"
-        }
-      ],
-      "default": [
-        "active",
-        "inactive",
-        "falsepos"
-      ],
-      "mandatory": false,
-      "description": "Only indicators with matching status will be fetched. If no specific value is chosen, indicators with all available status will be retrieved."
-    },
-    {
-      "label": "Tags",
-      "key": "tags",
-      "type": "text",
-      "default": "",
-      "mandatory": false,
-      "description": "Only indicators with matching Tags will be fetched. Add multiple Tags separated by commas."
-    },
-    {
-      "label": "Feed ID",
-      "key": "feed_id",
-      "type": "text",
-      "default": "",
-      "mandatory": false,
-      "description": "Only indicators with matching Feed ID will be fetched. Add one or more numeric Feed IDs, separated by commas."
-    },
-    {
-      "label": "Enable Polling",
-      "key": "is_pull_required",
-      "type": "choice",
-      "choices": [
-        {
-          "key": "Yes",
-          "value": "Yes"
-        },
-        {
-          "key": "No",
-          "value": "No"
-        }
-      ],
-      "default": "Yes",
-      "mandatory": true,
-      "description": "Enable/Disable polling data from Anomali. Disable if you only need to push indicators to Anomali."
-    },
-    {
-      "label": "Enable Tagging",
-      "key": "enable_tagging",
-      "type": "choice",
-      "choices": [
-        {
-          "key": "Yes",
-          "value": "Yes"
-        },
-        {
-          "key": "No",
-          "value": "No"
-        }
-      ],
-      "default": "No",
-      "mandatory": true,
-      "description": "Enable/Disable tagging functionality."
-    },
-    {
-      "label": "Initial Range (in days)",
-      "key": "days",
-      "type": "number",
-      "mandatory": true,
-      "default": 7,
-      "description": "Number of days Threat IoCs to pull in the initial run."
-    }
-  ]
+    ]
 }

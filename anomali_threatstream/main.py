@@ -39,20 +39,24 @@ import math
 import re
 import traceback
 from datetime import datetime, timedelta
-from typing import Dict, List, Tuple, Union, Generator
-from urllib.parse import urlparse
 from sys import getsizeof
+from typing import Dict, Generator, List, Tuple, Union
+from urllib.parse import urlparse
 
 from netskope.integrations.cte.models import (
-    Indicator, IndicatorType,
-    SeverityType, TagIn
+    Indicator,
+    IndicatorType,
+    SeverityType,
+    TagIn,
 )
 from netskope.integrations.cte.models.business_rule import (
-    Action, ActionWithoutParams
+    Action,
+    ActionWithoutParams,
 )
 from netskope.integrations.cte.plugin_base import (
-    PluginBase, PushResult,
-    ValidationResult
+    PluginBase,
+    PushResult,
+    ValidationResult,
 )
 from netskope.integrations.cte.utils import TagUtils
 from pydantic import ValidationError
@@ -61,19 +65,27 @@ from .utils.anomali_threatstream_constant import (
     ANOMALI_SEVERITY,
     ANOMALI_SEVERITY_MAPPING,
     ANOMALI_STATUS,
+    BYTES_TO_MB,
     DATE_FORMAT_FOR_IOCS,
+    DEFAULT_REPUTATION,
     INDICATOR_TYPES,
     INTEGER_THRESHOLD,
-    MAX_PAGE_SIZE, MODULE_NAME,
-    PAGE_LIMIT, PLATFORM_NAME,
-    PLUGIN_NAME, PLUGIN_VERSION,
+    MAX_PAGE_SIZE,
+    MODULE_NAME,
+    PAGE_LIMIT,
+    PLATFORM_NAME,
+    PLUGIN_NAME,
+    PLUGIN_VERSION,
+    PREFIX_IOC_SOURCE,
+    RETRACTION,
+    SEPARATOR,
     SEVERITY_MAPPING,
+    TAG_NAME,
     TARGET_SIZE_MB,
-    BYTES_TO_MB,
-    TAG_NAME
 )
 from .utils.anomali_threatstream_helper import (
-    AnomaliThreatstreamPluginException, AnomaliThreatstreamPluginHelper
+    AnomaliThreatstreamPluginException,
+    AnomaliThreatstreamPluginHelper,
 )
 
 
@@ -94,6 +106,7 @@ class AnomaliThreatstreamPlugin(PluginBase):
         )
         self.plugin_name, self.plugin_version = self._get_plugin_info()
         self.log_prefix = f"{MODULE_NAME} {self.plugin_name}"
+        self.config_name = name
         if name:
             self.log_prefix = f"{self.log_prefix} [{name}]"
         self.anomali_threatstream_helper = AnomaliThreatstreamPluginHelper(
@@ -101,8 +114,6 @@ class AnomaliThreatstreamPlugin(PluginBase):
             log_prefix=self.log_prefix,
             plugin_name=self.plugin_name,
             plugin_version=self.plugin_version,
-            ssl_validation=self.ssl_validation,
-            proxy=self.proxy,
         )
 
     def _get_plugin_info(self) -> Tuple:
@@ -151,9 +162,7 @@ class AnomaliThreatstreamPlugin(PluginBase):
             ValidateResult object with success flag and message.
         """
         validation_err_msg = f"{self.log_prefix}: Validation error occurred."
-        (
-            base_url, user_name, api_key
-        ) = self._get_credentials(configuration)
+        (base_url, user_name, api_key) = self._get_credentials(configuration)
 
         if not base_url:
             err_msg = "Base URL is a required configuration parameter."
@@ -162,7 +171,9 @@ class AnomaliThreatstreamPlugin(PluginBase):
                 success=False,
                 message=err_msg,
             )
-        elif not isinstance(base_url, str) or not self._validate_url(base_url, True):
+        elif not isinstance(base_url, str) or not self._validate_url(
+            base_url, True
+        ):
             err_msg = "Invalid Base URL provided in configuration parameters."
             self.logger.error(f"{validation_err_msg} {err_msg}")
             return ValidationResult(
@@ -214,16 +225,17 @@ class AnomaliThreatstreamPlugin(PluginBase):
 
         indicator_type = configuration.get("indicator_type")
         if not indicator_type:
-            err_msg = (
-                "Type of Threat data to pull is a required configuration parameter."
-            )
+            err_msg = "Type of Threat data to pull is a required configuration parameter."
             self.logger.error(f"{validation_err_msg} {err_msg}")
             return ValidationResult(
                 success=False,
                 message=err_msg,
             )
         if not (
-            all(indicator_type in INDICATOR_TYPES for indicator_type in indicator_type)
+            all(
+                indicator_type in INDICATOR_TYPES
+                for indicator_type in indicator_type
+            )
         ):
             err_msg = (
                 "Invalid value for Type of Threat data to pull provided. "
@@ -340,6 +352,47 @@ class AnomaliThreatstreamPlugin(PluginBase):
                 message="Invalid value for 'Enable Polling' provided."
                 " Allowed values are 'Yes' or 'No'.",
             )
+        retraction_days = configuration.get("retraction_interval")
+        if isinstance(retraction_days, int) and retraction_days is not None:
+            if int(retraction_days) <= 0:
+                err_msg = (
+                    "Invalid Retraction Interval provided in configuration"
+                    " parameters. Valid value should be an integer "
+                    "greater than 0."
+                )
+                self.logger.error(f"{validation_err_msg} {err_msg}")
+                return ValidationResult(
+                    success=False,
+                    message=err_msg,
+                )
+            elif int(retraction_days) > INTEGER_THRESHOLD:
+                err_msg = (
+                    "Invalid Retraction Interval provided in configuration"
+                    " parameters. Valid value should be an integer "
+                    "greater than 0 and less than 2^62."
+                )
+                self.logger.error(f"{validation_err_msg} {err_msg}")
+                return ValidationResult(
+                    success=False,
+                    message=err_msg,
+                )
+        elif retraction_days:
+            err_msg = (
+                "Invalid Retraction Interval provided in the "
+                "configuration parameters. Provide a valid integer value"
+                " for the Retraction Interval."
+            )
+            self.logger.error(
+                message=f"{validation_err_msg} {err_msg}",
+                details=(
+                    f"Retraction Interval: {retraction_days}, "
+                    f"Retraction Interval type: {type(retraction_days)}"
+                ),
+            )
+            return ValidationResult(
+                success=False,
+                message=err_msg,
+            )
 
         initial_range = configuration.get("days", 0)
         if initial_range is None:
@@ -378,9 +431,9 @@ class AnomaliThreatstreamPlugin(PluginBase):
             ValidateResult object with success flag and message.
         """
         try:
-            (
-                base_url, user_name, api_key
-            ) = self._get_credentials(configuration)
+            (base_url, user_name, api_key) = self._get_credentials(
+                configuration
+            )
 
             query_params = {"limit": 1}
             headers = self.get_headers(user_name, api_key)
@@ -391,6 +444,8 @@ class AnomaliThreatstreamPlugin(PluginBase):
                 params=query_params,
                 headers=headers,
                 is_validation=True,
+                verify=self.ssl_validation,
+                proxies=self.proxy,
             )
             return ValidationResult(
                 success=True,
@@ -426,7 +481,11 @@ class AnomaliThreatstreamPlugin(PluginBase):
             datetime: datetime object.
         """
         try:
-            return datetime.strptime(date, DATE_FORMAT_FOR_IOCS) if date else None
+            return (
+                datetime.strptime(date, DATE_FORMAT_FOR_IOCS)
+                if date
+                else None
+            )
         except Exception:
             return None
 
@@ -502,9 +561,10 @@ class AnomaliThreatstreamPlugin(PluginBase):
             int: The calculated reputation, ranging from 1 to 10.
         """
         if confidence:
-            return math.ceil(confidence / 10)
+            reputation = math.ceil(confidence / 10)
+            return reputation if reputation else DEFAULT_REPUTATION
         else:
-            return 5
+            return DEFAULT_REPUTATION
 
     def create_tags(self, tags: List) -> tuple:
         """Create Tags.
@@ -521,7 +581,9 @@ class AnomaliThreatstreamPlugin(PluginBase):
             tag_name = tag.get("name").strip()
             try:
                 if not tag_utils.exists(tag_name):
-                    tag_utils.create_tag(TagIn(name=tag_name, color="#ED3347"))
+                    tag_utils.create_tag(
+                        TagIn(name=tag_name, color="#ED3347")
+                    )
                 created_tags.add(tag_name)
             except ValueError:
                 skipped_tags.add(tag_name)
@@ -545,24 +607,20 @@ class AnomaliThreatstreamPlugin(PluginBase):
         """
         try:
             if self.configuration.get("is_pull_required") == "Yes":
-                self.logger.info(
-                    f"{self.log_prefix}: Pulling indicators from {PLATFORM_NAME}."
-                )
-                is_config_modified = self._is_config_modified()
                 if hasattr(self, "sub_checkpoint"):
 
                     def wrapper(self):
-                        yield from self.get_indicators(is_config_modified)
+                        yield from self.get_indicators()
 
                     return wrapper(self)
-
                 else:
                     indicators = []
-                    for batch in self.get_indicators(is_config_modified):
+                    for batch in self.get_indicators():
                         indicators.extend(batch)
 
                     self.logger.info(
-                        f"{self.log_prefix}: Total {len(indicators)} indicator(s) fetched."
+                        f"{self.log_prefix}: Total {len(indicators)} "
+                        "indicator(s) fetched."
                     )
                     return indicators
             else:
@@ -572,36 +630,48 @@ class AnomaliThreatstreamPlugin(PluginBase):
                     f"{PLATFORM_NAME}."
                 )
                 return []
-        except AnomaliThreatstreamPluginException as err:
-            self.logger.error(
-                message=(
-                    f"{self.log_prefix}: Error occurred while pulling"
-                    f" indicators. Error: {err}"
-                ),
-                details=str(traceback.format_exc()),
-            )
-            raise err
+        except AnomaliThreatstreamPluginException:
+            raise
         except Exception as exp:
+            err_msg = (
+                "Error occurred while pulling indicators"
+                f" from {PLATFORM_NAME}."
+            )
             self.logger.error(
-                message=(
-                    f"{self.log_prefix}: Error occurred while pulling"
-                    f" indicators. Error: {exp}"
-                ),
+                message=f"{self.log_prefix}: {err_msg} Error: {exp}",
                 details=str(traceback.format_exc()),
             )
-            raise exp
+            raise AnomaliThreatstreamPluginException(err_msg)
+
+    def _convert_datetime_to_anomali_format(self, date_time: datetime) -> str:
+        """
+        Convert a datetime object to a string in the Anomali ThreatStream
+          format.
+
+        Args:
+            date_time (datetime): The datetime object to convert.
+
+        Returns:
+            str: The datetime string in the Anomali ThreatStream format.
+        """
+        return date_time.isoformat(sep="T", timespec="milliseconds") + "Z"
 
     def get_indicators(
-        self, is_config_modified: bool
+        self,
+        is_retraction: bool = False,
+        retraction_time: str = "",
     ) -> Union[Generator[Indicator, bool, None], Dict]:
         """
         Retrieves a list of indicators from the API.
 
         Args:
-            - is_config_modified (bool): A boolean flag indicating
-            configuration is modified or not.
+            - is_retraction (bool): A boolean flag indicating
+            retraction is required or not.
+            - retraction_time (str): A string representing the
+            retraction time.
         Returns:
-            - Generator[Indicator, bool, None]: A Generator of Indicator objects
+            - Generator[Indicator, bool, None]: A Generator of Indicator
+                objects
             representing the retrieved indicators.
             - Dict: A dictionary containing the checkpoint details.
 
@@ -611,10 +681,11 @@ class AnomaliThreatstreamPlugin(PluginBase):
             Exception: If an unexpected error occurs while executing the
             pull cycle.
         """
-
-        (
-            base_url, user_name, api_key
-        ) = self._get_credentials(self.configuration)
+        if is_retraction and RETRACTION not in self.log_prefix:
+            self.log_prefix = self.log_prefix + f" [{RETRACTION}]"
+        (base_url, user_name, api_key) = self._get_credentials(
+            self.configuration
+        )
         query_endpoint = f"{base_url}/api/v2/intelligence"
         headers = self.get_headers(user_name, api_key)
 
@@ -624,19 +695,20 @@ class AnomaliThreatstreamPlugin(PluginBase):
 
         start_time = None
         sub_checkpoint = getattr(self, "sub_checkpoint", {})
-        if sub_checkpoint and sub_checkpoint.get("checkpoint"):
+        if is_retraction and retraction_time:
+            start_time = retraction_time
+        elif sub_checkpoint and sub_checkpoint.get("checkpoint"):
             start_time = sub_checkpoint.get("checkpoint")
         elif last_updated:
             start_time = last_updated
         elif self.last_run_at:
-            start_time = self.last_run_at.strftime(DATE_FORMAT_FOR_IOCS)
-
-        if is_config_modified or not start_time:
-            # If configuration is modified or start_time does not exists.
-            # Then prepare a new start_time.
+            start_time = self._convert_datetime_to_anomali_format(
+                self.last_run_at
+            )
+        else:
             initial_days = self.configuration.get("days")
             start_time = datetime.now() - timedelta(days=initial_days)
-            start_time = start_time.strftime(DATE_FORMAT_FOR_IOCS)
+            start_time = self._convert_datetime_to_anomali_format(start_time)
 
         self.logger.info(
             f"{self.log_prefix}: Pulling indicators from {PLATFORM_NAME}"
@@ -659,10 +731,16 @@ class AnomaliThreatstreamPlugin(PluginBase):
         indicator_types = self._get_indicator_types(
             threat_types=self.configuration.get("indicator_type")
         )
-        query_params["type"] = ",".join([
-            "hash" if indicator_type in ["md5", "sha256"] else indicator_type
-            for indicator_type in indicator_types
-        ])
+        query_params["type"] = ",".join(
+            [
+                (
+                    "hash"
+                    if indicator_type in ["md5", "sha256"]
+                    else indicator_type
+                )
+                for indicator_type in indicator_types
+            ]
+        )
 
         if all(x in indicator_types for x in ("md5", "sha256")):
             query_params["hash$subtype"] = "MD5,SHA256"
@@ -688,18 +766,17 @@ class AnomaliThreatstreamPlugin(PluginBase):
 
         last_indicator = None
         next_page = True
-        parsed_indicators = []
+        total_skipped_tags = set()
+        total_indicators = 0
         page_count = 0
         try:
             while next_page:
-                total_skipped_tags = set()
                 page_count += 1
                 indicator_type_count = {
                     indicator_type: 0 for indicator_type in indicator_types
                 }
                 current_page_skip_count = 0
-                current_extracted_indicators = []
-
+                current_extracted_indicators = set() if is_retraction else []
                 logger_msg = (
                     f"pulling data for page {page_count} from {PLATFORM_NAME}"
                 )
@@ -709,9 +786,14 @@ class AnomaliThreatstreamPlugin(PluginBase):
                     method="GET",
                     headers=headers,
                     params=query_params,
+                    verify=self.ssl_validation,
+                    proxies=self.proxy,
+                    is_retraction=is_retraction,
                 )
                 indicators_json_list = resp_json.get("objects", [])
                 if not indicators_json_list:
+                    if not is_retraction:
+                        storage.clear()
                     break
                 last_indicator = indicators_json_list[-1]
 
@@ -719,7 +801,9 @@ class AnomaliThreatstreamPlugin(PluginBase):
                     try:
                         skip_indicator = False
                         tags_data = (
-                            indicator.get("tags", []) if indicator.get("tags") else []
+                            indicator.get("tags", [])
+                            if indicator.get("tags")
+                            else []
                         )
                         if tags_data:
                             for tag in tags_data:
@@ -732,7 +816,9 @@ class AnomaliThreatstreamPlugin(PluginBase):
 
                             indicator_type = indicator.get("type", "")
                             if indicator.get("value") and indicator_type:
-                                tags, skipped_tags = self.create_tags(tags_data)
+                                tags, skipped_tags = self.create_tags(
+                                    tags_data
+                                )
                                 total_skipped_tags.update(skipped_tags)
 
                                 description = indicator.get("description")
@@ -740,40 +826,46 @@ class AnomaliThreatstreamPlugin(PluginBase):
                                     indicator_type == IndicatorType.MD5
                                     and indicator.get("subtype") == "SHA256"
                                 ):
-                                    # ToDo: This condition seems fishy
-                                    # Verify the logic by calling the anomali API.
                                     indicator_type = IndicatorType.SHA256
-                                current_extracted_indicators.append(
-                                    Indicator(
-                                        value=indicator.get("value"),
-                                        type=indicator_types.get(
-                                            indicator_type
-                                        ),
-                                        firstSeen=self.convert_into_date_time(
-                                            indicator.get("created_ts")
-                                        ),
-                                        lastSeen=self.convert_into_date_time(
-                                            indicator.get("modified_ts")
-                                        ),
-                                        severity=SEVERITY_MAPPING.get(
-                                            indicator.get("meta", {}).get(
-                                                "severity", SeverityType.UNKNOWN
-                                            ),
-                                        ),
-                                        tags=tags,
-                                        reputation=self.get_reputation(
-                                            indicator.get("confidence", "")
-                                        ),
-                                        comments=(
-                                            description
-                                            if description is not None
-                                            else ""
-                                        ),
+                                if is_retraction:
+                                    current_extracted_indicators.add(
+                                        indicator.get("value")
                                     )
-                                )
-
+                                else:
+                                    first_seen = self.convert_into_date_time(
+                                        indicator.get("created_ts")
+                                    )
+                                    last_seen = self.convert_into_date_time(
+                                        indicator.get("modified_ts")
+                                    )
+                                    current_extracted_indicators.append(
+                                        Indicator(
+                                            value=indicator.get("value"),
+                                            type=indicator_types.get(
+                                                indicator_type
+                                            ),
+                                            firstSeen=first_seen,
+                                            lastSeen=last_seen,
+                                            severity=SEVERITY_MAPPING.get(
+                                                indicator.get("meta", {}).get(
+                                                    "severity",
+                                                    SeverityType.UNKNOWN,
+                                                ),
+                                            ),
+                                            tags=tags,
+                                            reputation=self.get_reputation(
+                                                indicator.get(
+                                                    "confidence", ""
+                                                )
+                                            ),
+                                            comments=(
+                                                description
+                                                if description is not None
+                                                else ""
+                                            ),
+                                        )
+                                    )
                                 indicator_type_count[indicator_type] += 1
-
                             else:
                                 current_page_skip_count += 1
                         else:
@@ -794,78 +886,134 @@ class AnomaliThreatstreamPlugin(PluginBase):
                             details=str(traceback.format_exc()),
                         )
 
-                parsed_indicators.extend(current_extracted_indicators)
+                # parsed_indicators.extend(current_extracted_indicators)
+                total_indicators += len(current_extracted_indicators)
 
                 self.logger.info(
-                    f"{self.log_prefix}: Successfully fetched "
-                    f"{len(current_extracted_indicators)} indicator(s) and skipped {current_page_skip_count}"
-                    f" for page {page_count}. Pull Stat: {indicator_type_count['sha256']} SHA256, "
-                    f"{indicator_type_count['md5']} MD5, {indicator_type_count['url']} URL, "
-                    f"{indicator_type_count['domain']} Domain, {indicator_type_count['ip']} IP, "
-                    f"and {indicator_type_count['ipv6']} IPv6 indicator(s) fetched. "
-                    f"Total indicator(s) fetched - {len(parsed_indicators)}."
+                    "{}: Successfully fetched {} indicator(s) and"
+                    " skipped {} for page {}. Pull Stat: {} SHA256, "
+                    "{} MD5, {} URL, {} Domain, {} IP, "
+                    "and {} IPv6 indicator(s) "
+                    "fetched. Total indicator(s) fetched -"
+                    " {}.".format(
+                        self.log_prefix,
+                        len(current_extracted_indicators),
+                        current_page_skip_count,
+                        page_count,
+                        indicator_type_count["sha256"],
+                        indicator_type_count["md5"],
+                        indicator_type_count["url"],
+                        indicator_type_count["domain"],
+                        indicator_type_count["ip"],
+                        indicator_type_count["ipv6"],
+                        total_indicators,
+                    )
                 )
 
-                if len(total_skipped_tags) > 0:
-                    self.logger.info(
-                        f"{self.log_prefix}: {len(total_skipped_tags)} tag(s) "
-                        "skipped as they were longer than expected size or due"
-                        " to some other exceptions that occurred while "
-                        "creation of them. tags: "
-                        f"({', '.join(total_skipped_tags)})."
+                if len(indicators_json_list) < MAX_PAGE_SIZE:
+                    if not is_retraction:
+                        storage.clear()
+                    next_page = False
+                else:
+                    query_params["update_id__gt"] = last_indicator.get(
+                        "update_id"
                     )
 
-                if len(indicators_json_list) < MAX_PAGE_SIZE:
-                    storage.clear()
-                    next_page = False
-                else:
-                    query_params["update_id__gt"] = last_indicator.get("update_id")
-
-                if page_count >= PAGE_LIMIT:
+                if page_count >= PAGE_LIMIT and not is_retraction:
+                    # The threshold condition should only work for
+                    # Normal pulling and not retraction.
                     storage.clear()
                     if last_indicator and last_indicator.get("modified_ts"):
-                        storage["last_updated"] = last_indicator.get("modified_ts")
+                        storage["last_updated"] = last_indicator.get(
+                            "modified_ts"
+                        )
+
                     next_page = False
+                if not next_page:
+                    if len(total_skipped_tags) > 0:
+                        self.logger.info(
+                            f"{self.log_prefix}: {len(total_skipped_tags)} "
+                            "tag(s) skipped as they were longer than expected "
+                            "size or due to some other exceptions that "
+                            "occurred while creation of them. tags: "
+                            f"({', '.join(total_skipped_tags)})."
+                        )
+                    self.logger.info(
+                        f"{self.log_prefix}: Successfully fetched "
+                        f"{total_indicators} indicator(s) from "
+                        f"{PLATFORM_NAME}."
+                    )
 
-                if hasattr(self, "sub_checkpoint"):
-                    yield current_extracted_indicators, {
-                        "checkpoint": last_indicator.get("modified_ts")
-                    }
-                else:
-                    yield current_extracted_indicators
+                if current_extracted_indicators:
+                    if hasattr(self, "sub_checkpoint") and not is_retraction:
+                        yield current_extracted_indicators, {
+                            "checkpoint": (
+                                last_indicator.get("modified_ts")
+                                if last_indicator.get("modified_ts")
+                                else self._convert_datetime_to_anomali_format(
+                                    datetime.now()
+                                )
+                            )
+                        }
+                    else:
+                        yield current_extracted_indicators
         except AnomaliThreatstreamPluginException as ex:
-            storage.clear()
-            if last_indicator and last_indicator.get("modified_ts"):
-                storage["last_updated"] = last_indicator.get("modified_ts")
-
+            if not is_retraction and not hasattr(self, "sub_checkpoint"):
+                storage.clear()
+                if last_indicator and last_indicator.get("modified_ts"):
+                    storage["last_updated"] = last_indicator.get(
+                        "modified_ts"
+                    )
+            err_msg = (
+                "Error occurred while pulling "
+                f"indicators from {PLATFORM_NAME}."
+            )
             self.logger.error(
-                message=(
-                    f"{self.log_prefix}: Error Occurred while pulling "
-                    f"indicators from {PLATFORM_NAME} Error: {ex}"
-                ),
+                message=f"{self.log_prefix}: {err_msg} Error: {ex}",
                 details=traceback.format_exc(),
             )
 
-            if not hasattr(self, "sub_checkpoint"):
-                yield parsed_indicators
+            if (
+                current_extracted_indicators
+                and not hasattr(self, "sub_checkpoint")
+                and not is_retraction
+            ):
+                yield current_extracted_indicators
+            else:
+                raise AnomaliThreatstreamPluginException(err_msg)
 
         except Exception as ex:
-            storage.clear()
-            if last_indicator and last_indicator.get("modified_ts"):
-                storage["last_updated"] = last_indicator.get("modified_ts")
-
+            if not is_retraction and not hasattr(self, "sub_checkpoint"):
+                storage.clear()
+                if last_indicator and last_indicator.get("modified_ts"):
+                    storage["last_updated"] = last_indicator.get(
+                        "modified_ts"
+                    )
+            err_msg = (
+                "Unexpected error occurred while pulling "
+                f"indicators from {PLATFORM_NAME}."
+            )
             self.logger.error(
-                message=(
-                    f"{self.log_prefix}: Unexpected error occurred while "
-                    f"pulling indicators from {PLATFORM_NAME}. Error: {ex}"
-                ),
+                message=f"{self.log_prefix}: {err_msg} Error: {ex}",
                 details=traceback.format_exc(),
             )
+            if (
+                current_extracted_indicators
+                and not hasattr(self, "sub_checkpoint")
+                and not is_retraction
+            ):
+                yield current_extracted_indicators
+            else:
+                raise AnomaliThreatstreamPluginException(err_msg)
 
-            if not hasattr(self, "sub_checkpoint"):
-                yield parsed_indicators
-
-    def push(self, indicators: list, action_dict: dict) -> PushResult:
+    def push(
+        self,
+        indicators: list,
+        action_dict: dict,
+        source: str = None,
+        business_rule: str = None,
+        plugin_name: str = None,
+    ) -> PushResult:
         """Push method will push the indicators to Anomali.
 
         Args:
@@ -884,9 +1032,19 @@ class AnomaliThreatstreamPlugin(PluginBase):
 
         if action_value == "share_ioc":
             if not indicators:
-                self.logger.info(f"{self.log_prefix}: No indicators found to push.")
-                return PushResult(success=True, message="No indicators found.")
-
+                self.logger.info(
+                    f"{self.log_prefix}: No indicators found to push."
+                )
+                return PushResult(
+                    success=True, message="No indicators found."
+                )
+            default_tags = [
+                {"name": TAG_NAME},
+            ]
+            if plugin_name:
+                default_tags.append(
+                    {"name": f"{PREFIX_IOC_SOURCE} {SEPARATOR} {plugin_name}"}
+                )
             action_params = action_dict.get("parameters", {})
             hash_itype = action_params.get("hash_itype", "")
             ip_itype = action_params.get("ip_itype", "")
@@ -898,8 +1056,7 @@ class AnomaliThreatstreamPlugin(PluginBase):
                 tags = indicator.tags if indicator.tags else []
                 if tags:
                     tags = [{"name": tag} for tag in tags]
-                tags.append({"name": TAG_NAME})
-
+                tags.extend(default_tags)
                 payload = {
                     "tags": tags,
                     "severity": ANOMALI_SEVERITY_MAPPING.get(
@@ -909,7 +1066,10 @@ class AnomaliThreatstreamPlugin(PluginBase):
                 }
 
                 if str(indicator.type.value) in {
-                    "url", "domain", "ipv4", "ipv6"
+                    "url",
+                    "domain",
+                    "ipv4",
+                    "ipv6",
                 }:
                     try:
                         if self._validate_url(indicator.value, False):
@@ -946,22 +1106,24 @@ class AnomaliThreatstreamPlugin(PluginBase):
                     payload["md5"] = indicator.value
                     payload["subtype"] = "MD5"
                     payload["itype"] = hash_itype
-
-                objects.append(payload)
+                if payload:
+                    objects.append(payload)
 
             results = []
             size_in_bytes = getsizeof(json.dumps(objects))
             # Convert bytes to megabytes
             size_in_mb = size_in_bytes / BYTES_TO_MB
             if size_in_mb > TARGET_SIZE_MB:
-                chunk_data = self.anomali_threatstream_helper.split_into_size(objects)
+                chunk_data = self.anomali_threatstream_helper.split_into_size(
+                    objects
+                )
                 results.extend(chunk_data)
-            else:
+            elif objects:
                 results.append(objects)
 
-            (
-                base_url, user_name, api_key
-            ) = self._get_credentials(self.configuration)
+            (base_url, user_name, api_key) = self._get_credentials(
+                self.configuration
+            )
             headers = self.get_headers(user_name, api_key)
             final_payload = {
                 "meta": {
@@ -988,6 +1150,8 @@ class AnomaliThreatstreamPlugin(PluginBase):
                         method="PATCH",
                         data=json.dumps(final_payload),
                         headers=headers,
+                        verify=self.ssl_validation,
+                        proxies=self.proxy,
                     )
                     total_count += len(result)
                     self.logger.info(
@@ -1015,11 +1179,15 @@ class AnomaliThreatstreamPlugin(PluginBase):
                     f"not be shared or updated on {self.plugin_name} platform."
                     " Invalid Domain, IP/IPv6, URL or Hashes(SHA256, MD5) received."
                 )
-            return PushResult(success=True, message="Successfully pushed indicators.")
+            return PushResult(
+                success=True, message="Successfully pushed indicators."
+            )
 
     def get_actions(self):
         """Get available actions."""
-        return [ActionWithoutParams(label="Share Indicators", value="share_ioc")]
+        return [
+            ActionWithoutParams(label="Share Indicators", value="share_ioc")
+        ]
 
     def validate_action(self, action: Action) -> ValidationResult:
         """Validate Anomali configuration.
@@ -1062,7 +1230,9 @@ class AnomaliThreatstreamPlugin(PluginBase):
                 self.logger.error(f"{self.log_prefix}: {err_msg}")
                 return ValidationResult(success=False, message=err_msg)
 
-        return ValidationResult(success=True, message="Validation successful.")
+        return ValidationResult(
+            success=True, message="Validation successful."
+        )
 
     def get_action_fields(self, action: Action):
         """Get fields required for an action."""
@@ -1077,13 +1247,22 @@ class AnomaliThreatstreamPlugin(PluginBase):
                         {"key": "APT URL", "value": "apt_url"},
                         {"key": "Bot URL", "value": "bot_url"},
                         {"key": "Malware C&C URL", "value": "c2_url"},
-                        {"key": "Compromised URL", "value": "compromised_url"},
+                        {
+                            "key": "Compromised URL",
+                            "value": "compromised_url",
+                        },
                         {"key": "Cryptocurrency URL", "value": "crypto_url"},
                         {"key": "Downloader URL", "value": "downloader_url"},
-                        {"key": "Data Exfiltration URL", "value": "exfil_url"},
+                        {
+                            "key": "Data Exfiltration URL",
+                            "value": "exfil_url",
+                        },
                         {"key": "Exploit Kit URL", "value": "exploit_url"},
                         {"key": "Fraud URL", "value": "fraud_url"},
-                        {"key": "IP Geolocation URL", "value": "geolocation_url"},
+                        {
+                            "key": "IP Geolocation URL",
+                            "value": "geolocation_url",
+                        },
                         {
                             "key": "Information Stealer URL",
                             "value": "infostealer_url",
@@ -1097,9 +1276,15 @@ class AnomaliThreatstreamPlugin(PluginBase):
                         {"key": "Parked URL", "value": "parked_url"},
                         {"key": "Paste Site URL", "value": "pastesite_url"},
                         {"key": "Phishing URL", "value": "phish_url"},
-                        {"key": "Point Of Sale Malicious URL", "value": "pos_url"},
+                        {
+                            "key": "Point Of Sale Malicious URL",
+                            "value": "pos_url",
+                        },
                         {"key": "Ransomware URL", "value": "ransomware_url"},
-                        {"key": "Social Media URL", "value": "social_media_url"},
+                        {
+                            "key": "Social Media URL",
+                            "value": "social_media_url",
+                        },
                         {"key": "Spam URL", "value": "spam_url"},
                         {"key": "Speedtest URL", "value": "speedtest_url"},
                         {"key": "Suspicious URL", "value": "suspicious_url"},
@@ -1127,7 +1312,10 @@ class AnomaliThreatstreamPlugin(PluginBase):
                         {"key": "Infected Bot IP", "value": "bot_ip"},
                         {"key": "Brute Force IP", "value": "brute_ip"},
                         {"key": "Malware C&C IP", "value": "c2_ip"},
-                        {"key": "Commercial Webproxy IP", "value": "comm_proxy_ip"},
+                        {
+                            "key": "Commercial Webproxy IP",
+                            "value": "comm_proxy_ip",
+                        },
                         {"key": "Compromised IP", "value": "compromised_ip"},
                         {"key": "Cryptocurrency IP", "value": "crypto_ip"},
                         {"key": "DDOS IP", "value": "ddos_ip"},
@@ -1136,13 +1324,22 @@ class AnomaliThreatstreamPlugin(PluginBase):
                         {"key": "Exploit Kit IP", "value": "exploit_ip"},
                         {"key": "Fraud IP", "value": "fraud_ip"},
                         {"key": "I2P IP", "value": "i2p_ip"},
-                        {"key": "Information Stealer IP", "value": "infostealer_ip"},
-                        {"key": "Internet Of things Malicious IP", "value": "iot_ip"},
+                        {
+                            "key": "Information Stealer IP",
+                            "value": "infostealer_ip",
+                        },
+                        {
+                            "key": "Internet Of things Malicious IP",
+                            "value": "iot_ip",
+                        },
                         {"key": "Malware IP", "value": "mal_ip"},
                         {"key": "Peer-to-Peer C&C IP", "value": "p2pcnc"},
                         {"key": "Domain Parking IP", "value": "parked_ip"},
                         {"key": "Phishing IP", "value": "phish_ip"},
-                        {"key": "Point Of Sale Malicious IP", "value": "pos_ip"},
+                        {
+                            "key": "Point Of Sale Malicious IP",
+                            "value": "pos_ip",
+                        },
                         {"key": "Open Proxy IP", "value": "proxy_ip"},
                         {"key": "Ransomware IP", "value": "ransomware_ip"},
                         {"key": "Scanning IP", "value": "scan_ip"},
@@ -1167,18 +1364,39 @@ class AnomaliThreatstreamPlugin(PluginBase):
                     "type": "choice",
                     "choices": [
                         {"key": "Actor IPv6", "value": "actor_ipv6"},
-                        {"key": "Anonymous Proxy IPv6", "value": "anon_proxy_ipv6"},
-                        {"key": "Anonymous VPN IPv6", "value": "anon_vpn_ipv6"},
+                        {
+                            "key": "Anonymous Proxy IPv6",
+                            "value": "anon_proxy_ipv6",
+                        },
+                        {
+                            "key": "Anonymous VPN IPv6",
+                            "value": "anon_vpn_ipv6",
+                        },
                         {"key": "APT IPv6", "value": "apt_ipv6"},
                         {"key": "Infected Bot IPv6", "value": "bot_ipv6"},
                         {"key": "Brute Force IPv6", "value": "brute_ipv6"},
                         {"key": "Malware C&C IPv6", "value": "c2_ipv6"},
-                        {"key": "Commercial Webproxy IPv6", "value": "comm_proxy_ipv6"},
-                        {"key": "Compromised IPv6", "value": "compromised_ipv6"},
-                        {"key": "Cryptocurrency IPv6", "value": "crypto_ipv6"},
+                        {
+                            "key": "Commercial Webproxy IPv6",
+                            "value": "comm_proxy_ipv6",
+                        },
+                        {
+                            "key": "Compromised IPv6",
+                            "value": "compromised_ipv6",
+                        },
+                        {
+                            "key": "Cryptocurrency IPv6",
+                            "value": "crypto_ipv6",
+                        },
                         {"key": "DDOS IPv6", "value": "ddos_ipv6"},
-                        {"key": "Downloader IPv6", "value": "downloader_ipv6"},
-                        {"key": "Data Exfiltration IPv6", "value": "exfil_ipv6"},
+                        {
+                            "key": "Downloader IPv6",
+                            "value": "downloader_ipv6",
+                        },
+                        {
+                            "key": "Data Exfiltration IPv6",
+                            "value": "exfil_ipv6",
+                        },
                         {"key": "Exploit Kit IPv6", "value": "exploit_ipv6"},
                         {"key": "Fraud IPv6", "value": "fraud_ipv6"},
                         {"key": "I2P IPv6", "value": "i2p_ipv6"},
@@ -1191,20 +1409,41 @@ class AnomaliThreatstreamPlugin(PluginBase):
                             "value": "iot_ipv6",
                         },
                         {"key": "Malware IPv6", "value": "mal_ipv6"},
-                        {"key": "Peer-to-Peer C&C IPv6", "value": "p2pcnc_ipv6"},
-                        {"key": "Domain Parking IPv6", "value": "parked_ipv6"},
+                        {
+                            "key": "Peer-to-Peer C&C IPv6",
+                            "value": "p2pcnc_ipv6",
+                        },
+                        {
+                            "key": "Domain Parking IPv6",
+                            "value": "parked_ipv6",
+                        },
                         {"key": "Phishing IPv6", "value": "phish_ipv6"},
-                        {"key": "Point Of Sale Malicious IPv6", "value": "pos_ipv6"},
+                        {
+                            "key": "Point Of Sale Malicious IPv6",
+                            "value": "pos_ipv6",
+                        },
                         {"key": "Open Proxy IPv6", "value": "proxy_ipv6"},
-                        {"key": "Ransomware IPv6", "value": "ransomware_ipv6"},
+                        {
+                            "key": "Ransomware IPv6",
+                            "value": "ransomware_ipv6",
+                        },
                         {"key": "Scanning IPv6", "value": "scan_ipv6"},
                         {"key": "Sinkhole IPv6", "value": "sinkhole_ipv6"},
                         {"key": "Spammer IPv6", "value": "spam_ipv6"},
                         {"key": "SSH Brute Force IPv6", "value": "ssh_ipv6"},
-                        {"key": "Suppress Alerts IPv6", "value": "suppress_ipv6"},
-                        {"key": "Suspicious IPv6", "value": "suspicious_ipv6"},
+                        {
+                            "key": "Suppress Alerts IPv6",
+                            "value": "suppress_ipv6",
+                        },
+                        {
+                            "key": "Suspicious IPv6",
+                            "value": "suspicious_ipv6",
+                        },
                         {"key": "TOR Node IPv6", "value": "tor_ipv6"},
-                        {"key": "Trojan IPv6 Address", "value": "trojan_ipv6"},
+                        {
+                            "key": "Trojan IPv6 Address",
+                            "value": "trojan_ipv6",
+                        },
                         {"key": "Cloud Server IPv6", "value": "vps_ipv6"},
                     ],
                     "default": "actor_ipv6",
@@ -1221,23 +1460,44 @@ class AnomaliThreatstreamPlugin(PluginBase):
                         {"key": "Adware Domain", "value": "adware_domain"},
                         {"key": "APT Domain", "value": "apt_domain"},
                         {"key": "Bot Domain", "value": "bot_domain"},
-                        {"key": "Malware C&C Domain Name", "value": "c2_domain"},
+                        {
+                            "key": "Malware C&C Domain Name",
+                            "value": "c2_domain",
+                        },
                         {
                             "key": "Commercial Webproxy Domain",
                             "value": "comm_proxy_domain",
                         },
-                        {"key": "Compromised Domain", "value": "compromised_domain"},
-                        {"key": "Cryptocurrency Pool Domain", "value": "crypto_pool"},
+                        {
+                            "key": "Compromised Domain",
+                            "value": "compromised_domain",
+                        },
+                        {
+                            "key": "Cryptocurrency Pool Domain",
+                            "value": "crypto_pool",
+                        },
                         {
                             "key": "Disposable Email Domain",
                             "value": "disposable_email_domain",
                         },
-                        {"key": "Downloader Domain", "value": "downloader_domain"},
+                        {
+                            "key": "Downloader Domain",
+                            "value": "downloader_domain",
+                        },
                         {"key": "Dynamic DNS", "value": "dyn_dns"},
-                        {"key": "Data Exfiltration Domain", "value": "exfil_domain"},
-                        {"key": "Exploit Kit Domain", "value": "exploit_domain"},
+                        {
+                            "key": "Data Exfiltration Domain",
+                            "value": "exfil_domain",
+                        },
+                        {
+                            "key": "Exploit Kit Domain",
+                            "value": "exploit_domain",
+                        },
                         {"key": "Fraud Domain", "value": "fraud_domain"},
-                        {"key": "Free Email Domain", "value": "free_email_domain"},
+                        {
+                            "key": "Free Email Domain",
+                            "value": "free_email_domain",
+                        },
                         {
                             "key": "Information Stealer Domain",
                             "value": "infostealer_domain",
@@ -1253,12 +1513,24 @@ class AnomaliThreatstreamPlugin(PluginBase):
                             "key": "Point Of Sale Malicious Domain",
                             "value": "pos_domain",
                         },
-                        {"key": "Ransomware Domain", "value": "ransomware_domain"},
-                        {"key": "Sinkhole Domain", "value": "sinkhole_domain"},
+                        {
+                            "key": "Ransomware Domain",
+                            "value": "ransomware_domain",
+                        },
+                        {
+                            "key": "Sinkhole Domain",
+                            "value": "sinkhole_domain",
+                        },
                         {"key": "Spam Domain", "value": "spam_domain"},
-                        {"key": "Suspicious Domain", "value": "suspicious_domain"},
+                        {
+                            "key": "Suspicious Domain",
+                            "value": "suspicious_domain",
+                        },
                         {"key": "Trojan Domain", "value": "trojan_domain"},
-                        {"key": "Anonymous VPN Domain", "value": "vpn_domain"},
+                        {
+                            "key": "Anonymous VPN Domain",
+                            "value": "vpn_domain",
+                        },
                         {
                             "key": "Whois Privacy Email Domain",
                             "value": "whois_privacy_domain",
@@ -1281,10 +1553,16 @@ class AnomaliThreatstreamPlugin(PluginBase):
                             "key": "Cryptocurrency Mining Software",
                             "value": "crypto_hash",
                         },
-                        {"key": "Downloader File Hash", "value": "downloader_hash"},
+                        {
+                            "key": "Downloader File Hash",
+                            "value": "downloader_hash",
+                        },
                         {"key": "Exploit Hash", "value": "exploit_md5"},
                         {"key": "Fraud Hash", "value": "fraud_md5"},
-                        {"key": "Hack Tool File Hash", "value": "hack_tool_md5"},
+                        {
+                            "key": "Hack Tool File Hash",
+                            "value": "hack_tool_md5",
+                        },
                         {
                             "key": "Information Stealer File Hash",
                             "value": "infostealer_hash",
@@ -1293,15 +1571,24 @@ class AnomaliThreatstreamPlugin(PluginBase):
                             "key": "Internet Of Things Malicious File Hash",
                             "value": "iot_hash",
                         },
-                        {"key": "JA3/JA3S TLS Fingerprint", "value": "ja3_md5"},
+                        {
+                            "key": "JA3/JA3S TLS Fingerprint",
+                            "value": "ja3_md5",
+                        },
                         {"key": "Malware File Hash", "value": "mal_md5"},
-                        {"key": "SSL Certificate Hash", "value": "mal_sslcert_sha1"},
+                        {
+                            "key": "SSL Certificate Hash",
+                            "value": "mal_sslcert_sha1",
+                        },
                         {"key": "Phishing File Hash", "value": "phish_md5"},
                         {
                             "key": "Point Of Sale Malicious File Hash",
                             "value": "pos_hash",
                         },
-                        {"key": "Ransomware File Hash", "value": "ransomware_hash"},
+                        {
+                            "key": "Ransomware File Hash",
+                            "value": "ransomware_hash",
+                        },
                         {"key": "Rootkit File Hash", "value": "rootkit_hash"},
                         {"key": "Trojan File Hash", "value": "trojan_hash"},
                     ],
@@ -1362,54 +1649,59 @@ class AnomaliThreatstreamPlugin(PluginBase):
             )
         return indicator_types
 
-    def _create_configuration_digest(self, configuration) -> str:
-        """Create a MD5 Digest of configurations.
+    def get_modified_indicators(self, source_indicators: List[List[Dict]]):
+        """Get all modified indicators status.
 
         Args:
-            - configuration (Dict): A dictionary containing configuration parameters.
+            source_indicators (List[List[Dict]]): Source Indicators.
 
-        Returns:
-            - A string representation of MD5 hexdigest of configuration.
+        Yields:
+            tuple: Modified Indicators and Status.
         """
-        (
-            base_url, user_name, api_key
-        ) = self._get_credentials(configuration)
-
-        config = {
-            "base_url": base_url,
-            "user_name": user_name,
-            "api_key": api_key,
-            "indicator_type": configuration.get("indicator_type", []),
-            "severity": configuration.get("severity", ""),
-            "status": configuration.get("status", "")
-        }
-        return hashlib.md5(
-            json.dumps(config, sort_keys=True).encode("utf-8")
-        ).hexdigest()
-
-    def _is_config_modified(self) -> bool:
-        """This method is used to determine wether configuration
-        is modified or not.
-
-        Returns:
-            - Returns bool flag. True or False
-        """
-        # Create current configuration digest
-        current_config_digest = self._create_configuration_digest(
-            self.configuration
+        self.log_prefix = self.log_prefix + f" [{RETRACTION}]"
+        self.logger.info(
+            f"{self.log_prefix}: Getting all modified indicators status"
+            f" from {PLATFORM_NAME}."
         )
+        retraction_interval = self.configuration.get("retraction_interval")
+        if not (retraction_interval and isinstance(retraction_interval, int)):
+            log_msg = (
+                "Retraction Interval is not available for the configuration"
+                f' "{self.config_name}". Skipping retraction of IoC(s)'
+                f" for {PLATFORM_NAME}."
+            )
+            self.logger.info(f"{self.log_prefix}: {log_msg}")
+            yield [], True
+        retraction_interval = int(retraction_interval)
+        start_time = datetime.now() - timedelta(days=retraction_interval)
+        start_time = self._convert_datetime_to_anomali_format(start_time)
+        for source_ioc_list in source_indicators:
+            try:
+                iocs = set()
+                for ioc in source_ioc_list:
+                    if ioc:
+                        iocs.add(ioc.value)
+                total_iocs = len(iocs)
+                modified_indicators = self.get_indicators(
+                    is_retraction=True, retraction_time=start_time
+                )
+                for indicator in modified_indicators:
+                    iocs -= indicator
+                self.logger.info(
+                    f"{self.log_prefix}: {len(iocs)} indicator(s) will "
+                    f"be marked as retracted from {total_iocs} total "
+                    "indicator(s) present in cloud exchange for"
+                    f" {PLATFORM_NAME}."
+                )
 
-        # Fetch previous configuration digest from storage
-        config_digest = self.storage.get("config_digest")
-        if not config_digest:
-            # If config digest not present,
-            # then update storage with current digest.
-            self.storage["config_digest"] = current_config_digest
-
-        # Set is_config_modified flag
-        is_config_modified = bool(current_config_digest == config_digest)
-        if is_config_modified:
-            # if config is modified, set new config digest in storage.
-            self.storage["config_digest"] = current_config_digest
-
-        return is_config_modified
+                yield list(iocs), False
+            except Exception as err:
+                err_msg = (
+                    f"Error while fetching modified indicators from"
+                    f" {PLATFORM_NAME}."
+                )
+                self.logger.error(
+                    message=(f"{self.log_prefix}: {err_msg} Error: {err}"),
+                    details=traceback.format_exc(),
+                )
+                raise AnomaliThreatstreamPluginException(err_msg)

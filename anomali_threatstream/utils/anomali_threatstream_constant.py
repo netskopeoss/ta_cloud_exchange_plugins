@@ -31,8 +31,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 CTE Anomali Threatstream plugin constants.
 """
-from netskope.integrations.cte.models import SeverityType
 
+from netskope.integrations.cte.models import SeverityType
 
 SEVERITY_MAPPING = {
     "very-high": SeverityType.CRITICAL,
@@ -57,18 +57,23 @@ ANOMALI_STATUS = ["active", "inactive", "falsepos"]
 MODULE_NAME = "CTE"
 PLUGIN_NAME = "Anomali Threatstream XDR"
 PLATFORM_NAME = "Anomali Threatstream XDR"
-PLUGIN_VERSION = "1.2.0"
+PLUGIN_VERSION = "1.3.0"
 MAX_RETRIES = 4
 DEFAULT_WAIT_TIME = 60
 RETRY_SLEEP_TIME = 50
 MAX_PAGE_SIZE = 1000
 PAGE_LIMIT = 100
-DATE_FORMAT_FOR_IOCS = "%Y-%m-%dT%H:%M:%S.%f%Z"
+DATE_FORMAT_FOR_IOCS = r"%Y-%m-%dT%H:%M:%S.%f%Z"
 TARGET_SIZE_MB = 10
-BYTES_TO_MB = 1024.0 ** 2
-
+BYTES_TO_MB = 1024.0**2
+DEFAULT_REPUTATION = 5
 # Maximum number of Initial Range in Days.
 INTEGER_THRESHOLD = 4611686018427387904
 
 # Tag Name
 TAG_NAME = "netskope-ce"
+PREFIX_IOC_SOURCE = "Netskope CE"
+SEPARATOR = "|"
+
+# Retraction Constant
+RETRACTION = "Retraction"

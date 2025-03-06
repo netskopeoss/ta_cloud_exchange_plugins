@@ -34,8 +34,10 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
 from jsonschema import validate
-from .datadog_exceptions import MappingValidationError
 from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
+from netskope.common.utils import AlertsHelper
+
+from .datadog_exceptions import MappingValidationError
 
 
 def validate_extension(instance):
@@ -237,7 +239,11 @@ def get_datadog_mappings(mappings, data_type):
                     )
                 )
 
-    return mappings["delimiter"], mappings["cef_version"], mappings["taxonomy"]
+    return (
+        mappings["delimiter"],
+        mappings["cef_version"],
+        mappings["taxonomy"],
+    )
 
 
 def extract_subtypes(mappings, data_type):
@@ -254,3 +260,17 @@ def extract_subtypes(mappings, data_type):
     """
     taxonomy = mappings["taxonomy"][data_type]
     return [subtype for subtype in taxonomy]
+
+
+def get_tenant_name(source):
+    """Get Tenant Name.
+
+    Args:
+        source (str): Source Configuration Name
+
+    Returns:
+        str|None: Tenant configuration Name.
+    """
+    helper = AlertsHelper()
+    tenant_name = helper.get_tenant_cls(source).name
+    return tenant_name if tenant_name else None

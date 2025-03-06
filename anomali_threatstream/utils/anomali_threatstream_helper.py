@@ -33,18 +33,20 @@ CTE Anomali Threatstream plugin helper module.
 """
 
 import json
-import traceback
-import time
-import sys
-import requests
 import re
-from netskope.common.utils import add_user_agent
+import sys
+import time
+import traceback
+from typing import Dict
 
+import requests
+from netskope.common.utils import add_user_agent
 
 from .anomali_threatstream_constant import (
     DEFAULT_WAIT_TIME,
     MAX_RETRIES,
     MODULE_NAME,
+    RETRACTION,
     TARGET_SIZE_MB,
 )
 
@@ -68,8 +70,6 @@ class AnomaliThreatstreamPluginHelper(object):
         log_prefix: str,
         plugin_name: str,
         plugin_version: str,
-        ssl_validation,
-        proxy,
     ):
         """AnomaliThreatstreamHelper initializer.
 
@@ -83,8 +83,6 @@ class AnomaliThreatstreamPluginHelper(object):
         self.logger = logger
         self.plugin_name = plugin_name
         self.plugin_version = plugin_version
-        self.ssl_validation = ssl_validation
-        self.proxy = proxy
 
     def validate_comma_separated_values(self, value: str) -> bool:
         """
@@ -96,7 +94,7 @@ class AnomaliThreatstreamPluginHelper(object):
         Returns:
             bool: True if the format is correct, False otherwise.
         """
-        
+
         pattern = re.compile(r"^(([0-9\s](,)?)*)+$")
         if pattern.match(value) == None:
             return False
@@ -121,7 +119,9 @@ class AnomaliThreatstreamPluginHelper(object):
         headers.update({"User-Agent": user_agent})
         return headers
 
-    def parse_response(self, response: requests.models.Response, is_validation: bool):
+    def parse_response(
+        self, response: requests.models.Response, is_validation: bool
+    ):
         """Parse Response will return JSON from response object.
 
         Args:
@@ -134,7 +134,9 @@ class AnomaliThreatstreamPluginHelper(object):
         try:
             return response.json()
         except json.JSONDecodeError as err:
-            err_msg = f"Invalid JSON response received from API. Error: {str(err)}"
+            err_msg = (
+                f"Invalid JSON response received from API. Error: {str(err)}"
+            )
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg}",
                 details=f"API response: {response.text}",
@@ -155,7 +157,9 @@ class AnomaliThreatstreamPluginHelper(object):
                 err_msg = "Verify Base URL, Username and API Key provided in the configuration parameters."
             raise AnomaliThreatstreamPluginException(err_msg)
 
-    def handle_error(self, resp: requests.models.Response, logger_msg, is_validation):
+    def handle_error(
+        self, resp: requests.models.Response, logger_msg, is_validation
+    ):
         """Handle the different HTTP response code.
 
         Args:
@@ -180,7 +184,9 @@ class AnomaliThreatstreamPluginHelper(object):
             404: "Not Found",
         }
         if status_code in [200, 201]:
-            return self.parse_response(response=resp, is_validation=is_validation)
+            return self.parse_response(
+                response=resp, is_validation=is_validation
+            )
         elif status_code == 202:
             return {}
         elif status_code == 204:
@@ -223,6 +229,9 @@ class AnomaliThreatstreamPluginHelper(object):
         data=None,
         headers=None,
         is_validation=False,
+        is_retraction: bool = False,
+        verify: bool = True,
+        proxies: Dict = {},
     ):
         """API Helper perform API request to ThirdParty platform
         and captures all the possible errors for requests.
@@ -236,6 +245,8 @@ class AnomaliThreatstreamPluginHelper(object):
             dict: Response dictionary.
         """
         try:
+            if is_retraction and RETRACTION not in self.log_prefix:
+                self.log_prefix = self.log_prefix + f" [{RETRACTION}]"
             display_headers = {
                 k: v for k, v in headers.items() if k not in {"Authorization"}
             }
@@ -251,8 +262,8 @@ class AnomaliThreatstreamPluginHelper(object):
                     params=params,
                     data=data,
                     headers=headers,
-                    verify=self.ssl_validation,
-                    proxies=self.proxy,
+                    verify=verify,
+                    proxies=proxies,
                 )
                 self.logger.debug(
                     f"{self.log_prefix}: Received API Response while "
@@ -263,7 +274,10 @@ class AnomaliThreatstreamPluginHelper(object):
                 if (
                     not is_validation
                     and response.status_code == 429
-                    or (response.status_code >= 500 and response.status_code <= 600)
+                    or (
+                        response.status_code >= 500
+                        and response.status_code <= 600
+                    )
                 ):
                     if retry_counter == MAX_RETRIES - 1:
                         err_msg = (
@@ -297,7 +311,16 @@ class AnomaliThreatstreamPluginHelper(object):
                     )
                     time.sleep(DEFAULT_WAIT_TIME)
                 else:
-                    return self.handle_error(response, logger_msg, is_validation)
+                    return self.handle_error(
+                        response, logger_msg, is_validation
+                    )
+        except requests.ReadTimeout as error:
+            err_msg = f"Read Timeout error occurred while {logger_msg}."
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg} Error: {error}",
+                details=str(traceback.format_exc()),
+            )
+            raise AnomaliThreatstreamPluginException(err_msg)
 
         except requests.exceptions.ProxyError as error:
             err_msg = f"Proxy error occurred while {logger_msg}. Verify the provided proxy configuration."

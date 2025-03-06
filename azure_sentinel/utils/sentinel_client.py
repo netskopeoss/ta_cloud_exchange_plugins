@@ -201,7 +201,8 @@ class AzureSentinelClient:
             err_msg = f"Invalid JSON response received from API. {str(err)}"
             if is_validation:
                 err_msg = (
-                    "Verify Workspace ID and Primary Key provided in "
+                    "Verify Azure Log Analytics Domain, Workspace ID and "
+                    "Primary Key provided in "
                     "the configuration parameters."
                 )
             self.logger.error(
@@ -216,8 +217,9 @@ class AzureSentinelClient:
             )
             if is_validation:
                 err_msg = (
-                    "Verify Workspace ID and Primary Key provided in"
-                    " the configuration parameters."
+                    "Verify Azure Log Analytics Domain, Workspace ID and "
+                    "Primary Key provided in "
+                    "the configuration parameters."
                 )
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg}",
@@ -243,7 +245,8 @@ class AzureSentinelClient:
         """
         status_code = resp.status_code
         validation_msg = (
-            " Verify the Workspace ID and Primary Key provided in "
+            " Verify the Azure Log Analytics Domain, Workspace ID and "
+            "Primary Key provided in the "
             "configuration parameters."
         )
         error_dict = {
@@ -403,7 +406,8 @@ class AzureSentinelClient:
         except requests.exceptions.ConnectionError as error:
             err_msg = (
                 f"Unable to establish connection while {logger_msg}. "
-                "Check Workspace ID provided in configuration parameter."
+                "Check the Azure Log Analytics Domain or Workspace "
+                "ID provided in configuration parameter."
             )
             self.logger.error(
                 message=(
@@ -459,7 +463,7 @@ class AzureSentinelClient:
         )  # Recursively process the second half
         return part1 + part2  # Combine the results from both halves
 
-    def push(self, data, data_type, sub_type, logger_msg, is_validation=False):
+    def push(self, data, data_type, sub_type, logger_msg, base_url, is_validation=False):
         """Call method of post_data with appropriate parameters.
 
         :param data: The data to be ingested
@@ -492,7 +496,7 @@ class AzureSentinelClient:
                 "%a, %d %b %Y %H:%M:%S GMT"
             )
 
-            uri = API_BASE_URL.format(workspace_id, RESOURCE)
+            uri = API_BASE_URL.format(workspace_id, base_url, RESOURCE)
             headers = {
                 "Content-Type": CONTENT_TYPE,
                 "Log-Type": log_type,

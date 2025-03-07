@@ -1,3 +1,7 @@
+# 2.1.1
+## Fixed
+- Close gracefully to avoid data truncation.
+
 # 2.1.0
 ## Fixed
 - Fixed performance issues.

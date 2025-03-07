@@ -1,7 +1,7 @@
 {
   "name": "Elastic",
   "id": "elastic",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "mapping": "Elastic Default Mappings (Recommended)",
   "description": "This plugin is used to deliver alerts/events data to Elastic platform. Refer the [documentation](https://docs.elastic.co/integrations/netskope) for Elastic Agent deployment.",
   "netskope": false,

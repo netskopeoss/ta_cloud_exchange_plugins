@@ -1,0 +1,53 @@
+{
+  "name": "Bitsight",
+  "id": "bitsight_ztre",
+  "version": "1.0.0",
+  "module": "CRE",
+  "minimum_version": "5.1.0",
+  "netskope": false,
+  "description": "This plugin is used to fetch companies and their respective Security Rating from the Bitsight platform. It retrieves first-party companies from the Security Performance Management > Organization > My Company List page and third-party companies from the Continuous Monitoring > Portfolio Risk > Companies List page. This plugin also support performing Add company to tier and Remove company from tier actions on Bitsight.\n\nNetskope normalization score calculation => ((Security Rating - 250)/(900-250))) x 1000.",
+  "configuration": [
+    {
+      "label": "User API Token",
+      "key": "user_api_token",
+      "type": "password",
+      "default": "",
+      "mandatory": true,
+      "description": "User API Token for Bitsight account. User API Token can be generated from 'Settings > Account > User Preferences' page."
+    },
+    {
+      "label": "Security Rating",
+      "key": "rating",
+      "type": "number",
+      "default": 900,
+      "mandatory": true,
+      "description": "Only the companies with Security Rating less than or equal to the provided Security Rating will be pulled in CE. Value should be an integer in range of 250 to 900."
+    },
+    {
+      "label": "Rating type",
+      "key": "rating_type",
+      "type": "choice",
+      "choices": [
+        {
+          "key": "Bitsight Curated",
+          "value": "CURATED"
+        },
+        {
+          "key": "Self-Published",
+          "value": "SELF-PUBLISHED"
+        },
+        {
+          "key": "Privately Published",
+          "value": "PRIVATE"
+        },
+        {
+          "key": "All Rating Types",
+          "value": "All"
+        }
+      ],
+      "default": "All",
+      "mandatory": true,
+      "description": "Rating type used to pull the companies from Bitsight."
+    }
+  ]
+}

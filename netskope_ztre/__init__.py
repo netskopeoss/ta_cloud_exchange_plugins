@@ -1,1 +1,1 @@
-"""Netskope ITSM package."""
+"""Netskope CRE package."""

@@ -29,32 +29,24 @@ from netskope.integrations.crev2.plugin_base import (
 )
 from netskope.integrations.crev2.utils import get_latest_values
 from requests.exceptions import ConnectionError
+from .utils.constants import (
+    MAX_RETRY_COUNT,
+    PAGE_SIZE,
+    MAX_HOSTS_PER_PRIVATE_APP,
+    REGEX_HOST,
+    REGEX_EMAIL,
+    MODULE_NAME,
+    PLUGIN,
+    PLUGIN_VERSION,
+    URLS,
+    ERROR_TAG_EXISTS,
+    ERROR_APP_DOES_NOT_EXIST,
+    SUCCESS,
+    ADD_REMOVE_USER_BATCH_SIZE,
+    APP_INSTANCE_BATCH_SIZE,
+    TAG_APP_BATCH_SIZE,
+)
 
-MAX_RETRY_COUNT = 4
-PAGE_SIZE = 100
-MAX_HOSTS_PER_PRIVATE_APP = 500
-REGEX_HOST = (
-    r"^(?!:\/\/)([a-z0-9-]{1,63}\.)?[a-z0-9-]{1,63}(?:\.[a-z]{2,})?$|"
-    r"^(?:(?:25[0-5]|(2[0-4]|1\d|[1-9]|)\d)\.){3}(?:25[0-5]|(?:2[0-4]|1\d|[1-9]|)\d)$"
-)
-REGEX_EMAIL = r"[^@]+@[^@]+\.[^@]+"
-MODULE_NAME = "CRE"
-PLUGIN = "Netskope CRE"
-PLUGIN_VERSION = "1.1.1"
-URLS = {
-    "V2_PRIVATE_APP": "{}/api/v2/steering/apps/private",
-    "V2_PRIVATE_APP_PATCH": "{}/api/v2/steering/apps/private/{}",
-    "V2_PUBLISHER": "{}/api/v2/infrastructure/publishers",
-    "V2_CCI_TAG_CREATE": "{}/api/v2/services/cci/tags",
-    "V2_CCI_TAG_UPDATE": "{}/api/v2/services/cci/tags/{}",
-    "V1_APP_INSTANCE": "{}/api/v1/app_instances",
-}
-ERROR_TAG_EXISTS = (
-    "Tag provided is already present. Hence use PATCH method to add "
-    "existing tag to the list of apps/ids"
-)
-ERROR_APP_DOES_NOT_EXIST = "No records matched"
-SUCCESS = "Success"
 plugin_provider_helper = PluginProviderHelper()
 
 
@@ -222,9 +214,7 @@ class NetskopePlugin(PluginBase):
         """Call the API helper for getting application related data."""
         request_func = getattr(requests, method)
 
-        tenant_name = self.tenant.parameters.get("tenantName").replace(
-            " ", ""
-        )
+        tenant_name = self.tenant.parameters.get("tenantName").replace(" ", "")
         token = resolve_secret(self.tenant.parameters.get("v2token"))
         url = f"{tenant_name}/api/v2{endpoint}"
         headers = {
@@ -248,9 +238,7 @@ class NetskopePlugin(PluginBase):
             if not success:
                 raise response
 
-            if response.status_code == 429 and attempt < (
-                MAX_RETRY_COUNT - 1
-            ):
+            if response.status_code == 429 and attempt < (MAX_RETRY_COUNT - 1):
                 self.logger.error(
                     f"{self.log_prefix}: Received Too Many Requests error. "
                     f"Performing retry for url {url}. "
@@ -362,7 +350,10 @@ class NetskopePlugin(PluginBase):
                 f" {len(app_data)} application(s) from "
                 f"Netskope Tenant. Skipped {skip_app_count} application(s) due to invalid data."
             )
-            return app_data
+            apps = [
+                {k: v for k, v in app.items() if v} for app in app_data
+            ]
+            return apps
         except Exception as e:
             self.logger.info(
                 f"{self.log_prefix}: Polling is disabled, skipping. {e}"
@@ -582,13 +573,13 @@ class NetskopePlugin(PluginBase):
         ]
 
     def _get_all_groups(
-        self, configuration: Dict, log_in_status_check=False
+        self, log_in_status_check=False
     ) -> List:
         """Get list of all the groups.
 
         Args:
-            configuration (Dict): Configuration parameters.
-
+            log_in_status_check (bool, optional): Log in status check. \
+                Defaults to False.
         Returns:
             List: List of all the groups.
         """
@@ -605,7 +596,10 @@ class NetskopePlugin(PluginBase):
                 error_code="CRE_1015",
                 custom_message="Error occurred while fetching groups",
                 plugin=PLUGIN,
-                url=f"{self.tenant.parameters.get('tenantName').replace(' ', '')}/api/v2/scim/Groups",
+                url=(
+                    f"{self.tenant.parameters.get('tenantName').replace(' ', '')}"
+                    f"{URLS.get('V2_SCIM_GROUPS')}"
+                ),
                 headers=add_installation_id(add_user_agent(headers)),
                 params={"count": PAGE_SIZE, "startIndex": start_at},
                 proxies=self.proxy,
@@ -629,11 +623,8 @@ class NetskopePlugin(PluginBase):
             start_at += PAGE_SIZE
         return all_groups
 
-    def _get_all_users(self, configuration: Dict) -> List:
+    def _get_all_users(self) -> List:
         """Get list of all the users.
-
-        Args:
-            configuration (Dict): Configuration parameters.
 
         Returns:
             List: List of all the users.
@@ -706,7 +697,7 @@ class NetskopePlugin(PluginBase):
         return None
 
     def _remove_from_group(
-        self, configuration: Dict, user_id: str, group_id: str
+        self, configuration: Dict, user_ids: List[Dict], group_id: str
     ):
         """Remove specified user from the specified group.
 
@@ -729,7 +720,7 @@ class NetskopePlugin(PluginBase):
                 {
                     "op": "remove",
                     "path": "members",
-                    "value": [{"value": user_id}],
+                    "value": user_ids,
                 }
             ],
         }
@@ -738,7 +729,10 @@ class NetskopePlugin(PluginBase):
             error_code="CRE_1017",
             custom_message="Error occurred while removing user from group",
             plugin=PLUGIN,
-            url=f"{self.tenant.parameters.get('tenantName').replace(' ', '')}/api/v2/scim/Groups/{group_id}",
+            url=(
+                f"{self.tenant.parameters.get('tenantName').replace(' ', '')}"
+                f"{URLS.get('V2_SCIM_GROUPS')}/{group_id}"
+            ),
             headers=add_installation_id(add_user_agent(headers)),
             json=body,
             proxies=self.proxy,
@@ -757,12 +751,12 @@ class NetskopePlugin(PluginBase):
             notify=False,
         )
 
-    def _add_to_group(self, configuration: Dict, user_id: str, group_id: str):
+    def _add_to_group(self, configuration: Dict, user_ids: List[Dict], group_id: str):
         """Add specified user to the specified group.
 
         Args:
             configuration (Dict): Configuration parameters.
-            user_id (str): User ID of the user.
+            user_id (str): List of User ID payload.
             group_id (str): Group ID of the group.
 
         Raises:
@@ -779,7 +773,7 @@ class NetskopePlugin(PluginBase):
                 {
                     "op": "add",
                     "path": "members",
-                    "value": [{"value": user_id}],
+                    "value": user_ids,
                 }
             ],
         }
@@ -788,7 +782,10 @@ class NetskopePlugin(PluginBase):
             error_code="CRE_1018",
             custom_message="Error occurred while adding user to group",
             plugin=PLUGIN,
-            url=f"{self.tenant.parameters.get('tenantName').replace(' ', '')}/api/v2/scim/Groups/{group_id}",
+            url=(
+                f"{self.tenant.parameters.get('tenantName').replace(' ', '')}"
+                f"{URLS.get('V2_SCIM_GROUPS')}/{group_id}"
+            ),
             headers=add_installation_id(add_user_agent(headers)),
             json=body,
             proxies=self.proxy,
@@ -855,7 +852,10 @@ class NetskopePlugin(PluginBase):
             error_code="CRE_1019",
             custom_message="Error occurred while creating group",
             plugin=PLUGIN,
-            url=f"{self.tenant.parameters.get('tenantName').replace(' ', '')}/api/v2/scim/Groups",
+            url=(
+                f"{self.tenant.parameters.get('tenantName').replace(' ', '')}"
+                f"{URLS.get('V2_SCIM_GROUPS')}"
+            ),
             headers=add_installation_id(add_user_agent(headers)),
             json=body,
             proxies=self.proxy,
@@ -1014,9 +1014,7 @@ class NetskopePlugin(PluginBase):
             )
         elif action.value == "app_instance":
             try:
-                self._process_params_for_app_instance_action(
-                    action.parameters
-                )
+                self._process_params_for_app_instance_action(action.parameters)
             except NetskopeException as ex:
                 return ValidationResult(success=False, message=str(ex))
             return ValidationResult(
@@ -1047,6 +1045,17 @@ class NetskopePlugin(PluginBase):
                 )
                 return ValidationResult(success=False, message=str(e))
 
+            tags = action.parameters.get("tags", "")
+            if tags and "$" not in tags:
+                for tag in tags.split(","):
+                    if len(tag.strip()) > 30:
+                        return ValidationResult(
+                            success=False,
+                            message=(
+                                "Each tag should be less than or equal "
+                                "to 30 characters."
+                            ),
+                        )
             list_of_private_apps_list = list(existing_private_apps.keys())
             list_of_private_apps_list.append("create")
             if (
@@ -1169,12 +1178,9 @@ class NetskopePlugin(PluginBase):
             )
         elif action.value in ["add", "remove"]:
             groups = self._get_all_groups(
-                self.configuration, log_in_status_check=True
+                log_in_status_check=True
             )
-            if (
-                action.parameters.get("group") != "create"
-                and len(groups) <= 0
-            ):
+            if action.parameters.get("group") != "create" and len(groups) <= 0:
                 return ValidationResult(
                     success=False, message="No groups available."
                 )
@@ -1250,9 +1256,7 @@ class NetskopePlugin(PluginBase):
             custom_message="Error occurred while checking private apps",
             plugin=self.log_prefix,
             url=URLS["V2_PRIVATE_APP"].format(tenant_name),
-            params={
-                "fields": "app_id,app_name,host"
-            },  # we need only 3 fields
+            params={"fields": "app_id,app_name,host"},  # we need only 3 fields
         )
         if not success:
             raise private_app_netskope
@@ -1294,9 +1298,7 @@ class NetskopePlugin(PluginBase):
             custom_message="Error occurred while checking private apps",
             plugin=self.log_prefix,
             url=URLS["V2_PRIVATE_APP"].format(tenant_name),
-            params={
-                "fields": "app_id,app_name,host"
-            },  # we need only 3 fields
+            params={"fields": "app_id,app_name,host"},  # we need only 3 fields
         )
         if not success:
             raise private_app_netskope
@@ -1328,7 +1330,7 @@ class NetskopePlugin(PluginBase):
         if action.value == "generate":
             return []
         if action.value in ["add", "remove"]:
-            groups = self._get_all_groups(self.configuration)
+            groups = self._get_all_groups()
             groups = sorted(
                 groups, key=lambda g: g.get("displayName", "").lower()
             )
@@ -1904,7 +1906,7 @@ Provide Default Host in Static field if you have selected 'Create new private ap
                     notify=False,
                 )
 
-                if update_tags_response.get("message_status") != SUCCESS:
+                if update_tags_response.get("status") != SUCCESS:
                     self.logger.error(
                         f"{self.log_prefix}: Error occurred while tagging the application on Netskope. "
                         f"Received exit code {update_tags.status_code}.",
@@ -2116,12 +2118,12 @@ Provide Default Host in Static field if you have selected 'Create new private ap
         skip_score_validation = isinstance(score, str) and score.startswith(
             "$"
         )
-        skip_source_validation = isinstance(
-            source, str
-        ) and source.startswith("$")
-        skip_reason_validation = isinstance(
-            reason, str
-        ) and reason.startswith("$")
+        skip_source_validation = isinstance(source, str) and source.startswith(
+            "$"
+        )
+        skip_reason_validation = isinstance(reason, str) and reason.startswith(
+            "$"
+        )
 
         if not skip_user_validation:
             user = user.strip()
@@ -2195,31 +2197,41 @@ Provide Default Host in Static field if you have selected 'Create new private ap
         ids = convert_to_list(ids)
 
         if not tags and not skip_tag_validation:
-            raise NetskopeException(
+            err_msg = (
                 "Invalid value for tags provided. Tags can not be empty."
             )
+            self.logger.error(f"{self.log_prefix}: {err_msg}")
+            raise NetskopeException(err_msg)
+
         if (not apps and not ids) and not (
             skip_apps_validation or skip_ids_validation
         ):
-            raise NetskopeException(
+            err_msg = (
                 "Invalid value for apps/ids provided. "
-                "Application Names and Ids can not both be empty."
+                "Application Names and Ids can not be empty."
             )
+            self.logger.error(f"{self.log_prefix}: {err_msg}")
+            raise NetskopeException(err_msg)
 
         if apps and ids and not (skip_apps_validation or skip_ids_validation):
-            raise NetskopeException(
+            err_msg = (
                 "Invalid value for apps/ids provided. "
-                "Application Names and Ids both can not be provided at the same time."
+                "Application Names and Ids both can not be "
+                "provided at the same time."
             )
+            self.logger.error(f"{self.log_prefix}: {err_msg}")
+            raise NetskopeException(err_msg)
 
         try:
             ids = list(map(int, ids))
         except ValueError as ex:
             if not skip_ids_validation:
-                raise NetskopeException(
+                err_msg = (
                     "Invalid value for Application Ids provided. "
                     "One of the id is not a valid integer."
-                ) from ex
+                )
+                self.logger.error(f"{self.log_prefix}: {err_msg}")
+                raise NetskopeException(err_msg) from ex
 
         return tags, apps, ids
 
@@ -2244,9 +2256,7 @@ Provide Default Host in Static field if you have selected 'Create new private ap
                 )
             )
             action_dict = action.parameters
-            existing_private_app_name = action_dict.get(
-                "private_app_name", ""
-            )
+            existing_private_app_name = action_dict.get("private_app_name", "")
             new_private_app_name = action_dict.get("name", "")
             host = action_dict["host"]
             if existing_private_app_name == "create":
@@ -2368,10 +2378,28 @@ Provide Default Host in Static field if you have selected 'Create new private ap
         ]
         use_publisher_dns = action_dict.get("use_publisher_dns", False)
         if not action_dict.get("host"):
-            raise NetskopeException("Host can not be empty.")
+            err_msg = (
+                "Empty Host found in the record. "
+                "Host can not be empty."
+            )
+            self.logger.error(
+                f"{self.log_prefix}: {err_msg}"
+            )
+            raise NetskopeException(err_msg)
         tags = action_dict.get("tags", [])
         if tags and isinstance(tags, str):
             tags = list(map(lambda x: x.strip(), tags.split(",")))
+            for tag in tags:
+                if len(tag) > 30:
+                    err_msg = (
+                        "Found tag length greater than 30 characters. "
+                        "Tag length should be less than or equal to 30 characters."
+                    )
+                    self.logger.error(
+                        message=err_msg,
+                        details=str(tag)
+                    )
+                    raise NetskopeException(err_msg)
 
         return self._push_private_app(
             action_dict["host"],
@@ -2412,7 +2440,7 @@ Provide Default Host in Static field if you have selected 'Create new private ap
             return
         elif action.value in ["add", "remove"]:
             user = action.parameters.get("user", "")
-            users = self._get_all_users(self.configuration)
+            users = self._get_all_users()
             match = self._find_user_by_email(users, user)
             if match is None:
                 self.logger.info(
@@ -2422,7 +2450,7 @@ Provide Default Host in Static field if you have selected 'Create new private ap
             if action.value == "add":
                 group_id = action.parameters.get("group", "")
                 if group_id == "create":
-                    groups = self._get_all_groups(self.configuration)
+                    groups = self._get_all_groups()
                     group_name = action.parameters.get("name", "").strip()
                     group_match = self._find_group_by_name(groups, group_name)
                     if group_match is None:  # create group
@@ -2432,14 +2460,18 @@ Provide Default Host in Static field if you have selected 'Create new private ap
                         group_id = group["id"]
                     else:
                         group_id = group_match["id"]
-                self._add_to_group(self.configuration, match["id"], group_id)
+                self._add_to_group(
+                    self.configuration,
+                    [{"value": match["id"]}],
+                    group_id
+                )
                 self.logger.info(
                     f"{self.log_prefix}: Added {user} to group with ID {group_id} successfully."
                 )
             if action.value == "remove":
                 self._remove_from_group(
                     self.configuration,
-                    match["id"],
+                    [{"value": match["id"]}],
                     action.parameters.get("group", ""),
                 )
                 self.logger.info(
@@ -2470,9 +2502,7 @@ Provide Default Host in Static field if you have selected 'Create new private ap
             )
         elif action.value == "app_instance":
             instance_id, instance_name, app, tags = (
-                self._process_params_for_app_instance_action(
-                    action.parameters
-                )
+                self._process_params_for_app_instance_action(action.parameters)
             )
 
             self.session = requests.Session()
@@ -2495,6 +2525,11 @@ Provide Default Host in Static field if you have selected 'Create new private ap
         helper = AlertsHelper()
         self.tenant = helper.get_tenant_crev2(self.name)
         first_action = actions[0]
+        action_label = first_action.label
+        self.logger.info(
+            f"{self.log_prefix}: Executing '{action_label}' action "
+            f"for {len(actions)} records."
+        )
         if first_action.value == "private_app":
             private_apps = {}
             for action in actions:
@@ -2506,9 +2541,9 @@ Provide Default Host in Static field if you have selected 'Create new private ap
                     ),
                     [],
                 ).append(action.parameters)
-
             for _, batched_actions in private_apps.items():
-                params = first_action.parameters.copy()
+                first_action = batched_actions[0]
+                params = first_action.copy()
                 params["host"] = [
                     action["host"]
                     for action in batched_actions
@@ -2519,5 +2554,484 @@ Provide Default Host in Static field if you have selected 'Create new private ap
                     exclude_keys=["host", "tags", "protocol", "publishers"],
                 )
                 self._execute_private_app_action(params)
+        elif first_action.value in ["add", "remove"]:
+            skip_count = 0
+            bulk_payload = []
+            action_parameters = first_action.parameters
+            all_users = self._get_all_users()
+            if first_action.value == "add":
+                group_id = action_parameters.get("group", "")
+                if group_id == "create":
+                    groups = self._get_all_groups()
+                    group_name = action_parameters.get("name", "").strip()
+                    group_match = self._find_group_by_name(groups, group_name)
+                    if group_match is None:  # create group
+                        group = self._create_group(
+                            self.configuration, group_name
+                        )
+                        group_id = group.get("id", "")
+                        group_name = group.get("displayName", "")
+                    else:
+                        group_name = group_match.get("displayName", "")
+                        group_id = group_match.get("id", "")
+
+                for action in actions:
+                    user = action.parameters.get("user", "")
+                    match = self._find_user_by_email(all_users, user)
+                    if match is None:
+                        self.logger.info(
+                            f"{self.log_prefix}: User with email {user} "
+                            f"not found on Netskope via SCIM. "
+                            "Hence skipping execution of action "
+                            f"'{action_label}' on '{user}'."
+                        )
+                        skip_count += 1
+                        continue
+
+                    bulk_payload.append(
+                        {"value": match["id"]}
+                    )
+
+                total_users = 0
+                if bulk_payload:
+                    batch = 1
+                    for index in range(
+                        0, len(bulk_payload), ADD_REMOVE_USER_BATCH_SIZE
+                    ):
+                        batch_users = bulk_payload[
+                            index: index + ADD_REMOVE_USER_BATCH_SIZE
+                        ]
+                        self._add_to_group(
+                            self.configuration,
+                            batch_users,
+                            group_id
+                        )
+                        total_users += len(batch_users)
+                        self.logger.info(
+                            f"{self.log_prefix}: Successfully added "
+                            f"{len(batch_users)} user(s) to the group "
+                            f"with ID '{group_id}' for batch {batch}. "
+                            f"Total users added: {total_users}."
+                        )
+                        batch += 1
+
+                if skip_count > 0:
+                    self.logger.info(
+                        f"{self.log_prefix}: Skipped adding {skip_count} "
+                        f"user(s) to the group with ID '{group_id}' as they "
+                        "were not found on Netskope."
+                    )
+                self.logger.info(
+                    f"{self.log_prefix}: Sucessfully added "
+                    f"{len(bulk_payload)} user(s) to the group with "
+                    f"ID '{group_id}'."
+                )
+            elif first_action.value == "remove":
+                group_id = action_parameters.get("group", "")
+                for action in actions:
+                    user = action.parameters.get("user", "")
+                    match = self._find_user_by_email(all_users, user)
+                    if match is None:
+                        self.logger.info(
+                            f"{self.log_prefix}: User with email {user} "
+                            f"not found on Netskope via SCIM. "
+                            "Hence skipping execution of action "
+                            f"'{action_label}' on '{user}'."
+                        )
+                        skip_count += 1
+                        continue
+
+                    bulk_payload.append(
+                        {"value": match["id"]}
+                    )
+
+                total_removed = 0
+                if bulk_payload:
+                    batch = 1
+                    for index in range(
+                        0, len(bulk_payload), ADD_REMOVE_USER_BATCH_SIZE
+                    ):
+                        batch_users = bulk_payload[
+                            index: index + ADD_REMOVE_USER_BATCH_SIZE
+                        ]
+                        self._remove_from_group(
+                            self.configuration,
+                            batch_users,
+                            group_id
+                        )
+                        total_removed += len(batch_users)
+                        self.logger.info(
+                            f"{self.log_prefix}: Successfully removed "
+                            f"{len(batch_users)} user(s) from the group "
+                            f"with ID '{group_id}' for batch {batch}. "
+                            f"Total users removed: {total_removed}."
+                        )
+                        batch += 1
+
+                if skip_count > 0:
+                    self.logger.info(
+                        f"{self.log_prefix}: Skipped removing {skip_count} "
+                        f"user(s) from the group with ID '{group_id}' "
+                        "as they were not found on Netskope."
+                    )
+                self.logger.info(
+                    f"{self.log_prefix}: Sucessfully removed "
+                    f"{len(bulk_payload)} user(s) from the group with ID "
+                    f"'{group_id}'."
+                )
+        elif first_action.value == "tag_app":
+            self.session = requests.Session()
+            self.session.headers.update(
+                add_installation_id(
+                    add_user_agent(
+                        {
+                            "Netskope-API-Token": resolve_secret(
+                                self.tenant.parameters["v2token"]
+                            ),
+                        }
+                    )
+                )
+            )
+            tags_ids_apps = {}
+            for action in actions:
+                tags, apps, ids = self._process_params_for_add_tag_action(
+                    action.parameters
+                )
+
+                for tag in tags:
+                    if tag not in tags_ids_apps:
+                        tags_ids_apps[tag] = {"apps": [], "ids": []}
+
+                    if apps:
+                        tags_ids_apps[tag]["apps"] = (
+                            list(set(tags_ids_apps[tag]["apps"]) | set(apps))
+                        )
+                    if ids:
+                        tags_ids_apps[tag]["ids"] = (
+                            list(set(tags_ids_apps[tag]["ids"]) | set(ids))
+                        )
+            self._bulk_tag_application(tags_ids_apps)
+            self.logger.info(
+                f"{self.log_prefix}: Successfully added tag(s) "
+                f"{','.join(tags_ids_apps.keys())} to application(s)."
+            )
+        elif first_action.value == "app_instance":
+            bulk_app_instance_payload = {
+                "update": [],
+                "add": []
+            }
+            skip_count = 0
+            self.session = requests.Session()
+            self.session.headers.update(
+                add_installation_id(add_user_agent({}))
+            )
+            tenant_name = self.tenant.parameters["tenantName"].strip()
+            token = resolve_secret(self.tenant.parameters["token"])
+            for action in actions:
+                instance_id, instance_name, app, tags = (
+                    self._process_params_for_app_instance_action(
+                        action.parameters
+                    )
+                )
+                list_instances_success, list_instances = handle_exception(
+                    self.session.post,
+                    error_code="CRE_1045",
+                    custom_message=(
+                        "Error occurred while listing app instances."
+                    ),
+                    plugin=self.log_prefix,
+                    url=URLS["V1_APP_INSTANCE"].format(tenant_name),
+                    params={
+                        "op": "list",
+                        "app": app,
+                        "instance_id": instance_id,
+                        "instance_name": instance_name,
+                    },
+                    data={"token": token},
+                )
+                if not list_instances_success:
+                    skip_count += 1
+                    err_msg = (
+                        "Error occurred while listing app instances "
+                        "from Netskope."
+                    )
+                    self.logger.error(f"{self.log_prefix}: {err_msg}")
+                    raise NetskopeException(err_msg) from list_instances
+                list_instances_response = handle_status_code(
+                    list_instances,
+                    error_code="CRE1049",
+                    custom_message=(
+                        "Error occurred while listing app instances "
+                        "from Netskope."
+                    ),
+                    plugin=self.log_prefix,
+                    notify=False,
+                )
+                if (
+                    list_instances_response.get("status").lower() !=
+                    SUCCESS.lower()
+                ):
+                    skip_count += 1
+                    err_msg = (
+                        "Error occurred while listing app instances "
+                        "from Netskope."
+                    )
+                    self.logger.error(
+                        f"{self.log_prefix}: {err_msg} "
+                        f"Received exit code {list_instances.status_code}.",
+                        details=json.dumps(list_instances_response),
+                    )
+                    raise NetskopeException(err_msg)
+                if list_instances_response.get("data"):
+                    bulk_app_instance_payload.get("update").append(
+                        {
+                            "instance_id": instance_id,
+                            "instance_name": instance_name,
+                            "app": app,
+                            "tags": tags
+                        }
+                    )
+                else:
+                    bulk_app_instance_payload.get("add").append(
+                        {
+                            "instance_id": instance_id,
+                            "instance_name": instance_name,
+                            "app": app,
+                            "tags": tags
+                        }
+                    )
+
+            self._create_update_app_instance_bulk(
+                bulk_app_instance_payload,
+                tenant_name,
+                token
+            )
+            if skip_count > 0:
+                self.logger.info(
+                    f"{self.log_prefix}: Skipped creating/updating "
+                    f"{skip_count} app instance(s) as some error occurred."
+                )
+            self.logger.info(
+                f"{self.log_prefix}: Successfully "
+                f"created {len(bulk_app_instance_payload.get('add'))} and "
+                f"updated {len(bulk_app_instance_payload.get('update'))} "
+                "app instance(s)."
+            )
+        elif first_action.value == "generate":
+            self.logger.info(
+                f"{self.log_prefix}: Successfully performed action "
+                f"'{action_label}' on {len(actions)} records."
+            )
+            return
         else:
             raise NotImplementedError
+
+    def _create_update_app_instance_bulk(
+        self,
+        bulk_payload: dict,
+        tenant_name: str,
+        auth_token: str,
+    ):
+        """Create or update app instances.
+
+        Args:
+            bulk_payload (dict): Payload for bulk create or update
+            tenant_name (str): Tenant name
+            auth_token (str): Auth token.
+        """
+        op_counter = 1
+        for op, payload in bulk_payload.items():
+            batch = 1
+            create_update_msg = 'updating' if op == 'update' else 'adding'
+            total_app_instances = 0
+            for index in range(0, len(payload), APP_INSTANCE_BATCH_SIZE):
+                if op_counter > 1 or batch > 1:
+                    self.logger.info(
+                        f"{self.log_prefix}: Batch {batch} for "
+                        f"{create_update_msg} app instance will be executed "
+                        "in 60 seconds as App Instance API only allows 1 "
+                        "request per minute."
+                    )
+                    time.sleep(60)
+                batch_app_instances = payload[
+                    index: index + APP_INSTANCE_BATCH_SIZE
+                ]
+                create_instance_success, create_instance = handle_exception(
+                    self.session.post,
+                    error_code="CRE_1044",
+                    custom_message=(
+                        f"Error occurred while {create_update_msg} "
+                        f"app instance for batch {batch}."
+                    ),
+                    plugin=self.log_prefix,
+                    url=URLS["V1_APP_INSTANCE"].format(tenant_name),
+                    params={"op": op},
+                    json={
+                        "instances": batch_app_instances,
+                        "token": auth_token,
+                    },
+                )
+                if not create_instance_success:
+                    err_msg = (
+                        f"Error occurred while {create_update_msg} "
+                        f"app instance on Netskope for batch {batch}."
+                    )
+                    self.logger.error(f"{self.log_prefix}: {err_msg}")
+                    continue
+                create_instance_response = handle_status_code(
+                    create_instance,
+                    error_code="CRE1048",
+                    custom_message=(
+                        f"Error occurred while {create_update_msg} "
+                        f"app instance on Netskope for batch {batch}."
+                    ),
+                    plugin=self.log_prefix,
+                    notify=False,
+                )
+                if create_instance_response.get("status").lower() != SUCCESS.lower():
+                    err_msg = (
+                        f"Error occurred while {create_update_msg} "
+                        f"app instance on Netskope for batch {batch}."
+                    )
+                    self.logger.error(
+                        f"{self.log_prefix}: {err_msg} "
+                        f"Received exit code {create_instance.status_code}.",
+                        details=json.dumps(create_instance_response),
+                    )
+                    continue
+                total_app_instances += len(batch_app_instances)
+                added_msg = 'updated' if op == 'update' else 'added'
+                self.logger.info(
+                    f"{self.log_prefix}: Successfully "
+                    f"{added_msg} {len(batch_app_instances)} "
+                    f"app instance(s) for batch {batch}. "
+                    f"Total {added_msg} app instances: "
+                    f"{total_app_instances}."
+                )
+                batch += 1
+            op_counter += 1
+
+    def _bulk_tag_application(
+        self, tags_ids_apps: dict
+    ):
+        """Bulk tag application.
+
+        Args:
+            tags_ids_apps (dict): Dictionary of tags and ids/apps.
+        """
+        tenant_name = self.tenant.parameters.get("tenantName", "").strip()
+        for tag, values in tags_ids_apps.items():
+            apps = values.get("apps", [])
+            ids = values.get("ids", [])
+            total = apps + ids
+            batch_count = 1
+            total_tagged_count = 0
+            for i in range(0, len(total), TAG_APP_BATCH_SIZE):
+                batch = total[i: i + TAG_APP_BATCH_SIZE]
+                data = (
+                    {"tag": tag}
+                    | ({"apps": batch} if apps else {})
+                    | ({"ids": batch} if ids else {})
+                )
+
+                add_tags_success, add_tags = handle_exception(
+                    self.session.post,
+                    error_code="CRE_1043",
+                    custom_message=(
+                        f"Error occurred while creating the tag '{tag}' "
+                        f"for batch {batch_count}."
+                    ),
+                    plugin=self.log_prefix,
+                    url=URLS["V2_CCI_TAG_CREATE"].format(tenant_name),
+                    json=data,
+                )
+                if not add_tags_success:
+                    err_msg = (
+                        f"Error occurred while tagging "
+                        f"the application on Netskope for batch "
+                        f"{batch_count}."
+                    )
+                    self.logger.error(f"{self.log_prefix}: {err_msg}")
+                    raise NetskopeException(err_msg) from add_tags
+                add_tags_response = handle_status_code(
+                    add_tags,
+                    error_code="CRE1046",
+                    custom_message=(
+                        f"Error occurred while creating a tag '{tag}' "
+                        f"on Netskope for batch {batch_count}."
+                    ),
+                    plugin=self.log_prefix,
+                    notify=False,
+                )
+                if add_tags_response.get("message") == ERROR_APP_DOES_NOT_EXIST:
+                    err_msg = (
+                        f"Error occurred while tagging "
+                        f"the application on Netskope for batch "
+                        f"{batch_count}. Invalid app provided."
+                    )
+                    self.logger.error(f"{self.log_prefix}: {err_msg}")
+                    raise NetskopeException(err_msg)
+                elif add_tags_response.get("status_code") == 400:
+                    # either the tag is one of the pre-defined ones or
+                    # the tag already exists;
+                    # try updating the existing record
+                    update_tags_success, update_tags = handle_exception(
+                        self.session.patch,
+                        error_code="CRE_1043",
+                        custom_message=(
+                            f"Error occurred while creating the '{tag}' tag "
+                            f"for batch {batch_count}."
+                        ),
+                        plugin=self.log_prefix,
+                        url=URLS["V2_CCI_TAG_UPDATE"].format(tenant_name, tag),
+                        json=data,
+                    )
+                    if not update_tags_success:
+                        err_msg = (
+                            f"Error occurred while tagging "
+                            f"the application on Netskope for batch "
+                            f"{batch_count}."
+                        )
+                        self.logger.error(f"{self.log_prefix}: {err_msg}")
+                        raise NetskopeException(err_msg) from update_tags
+                    update_tags_response = handle_status_code(
+                        update_tags,
+                        error_code="CRE1047",
+                        custom_message=(
+                            f"Error occurred while updating the '{tag}' tag "
+                            f"on Netskope for batch {batch_count}."
+                        ),
+                        plugin=self.log_prefix,
+                        notify=False,
+                    )
+
+                    if update_tags_response.get("status") != SUCCESS:
+                        self.logger.error(
+                            f"{self.log_prefix}: Error occurred while tagging "
+                            f"the application on Netskope for batch "
+                            f"{batch_count}. "
+                            f"Received exit code {update_tags.status_code}.",
+                            details=json.dumps(update_tags_response),
+                        )
+
+                elif add_tags_response.get("status") != SUCCESS:
+                    err_msg = (
+                        f"Error occurred while tagging "
+                        f"the application on Netskope for batch "
+                        f"{batch_count}."
+                    )
+                    self.logger.error(
+                        f"{self.log_prefix}: {err_msg} "
+                        f"Received exit code {add_tags.status_code}.",
+                        details=json.dumps(add_tags_response),
+                    )
+                    raise NetskopeException(err_msg)
+
+                total_tagged_count += len(batch)
+                self.logger.info(
+                    f"{self.log_prefix}: Successfully tagged "
+                    f"{len(batch)} application(s) with tag '{tag}' "
+                    f"for batch {batch_count}. "
+                    f"Total tagged applications: {total_tagged_count}."
+                )
+                batch_count += 1

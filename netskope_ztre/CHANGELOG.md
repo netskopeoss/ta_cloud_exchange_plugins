@@ -1,3 +1,9 @@
+# 1.2.0
+## Added
+- Added bulk action support starting from CE v5.1.1.
+## Changed
+- Updated validation for Tags parameter in 'Add Host to Private App' action.
+
 # 1.1.1
 ## Changed
 - Updated authentication for V1 token.

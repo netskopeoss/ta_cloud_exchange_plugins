@@ -10,7 +10,6 @@ from typing import Dict, List
 from urllib.parse import urlparse
 
 import requests
-from netskope.common.models import NetskopeFieldType
 from netskope.common.models.other import NotificationType
 from netskope.common.utils import (
     Notifier,
@@ -26,6 +25,8 @@ from netskope.common.utils.provider_plugin_base import (
     PluginBase,
     ValidationResult,
 )
+from netskope.common.models import NetskopeFieldType, FieldDataType
+from netskope_api.iterator.netskope_iterator import NetskopeIterator
 
 from .utils.iterator_helper import (
     EVENTS,
@@ -415,9 +416,7 @@ class NetskopeProviderPlugin(PluginBase):
 
     def _pull_webtx_metrics(self):
         try:
-            existing_data = plugin_provider_helper.get_webtx_metrics(
-                self.name
-            )
+            existing_data = plugin_provider_helper.get_webtx_metrics(self.name)
             if existing_data and "latest_utc_hour" in existing_data:
                 try:
                     latest_datetime = existing_data["latest_utc_hour"]
@@ -579,8 +578,10 @@ class NetskopeProviderPlugin(PluginBase):
                 sub_type = item.get("event_type", None)
             if not item_id:
                 item_id = item.get("id")
-            for field in item.keys():
+            for field, field_value in item.items():
                 if field in fields:
+                    continue
+                if not field_value:
                     continue
                 field_obj = plugin_provider_helper.get_stored_field(field)
                 if (
@@ -588,12 +589,12 @@ class NetskopeProviderPlugin(PluginBase):
                     and field_obj is None
                 ):
                     self.logger.info(
-                        f"{self.log_prefix}: The CE platform has detected new field '{field}' in the WebTx log"
-                        f" with id {item_id}. Configure CLS to use this field if you wish to sent it to the SIEM."
+                        f"{self.log_prefix}: The CE platform has detected new field '{field}' in the WebTx logs."
+                        " Configure CLS to use this field if you wish to sent it to the SIEM."
                     )
                     notifier.info(
-                        f"The CE platform has detected new field '{field}' in the WebTx log"
-                        f" with id {item_id}. Configure CLS to use this field if you wish to sent it to the SIEM."
+                        f"The CE platform has detected new field '{field}' in the WebTx logs."
+                        " Configure CLS to use this field if you wish to sent it to the SIEM."
                     )
                 elif sub_type not in EVENTS.keys() and field_obj is None:
                     self.logger.info(
@@ -622,7 +623,19 @@ class NetskopeProviderPlugin(PluginBase):
                         f" event with id {item_id}. Configure CLS to use this field if you wish to sent it to the SIEM."
                     )
 
-                plugin_provider_helper.store_new_field(field, typeOfField)
+                datatype = (
+                    FieldDataType.BOOLEAN
+                    if isinstance(field_value, bool)
+                    else (
+                        FieldDataType.NUMBER
+                        if isinstance(field_value, int)
+                        or isinstance(field_value, float)
+                        else FieldDataType.TEXT
+                    )
+                )
+                plugin_provider_helper.store_new_field(
+                    field, typeOfField, datatype
+                )
 
             fields = fields.union(item.keys())
 
@@ -772,9 +785,9 @@ class NetskopeProviderPlugin(PluginBase):
             )
 
         tenant_creation = True
-        if self.storage and self.storage.get(
-            "existing_configuration", {}
-        ).get("tenantName"):
+        if self.storage and self.storage.get("existing_configuration", {}).get(
+            "tenantName"
+        ):
             tenant_creation = False
             existing_tenant_name = self.storage.get(
                 "existing_configuration", {}
@@ -825,3 +838,65 @@ class NetskopeProviderPlugin(PluginBase):
                 )
         else:
             self.update_banner(tenant_name)
+
+    def share_analytics_in_user_agent(self, tenant_name, user_agent_analytics):
+        """Share analytics data in user agent."""
+        try:
+            from netskope.common.utils import resolve_secret
+            from netskope_api.iterator.const import Const
+
+            future_time = int(
+                (
+                    datetime.datetime.now() + datetime.timedelta(minutes=60)
+                ).timestamp()
+            )
+            tenant = {
+                "name": tenant_name,
+                "parameters": self.configuration,
+                "storage": self.storage,
+                "checkpoint": self.last_run_at,
+                "use_proxy": self.use_proxy,
+                "proxy": self.proxy,
+            }
+            ALERT = "alert"
+            params = {
+                Const.NSKP_TOKEN: resolve_secret(
+                    tenant["parameters"].get("v2token")
+                ),
+                Const.NSKP_TENANT_HOSTNAME: tenant["parameters"]
+                .get("tenantName")
+                .strip()
+                .strip("/")
+                .removeprefix("https://"),
+                Const.NSKP_USER_AGENT: user_agent_analytics,
+                Const.NSKP_ITERATOR_NAME: f"analytics_{tenant.get('name')}_{ALERT}".replace(
+                    " ", ""
+                ),
+                Const.NSKP_EVENT_TYPE: Const.EVENT_TYPE_ALERT,
+                Const.NSKP_ALERT_TYPE: None,
+            }
+            iterator = NetskopeIterator(params)
+            response = iterator.download(future_time)
+            if response.status_code == 200:
+                self.logger.info(
+                    f"{self.log_prefix}: Analytics sent successfully for {tenant.get('name')} with User-Agent."
+                )
+                return True
+            else:
+                response = handle_status_code(
+                    response,
+                    error_code="CE_1054",
+                    custom_message=(
+                        f"Error occurred while sharing analytics for {tenant.get('name')}"
+                        " in User-Agent with Netskope"
+                    ),
+                )
+                return False
+        except Exception:
+            self.logger.error(
+                f"{self.log_prefix}: Error occurred while sharing analytics for {tenant.get('name')}"
+                " in User-Agent with Netskope",
+                error_code="CE_1055",
+                details=traceback.format_exc(),
+            )
+            return False

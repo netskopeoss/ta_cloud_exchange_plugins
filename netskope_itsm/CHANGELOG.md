@@ -1,3 +1,7 @@
+# 2.2.0
+## Changed
+- Updated Netskope ITSM plugin to preserve data types while storing alerts/events.
+
 # 2.1.0
 ## Added
 - Added support for device and content alerts.

@@ -1,185 +1,187 @@
 {
-  "name": "Netskope Log Shipper",
-  "id": "netskope_cls",
-  "netskope": true,
-  "version": "2.1.0",
-  "module": "CLS",
-  "minimum_version": "5.1.0",
-  "minimum_provider_version": "1.0.0",
-  "provider_id": "netskope_provider",
-  "patch_supported": true,
-  "types": [
-    "alerts",
-    "events"
-  ],
-  "mapping": "",
-  "description": "This plugin is used to fetch Alerts (DLP, Malware, Policy, Compromised Credential, Malsite, Quarantine, Remediation, Security Assessment, Watchlist, UBA, CTEP, Device, and Content) and Events (Page, Application, Audit, Infrastructure, Network, Incident, and Endpoint) from Netskope Tenant.",
-  "supported_subtypes": {
-    "alerts": [
-      "Compromised Credential",
-      "policy",
-      "malsite",
-      "Malware",
-      "DLP",
-      "Security Assessment",
-      "watchlist",
-      "quarantine",
-      "Remediation",
-      "uba",
-      "ctep",
-      "ips",
-      "c2",
-      "Device",
-      "Content"
+    "name": "Netskope Log Shipper",
+    "id": "netskope_cls",
+    "netskope": true,
+    "version": "2.1.0",
+    "module": "CLS",
+    "minimum_version": "5.1.0",
+    "minimum_provider_version": "1.3.0",
+    "provider_id": "netskope_provider",
+    "patch_supported": true,
+    "types": [
+        "alerts",
+        "events"
     ],
-    "events": [
-      "page",
-      "application",
-      "audit",
-      "infrastructure",
-      "network",
-      "incident",
-      "endpoint"
+    "mapping": "",
+    "description": "This plugin is used to fetch Alerts (DLP, Malware, Policy, Compromised Credential, Malsite, Quarantine, Remediation, Security Assessment, Watchlist, UBA, CTEP, Device, and Content) and Events (Page, Application, Audit, Infrastructure, Network, Incident, and Endpoint) from Netskope Tenant.",
+    "supported_subtypes": {
+        "alerts": [
+            "Compromised Credential",
+            "policy",
+            "malsite",
+            "Malware",
+            "DLP",
+            "Security Assessment",
+            "watchlist",
+            "quarantine",
+            "Remediation",
+            "uba",
+            "ctep",
+            "ips",
+            "c2",
+            "anomaly",
+            "Legal Hold",
+            "Device",
+            "Content"
+        ],
+        "events": [
+            "page",
+            "application",
+            "audit",
+            "infrastructure",
+            "network",
+            "incident",
+            "endpoint"
+        ]
+    },
+    "configuration": [
+        {
+            "label": "Alert Types",
+            "key": "alert_types",
+            "mandatory": false,
+            "description": "Selected types of alerts will be fetched.",
+            "type": "multichoice",
+            "choices": [
+                {
+                    "key": "Compromised Credential",
+                    "value": "Compromised Credential"
+                },
+                {
+                    "key": "Policy",
+                    "value": "policy"
+                },
+                {
+                    "key": "Malsite",
+                    "value": "malsite"
+                },
+                {
+                    "key": "Malware",
+                    "value": "Malware"
+                },
+                {
+                    "key": "DLP",
+                    "value": "DLP"
+                },
+                {
+                    "key": "Security Assessment",
+                    "value": "Security Assessment"
+                },
+                {
+                    "key": "Watchlist",
+                    "value": "watchlist"
+                },
+                {
+                    "key": "Quarantine",
+                    "value": "quarantine"
+                },
+                {
+                    "key": "Remediation",
+                    "value": "Remediation"
+                },
+                {
+                    "key": "UBA",
+                    "value": "uba"
+                },
+                {
+                    "key": "CTEP",
+                    "value": "ctep"
+                },
+                {
+                    "key": "Device",
+                    "value": "Device"
+                },
+                {
+                    "key": "Content",
+                    "value": "Content"
+                }
+            ],
+            "default": [
+                "Compromised Credential",
+                "policy",
+                "malsite",
+                "Malware",
+                "DLP",
+                "Security Assessment",
+                "watchlist",
+                "quarantine",
+                "Remediation",
+                "uba",
+                "ctep",
+                "Device",
+                "Content"
+            ]
+        },
+        {
+            "label": "Initial Range for Alerts (in days)",
+            "key": "days",
+            "type": "number",
+            "mandatory": true,
+            "default": 7,
+            "description": "Number of days to pull the data for the initial run."
+        },
+        {
+            "label": "Event Types",
+            "key": "event_type",
+            "type": "multichoice",
+            "choices": [
+                {
+                    "key": "Page",
+                    "value": "page"
+                },
+                {
+                    "key": "Application",
+                    "value": "application"
+                },
+                {
+                    "key": "Audit",
+                    "value": "audit"
+                },
+                {
+                    "key": "Infrastructure",
+                    "value": "infrastructure"
+                },
+                {
+                    "key": "Network",
+                    "value": "network"
+                },
+                {
+                    "key": "Incident",
+                    "value": "incident"
+                },
+                {
+                    "key": "Endpoint",
+                    "value": "endpoint"
+                }
+            ],
+            "default": [
+                "page",
+                "application",
+                "audit",
+                "infrastructure",
+                "network",
+                "incident",
+                "endpoint"
+            ],
+            "mandatory": false,
+            "description": "Types of the events to fetch."
+        },
+        {
+            "label": "Initial Range for Events (in hours)",
+            "key": "hours",
+            "type": "number",
+            "mandatory": true,
+            "default": 1,
+            "description": "Number of hours to pull the event data for the initial run."
+        }
     ]
-  },
-  "configuration": [
-    {
-      "label": "Alert Types",
-      "key": "alert_types",
-      "mandatory": false,
-      "description": "Selected types of alerts will be fetched.",
-      "type": "multichoice",
-      "choices": [
-        {
-          "key": "Compromised Credential",
-          "value": "Compromised Credential"
-        },
-        {
-          "key": "Policy",
-          "value": "policy"
-        },
-        {
-          "key": "Malsite",
-          "value": "malsite"
-        },
-        {
-          "key": "Malware",
-          "value": "Malware"
-        },
-        {
-          "key": "DLP",
-          "value": "DLP"
-        },
-        {
-          "key": "Security Assessment",
-          "value": "Security Assessment"
-        },
-        {
-          "key": "Watchlist",
-          "value": "watchlist"
-        },
-        {
-          "key": "Quarantine",
-          "value": "quarantine"
-        },
-        {
-          "key": "Remediation",
-          "value": "Remediation"
-        },
-        {
-          "key": "UBA",
-          "value": "uba"
-        },
-        {
-          "key": "CTEP",
-          "value": "ctep"
-        },
-        {
-            "key": "Device",
-            "value": "Device"
-        },
-        {
-            "key": "Content",
-            "value": "Content"
-        }
-      ],
-      "default": [
-        "Compromised Credential",
-        "policy",
-        "malsite",
-        "Malware",
-        "DLP",
-        "Security Assessment",
-        "watchlist",
-        "quarantine",
-        "Remediation",
-        "uba",
-        "ctep",
-        "Device",
-        "Content"
-      ]
-    },
-    {
-      "label": "Initial Range for Alerts (in days)",
-      "key": "days",
-      "type": "number",
-      "mandatory": true,
-      "default": 7,
-      "description": "Number of days to pull the data for the initial run."
-    },
-    {
-      "label": "Event Types",
-      "key": "event_type",
-      "type": "multichoice",
-      "choices": [
-        {
-          "key": "Page",
-          "value": "page"
-        },
-        {
-          "key": "Application",
-          "value": "application"
-        },
-        {
-          "key": "Audit",
-          "value": "audit"
-        },
-        {
-          "key": "Infrastructure",
-          "value": "infrastructure"
-        },
-        {
-          "key": "Network",
-          "value": "network"
-        },
-        {
-          "key": "Incident",
-          "value": "incident"
-        },
-        {
-          "key": "Endpoint",
-          "value": "endpoint"
-        }
-      ],
-      "default": [
-        "page",
-        "application",
-        "audit",
-        "infrastructure",
-        "network",
-        "incident",
-        "endpoint"
-      ],
-      "mandatory": false,
-      "description": "Types of the events to fetch."
-    },
-    {
-      "label": "Initial Range for Events (in hours)",
-      "key": "hours",
-      "type": "number",
-      "mandatory": true,
-      "default": 1,
-      "description": "Number of hours to pull the event data for the initial run."
-    }
-  ]
 }

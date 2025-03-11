@@ -20,7 +20,7 @@ plugin_provider_helper = PluginProviderHelper()
 
 MODULE_NAME = "CLS"
 PLUGIN_NAME = "Netskope CLS"
-PLUGIN_VERSION = "2.0.0"
+PLUGIN_VERSION = "2.1.0"
 
 
 class NetskopeCLSPlugin(PluginBase):

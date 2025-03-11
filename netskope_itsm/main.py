@@ -8,6 +8,7 @@ import time
 import traceback
 from typing import List, Union, Tuple
 from datetime import datetime
+from jsonschema import validate, ValidationError
 
 from netskope.common.utils import (
     AlertsHelper,
@@ -32,6 +33,7 @@ from netskope.integrations.itsm.models import (
     Severity,
     TaskStatus
 )
+from netskope.integrations.itsm.utils import alert_event_query_schema
 from netskope.common.utils.plugin_provider_helper import PluginProviderHelper
 
 helper = AlertsHelper()
@@ -54,7 +56,7 @@ MAX_RETRIES_ON_RATE_LIMIT = 3
 INCIDENT_UPDATE_API = "{}/api/v2/incidents/update"
 MODULE_NAME = "CTO"
 PLUGIN_NAME = "Netskope CTO"
-PLUGIN_VERSION = "2.1.0"
+PLUGIN_VERSION = "2.2.0"
 DEFAULT_STATUS_VALUE_MAP = {
     "New": "new",
     "In Progress": "in_progress",
@@ -112,7 +114,7 @@ class NetskopePlugin(PluginBase):
         """Validate a given step."""
         if name == "params":
             config = configuration.get(name, {})
-            if "alert_types" not in config or type(config["alert_types"]) is not list:
+            if "alert_types" not in config or not isinstance(config["alert_types"], list):
                 self.logger.error(
                     "Netskope ITSM Plugin: Validation error occurred. Error: "
                     "Invalid alert types found in the configuration parameters.",
@@ -121,7 +123,7 @@ class NetskopePlugin(PluginBase):
                 return ValidationResult(
                     success=False, message="Invalid alert type provided."
                 )
-            if "event_types" not in config or type(config["event_types"]) is not list:
+            if "event_types" not in config or not isinstance(config["event_types"], list):
                 self.logger.info(
                     "Netskope ITSM Plugin: Validation error occurred. Error: "
                     "Invalid event types found in the configuration parameters.",
@@ -208,7 +210,7 @@ class NetskopePlugin(PluginBase):
                 )
         elif name == "incident_update_config":
             config = configuration.get(name, {})
-            if "user_email" not in config or type(config["user_email"]) is not str:
+            if "user_email" not in config or not isinstance(config["user_email"], str):
                 self.logger.error(
                     "Netskope ITSM Plugin: Validation error occurred. Error: "
                     "Invalid user email found in the configuration parameters.",
@@ -233,7 +235,7 @@ class NetskopePlugin(PluginBase):
                     )
             if (
                 "status_mapping" not in config
-                or type(config["status_mapping"]) is not dict
+                or not isinstance(config["status_mapping"], dict)
             ):
                 self.logger.error(
                     "Netskope ITSM Plugin: Validation error occurred. Error: "
@@ -250,7 +252,7 @@ class NetskopePlugin(PluginBase):
                 )
             if (
                 "severity_mapping" not in config
-                or type(config["severity_mapping"]) is not dict
+                or not isinstance(config["severity_mapping"], dict)
             ):
                 self.logger.error(
                     "Netskope ITSM Plugin: Validation error occurred. Error: "
@@ -280,7 +282,7 @@ class NetskopePlugin(PluginBase):
 
     def _get_raw_dict(self, data):
         """Get raw dict."""
-        data_item = {k: str(v) for k, v in data.items() if k not in IGNORED_RAW_KEYS}
+        data_item = {k: v for k, v in data.items() if k not in IGNORED_RAW_KEYS}
         for k, v in self.get_severity_status_mapping().items():
             if k == "severity" and k in data_item.keys():
                 data_item.update(
@@ -362,14 +364,32 @@ class NetskopePlugin(PluginBase):
                     details=traceback.format_exc(),
                     error_code="CTO_1021",
                 )
-        filters = self.configuration.get("filters", {}) or {}
-        query = filters.get("query", "")
+        filters = self.configuration.get("params", {}).get("filters", {}) or {}
+        query = filters.get("mongo", "{}")
+        try:
+            [*_, QUERY_SCHEMA] = alert_event_query_schema()
+            validate(json.loads(str(query).replace("'", '"')), QUERY_SCHEMA)
+        except ValidationError:
+            self.logger.error(
+                f"{self.log_prefix}: Storing of {len(all_data)} alert(s)/event(s)"
+                " have failed because one or more field data types"
+                f" are incompatible in Alert/Event query for configuration {self.name}."
+                " Reconfigure Alert/Event query using the Edit button in the CTO Module -> Plugins page."
+            )
+        except Exception as e:
+            self.logger.error(
+                f"{self.log_prefix}: Error occurred while validating Alert/Event Query for "
+                f"configuration {self.name}.",
+                details=traceback.format_exc(),
+                error_code="CTO_1022",
+            )
+            raise e
         if query != "":
             from netskope.integrations.itsm.tasks.pull_data_items import (
                 _filter_data_items,
             )
 
-            results = _filter_data_items(results, query)
+            results = _filter_data_items(results, str(query).replace("'", '"'))
         return results
 
     def handle_update_incident_api_call(self, url, data, field, batch_no):

@@ -32,39 +32,34 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 Datadog Plugin.
 """
 
-import traceback
-import sys
-import json
 import gzip
+import json
+import sys
+import traceback
 from datetime import datetime
 from typing import List
-from jsonpath import jsonpath
 
-from netskope.common.utils import AlertsHelper
+from jsonpath import jsonpath
 from netskope.integrations.cls.plugin_base import PluginBase, ValidationResult
 
+from .utils.datadog_api_helper import DatadogPluginHelper
 from .utils.datadog_cef_generator import CEFGenerator
-from .utils.datadog_validator import DatadogValidator
-from .utils.datadog_helper import get_datadog_mappings
-
 from .utils.datadog_constants import (
-    PLATFORM_NAME,
-    MODULE_NAME,
-    PLUGIN_VERSION,
+    CE_TENANT_NAME,
     DATADOG_SITES,
-    LOGS_TIME_FORMAT
+    LOGS_TIME_FORMAT,
+    MODULE_NAME,
+    PLATFORM_NAME,
+    PLUGIN_VERSION,
 )
-
-from .utils.datadog_api_helper import (
-    DatadogPluginHelper,
-)
-
 from .utils.datadog_exceptions import (
     DatadogPluginException,
-    MappingValidationError,
     EmptyExtensionError,
     FieldNotFoundError,
+    MappingValidationError,
 )
+from .utils.datadog_helper import get_datadog_mappings, get_tenant_name
+from .utils.datadog_validator import DatadogValidator
 
 
 class DatadogPlugin(PluginBase):
@@ -118,8 +113,9 @@ class DatadogPlugin(PluginBase):
         Convert string to timestamp
         """
         try:
-            timestamp = datetime.strptime(
-                date_string, format).strftime(LOGS_TIME_FORMAT)
+            timestamp = datetime.strptime(date_string, format).strftime(
+                LOGS_TIME_FORMAT
+            )
             return timestamp
         except Exception as exp:
             self.logger.error(
@@ -149,7 +145,9 @@ class DatadogPlugin(PluginBase):
         elif data_type == "logs":
             createdAt = data.get("createdAt", None)
             if createdAt:
-                return self.convert_string_to_timestamp(createdAt, "%m/%d/%Y %I:%M:%S %p")
+                return self.convert_string_to_timestamp(
+                    createdAt, "%m/%d/%Y %I:%M:%S %p"
+                )
         else:
             timestamp = data.get("timestamp")
             if timestamp:
@@ -254,16 +252,17 @@ class DatadogPlugin(PluginBase):
         headers = {}
         mapping_variables = {}
         if data_type != "webtx":
-            helper = AlertsHelper()
-            tenant = helper.get_tenant_cls(self.source)
-            mapping_variables = {"$tenant_name": tenant.name}
+            mapping_variables = {"$tenant_name": get_tenant_name(self.source)}
 
         missing_fields = []
         mapped_field_flag = False
         # Iterate over mapped headers
         for cef_header, header_mapping in header_mappings.items():
             try:
-                headers[cef_header], mapped_field, = self.get_field_value_from_data(
+                (
+                    headers[cef_header],
+                    mapped_field,
+                ) = self.get_field_value_from_data(
                     header_mapping, data, False
                 )
 
@@ -374,7 +373,8 @@ class DatadogPlugin(PluginBase):
                     extension_mapping["mapping_field"] in data
                 ):  # case #1 and case #4
                     if (
-                        extension_mapping.get("transformation") == "Time Stamp"
+                        extension_mapping.get("transformation")
+                        == "Time Stamp"
                         and data[extension_mapping["mapping_field"]]
                     ):
                         try:
@@ -422,7 +422,9 @@ class DatadogPlugin(PluginBase):
                 message=err_msg,
             )
         elif not isinstance(dd_site, str):
-            err_msg = "Invalid Datadog Site provided in configuration parameters."
+            err_msg = (
+                "Invalid Datadog Site provided in configuration parameters."
+            )
             self.logger.error(f"{validation_err_msg} {err_msg}")
             return ValidationResult(
                 success=False,
@@ -453,8 +455,10 @@ class DatadogPlugin(PluginBase):
             )
 
         dd_tags = configuration.get("dd_tags", "").strip()
-        if dd_tags and (not isinstance(dd_tags, str) or not datadog_validator.validate_datadog_tags(dd_tags)):
-            err_msg = "Invalid Datadog Tags provided in configuration parameters."
+        if dd_tags and not isinstance(dd_tags, str):
+            err_msg = (
+                "Invalid Datadog Tags provided in configuration parameters."
+            )
             self.logger.error(f"{validation_err_msg} {err_msg}")
             return ValidationResult(
                 success=False,
@@ -463,9 +467,9 @@ class DatadogPlugin(PluginBase):
 
         mappings = self.mappings.get("jsonData", None)
         mappings = json.loads(mappings)
-        if not isinstance(mappings, dict) or not datadog_validator.validate_datadog_map(
-            mappings
-        ):
+        if not isinstance(
+            mappings, dict
+        ) or not datadog_validator.validate_datadog_map(mappings):
             err_msg = "Invalid attribute mapping provided."
             self.logger.error(f"{validation_err_msg} {err_msg}")
             return ValidationResult(
@@ -489,7 +493,7 @@ class DatadogPlugin(PluginBase):
             headers = self.get_api_headers(configuration)
             body = {"message": ""}
             params = {
-                "hostname": "netskope-ce",
+                "ddsource": "netskope-ce",
                 "ddtags": configuration.get("dd_tags", "").strip(),
             }
 
@@ -530,10 +534,14 @@ class DatadogPlugin(PluginBase):
         """To Transform the raw netskope JSON data into target platform \
             supported data formats."""
         count = 0
+
         if not self.configuration.get("transformData", True):
+            tenant_name = None
+            if data_type != "webtx":
+                tenant_name = get_tenant_name(self.source)
             try:
-                delimiter, cef_version, datadog_mappings = get_datadog_mappings(
-                    self.mappings, "json"
+                delimiter, cef_version, datadog_mappings = (
+                    get_datadog_mappings(self.mappings, "json")
                 )
             except KeyError as err:
                 self.logger.error(
@@ -569,10 +577,16 @@ class DatadogPlugin(PluginBase):
                     transformed_data = []
                     for data in raw_data:
                         if data:
-                            data["timestamp"] = self.add_timestamp_datatype_wise(
-                                data, data_type)
+                            data["timestamp"] = (
+                                self.add_timestamp_datatype_wise(
+                                    data, data_type
+                                )
+                            )
+                            if tenant_name:
+                                data[CE_TENANT_NAME] = tenant_name
                             transformed_data.append(
-                                {"message": json.dumps(data)})
+                                {"message": json.dumps(data)}
+                            )
                         else:
                             count += 1
                     if count > 0:
@@ -582,7 +596,8 @@ class DatadogPlugin(PluginBase):
                             "fields according to the configured JSON mapping. "
                             "Therefore, the transformation and ingestion for those "
                             "records were skipped.".format(
-                                self.log_prefix, count)
+                                self.log_prefix, count
+                            )
                         )
                     return transformed_data
             except Exception:
@@ -600,10 +615,16 @@ class DatadogPlugin(PluginBase):
             for data in raw_data:
                 mapped_dict = self.map_json_data(subtype_mapping, data)
                 if mapped_dict:
-                    mapped_dict["timestamp"] = self.add_timestamp_datatype_wise(
-                        mapped_dict, data_type)
+                    mapped_dict["timestamp"] = (
+                        self.add_timestamp_datatype_wise(
+                            mapped_dict, data_type
+                        )
+                    )
+                    if tenant_name:
+                        mapped_dict[CE_TENANT_NAME] = tenant_name
                     transformed_data.append(
-                        {"message": json.dumps(mapped_dict)})
+                        {"message": json.dumps(mapped_dict)}
+                    )
                 else:
                     count += 1
 
@@ -619,8 +640,8 @@ class DatadogPlugin(PluginBase):
             return transformed_data
         else:
             try:
-                delimiter, cef_version, datadog_mappings = get_datadog_mappings(
-                    self.mappings, data_type
+                delimiter, cef_version, datadog_mappings = (
+                    get_datadog_mappings(self.mappings, data_type)
                 )
             except KeyError as err:
                 self.logger.error(
@@ -654,6 +675,7 @@ class DatadogPlugin(PluginBase):
                 cef_version,
                 self.logger,
                 self.log_prefix,
+                self.source,
             )
 
             # First retrieve the mapping of subtype being transformed
@@ -731,7 +753,8 @@ class DatadogPlugin(PluginBase):
                     )
                     if cef_generated_event:
                         transformed_data.append(
-                            {"message": cef_generated_event})
+                            {"message": cef_generated_event}
+                        )
                 except EmptyExtensionError:
                     self.logger.error(
                         message=(
@@ -776,7 +799,8 @@ class DatadogPlugin(PluginBase):
             batch_size = sys.getsizeof(f"{transformed_data}") / (1024 * 1024)
             if batch_size > 1:
                 transformed_data = self.datadog_helper.split_into_size(
-                    transformed_data)
+                    transformed_data
+                )
             else:
                 transformed_data = [transformed_data]
 
@@ -784,15 +808,10 @@ class DatadogPlugin(PluginBase):
             total_count = 0
             page = 0
             headers = self.get_api_headers(self.configuration)
-            tenant = None
-            if data_type != "webtx":
-                helper = AlertsHelper()
-                tenant = helper.get_tenant_cls(self.source)
 
             params = {
                 "ddsource": "netskope-ce",
                 "ddtags": self.configuration.get("dd_tags", ""),
-                "hostname": tenant.name if tenant and tenant.name else "",
             }
             for chunk in transformed_data:
                 page += 1
@@ -803,7 +822,7 @@ class DatadogPlugin(PluginBase):
                         headers["Content-Encoding"] = "gzip"
 
                         # Convert to bytes
-                        encoded = json_data.encode('utf-8')
+                        encoded = json_data.encode("utf-8")
                         # Compress
                         json_data = gzip.compress(encoded)
 
@@ -842,12 +861,14 @@ class DatadogPlugin(PluginBase):
                     f"{self.log_prefix}: Skipped {skipped_count} records due to some unexpected error occurred, check logs for more details."
                 )
 
-            log_msg = "[{}]:[{}] Successfully ingested {} {}(s) to {}.".format(
-                data_type,
-                subtype,
-                total_count,
-                data_type,
-                self.plugin_name,
+            log_msg = (
+                "[{}]:[{}] Successfully ingested {} {}(s) to {}.".format(
+                    data_type,
+                    subtype,
+                    total_count,
+                    data_type,
+                    self.plugin_name,
+                )
             )
             self.logger.info(f"{self.log_prefix}: {log_msg}")
         except DatadogPluginException as err:

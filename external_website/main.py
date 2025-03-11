@@ -31,6 +31,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 CTE Web Page IOC Scraper Plugin.
 """
+
 import re
 import traceback
 from ipaddress import IPv4Address, IPv6Address, ip_address
@@ -55,7 +56,7 @@ from .utils.externalwebsite_constants import (
 
 from .utils.externalwebsite_helper import (
     WebPageIOCScraperPluginException,
-    WebPageIOCScraperPluginHelper
+    WebPageIOCScraperPluginHelper,
 )
 
 
@@ -82,7 +83,7 @@ class WebPageIOCScraperPlugin(PluginBase):
             logger=self.logger,
             log_prefix=self.log_prefix,
             plugin_name=self.plugin_name,
-            plugin_version=self.plugin_version
+            plugin_version=self.plugin_version,
         )
 
     def _get_plugin_info(self) -> tuple:
@@ -147,7 +148,7 @@ class WebPageIOCScraperPlugin(PluginBase):
 
     def pull(self) -> List[Indicator]:
         """Pull indicators from Web Page IOC Scraper Plugin."""
-        url = self.configuration['url'].strip().strip("/")
+        url = self.configuration["url"].strip().strip("/")
 
         try:
             indicator_types = self._get_indicator_types(
@@ -159,14 +160,17 @@ class WebPageIOCScraperPlugin(PluginBase):
                 method="GET",
                 verify=self.ssl_validation,
                 proxies=self.proxy,
-                logger_msg="pulling IOC(s)"
+                logger_msg="pulling IOC(s)",
             )
-            indicators, skipped_count, indicator_type_count = self.extract_indicators(
-                response, indicator_types
+            indicators, skipped_count, indicator_type_count = (
+                self.extract_indicators(response, indicator_types)
             )
 
             pull_stats = ", ".join(
-                [f"{str(val)} {key.upper()}" for key, val in indicator_type_count.items()]
+                [
+                    f"{str(val)} {key.upper()}"
+                    for key, val in indicator_type_count.items()
+                ]
             )
             self.logger.debug(
                 f"Pull Stat: {pull_stats} indicator(s) were fetched. "
@@ -195,14 +199,14 @@ class WebPageIOCScraperPlugin(PluginBase):
         except Exception as exp:
             err_msg = "Error occurred while pulling indicators."
             self.logger.error(
-                message=(
-                    f"{self.log_prefix}: {err_msg} Error: {str(exp)}"
-                ),
+                message=(f"{self.log_prefix}: {err_msg} Error: {str(exp)}"),
                 details=str(traceback.format_exc()),
             )
             raise exp
 
-    def extract_indicators(self, response, indicator_types: Dict) -> List[dict]:
+    def extract_indicators(
+        self, response, indicator_types: Dict
+    ) -> List[dict]:
         """
         Extract indicators from a given response based on the specified indicator types.
 
@@ -227,7 +231,10 @@ class WebPageIOCScraperPlugin(PluginBase):
             for sha256 in sha256_list:
                 try:
                     indicators.append(
-                        Indicator(value=sha256, type=indicator_types["sha256"])
+                        Indicator(
+                            value=sha256.strip(),
+                            type=indicator_types["sha256"],
+                        )
                     )
                     indicator_type_count["sha256"] += 1
                 except ValidationError:
@@ -242,7 +249,9 @@ class WebPageIOCScraperPlugin(PluginBase):
             for md5 in md5_list:
                 try:
                     indicators.append(
-                        Indicator(value=md5, type=indicator_types["md5"])
+                        Indicator(
+                            value=md5.strip(), type=indicator_types["md5"]
+                        )
                     )
                     indicator_type_count["md5"] += 1
                 except ValidationError:
@@ -251,12 +260,14 @@ class WebPageIOCScraperPlugin(PluginBase):
                     skipped_count += 1
 
         if "url" in indicator_types:
-            url_regex = r"\b(?:https?|ftp):\/\/[-A-Za-z0-9+&@#\/%?=~_|!:,.;]*[-A-Za-z0-9+&@#\/%=~_|]"  # noqa
+            url_regex = r"(?:https?|ftp):\/\/(?:(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}|localhost|(?:\d{1,3}\.){3}\d{1,3})(?::(?:6[0-5]{2}[0-3][0-5]|65[0-4][0-9][0-9]|[1-5]?[0-9]{1,4}|0))?(?:\/[a-zA-Z0-9-._~%!$&'()*+,;=:@]*)*(?:\?[a-zA-Z0-9-._~%!$&'()*+,;=:@/?]*)?(?:#[a-zA-Z0-9-._~%!$&'()*+,;=:@/?]*)?(?::(?:6553[0-5]|655[0-2]\d|65[0-4]\d{2}|6[0-4]\d{3}|[1-5]\d{4}|\d{1,4}))?(?:\/)?(?![:\/\w])"  # noqa
             url_list = re.findall(url_regex, response)
             for url in url_list:
                 try:
                     indicators.append(
-                        Indicator(value=url.strip(), type=indicator_types["url"])
+                        Indicator(
+                            value=url.strip(), type=indicator_types["url"]
+                        )
                     )
                     indicator_type_count["url"] += 1
                 except ValidationError:
@@ -265,13 +276,17 @@ class WebPageIOCScraperPlugin(PluginBase):
                     skipped_count += 1
 
         if "ipv4" in indicator_types:
-            ipv4_regex = r"(?<![:\/\d])\b(?:\d{1,3}\.){3}\d{1,3}\b(?![:\/\d])"  # noqa
+            ipv4_regex = r"(?<![:\/\.\d])\b(?:\d{1,3}\.){3}\d{1,3}\b\/*?(?![:\/\.\dA-Za-z])"  # noqa
             ipv4_list = re.findall(ipv4_regex, response)
             for ipv4 in ipv4_list:
                 try:
+                    ipv4 = ipv4.strip().strip("/")
                     if isinstance(ip_address(ipv4), IPv4Address):
                         indicators.append(
-                            Indicator(value=ipv4, type=indicator_types["ipv4"])
+                            Indicator(
+                                value=ipv4,
+                                type=indicator_types["ipv4"],
+                            )
                         )
                         indicator_type_count["ipv4"] += 1
                 except ValidationError:
@@ -280,13 +295,29 @@ class WebPageIOCScraperPlugin(PluginBase):
                     skipped_count += 1
 
         if "ipv6" in indicator_types:
-            ipv6_regex = r"(?<![:\w])(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}(?![:\w/])"
-            ipv6_list = re.findall(ipv6_regex, response)
+
+            response_list_regex = r"[^\s]+"
+
+            ipv6_regex = r"^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|([0-9a-fA-F]{1,4}:){1,7}:)(/*)?$"  # noqa
+
+            response_list = re.findall(response_list_regex, str(response))
+
+            pattern = re.compile(ipv6_regex, re.VERBOSE | re.MULTILINE)
+
+            ipv6_list = [
+                match[0]
+                for ip in response_list
+                for match in re.findall(pattern, ip)
+            ]
             for ipv6 in ipv6_list:
                 try:
+                    ipv6 = ipv6.strip().strip("/")
                     if isinstance(ip_address(ipv6), IPv6Address):
                         indicators.append(
-                            Indicator(value=ipv6, type=indicator_types["ipv6"])
+                            Indicator(
+                                value=ipv6,
+                                type=indicator_types["ipv6"],
+                            )
                         )
                         indicator_type_count["ipv6"] += 1
                 except ValidationError:
@@ -295,12 +326,15 @@ class WebPageIOCScraperPlugin(PluginBase):
                     skipped_count += 1
 
         if "domain" in indicator_types:
-            domain_regex = r"(?<![:\/\w.])(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.(?:[a-zA-Z]{2,}\.?){1,})(?:\/)?(?![:\/\w])"  # noqa
+            domain_regex = r"(?<!-)(?<![:\/\w.])(?:\*\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}|(?<!\*)[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)*\.[a-zA-Z]{2,})(?::(?:6553[0-5]|655[0-2]\d|65[0-4]\d{2}|6[0-4]\d{3}|[1-5]\d{4}|\d{1,4}))?(?:\/)?(?![:\/\w])"  # noqa
             domain_list = re.findall(domain_regex, response)
             for domain in domain_list:
                 try:
                     indicators.append(
-                        Indicator(value=domain, type=indicator_types["domain"])
+                        Indicator(
+                            value=domain.strip(),
+                            type=indicator_types["domain"],
+                        )
                     )
                     indicator_type_count["domain"] += 1
                 except ValidationError:
@@ -344,7 +378,7 @@ class WebPageIOCScraperPlugin(PluginBase):
                 verify=self.ssl_validation,
                 proxies=self.proxy,
                 logger_msg=f"verifying the connectivity with {url}.",
-                is_validation=True
+                is_validation=True,
             )
 
             validation_msg = f"Validation successful for {MODULE_NAME} {self.plugin_name} Plugin."
@@ -387,7 +421,9 @@ class WebPageIOCScraperPlugin(PluginBase):
             self.logger.error(f"{self.log_prefix}: {validation_err} {err_msg}")
             return ValidationResult(success=False, message=err_msg)
         elif not isinstance(url, str) or not self.is_url(url):
-            err_msg = "Invalid website URL provided in configuration parameters."
+            err_msg = (
+                "Invalid website URL provided in configuration parameters."
+            )
             self.logger.error(f"{self.log_prefix}: {validation_err} {err_msg}")
             return ValidationResult(success=False, message=err_msg)
 

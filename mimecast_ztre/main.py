@@ -26,15 +26,10 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 CRE Mimecast Plugin."""
 
 import json
-import base64
-import hashlib
-import hmac
 import re
-import uuid
-from datetime import datetime
+import sys
 from typing import List, Dict, Optional
 import traceback
-from urllib.parse import urlparse
 
 from netskope.integrations.crev2.models import Action, ActionWithoutParams
 from netskope.integrations.crev2.plugin_base import (
@@ -52,8 +47,18 @@ from .utils.constants import (
     PLUGIN_VERSION,
     MAX_PAGE_SIZE,
     USER_FIELD_MAPPING,
-    SECRET_KEY_REGEX,
     EMAIL_ADDRESS_REGEX,
+    BASE_URL,
+    GET_ACCOUNT_DETAILS_ENDPOINT,
+    FIND_GROUPS_ENDPOINT,
+    GET_SAFE_SCORE_DETAILS_ENDPOINT,
+    CREATE_GROUP_ENDPOINT,
+    ADD_GROUP_MEMBER_ENDPOINT,
+    REMOVE_GROUP_MEMBER_ENDPOINT,
+    MIMECAST_SCORE_MAPPING,
+    NETSKOPE_RISK_CATEGORY_MAPPING,
+    ADD_TO_GROUP_BATCH_SIZE,
+    MAX_PAYLOAD_CHUNK_SIZE_IN_BYTES,
 )
 
 
@@ -109,130 +114,126 @@ class MimecastPlugin(PluginBase):
         return (PLATFORM_NAME, PLUGIN_VERSION)
 
     def _parse_errors(self, failures):
-        """Parse the error message from Mimecast response."""
-        messages = []
+        """
+        Parse the error message from Mimecast response.
+        args:
+            failures: Mimecast response
+        returns:
+            List: List of error messages
+        """
+        messages = set()
         for failure in failures:
-            for error in failure.get("errors", []):
-                messages.append(error.get("message"))
-        return messages
+            message = failure.get("message")
+            errors = failure.get("errors", [])
+            if message:
+                messages.add(message)
+            if errors and isinstance(errors, list):
+                for error in errors:
+                    messages.add(error.get("message"))
+        return list(messages)
 
-    def _find_group_by_name(self, groups: List, name: str):
-        """Find group from list by name.
+    def split_into_size(self, total_payload):
+        """
+        Split a list into parts, each approximately with a target
+            size in 2048 bytes.
 
-        Args:
-            groups (List): List of groups dictionaries.
-            name (str): Name to find.
+        Parameters:
+        - total_payload: The list of data to be split.
 
         Returns:
-            Optional[Dict]: Group dictionary if found, None otherwise.
+        - A list of parts, each with a total size approximately equal
+            to the target size.
         """
-        for group in groups:
-            if group.get("name") == name:
-                return group
-        return None
+        result = []
+        current_part = []
+        current_size_bytes = 0
+        chunk_part = 1
+        for chunk in total_payload:
+            item_size_bytes = sys.getsizeof(json.dumps(chunk))
+            if (
+                current_size_bytes + item_size_bytes
+                <= MAX_PAYLOAD_CHUNK_SIZE_IN_BYTES
+            ):
+                current_part.append(chunk)
+                current_size_bytes += item_size_bytes
+            else:
+                self.logger.debug(
+                    f"{self.log_prefix}: Remove from group API payload"
+                    f" chunk size for chunk {chunk_part}"
+                    f" is {current_size_bytes} bytes."
+                )
+                chunk_part += 1
+                result.append(current_part)
+                current_part = [chunk]
+                current_size_bytes = item_size_bytes
 
-    def _get_auth_headers(self, configuration: dict, endpoint: str):
-        """Generate Mimecast authentication headers."""
-        request_url = (
-            f"{configuration.get('url').strip().strip('/')}{endpoint}"
-        )
-        request_id = str(uuid.uuid4())
-        request_datetime = (
-            f"{datetime.utcnow().strftime('%a, %d %b %Y %H:%M:%S')} UTC"
-        )
+        if current_part:
+            self.logger.debug(
+                f"{self.log_prefix}: Remove from group API payload"
+                f" Chunk size for chunk {chunk_part}"
+                f" is {current_size_bytes} bytes."
+            )
+            result.append(current_part)
 
-        # Create the HMAC SA1 of the Base64 decoded secret key for the
-        # Authorization header
-        hmac_sha1 = hmac.new(
-            base64.b64decode(configuration.get("secret_key")),
-            ":".join(
-                [
-                    request_datetime,
-                    request_id,
-                    endpoint,
-                    configuration.get("app_key"),
-                ]
-            ).encode("utf-8"),
-            digestmod=hashlib.sha1,
-        ).digest()
+        return result
 
-        # Use the HMAC SHA1 value to sign hmac_sha1
-        sig = base64.b64encode(hmac_sha1).rstrip()
-
-        # Create request headers
-        headers = {
-            "Authorization": f"MC {configuration.get('access_key')}:"
-            f"{sig.decode('utf-8')}",
-            "x-mc-app-id": configuration.get("app_id").strip(),
-            "x-mc-date": request_datetime,
-            "x-mc-req-id": request_id,
-            "Content-Type": "application/json",
-        }
-        return request_url, headers
-
-    def _get_all_groups(
-        self, configuration: Dict, is_validation=False
-    ) -> List:
-        """Get list of all the groups.
+    def _remove_from_group(
+        self, configuration: Dict, user_id: str, group_id: str, group_name: str
+    ):
+        """Remove specified user from the specified group.
 
         Args:
             configuration (Dict): Configuration parameters.
-            is_validation (bool): Whether calling from validate method
+            user_id (str): User ID of the user.
+            group_id (str): Group ID of the group.
 
-        Returns:
-            List: List of all the groups.
+        Raises:
+            HTTPError: If the group does not exist on Mimecast.
         """
-        all_groups = []
-        endpoint = "/api/directory/find-groups"
-        pageSize = MAX_PAGE_SIZE
-        nextPageToken = ""
-        request_url, headers = self._get_auth_headers(configuration, endpoint)
-        body = {
-            "meta": {
-                "pagination": {
-                    "pageSize": pageSize,
-                    "pageToken": nextPageToken,
-                }
-            }
-        }
-        try:
-            while True:
-                groups = self.mimecast_helper.api_helper(
-                    url=request_url,
-                    method="POST",
-                    headers=headers,
-                    proxies=self.proxy,
-                    verify=self.ssl_validation,
-                    data=json.dumps(body),
-                    logger_msg="fetching all groups",
-                    is_handle_error_required=True,
-                    is_validation=is_validation,
-                )
-                all_groups += [
-                    {"id": group.get("id"), "name": group.get("description")}
-                    for group in groups.get("data", [{}])[0].get("folders", [])
-                    if group.get("id") and group.get("description")
-                ]
-                nextPage = (
-                    groups.get("meta", {})
-                    .get("pagination", {})
-                    .get("next", "")
-                )
-                if nextPage:
-                    body["meta"]["pagination"]["pageToken"] = nextPage
-                else:
-                    break
 
-            self.logger.info(
-                f"{self.log_prefix}: Successfully fetched {len(all_groups)}"
-                f" groups from {PLATFORM_NAME}."
+        self.logger.debug(
+            f"{self.log_prefix}: Removing {user_id} "
+            f"from the group '{group_name}'."
+        )
+        body = {"data": [{"emailAddress": user_id, "id": group_id}]}
+        headers = self.mimecast_helper.get_headers(
+            configuration,
+            regenerate_auth_token=True,
+            proxy=self.proxy,
+            verify=self.ssl_validation,
+        )
+        request_url = f"{BASE_URL}/{REMOVE_GROUP_MEMBER_ENDPOINT}"
+
+        try:
+            response = self.mimecast_helper.api_helper(
+                url=request_url,
+                method="POST",
+                headers=headers,
+                proxies=self.proxy,
+                data=json.dumps(body),
+                verify=self.ssl_validation,
+                logger_msg=f"removing {user_id} from the group '{group_name}'",
+                is_handle_error_required=True,
+                configuration=configuration,
             )
-            return all_groups
+            failures = response.get("fail", [])
+            if failures:
+                err_msg = (
+                    f"An error occurred while removing {user_id} "
+                    f"from group '{group_name}'."
+                )
+                error = ", ".join(self._parse_errors(failures))
+                self.logger.error(
+                    message=f"{self.log_prefix}: {err_msg} Error: {error}",
+                    details=f"API response: {response}",
+                )
+                raise MimecastPluginException(err_msg)
         except MimecastPluginException:
             raise
         except Exception as e:
             err_msg = (
-                "An error occurred while retrieving existing group details."
+                f"An unexpected error occurred while removing {user_id} "
+                f"from group '{group_name}'."
             )
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {e}",
@@ -240,44 +241,105 @@ class MimecastPlugin(PluginBase):
             )
             raise MimecastPluginException(err_msg)
 
-    def _create_group(self, configuration: Dict, name: str):
-        """Create a new group with name.
+    def _bulk_remove_from_group(
+        self,
+        configuration: Dict,
+        payload: List,
+        group_name: str,
+        action_label: str,
+        skip_count: int = 0,
+    ):
+        """Remove users from group.
 
         Args:
-            configuration (Dict): Configuration parameters
-            name (str): Name of the group to create.
-
-        Returns:
-            Dict: Newly created group dictionary.
+            configuration (Dict): Configuration parameters.
+            payload (List): List of dictionaries, each dictionary
+                            representing the payload for removing a
+                            user from a group.
+            group_name (str): Name of the group.
+            action_label (str): Action label
+            skip_count (int): Number of users skipped
         """
-        endpoint = "/api/directory/create-group"
-        body = {"data": [{"description": name}]}
-        request_url, headers = self._get_auth_headers(configuration, endpoint)
-        logger_msg = f"Creating group with name {name}"
-        self.logger.debug(f"{self.log_prefix}: {logger_msg}.")
-        err_msg = f"An error occurred while creating group with name {name}."
+
+        headers = self.mimecast_helper.get_headers(
+            configuration,
+            regenerate_auth_token=True,
+            proxy=self.proxy,
+            verify=self.ssl_validation,
+        )
+        request_url = f"{BASE_URL}/{REMOVE_GROUP_MEMBER_ENDPOINT}"
+        total_users = len(payload)
+        self.logger.info(
+            f"{self.log_prefix}: Removing {total_users} "
+            f"user(s) from group {group_name}."
+        )
+        batch_count = 1
+        skip_count = skip_count
+
         try:
-            response = self.mimecast_helper.api_helper(
-                url=request_url,
-                method="POST",
-                headers=headers,
-                proxies=self.proxy,
-                verify=self.ssl_validation,
-                data=json.dumps(body),
-                logger_msg=logger_msg,
-                is_handle_error_required=True,
-            )
-            failures = response.get("fail", [])
-            if failures:
-                error = ", ".join(self._parse_errors(failures))
-                self.logger.error(
-                    f"{self.log_prefix}: {err_msg} Error: {error}"
+            payload_chunks = self.split_into_size(payload)
+            for chunk in payload_chunks:
+                body = {"data": chunk}
+                response = self.mimecast_helper.api_helper(
+                    url=request_url,
+                    method="POST",
+                    headers=headers,
+                    data=json.dumps(body),
+                    proxies=self.proxy,
+                    verify=self.ssl_validation,
+                    logger_msg=(
+                        f"removing {len(chunk)} user(s) from group"
+                        f" {group_name} for batch {batch_count}"
+                    ),
+                    is_handle_error_required=True,
+                    configuration=configuration,
                 )
-                raise MimecastPluginException(error)
-            return response
+                data = response.get("data", [])
+                failures = response.get("fail", [])
+                if failures:
+                    skip = len(chunk) - len(data)
+                    err_msg = (
+                        f"An error occurred while removing {skip} "
+                        f"user(s) for batch {batch_count} from group "
+                        f"{group_name}. Hence these user(s) records"
+                        " will be skipped."
+                    )
+                    error = ", ".join(self._parse_errors(failures))
+                    self.logger.error(
+                        message=f"{self.log_prefix}: {err_msg} Error: {error}",
+                        details=f"API response: {response}",
+                    )
+                    skip_count += skip
+                    batch_count += 1
+                    continue
+
+                self.logger.info(
+                    f"{self.log_prefix}: Successfully removed {len(data)}"
+                    f" user(s) from group {group_name} "
+                    f"for batch {batch_count}."
+                )
+                batch_count += 1
+
+            msg = (
+                f"{self.log_prefix}: Successfully performed action "
+                f"'{action_label}' on {total_users-skip_count} "
+                f"user(s)."
+            )
+            if skip_count > 0:
+                msg += (
+                    f" Skipped removing {skip_count} user(s) as "
+                    "an error occurred while removing these "
+                    f"user(s) from group {group_name}."
+                )
+
+            self.logger.info(f"{self.log_prefix}: {msg}")
         except MimecastPluginException:
             raise
         except Exception as e:
+            err_msg = (
+                "An unexpected error occurred while removing "
+                f"user(s) from group {group_name}."
+            )
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {e}",
                 details=str(traceback.format_exc()),
@@ -297,16 +359,20 @@ class MimecastPlugin(PluginBase):
         Returns:
             HTTPError: If the group doesn't exist on Mimecast.
         """
-        endpoint = "/api/directory/add-group-member"
+
         body = {"data": [{"emailAddress": user_id, "id": group_id}]}
-        request_url, headers = self._get_auth_headers(configuration, endpoint)
+        headers = self.mimecast_helper.get_headers(
+            configuration,
+            regenerate_auth_token=True,
+            proxy=self.proxy,
+            verify=self.ssl_validation,
+        )
         self.logger.debug(
-            f"{self.log_prefix}: Adding user {user_id} to group {group_name}."
+            f"{self.log_prefix}: Adding user {user_id} "
+            f"to group '{group_name}'."
         )
-        err_msg = (
-            f"An error occurred while adding {user_id} "
-            f"to group {group_name}."
-        )
+        request_url = f"{BASE_URL}/{ADD_GROUP_MEMBER_ENDPOINT}"
+
         try:
             response = self.mimecast_helper.api_helper(
                 url=request_url,
@@ -315,11 +381,16 @@ class MimecastPlugin(PluginBase):
                 proxies=self.proxy,
                 data=json.dumps(body),
                 verify=self.ssl_validation,
-                logger_msg=f"adding user {user_id} to group {group_name}",
+                logger_msg=f"adding user {user_id} to group '{group_name}'",
                 is_handle_error_required=True,
+                configuration=configuration,
             )
             failures = response.get("fail", [])
             if failures:
+                err_msg = (
+                    f"An error occurred while adding {user_id} "
+                    f"to group '{group_name}'."
+                )
                 error = ", ".join(self._parse_errors(failures))
                 self.logger.error(
                     message=f"{self.log_prefix}: {err_msg} Error: {error}",
@@ -329,63 +400,152 @@ class MimecastPlugin(PluginBase):
         except MimecastPluginException:
             raise
         except Exception as e:
+            err_msg = (
+                f"An unexpected error occurred while adding {user_id} "
+                f"to group '{group_name}'."
+            )
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg}. Error: {e}",
                 details=str(traceback.format_exc()),
             )
             raise MimecastPluginException(err_msg)
 
-    def _remove_from_group(
-        self, configuration: Dict, user_id: str, group_id: str, group_name: str
+    def _bulk_add_to_group(
+        self,
+        configuration: Dict,
+        payload: List,
+        group_name: str,
+        action_label: str,
+        skip_count: int = 0,
     ):
-        """Remove specified user from the specified group.
+        """Add users to group.
 
         Args:
             configuration (Dict): Configuration parameters.
-            user_id (str): User ID of the user.
-            group_id (str): Group ID of the group.
-
-        Raises:
-            HTTPError: If the group does not exist on Mimecast.
+            payload (List): List of dictionaries, each dictionary
+                            representing the payload for adding a user
+                            to a group.
+            group_name (str): Name of the group.
+            action_label (str): Action label
+            skip_count (int): Number of users skipped
         """
-        endpoint = "/api/directory/remove-group-member"
-        body = {"data": [{"emailAddress": user_id, "id": group_id}]}
-        request_url, headers = self._get_auth_headers(configuration, endpoint)
-        self.logger.debug(
-            f"{self.log_prefix}: Removing {user_id} "
-            f"from the group {group_name}."
+
+        headers = self.mimecast_helper.get_headers(
+            configuration,
+            regenerate_auth_token=True,
+            proxy=self.proxy,
+            verify=self.ssl_validation,
         )
-        err_msg = (
-            f"An error occurred while removing {user_id} "
-            f"from group {group_name}."
+        request_url = f"{BASE_URL}/{ADD_GROUP_MEMBER_ENDPOINT}"
+        total_users = len(payload)
+        self.logger.info(
+            f"{self.log_prefix}: Adding {total_users} "
+            f"user(s) to group {group_name} in batch"
+            f" of {ADD_TO_GROUP_BATCH_SIZE}."
         )
+        batch_count = 1
+        skip_count = skip_count
         try:
-            response = self.mimecast_helper.api_helper(
-                url=request_url,
-                method="POST",
-                headers=headers,
-                proxies=self.proxy,
-                data=json.dumps(body),
-                verify=self.ssl_validation,
-                logger_msg=f"removing {user_id} from the group {group_name}",
-                is_handle_error_required=True,
-            )
-            failures = response.get("fail", [])
-            if failures:
-                error = ", ".join(self._parse_errors(failures))
-                self.logger.error(
-                    message=f"{self.log_prefix}: {err_msg} Error: {error}",
-                    details=f"API response: {response}",
+            payload_chunks = [
+                payload[i : i + ADD_TO_GROUP_BATCH_SIZE]
+                for i in range(0, len(payload), ADD_TO_GROUP_BATCH_SIZE)
+            ]
+            for chunk in payload_chunks:
+                body = {"data": chunk}
+                response = self.mimecast_helper.api_helper(
+                    url=request_url,
+                    method="POST",
+                    headers=headers,
+                    data=json.dumps(body),
+                    proxies=self.proxy,
+                    verify=self.ssl_validation,
+                    logger_msg=(
+                        f"adding {len(chunk)} user(s) to group {group_name}"
+                        f" for batch {batch_count}"
+                    ),
+                    is_handle_error_required=True,
+                    configuration=configuration,
                 )
-                raise MimecastPluginException(err_msg)
+                data = response.get("data", [])
+                failures = response.get("fail", [])
+                if failures:
+                    skip = len(chunk) - len(data)
+                    err_msg = (
+                        f"An error occurred while adding {skip} "
+                        f"user(s) for batch {batch_count} to "
+                        f"group {group_name}. Hence these user(s)"
+                        " records will be skipped."
+                    )
+                    error = ", ".join(self._parse_errors(failures))
+                    self.logger.error(
+                        message=f"{self.log_prefix}: {err_msg} Error: {error}",
+                        details=f"API response: {response}",
+                    )
+                    skip_count += skip
+                    batch_count += 1
+                    continue
+                self.logger.info(
+                    f"{self.log_prefix}: Successfully added {len(chunk)}"
+                    f" user(s) to group {group_name} for batch {batch_count}."
+                )
+                batch_count += 1
+
+            msg = (
+                f"{self.log_prefix}: Successfully performed action "
+                f"'{action_label}' on {total_users-skip_count} "
+                f"user(s)."
+            )
+            if skip_count > 0:
+                msg += (
+                    f" Skipped adding {skip_count} user(s) as "
+                    "an error occurred while adding these "
+                    f"user(s) to group {group_name}."
+                )
+
+            self.logger.info(f"{self.log_prefix}: {msg}")
         except MimecastPluginException:
             raise
         except Exception as e:
+            err_msg = (
+                "An unexpected error occurred while adding "
+                f"user(s) to group {group_name}."
+            )
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {e}",
                 details=str(traceback.format_exc()),
             )
             raise MimecastPluginException(err_msg)
+
+    def _find_group_by_name(self, groups: List, name: str):
+        """Find group from list by name.
+
+        Args:
+            groups (List): List of groups dictionaries.
+            name (str): Name to find.
+
+        Returns:
+            Optional[Dict]: Group dictionary if found, None otherwise.
+        """
+        for group in groups:
+            if group.get("name") == name:
+                return group
+        return None
+
+    def _find_user_by_email(self, users: List, email: str) -> Optional[Dict]:
+        """Find user from list by email.
+
+        Args:
+            users (List): List of user dictionaries
+            email (str): Email to find.
+
+        Returns:
+            Optional[Dict]: user dictionary if found, None otherwise.
+        """
+        if users:
+            for user in users:
+                if user.get("emailAddress", "") == email:
+                    return user
+        return None
 
     def _get_all_users(self) -> List:
         """Get list of all the users.
@@ -394,22 +554,23 @@ class MimecastPlugin(PluginBase):
             List: List of all the users.
         """
         records = []
-        endpoint = "/api/awareness-training/company/get-safe-score-details"
-        pageSize = MAX_PAGE_SIZE
         nextPageToken = ""
-        request_url, headers = self._get_auth_headers(
-            self.configuration, endpoint
+        headers = self.mimecast_helper.get_headers(
+            self.configuration,
+            regenerate_auth_token=True,
+            proxy=self.proxy,
+            verify=self.ssl_validation,
         )
         body = {
             "meta": {
                 "pagination": {
-                    "pageSize": pageSize,
+                    "pageSize": MAX_PAGE_SIZE,
                     "pageToken": nextPageToken,
                 }
             }
         }
-        err_msg = "An error occurred while fetching users."
-        logger_msg = f"fetching user details from {PLATFORM_NAME}"
+        request_url = f"{BASE_URL}/{GET_SAFE_SCORE_DETAILS_ENDPOINT}"
+
         page_count = 1
         while True:
             try:
@@ -420,15 +581,20 @@ class MimecastPlugin(PluginBase):
                     proxies=self.proxy,
                     verify=self.ssl_validation,
                     data=json.dumps(body),
-                    logger_msg=logger_msg,
+                    logger_msg=f"fetching user details from {PLATFORM_NAME}",
                     is_handle_error_required=True,
+                    configuration=self.configuration,
                 )
                 failures = response.get("fail", [])
                 if failures:
+                    err_msg = (
+                        "An error occurred while fetching "
+                        f"users from {PLATFORM_NAME}."
+                    )
                     error = ", ".join(self._parse_errors(failures))
                     self.logger.error(
                         message=f"{self.log_prefix}: {err_msg} Error: {error}",
-                        details=f"API response: {response}",
+                        details=f"API response: {str(response)}",
                     )
                     raise MimecastPluginException(error)
                 fetch_records = response.get("data", [])
@@ -451,28 +617,17 @@ class MimecastPlugin(PluginBase):
             except MimecastPluginException:
                 raise
             except Exception as e:
+                err_msg = (
+                    "An unexpected error occurred while "
+                    f"fetching user details from {PLATFORM_NAME}."
+                )
                 self.logger.error(
                     message=f"{self.log_prefix}: {err_msg} Error: {e}",
                     details=str(traceback.format_exc()),
                 )
                 raise MimecastPluginException(err_msg)
+
         return records
-
-    def _find_user_by_email(self, users: List, email: str) -> Optional[Dict]:
-        """Find user from list by email.
-
-        Args:
-            users (List): List of user dictionaries
-            email (str): Email to find.
-
-        Returns:
-            Optional[Dict]: user dictionary if found, None otherwise.
-        """
-        if users:
-            for user in users:
-                if user.get("emailAddress", "") == email:
-                    return user
-        return None
 
     def add_field(self, fields_dict: dict, field_name: str, value):
         """Function to add field to the extracted_fields dictionary.
@@ -527,6 +682,7 @@ class MimecastPlugin(PluginBase):
             dict: Extracted fields dictionary.
         """
         extracted_fields = {}
+        normalized_score_skip_count = 0
 
         for field_name, field_value in USER_FIELD_MAPPING.items():
             key, default, transformation = (
@@ -542,227 +698,184 @@ class MimecastPlugin(PluginBase):
                 ),
             )
 
-        if event.get("risk") and include_normalization:
-            risk_level = event.get("risk")
-            normalized_score = None
-            risk_category = ""
-            if risk_level == "A":
-                normalized_score = 800
-                risk_category = "Low"
-            elif risk_level == "B":
-                normalized_score = 600
-                risk_category = "Medium"
-            elif risk_level == "C":
-                normalized_score = 400
-                risk_category = "High"
-            elif risk_level == "D":
-                normalized_score = 200
-                risk_category = "Critical"
-            elif risk_level == "F":
-                normalized_score = 1
-                risk_category = "Critical"
-            else:
-                err_msg = f"Invalid risk '{risk_level}' found in response."
-                self.logger.error(message=f"{self.log_prefix}: {err_msg}")
-                raise MimecastPluginException(err_msg)
+        risk_level = event.get("risk")
+        if risk_level and include_normalization:
+            normalized_score = MIMECAST_SCORE_MAPPING.get(risk_level)
+            netskope_risk_category = NETSKOPE_RISK_CATEGORY_MAPPING.get(
+                risk_level
+            )
+            if not normalized_score:
+                err_msg = (
+                    f"{self.log_prefix}: Invalid "
+                    f"Risk '{risk_level}' found in response "
+                    f"for User '{event.get('emailAddress')}'. "
+                    "Netskope Normalized Score will not be "
+                    "calculated for this user. "
+                    "Valid Risk range is A to F."
+                )
+                self.logger.error(
+                    message=f"{self.log_prefix}: {err_msg}",
+                    details=f"Risk : '{risk_level}'",
+                )
+                normalized_score_skip_count += 1
+
             self.add_field(
                 extracted_fields, "Netskope Normalized Score", normalized_score
             )
             self.add_field(
-                extracted_fields, "Netskope Risk Category", risk_category
+                extracted_fields,
+                "Netskope Risk Category",
+                netskope_risk_category,
             )
 
-        return extracted_fields
+        return extracted_fields, normalized_score_skip_count
 
     def is_email(self, address):
-        """Validate email address."""
-        # Simple email regex pattern
-        pattern = EMAIL_ADDRESS_REGEX
-        return re.match(pattern, address) is not None
-
-    def fetch_records(self, entity: str) -> List:
-        """Pull Records from Mimecast.
-
-        Returns:
-            List: List of records to be stored on the platform.
         """
-        total_records = []
-        skip_count = 0
-        entity_name = entity.lower()
-        if entity == "Users":
-            self.logger.info(
-                f"{self.log_prefix}: Fetching {entity_name} from "
-                f"{PLATFORM_NAME} platform."
-            )
-            try:
-                fetched_records = self._get_all_users()
-                if fetched_records:
-                    self.logger.debug(
-                        f"{self.log_prefix}: Processing "
-                        f"{len(fetched_records)} records."
-                    )
-
-                    for record in fetched_records:
-                        try:
-                            extracted_fields = (
-                                self._extract_each_device_fields(
-                                    record,
-                                    include_normalization=False,
-                                )
-                            )
-                            if extracted_fields:
-                                total_records.append(extracted_fields)
-                            else:
-                                skip_count += 1
-                        except MimecastPluginException:
-                            skip_count += 1
-                        except Exception as err:
-                            email_address = record.get("emailAddress")
-                            err_msg = (
-                                "Unable to extract fields from user"
-                                f' having Email Address "{email_address}".'
-                            )
-                            self.logger.error(
-                                message=(
-                                    f"{self.log_prefix}: {err_msg} Error: {err}"
-                                ),
-                                details=f"Record: {record}",
-                            )
-                            skip_count += 1
-            except MimecastPluginException:
-                raise
-            except Exception as e:
-                err_msg = "An error occurred while fetching records."
-                self.logger.error(
-                    message=f"{self.log_prefix}: {err_msg} Error: {e}",
-                    details=str(traceback.format_exc()),
-                )
-                raise MimecastPluginException(err_msg)
-
-            if skip_count > 0:
-                self.logger.info(
-                    f"{self.log_prefix}: Skipped {skip_count} {entity_name}"
-                    f" because they might not contain Email Address"
-                    " in their response or fields could "
-                    "not be extracted from them."
-                )
-            self.logger.info(
-                f"{self.log_prefix}: Successfully fetched"
-                f" {len(total_records)} {entity_name} "
-                f"from {PLATFORM_NAME} platform."
-            )
-            return total_records
-
-        else:
-            err_msg = (
-                f"Invalid entity found. {PLATFORM_NAME} only supports "
-                f"{entity_name} entity."
-            )
-            self.logger.error(f"{self.log_prefix}: {err_msg}")
-            raise MimecastPluginException(err_msg)
-
-    def update_records(self, entity: str, records: list[dict]) -> list[dict]:
-        """Update user scores.
+        Validate email address.
 
         Args:
-            users (List): List of users.
+            address (str): Email address to validate.
 
         Returns:
-            List: List of users with scores assigned.
+            bool: True if valid else False
         """
-        updated_records = []
-        entity_name = entity.lower()
-        skip_count = 0
-        if entity == "Users":
-            self.logger.info(
-                f"{self.log_prefix}: Updating {len(records)} {entity_name}"
-                f" records from {PLATFORM_NAME}."
-            )
-            user_list = []
-            for record in records:
-                if record.get("User Email"):
-                    user_list.append(record.get("User Email"))
+        return re.match(EMAIL_ADDRESS_REGEX, address) is not None
 
-            log_msg = (
-                f"{len(user_list)} user record(s) will be updated out"
-                f" of {len(records)} records."
-            )
-            if len(records) - len(user_list) > 0:
-                log_msg += (
-                    f" Skipped {len(records) - len(user_list)} user(s) as they"
-                    " do not have User Email field in them."
+    def validate_action(self, action: Action) -> ValidationResult:
+        """Validate Mimecast action configuration."""
+        try:
+            validation_err_msg = "Unsupported action provided."
+            if action.value not in ["add", "remove", "generate"]:
+                msg = (
+                    "Supported actions are 'Add to group', "
+                    "'Remove from group' and 'No action'."
                 )
-            self.logger.info(f"{self.log_prefix}: {log_msg}")
-            try:
-                fetched_records = self._get_all_users()
-                if fetched_records:
-                    for record in fetched_records:
-                        try:
-                            extracted_fields = (
-                                self._extract_each_device_fields(
-                                    record,
-                                    include_normalization=True,
-                                )
-                            )
-                            if extracted_fields:
-                                updated_records.append(extracted_fields)
-                            else:
-                                skip_count += 1
-                        except MimecastPluginException:
-                            skip_count += 1
-                        except Exception as err:
-                            email_address = record.get("emailAddress")
-                            err_msg = (
-                                "Unable to extract fields from user"
-                                f' having Email Address "{email_address}".'
-                            )
-                            self.logger.error(
-                                message=(
-                                    f"{self.log_prefix}: {err_msg} Error: {err}"
-                                ),
-                                details=f"Record: {record}",
-                            )
-                            skip_count += 1
-
-            except MimecastPluginException:
-                raise
-            except Exception as e:
-                err_msg = "An error occurred while updating records."
                 self.logger.error(
-                    message=f"{self.log_prefix}: {err_msg} Error: {e}",
-                    details=str(traceback.format_exc()),
+                    message=f"{self.log_prefix}: {validation_err_msg} {msg}",
                 )
-                raise MimecastPluginException(err_msg)
-
-            if skip_count > 0:
-                self.logger.info(
-                    f"{self.log_prefix}: Skipped {skip_count} {entity_name}"
-                    f" because they might not contain Email Address"
-                    " in their response or fields could "
-                    "not be extracted from them."
+                return ValidationResult(
+                    success=False,
+                    message=f"{validation_err_msg} {msg}",
                 )
-            self.logger.info(
-                f"{self.log_prefix}: Successfully updated "
-                f"{len(updated_records)} {entity_name} record(s)"
-                f" out of {len(records)} from {PLATFORM_NAME}."
-            )
+            if action.value == "generate":
+                self.logger.debug(
+                    f"{self.log_prefix}: Successfully validated "
+                    f"action configuration for '{action.label}'."
+                )
+                return ValidationResult(
+                    success=True, message="Validation successful."
+                )
 
-            return updated_records
-        else:
-            err_msg = (
-                f"Invalid entity found. {PLATFORM_NAME} only supports "
-                f"{entity_name} entity."
-            )
-            self.logger.error(f"{self.log_prefix}: {err_msg}")
-            raise MimecastPluginException(err_msg)
+            create_dict = json.dumps({"id": "create"})
+            email = action.parameters.get("email", "")
 
-    def get_actions(self) -> list[ActionWithoutParams]:
-        """Get Available actions."""
-        return [
-            ActionWithoutParams(label="Add to Group", value="add"),
-            ActionWithoutParams(label="Remove from Group", value="remove"),
-            ActionWithoutParams(label="No Action", value="generate"),
-        ]
+            if not email:
+                err_msg = "User Email is a required action parameter."
+                self.logger.error(f"{self.log_prefix}: {err_msg}")
+                return ValidationResult(success=False, message=err_msg)
+            if ("$" not in email) and (
+                not isinstance(email, str) or not self.is_email(email)
+            ):
+                err_msg = (
+                    "Invalid User Email value provided in action parameters."
+                )
+                self.logger.error(f"{self.log_prefix}: {err_msg}")
+                return ValidationResult(success=False, message=err_msg)
+            elif isinstance(email, str) and "$" in email:
+                log_msg = (
+                    "User Email contains the source field"
+                    " hence validation for this field will be performed"
+                    f" while executing the {action.label} action."
+                )
+                self.logger.info(f"{self.log_prefix}: {log_msg}")
+
+            groups = self._get_all_groups(
+                self.configuration, is_validation=True
+            )
+            if create_dict not in action.parameters.get("group", "") and (
+                "$" in action.parameters.get("group")
+            ):
+                err_msg = (
+                    "Group contains the Source Field."
+                    " Please select group from Static Field dropdown only."
+                )
+                self.logger.error(f"{self.log_prefix}: {err_msg}")
+                return ValidationResult(success=False, message=err_msg)
+
+            if create_dict not in action.parameters.get(
+                "group", ""
+            ) and not any(
+                map(
+                    lambda g: (
+                        isinstance(
+                            group_dict := json.loads(
+                                action.parameters.get("group", "")
+                            ),
+                            dict,
+                        )
+                        and "id" in group_dict
+                        and g.get("id", "") == group_dict["id"]
+                    ),
+                    groups,
+                )
+            ):
+                err_msg = (
+                    "Invalid Group name Provided in action parameters. "
+                    "Select Group name from drop down list."
+                )
+                self.logger.error(f"{self.log_prefix}: {err_msg}")
+                return ValidationResult(success=False, message=err_msg)
+
+            if (
+                action.value == "add"
+                and create_dict in action.parameters.get("group", "")
+                and len(action.parameters.get("name", "").strip()) == 0
+            ):
+                err_msg = (
+                    "Invalid New Group Name provided in action parameters,"
+                    " New Group Name can not be empty."
+                )
+                self.logger.error(f"{self.log_prefix}: {err_msg}")
+                return ValidationResult(success=False, message=err_msg)
+            if (
+                action.value == "add"
+                and create_dict in action.parameters.get("group", "")
+                and "$" in action.parameters.get("name", "")
+            ):
+                err_msg = (
+                    "New Group Name contains the Source Field."
+                    " Please provide a group name using Static Field only."
+                )
+                self.logger.error(f"{self.log_prefix}: {err_msg}")
+                return ValidationResult(success=False, message=err_msg)
+            if (
+                action.value == "remove"
+                and f"No groups found on {PLATFORM_NAME} platform."
+                in action.parameters.get("group", "")
+            ):
+                err_msg = (
+                    "Action will not be saved as no groups"
+                    f" found on {PLATFORM_NAME} server."
+                )
+                self.logger.error(f"{self.log_prefix}: {err_msg}")
+                return ValidationResult(success=False, message=err_msg)
+
+            return ValidationResult(
+                success=True, message="Validation successful."
+            )
+        except MimecastPluginException:
+            raise
+        except Exception as e:
+            err_msg = "Unexpected error occurred while validating actions."
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg} Error: {e}",
+                details=str(traceback.format_exc()),
+            )
+            return ValidationResult(
+                success=False,
+                message=f"{err_msg} Check logs for more details.",
+            )
 
     def get_action_params(self, action: Action) -> List:
         """Get fields required for an action."""
@@ -806,9 +919,9 @@ class MimecastPlugin(PluginBase):
                     "mandatory": True,
                     "description": (
                         "Select an existing group from the available"
-                        " options or opt to create a new group by "
-                        "selecting 'Create New Group' for "
-                        "adding users into it."
+                        " options or choose 'Create New Group' to "
+                        "create a new group and add users to it. "
+                        "Select Group from Static field dropdown only."
                     ),
                 },
                 {
@@ -818,9 +931,9 @@ class MimecastPlugin(PluginBase):
                     "default": "A_Cloud_Exchange",
                     "mandatory": False,
                     "description": (
-                        "Add a new group name if you have opted for "
-                        "the 'Create New Group' actions from "
-                        "the above section on Group."
+                        "Create group with given name. Provide New"
+                        " Group Name in Static field if you have selected"
+                        " 'Create New Group' in Group."
                     ),
                 },
             ]
@@ -844,22 +957,31 @@ class MimecastPlugin(PluginBase):
                         else f"No groups found on {PLATFORM_NAME} platform."
                     ),
                     "mandatory": True,
-                    "description": "Select a group to remove the user from.",
+                    "description": (
+                        "Group to remove the user from. "
+                        "Select Group from Static field dropdown only."
+                    ),
                 }
             ]
 
     def execute_action(self, action: Action):
-        """Execute action on the user."""
+        """
+        Execute action on the user.
+
+        Args:
+            action (Action): Action to be executed.
+        """
         action_label = action.label
         action_parameters = action.parameters
         user = action_parameters.get("email", "")
-        self.logger.info(
-            f"{self.log_prefix}: Executing '{action_label}' action."
+        self.logger.debug(
+            f"{self.log_prefix}: Executing action "
+            f"'{action_label}' for user '{user}'."
         )
         if action.value == "generate":
             self.logger.info(
                 f"{self.log_prefix}: Successfully performed action "
-                f"'{action_label}' on {user}"
+                f"'{action_label}'."
             )
             return
         elif not self.is_email(user):
@@ -867,7 +989,7 @@ class MimecastPlugin(PluginBase):
                 f"{PLATFORM_NAME} plugin expects "
                 "the value of 'User Email' parameter to be a "
                 "valid email hence skipping "
-                f"execution of action {action_label} on '{user}'."
+                f"execution of action '{action_label}' on '{user}'."
             )
             self.logger.error(f"{self.log_prefix}: {error_msg}")
             raise MimecastPluginException(error_msg)
@@ -895,11 +1017,17 @@ class MimecastPlugin(PluginBase):
                 else:
                     group_info = match_group
 
+            group_name = None
+            if group_info.get("description", ""):
+                group_name = group_info.get("description", "")
+            else:
+                group_name = group_info.get("name", "")
+
             self._add_to_group(
                 self.configuration,
                 match.get("emailAddress", ""),
                 group_info.get("id", ""),
-                group_info.get("description", ""),
+                group_name,
             )
             self.logger.info(
                 f"{self.log_prefix}: Successfully performed action"
@@ -911,301 +1039,673 @@ class MimecastPlugin(PluginBase):
                 self.configuration,
                 match.get("emailAddress", ""),
                 group_info.get("id", ""),
-                group_info.get("description", ""),
+                group_info.get("name", ""),
             )
             self.logger.info(
                 f"{self.log_prefix}: Successfully performed action"
                 f" '{action_label}' on user with email {user}."
             )
 
-    def validate_action(self, action: Action) -> ValidationResult:
-        """Validate Mimecast action configuration."""
+    def execute_actions(self, actions: List[Action]):
+        """
+        Execute actions in bulk.
+
+        Args:
+            actions (List[Action]): List of actions to be executed.
+        """
+
+        if len(actions) > 0:
+            action = actions[0]
+            action_label = action.label
+            action_value = action.value
+            self.logger.debug(
+                f"{self.log_prefix}: Executing '{action_label}'"
+                f" action on {len(actions)} user(s)."
+            )
+            if action_value == "generate":
+                self.logger.info(
+                    f"{self.log_prefix}: Successfully performed action "
+                    f"'{action_label}'."
+                )
+                return
+
+            if action_value == "add":
+                skip_count = 0
+                group_name = None
+                total_payload = []
+                action_parameters = action.parameters
+                users = self._get_all_users()
+                groups = self._get_all_groups(self.configuration)
+
+                group_info = json.loads(action_parameters.get("group", ""))
+                if group_info.get("id", "") == "create":
+                    group_name = action_parameters.get("name", "").strip()
+                    match_group = self._find_group_by_name(groups, group_name)
+                    if not match_group:
+                        group = self._create_group(
+                            self.configuration, group_name
+                        )
+                        group_info = group.get("data", [{}])[0]
+                    else:
+                        group_info = match_group
+
+                if group_info.get("description", ""):
+                    group_name = group_info.get("description", "")
+                else:
+                    group_name = group_info.get("name", "")
+
+                for action in actions:
+                    action_parameters = action.parameters
+                    user = action_parameters.get("email", "")
+                    if not self.is_email(user):
+                        error_msg = (
+                            f"{PLATFORM_NAME} plugin expects "
+                            "the value of 'User Email' parameter"
+                            "valid email hence skipping to be a "
+                            f"execution of action '{action_label}'"
+                            f" on '{user}'."
+                        )
+                        self.logger.error(f"{self.log_prefix}: {error_msg}")
+                        skip_count += 1
+                        continue
+
+                    match = self._find_user_by_email(users, user)
+                    if match is None:
+                        self.logger.info(
+                            f"{self.log_prefix}: The user with email address"
+                            f" {user} was not found on {PLATFORM_NAME}. "
+                            f"Hence cannot perform {action_label} action "
+                            f"on '{user}'."
+                        )
+                        skip_count += 1
+                        continue
+
+                    total_payload.append(
+                        {
+                            "id": group_info.get("id", ""),
+                            "emailAddress": match.get("emailAddress", ""),
+                        }
+                    )
+
+                self._bulk_add_to_group(
+                    self.configuration,
+                    total_payload,
+                    group_name,
+                    action_label,
+                    skip_count,
+                )
+
+            elif action_value == "remove":
+                skip_count = 0
+                group_name = None
+                total_payload = []
+                action_parameters = action.parameters
+                users = self._get_all_users()
+                group_info = json.loads(action_parameters.get("group", ""))
+                group_name = group_info.get("name", "")
+                for action in actions:
+                    action_parameters = action.parameters
+                    user = action_parameters.get("email", "")
+                    if not self.is_email(user):
+                        error_msg = (
+                            f"{PLATFORM_NAME} plugin expects "
+                            "the value of 'User Email' parameter"
+                            "valid email hence skipping  to be a "
+                            f"execution of action '{action_label}'"
+                            f" on '{user}'."
+                        )
+                        self.logger.error(f"{self.log_prefix}: {error_msg}")
+                        skip_count += 1
+                        continue
+
+                    match = self._find_user_by_email(users, user)
+                    if match is None:
+                        self.logger.info(
+                            f"{self.log_prefix}: The user with email address"
+                            f" {user} was not found on {PLATFORM_NAME}. "
+                            f"Hence cannot perform {action_label} action "
+                            f"on '{user}'."
+                        )
+                        skip_count += 1
+                        continue
+
+                    total_payload.append(
+                        {
+                            "id": group_info.get("id", ""),
+                            "emailAddress": match.get("emailAddress", ""),
+                        }
+                    )
+
+                self._bulk_remove_from_group(
+                    self.configuration,
+                    total_payload,
+                    group_name,
+                    action_label,
+                    skip_count,
+                )
+
+    def _create_group(self, configuration: Dict, name: str):
+        """Create a new group with name.
+
+        Args:
+            configuration (Dict): Configuration parameters
+            name (str): Name of the group to create.
+
+        Returns:
+            Dict: Newly created group dictionary.
+        """
+        headers = self.mimecast_helper.get_headers(
+            configuration,
+            regenerate_auth_token=True,
+            proxy=self.proxy,
+            verify=self.ssl_validation,
+        )
+        body = {"data": [{"description": name}]}
+        request_url = f"{BASE_URL}/{CREATE_GROUP_ENDPOINT}"
+        logger_msg = f"Creating group with name {name}"
+        self.logger.debug(f"{self.log_prefix}: {logger_msg}.")
         try:
-            validation_err_msg = "Unsupported action provided."
-            if action.value not in ["add", "remove", "generate"]:
+            response = self.mimecast_helper.api_helper(
+                url=request_url,
+                method="POST",
+                headers=headers,
+                proxies=self.proxy,
+                verify=self.ssl_validation,
+                data=json.dumps(body),
+                logger_msg=logger_msg,
+                is_handle_error_required=True,
+                configuration=configuration,
+            )
+            failures = response.get("fail", [])
+            if failures:
+                err_msg = (
+                    f"An error occurred while creating group with name {name}."
+                )
+                error = ", ".join(self._parse_errors(failures))
                 self.logger.error(
-                    message=(
-                        f"{self.log_prefix}: {validation_err_msg}"
-                        "Supported actions are 'Add to Group', "
-                        "'Remove from Group' and 'No action'."
-                    ),
+                    f"{self.log_prefix}: {err_msg} Error: {error}"
                 )
-                return ValidationResult(
-                    success=False,
-                    message=(
-                        f"{validation_err_msg} Supported actions are "
-                        "'Add to Group', 'Remove from Group' and 'No action'."
-                    ),
-                )
-            if action.value == "generate":
-                return ValidationResult(
-                    success=True, message="Validation successful."
-                )
-            create_dict = json.dumps({"id": "create"})
-            email = action.parameters.get("email", "")
-            if not email:
-                err_msg = "User Email is a required action parameter."
-                self.logger.error(f"{self.log_prefix}: {err_msg}")
-                return ValidationResult(success=False, message=err_msg)
-            elif not isinstance(email, str):
-                err_msg = "Invalid User Email provided in action parameters."
-                self.logger.error(f"{self.log_prefix}: {err_msg}")
-                return ValidationResult(success=False, message=err_msg)
-            elif isinstance(email, str) and "$" in email:
-                log_msg = (
-                    "User Email contains the Source Field"
-                    " hence validation for this field will be performed"
-                    f" while executing the {action.label} action."
-                )
-                self.logger.info(f"{self.log_prefix}: {log_msg}")
-
-            groups = self._get_all_groups(
-                self.configuration, is_validation=True
-            )
-            if create_dict not in action.parameters.get("group", "") and (
-                "$" in action.parameters.get("group")
-            ):
-                err_msg = (
-                    "Group contains the Source Field."
-                    " Please select group from Static Field dropdown only."
-                )
-                self.logger.error(f"{self.log_prefix}: {err_msg}")
-                return ValidationResult(success=False, message=err_msg)
-
-            if create_dict not in action.parameters.get(
-                "group", ""
-            ) and not any(
-                map(
-                    lambda g: g.get("id", "")
-                    == json.loads(action.parameters.get("group", ""))["id"],
-                    groups,
-                )
-            ):
-                err_msg = (
-                    "Invalid Group Name Provided in action parameters. "
-                    "Select group names from drop down list."
-                )
-                self.logger.error(f"{self.log_prefix}: {err_msg}")
-                return ValidationResult(success=False, message=err_msg)
-
-            if (
-                action.value == "add"
-                and create_dict in action.parameters.get("group", "")
-                and len(action.parameters.get("name", "").strip()) == 0
-            ):
-                err_msg = (
-                    "Invalid Group Name provided in action parameters,"
-                    " Group Name can not be empty."
-                )
-                self.logger.error(f"{self.log_prefix}: {err_msg}")
-                return ValidationResult(success=False, message=err_msg)
-            if (
-                action.value == "add"
-                and create_dict in action.parameters.get("group", "")
-                and "$" in action.parameters.get("name", "")
-            ):
-                err_msg = (
-                    "New Group Name contains the Source Field."
-                    " Please provide a group name using Static Field only."
-                )
-                self.logger.error(f"{self.log_prefix}: {err_msg}")
-                return ValidationResult(success=False, message=err_msg)
-            if (
-                action.value == "remove"
-                and f"No groups found on {PLATFORM_NAME} platform."
-                in action.parameters.get("group", "")
-            ):
-                err_msg = (
-                    "Action will not be saved as no groups"
-                    " found on {} server.".format(PLATFORM_NAME)
-                )
-                self.logger.error(f"{self.log_prefix}: {err_msg}")
-                return ValidationResult(success=False, message=err_msg)
-
-            return ValidationResult(
-                success=True, message="Validation successful."
-            )
+                raise MimecastPluginException(error)
+            return response
+        except MimecastPluginException:
+            raise
         except Exception as e:
-            err_msg = "Unexpected error occurred while validating actions."
+            err_msg = (
+                "An Unexpected error occurred while creating"
+                f" group with name {name}."
+            )
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {e}",
                 details=str(traceback.format_exc()),
             )
-            return ValidationResult(
-                success=False,
-                message=f"{err_msg} Check logs for more details.",
+            raise MimecastPluginException(err_msg)
+
+    def _get_all_groups(
+        self, configuration: Dict, is_validation=False
+    ) -> List:
+        """Get list of all the groups.
+
+        Args:
+            configuration (Dict): Configuration parameters.
+            is_validation (bool): Whether calling from validate method
+
+        Returns:
+            List: List of all the groups.
+        """
+
+        page_count = 1
+        all_groups = []
+        nextPageToken = ""
+        headers = self.mimecast_helper.get_headers(
+            configuration,
+            regenerate_auth_token=True,
+            proxy=self.proxy,
+            verify=self.ssl_validation,
+        )
+        body = {
+            "meta": {
+                "pagination": {
+                    "pageSize": MAX_PAGE_SIZE,
+                    "pageToken": nextPageToken,
+                }
+            }
+        }
+        url = f"{BASE_URL}/{FIND_GROUPS_ENDPOINT}"
+        try:
+            while True:
+                per_page_fetched_count = 0
+                groups_fetched_per_page = []
+                groups = self.mimecast_helper.api_helper(
+                    url=url,
+                    method="POST",
+                    headers=headers,
+                    proxies=self.proxy,
+                    verify=self.ssl_validation,
+                    data=json.dumps(body),
+                    logger_msg=f"fetching all groups from {PLATFORM_NAME}",
+                    is_handle_error_required=True,
+                    is_validation=is_validation,
+                    configuration=configuration,
+                )
+
+                failures = groups.get("fail", [])
+                if failures:
+                    err_msg = (
+                        "An error occurred while fetching "
+                        f"groups from {PLATFORM_NAME}."
+                    )
+                    error = ", ".join(self._parse_errors(failures))
+                    self.logger.error(
+                        message=f"{self.log_prefix}: {err_msg} Error: {error}",
+                        details=f"API response: {str(groups)}",
+                    )
+                    raise MimecastPluginException(error)
+
+                groups_fetched_per_page = [
+                    {"id": group.get("id"), "name": group.get("description")}
+                    for group in groups.get("data", [{}])[0].get("folders", [])
+                    if group.get("id") and group.get("description")
+                ]
+                all_groups += groups_fetched_per_page
+                per_page_fetched_count = len(groups_fetched_per_page)
+                nextPage = (
+                    groups.get("meta", {})
+                    .get("pagination", {})
+                    .get("next", "")
+                )
+                self.logger.debug(
+                    f"{self.log_prefix}: Successfully fetched "
+                    f"{per_page_fetched_count} groups from "
+                    f"{PLATFORM_NAME} for page {page_count}."
+                )
+                if nextPage:
+                    body["meta"]["pagination"]["pageToken"] = nextPage
+                    page_count += 1
+                else:
+                    break
+
+            self.logger.info(
+                f"{self.log_prefix}: Successfully fetched {len(all_groups)}"
+                f" groups from {PLATFORM_NAME}."
+            )
+            return all_groups
+        except MimecastPluginException:
+            raise
+        except Exception as e:
+            err_msg = (
+                "An unexpected error occurred while "
+                "retrieving existing group details."
+            )
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg} Error: {e}",
+                details=str(traceback.format_exc()),
+            )
+            raise MimecastPluginException(err_msg)
+
+    def fetch_records(self, entity: str) -> List:
+        """Pull Records from Mimecast.
+
+        Args:
+            entity (str): Entity name.
+
+        Returns:
+            List: List of records to be stored on the platform.
+        """
+        total_records = []
+        skip_count = 0
+        entity_name = entity.lower()
+
+        if entity != "Users":
+            err_msg = (
+                f"Invalid entity found. {PLATFORM_NAME} only supports "
+                f"{entity_name} entity."
+            )
+            self.logger.error(f"{self.log_prefix}: {err_msg}")
+            raise MimecastPluginException(err_msg)
+
+        self.logger.info(
+            f"{self.log_prefix}: Fetching {entity_name} from "
+            f"{PLATFORM_NAME} platform."
+        )
+        try:
+            fetched_records = self._get_all_users()
+            if fetched_records:
+                for record in fetched_records:
+                    try:
+                        extracted_fields, _ = self._extract_each_device_fields(
+                            record,
+                            include_normalization=False,
+                        )
+                        if extracted_fields:
+                            total_records.append(extracted_fields)
+                        else:
+                            skip_count += 1
+                    except MimecastPluginException:
+                        skip_count += 1
+                    except Exception as err:
+                        email_address = record.get("emailAddress")
+                        err_msg = (
+                            "Unable to extract fields from user"
+                            f' having Email Address "{email_address}".'
+                        )
+                        self.logger.error(
+                            message=(
+                                f"{self.log_prefix}: {err_msg} Error: {err}"
+                            ),
+                            details=str(traceback.format_exc()),
+                        )
+                        skip_count += 1
+        except MimecastPluginException:
+            raise
+        except Exception as exp:
+            err_msg = (
+                f"Unexpected error occurred while fetching "
+                f"{entity_name} from {PLATFORM_NAME} platform."
+            )
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg} Error: {exp}",
+                details=str(traceback.format_exc()),
+            )
+            raise MimecastPluginException(err_msg)
+
+        if skip_count > 0:
+            self.logger.info(
+                f"{self.log_prefix}: Skipped {skip_count} {entity_name}"
+                f" because they might not contain Email Address"
+                " in their response or fields could "
+                "not be extracted from them."
+            )
+        self.logger.info(
+            f"{self.log_prefix}: Successfully fetched"
+            f" {len(total_records)} {entity_name} "
+            f"from {PLATFORM_NAME} platform."
+        )
+        return total_records
+
+    def update_records(self, entity: str, records: list[dict]) -> list[dict]:
+        """Update user scores.
+
+        Args:
+            users (List): List of users.
+
+        Returns:
+            List: List of users with scores assigned.
+        """
+        updated_records = []
+        entity_name = entity.lower()
+        total_normalized_score_skip_count = 0
+        skip_count = 0
+
+        if entity != "Users":
+            err_msg = (
+                f"Invalid entity found. {PLATFORM_NAME} only supports "
+                f"{entity_name} entity."
+            )
+            self.logger.error(f"{self.log_prefix}: {err_msg}")
+            raise MimecastPluginException(err_msg)
+
+        self.logger.info(
+            f"{self.log_prefix}: Updating {len(records)} {entity_name}"
+            f" records from {PLATFORM_NAME}."
+        )
+        user_list = set()
+        for record in records:
+            user_email = record.get("User Email")
+            if user_email:
+                user_list.add(user_email)
+
+        log_msg = (
+            f"{len(user_list)} user record(s) will be updated out"
+            f" of {len(records)} records."
+        )
+        if len(records) - len(user_list) > 0:
+            log_msg += (
+                f" Skipped {len(records) - len(user_list)} user(s) as they"
+                " do not have User Email field in them."
+            )
+        self.logger.info(f"{self.log_prefix}: {log_msg}")
+
+        try:
+            fetched_records = self._get_all_users()
+            if fetched_records:
+                for record in fetched_records:
+                    try:
+                        if record.get("emailAddress"):
+                            (extracted_fields, normalized_score_skip_count) = (
+                                self._extract_each_device_fields(
+                                    record,
+                                    include_normalization=True,
+                                )
+                            )
+                            if extracted_fields:
+                                current_email = extracted_fields.get(
+                                    "User Email", ""
+                                )
+                                if current_email in user_list:
+                                    updated_records.append(extracted_fields)
+                                else:
+                                    skip_count += 1
+                            else:
+                                skip_count += 1
+
+                            total_normalized_score_skip_count += (
+                                normalized_score_skip_count
+                            )
+                        else:
+                            skip_count += 1
+                    except MimecastPluginException:
+                        skip_count += 1
+                    except Exception as err:
+                        email_address = record.get("emailAddress")
+                        err_msg = (
+                            "Unable to extract fields from user"
+                            f' having Email Address "{email_address}".'
+                        )
+                        self.logger.error(
+                            message=(
+                                f"{self.log_prefix}: {err_msg} Error: {err}"
+                            ),
+                            details=str(traceback.format_exc()),
+                        )
+                        skip_count += 1
+        except MimecastPluginException:
+            raise
+        except Exception as exp:
+            err_msg = (
+                f"Unexpected error occurred "
+                f"while updating {entity_name} "
+                f"from {PLATFORM_NAME} platform."
+            )
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg} Error: {exp}",
+                details=str(traceback.format_exc()),
+            )
+            raise MimecastPluginException(err_msg)
+
+        if skip_count > 0:
+            self.logger.info(
+                f"{self.log_prefix}: Skipped {skip_count} {entity_name}"
+                f" because they might not contain Email Address"
+                " in their response or fields could "
+                "not be extracted from them."
             )
 
-    def _validate_credentials(self, configuration: dict):
-        """Validate credentials by making REST API call."""
+        if total_normalized_score_skip_count > 0:
+            self.logger.info(
+                f"{self.log_prefix}: Skipped calculating "
+                "Netskope Normalized Score for "
+                f"{total_normalized_score_skip_count} {entity_name}"
+                " record(s) as invalid Risk value received from the "
+                f"{PLATFORM_NAME} platform."
+            )
+
+        self.logger.info(
+            f"{self.log_prefix}: Successfully updated "
+            f"{len(updated_records)} {entity_name} record(s)"
+            f" out of {len(records)} from {PLATFORM_NAME}."
+        )
+
+        return updated_records
+
+    def get_actions(self) -> list[ActionWithoutParams]:
+        """Get available actions.
+
+        Args:
+            None
+
+        Returns:
+            [...] list of ActionWithoutParams: List of ActionWithoutParams
+                which has label and value defined
+
+        """
+        return [
+            ActionWithoutParams(label="Add to group", value="add"),
+            ActionWithoutParams(label="Remove from group", value="remove"),
+            ActionWithoutParams(label="No action", value="generate"),
+        ]
+
+    def _validate_auth_params(self, configuration: dict):
+        """Validate the authentication params with Mimecast platform.
+
+        Args: configuration (dict).
+
+        Returns:
+            ValidationResult: ValidationResult object having validation
+            results after making an API call.
+        """
         try:
             validation_err_msg = "Validation error occurred"
-            url, headers = self._get_auth_headers(
-                configuration, "/api/account/get-account"
+            headers = self.mimecast_helper.get_headers(
+                configuration,
+                is_handle_error_required=True,
+                is_validation=True,
+                proxy=self.proxy,
+                verify=self.ssl_validation,
             )
+            url = f"{BASE_URL}/{GET_ACCOUNT_DETAILS_ENDPOINT}"
+
             response = self.mimecast_helper.api_helper(
                 url=url,
                 method="POST",
                 headers=headers,
                 proxies=self.proxy,
                 verify=self.ssl_validation,
-                logger_msg="validating the credentials",
+                logger_msg=(
+                    f"checking connectivity with {PLATFORM_NAME} platform"
+                ),
                 is_handle_error_required=True,
+                regenerate_auth_token=False,
                 is_validation=True,
+                configuration=configuration,
             )
             failures = response.get("fail", [])
             if not failures:
+                msg = (
+                    f"Validation successful for {MODULE_NAME} "
+                    f"{PLATFORM_NAME} plugin."
+                )
+                self.logger.debug(f"{self.log_prefix}: {msg}")
+                packages = response.get("data", [{}])[0].get("packages", [])
+
+                if "Awareness Training [1078]" not in packages:
+                    err_msg = (
+                        "Awareness Training' package is not enabled in "
+                        "configured account and hence fetching score"
+                        " is not possible."
+                    )
+                    self.logger.error(
+                        f"{self.log_prefix}: {validation_err_msg} {err_msg}"
+                    )
+                    return ValidationResult(
+                        success=False,
+                        message=err_msg,
+                    )
                 return ValidationResult(
                     success=True,
-                    message=(
-                        "Validation successful for {} {} Plugin.".format(
-                            MODULE_NAME, PLATFORM_NAME
-                        )
-                    ),
-                ), response.get("data", [{}])[0].get("packages", [])
-            return (
-                ValidationResult(
-                    success=False,
-                    message="{}: {}. Error: {}".format(
-                        self.log_prefix,
-                        validation_err_msg,
-                        ", ".join(self._parse_errors(failures)),
-                    ),
+                    message=msg,
+                )
+            return ValidationResult(
+                success=False,
+                message="{}: {}. Error: {}".format(
+                    self.log_prefix,
+                    validation_err_msg,
+                    ", ".join(self._parse_errors(failures)),
                 ),
-                None,
             )
-        except MimecastPluginException:
-            raise
-        except Exception:
-            err_msg = f"{validation_err_msg} while validating credentials."
+        except MimecastPluginException as exp:
+            return ValidationResult(
+                success=False,
+                message=str(exp),
+            )
+
+        except Exception as exp:
+            err_msg = "Unexpected validation error occurred."
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg} Error: {exp}",
+                details=traceback.format_exc(),
+            )
             return ValidationResult(
                 success=False,
                 message=f"{err_msg} Check logs for more details.",
             )
 
-    def _validate_url(self, url: str) -> bool:
-        """Validate the URL using parsing.
+    def validate(self, configuration: Dict):
+        """Validate the Plugin configuration parameters.
 
         Args:
-            url (str): Given URL.
+            configuration (dict): Contains the below keys:
 
         Returns:
-            bool: True or False { Valid or not Valid URL }.
+            ValidateResult: ValidateResult object with success flag and
+                            message.
         """
-        parsed_url = urlparse(url)
-        return parsed_url.scheme and parsed_url.netloc
-
-    def validate(self, configuration: Dict):
-        """Validate Mimecast configuration."""
 
         validation_err_msg = "Validation error occurred."
-        base_url = configuration.get("url", "").strip().strip("/")
-        if not base_url:
-            err_msg = "Base URL is a required configuration parameter."
+
+        # Validate Client ID.
+        client_id = configuration.get("client_id", "")
+        if not client_id:
+            err_msg = "Client ID is a required configuration parameter."
             self.logger.error(
                 f"{self.log_prefix}: {validation_err_msg} {err_msg}"
             )
             return ValidationResult(success=False, message=err_msg)
-        elif not (isinstance(base_url, str) and self._validate_url(base_url)):
+        elif not (isinstance(client_id, str)):
             err_msg = (
-                "Invalid Base URL provided in the configuration parameters."
-            )
-            self.logger.error(
-                f"{self.log_prefix}: {validation_err_msg} {err_msg}"
-            )
-            return ValidationResult(success=False, message=err_msg)
-        # Validate Application ID.
-        app_id = configuration.get("app_id", "").strip()
-        if not app_id:
-            err_msg = "Application ID is a required configuration parameter."
-            self.logger.error(
-                f"{self.log_prefix}: {validation_err_msg} {err_msg}"
-            )
-            return ValidationResult(success=False, message=err_msg)
-        elif not (isinstance(app_id, str)):
-            err_msg = (
-                "Invalid Application ID provided in the "
-                "configuration parameters."
+                "Invalid Client ID provided in the configuration parameters."
             )
             self.logger.error(
                 f"{self.log_prefix}: {validation_err_msg} {err_msg}"
             )
             return ValidationResult(success=False, message=err_msg)
 
-        # Validate Application Key.
-        app_key = configuration.get("app_key", "")
-        if not app_key:
-            err_msg = "Application Key is a required configuration parameter."
+        # Validate Client Secret Key.
+        client_secret = configuration.get("client_secret", "")
+        if not client_secret:
+            err_msg = "Client Secret is a required configuration parameter."
             self.logger.error(
                 f"{self.log_prefix}: {validation_err_msg} {err_msg}"
             )
             return ValidationResult(success=False, message=err_msg)
-        elif not (isinstance(app_key, str)):
+        elif not isinstance(client_secret, str):
             err_msg = (
-                "Invalid Application Key provided in "
+                "Invalid Client Secret provided in "
                 "the configuration parameters."
             )
             self.logger.error(
                 f"{self.log_prefix}: {validation_err_msg} {err_msg}"
             )
             return ValidationResult(success=False, message=err_msg)
-        # Validate Access Key.
-        access_key = configuration.get("access_key", "")
-        if not access_key:
-            err_msg = "Access Key is a required configuration parameter."
-            self.logger.error(
-                f"{self.log_prefix}: {validation_err_msg} {err_msg}"
-            )
-            return ValidationResult(success=False, message=err_msg)
-        elif not (isinstance(access_key, str)):
-            err_msg = (
-                "Invalid Access Key provided in the configuration parameters."
-            )
-            self.logger.error(
-                f"{self.log_prefix}: {validation_err_msg} {err_msg}"
-            )
-            return ValidationResult(success=False, message=err_msg)
-        # Validate Secret Key.
-        secret_key = configuration.get("secret_key", "")
-        if not secret_key:
-            err_msg = "Secret Key is a required configuration parameter."
-            self.logger.error(
-                f"{self.log_prefix}: {validation_err_msg} {err_msg}"
-            )
-            return ValidationResult(success=False, message=err_msg)
-        elif not (isinstance(secret_key, str)) or not re.match(
-            SECRET_KEY_REGEX,
-            secret_key,
-        ):
-            err_msg = (
-                "Invalid Secret Key provided in the configuration parameters."
-            )
-            self.logger.error(
-                f"{self.log_prefix}: {validation_err_msg} {err_msg}"
-            )
-            return ValidationResult(success=False, message=err_msg)
-        validation_result, packages = self._validate_credentials(configuration)
 
-        if not validation_result.success:
-            return validation_result
-
-        if "Awareness Training [1078]" not in packages:
-            err_msg = (
-                "Awareness Training' package is not enabled in "
-                "configured account and hence fetching score is not possible."
-            )
-            self.logger.error(
-                f"{self.log_prefix}: {validation_err_msg} {err_msg}"
-            )
-            return ValidationResult(
-                success=False,
-                message=err_msg,
-            )
-
-        return validation_result
+        return self._validate_auth_params(configuration)
 
     def get_entities(self) -> list[Entity]:
-        """Get available entities."""
+        """
+        Get available entities.
+
+        returns:
+            List: List of available entities
+        """
         return [
             Entity(
                 name="Users",

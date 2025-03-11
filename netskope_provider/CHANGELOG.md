@@ -1,3 +1,7 @@
+# 1.3.0
+## Changed
+- Enhanced field learning workflow with updated plugin to identify fields and their data types.
+
 # 1.2.0
 ## Added
 - Added support for device and content alerts.

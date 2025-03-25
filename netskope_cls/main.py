@@ -20,7 +20,7 @@ plugin_provider_helper = PluginProviderHelper()
 
 MODULE_NAME = "CLS"
 PLUGIN_NAME = "Netskope CLS"
-PLUGIN_VERSION = "2.1.0"
+PLUGIN_VERSION = "2.2.0"
 
 
 class NetskopeCLSPlugin(PluginBase):
@@ -105,7 +105,7 @@ class NetskopeCLSPlugin(PluginBase):
         ):
             self.logger.error(
                 f"{self.log_prefix}: Validation error occurred. Error: "
-                "Invalid event type found in the configuration parameters.",
+                "Invalid Event Types found in the configuration parameters.",
                 error_code="CLS_1016",
             )
             return ValidationResult(
@@ -118,7 +118,7 @@ class NetskopeCLSPlugin(PluginBase):
         ):
             self.logger.error(
                 f"{self.log_prefix}: Validation error occurred. Error: "
-                "Invalid alert types found in the configuration parameters.",
+                "Invalid Alert Types found in the configuration parameters.",
                 error_code="CLS_1016",
             )
             return ValidationResult(
@@ -128,12 +128,12 @@ class NetskopeCLSPlugin(PluginBase):
         if not configuration["event_type"] and not configuration.get("alert_types"):
             self.logger.error(
                 f"{self.log_prefix}: Validation error occurred. Error: "
-                "Event types and alert types both can not be empty.",
+                "Event Types and Alert Types both can not be empty.",
                 error_code="CLS_1017",
             )
             return ValidationResult(
                 success=False,
-                message="Event types and alert types both can not be empty.",
+                message="Event Types and Alert Types both can not be empty.",
             )
 
         hours = configuration.get("hours")
@@ -193,11 +193,39 @@ class NetskopeCLSPlugin(PluginBase):
 
         if not tenant_name:
             tenant_name = helper.get_tenant_cls(self.name).name
-        provider = plugin_provider_helper.get_provider(tenant_name=tenant_name)
+
+        # Get the tenant configuration if self.name exists  - not the first plugin save
+        tenant_configuration = {}
+        try:
+            tenant_configuration = helper.get_tenant_cls(self.name).parameters
+        except Exception as e:
+            tenant_configuration = {}
+        provider = plugin_provider_helper.get_provider(tenant_name=tenant_name) 
         type_map = {
-            'events': configuration['event_type'],
-            'alerts': configuration['alert_types'],
+            "events": configuration.get("event_type", []),
+            "alerts": configuration.get("alert_types", []),
         }
-        provider.permission_check(type_map, plugin_name=self.plugin_name, configuration_name=self.name)
+
+        modified_type_map = type_map.copy()
+        if "events" in modified_type_map and "clientstatus" in modified_type_map.get("events", []):
+            try:
+                provider.client_status_validation()
+                modified_type_map["events"] = [
+                    event_type
+                    for event_type in modified_type_map.get("events", [])
+                    if event_type != "clientstatus"
+                ]
+            except Exception as e:
+                return ValidationResult(success=False, message=str(e))
+        else:
+            if tenant_configuration:
+                provider.cleanup(tenant_configuration, is_validation=True)
+
+        # use the modified_type_map for the permission check    
+        provider.permission_check(
+            modified_type_map,
+            plugin_name=self.plugin_name,
+            configuration_name=self.name
+        )
 
         return ValidationResult(success=True, message="Validation successful.")

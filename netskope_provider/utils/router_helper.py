@@ -31,5 +31,6 @@ def get_all_subtypes():
             "Network": "network",
             "Incident": "incident",
             "Endpoint": "endpoint",
+            "clientstatus": "clientstatus"
         }
     }

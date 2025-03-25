@@ -1,6 +1,4 @@
 """Pulling mechanism using iterator."""
-
-import os
 import threading
 import time
 import re
@@ -16,6 +14,8 @@ import requests.exceptions
 from celery.exceptions import SoftTimeLimitExceeded
 from netskope_api.iterator.const import Const
 from netskope_api.iterator.netskope_iterator import NetskopeIterator
+from . import constants as CONST
+from .iterator_api_helper import NetskopePluginHelper
 from netskope.common.api import __version__
 from netskope.common.utils import (
     Logger,
@@ -29,66 +29,10 @@ from netskope.common.utils.exceptions import IncompleteTransactionError, Forbidd
 from netskope.common.utils.handle_exception import handle_status_code
 from netskope.common.utils.plugin_provider_helper import PluginProviderHelper
 
-DB_LOOKUP_INTERVAL = 120
-
 connector = DBConnector()
 logger = Logger()
 notifier = Notifier()
 plugin_provider_helper = PluginProviderHelper()
-
-ALERTS = {
-    "Compromised Credential": Const.ALERT_TYPE_COMPROMISEDC_CREDENTIALS,
-    "policy": Const.ALERT_TYPE_POLICY,
-    "malsite": Const.ALERT_TYPE_MALSITE,
-    "Malware": Const.ALERT_TYPE_MALWARE,
-    "DLP": Const.ALERT_TYPE_DLP,
-    "Security Assessment": Const.ALERT_TYPE_SECURITY_ASSESSMENT,
-    "watchlist": Const.ALERT_TYPE_WATCHLIST,
-    "quarantine": Const.ALERT_TYPE_QUARANTINE,
-    "Remediation": Const.ALERT_TYPE_REMEDIATION,
-    "uba": Const.ALERT_TYPE_UBA,
-    "ctep": Const.ALERT_TYPE_CTEP,
-    "Device": "device",
-    "Content": "content",
-}
-EVENTS = {
-    "page": Const.EVENT_TYPE_PAGE,
-    "infrastructure": Const.EVENT_TYPE_INFRASTRUCTURE,
-    "network": Const.EVENT_TYPE_NETWORK,
-    "audit": Const.EVENT_TYPE_AUDIT,
-    "application": Const.EVENT_TYPE_APPLICATION,
-    "incident": Const.EVENT_TYPE_INCIDENT,
-    "endpoint": "endpoint",
-}
-
-ITERATORS = {
-    key.lower(): list({x.strip() for x in value.split(',') if x.strip() != ""})
-    for key, value in os.environ.items()
-    if key.lower().startswith("iterator_")
-}
-
-RESOURCES = {"alert": ALERTS, "event": EVENTS}
-
-DATA_TYPE = {"alert": "alerts", "event": "events"}
-
-OK_PATTERN = rb"\"ok\"\s*:\s*(\d+)"
-TIMESTAMP_HWM_PATTERN = rb"\"timestamp_hwm\"\s*:\s*(\d+)"
-WAIT_TIME_PATTERN = rb"\"wait_time\"\s*:\s*(\d+)"
-ID_PATTERN = rb'\"_id"\s*:'
-RESULT = "result"
-TIMESTAMP_HWM = "timestamp_hwm"
-QUEUE_SIZE = 10
-DEFAULT_WAIT_TIME = 30
-EXPONENTIAL_WAIT_TIME = 180
-WAIT_TIME = "wait_time"
-DEFAULT_RETRY_COUNT = 3
-RETRY_COUNT_FOR_PULLING = os.environ.get("RETRY_COUNT_FOR_PULLING")
-if isinstance(RETRY_COUNT_FOR_PULLING, str) and RETRY_COUNT_FOR_PULLING.isnumeric():
-    RETRY_COUNT_FOR_PULLING = int(RETRY_COUNT_FOR_PULLING)
-    if RETRY_COUNT_FOR_PULLING < 1:
-        RETRY_COUNT_FOR_PULLING = DEFAULT_RETRY_COUNT
-else:
-    RETRY_COUNT_FOR_PULLING = DEFAULT_RETRY_COUNT
 
 
 class NetskopeIteratorBuilder(NetskopeIterator):
@@ -107,6 +51,7 @@ class NetskopeIteratorBuilder(NetskopeIterator):
         destination_configuration=None,
         business_rule=None,
         headers=None,
+        log_prefix=None,
     ):
         """Initialize Netskope iterator."""
         from netskope.common.utils import get_installation_id
@@ -114,10 +59,14 @@ class NetskopeIteratorBuilder(NetskopeIterator):
         self.tenant = tenant
         self.tenant_name = tenant.get("name") if tenant else ""
         tenant_config_parameters = tenant.get("parameters", {})
+        self.tenant_hostname = tenant_config_parameters.get(
+            "tenantName", ""
+        )
         iterator_name = iterator_name.replace(" ", "")
         proxy = {}
         if tenant.get("use_proxy"):
             proxy = tenant.get("proxy")
+        self.proxy = proxy
         self.epoch = epoch
         self.index_name = iterator_name
         self.type = type_
@@ -130,63 +79,133 @@ class NetskopeIteratorBuilder(NetskopeIterator):
         self.return_response = return_response
         self.timestamp_hwm = None
         self.should_apply_expo_backoff = False
+        self.log_prefix = log_prefix
         from netskope.common.utils import resolve_secret
 
         if headers is None:
             headers = {}
-
+        self.headers = headers
+        self.headers["Authorization"] = "Bearer {}".format(
+            resolve_secret(tenant_config_parameters.get("v2token"))
+        )
         params = {
             Const.NSKP_TOKEN: resolve_secret(tenant_config_parameters.get("v2token")),
             Const.NSKP_TENANT_HOSTNAME: tenant_config_parameters.get(
                 "tenantName"
             ).removeprefix("https://"),
-            Const.NSKP_PROXIES: proxy,
+            Const.NSKP_PROXIES: self.proxy,
             Const.NSKP_ITERATOR_NAME: iterator_name,
-            Const.NSKP_USER_AGENT: headers.get(
+            Const.NSKP_USER_AGENT: self.headers.get(
                 "User-Agent", f"netskope-ce-{__version__}"
             ),
         }
 
-        if sub_type in EVENTS:
+        if sub_type in CONST.EVENTS:
             params[Const.NSKP_EVENT_TYPE] = sub_type
         else:
             params[Const.NSKP_EVENT_TYPE] = Const.EVENT_TYPE_ALERT
-            params[Const.NSKP_ALERT_TYPE] = ALERTS.get(sub_type)
+            params[Const.NSKP_ALERT_TYPE] = CONST.ALERTS.get(sub_type)
         super().__init__(params)
 
         self.client.session.headers.update(
             {"X-CE-Installation-Id": get_installation_id()}
         )
 
+        self.netskope_api_plugin_helper = NetskopePluginHelper(
+            logger=logger,
+            log_prefix=self.log_prefix,
+            plugin_name=CONST.PLATFORM_NAME,
+            plugin_version=CONST.PLUGIN_VERSION,
+        )
+
+    def fetch_client_status_data(self):
+        """
+        Fetch client status data form the stored 
+        Client Status iterator.
+        """
+        client_status_storage = self.tenant.get(
+            "storage", {}
+        ).get("client_status_iterator", "")
+        if client_status_storage:
+            # Check the iterator status
+            iterator_name = client_status_storage
+        else:
+            iterator_name = self.netskope_api_plugin_helper.create_iterator(
+                tenant_name=self.tenant_hostname,
+                tenant_configuration_name=self.tenant_name,
+                headers=self.headers,
+                iterator_name=CONST.CLIENT_STATUS_ITERATOR_NAME,
+                proxies=self.proxy
+            )
+        client_status_csv_endpoint = CONST.CLIENT_STATUS_CSV.format(
+            self.tenant_hostname, iterator_name
+        )
+        params = {
+            "operation": "next",
+        }
+        logger_msg = "fetching client status data for iterator"
+        resp = self.netskope_api_plugin_helper.api_helper(
+            logger_msg=logger_msg,
+            url=client_status_csv_endpoint,
+            method="GET",
+            headers=self.headers,
+            params=params,
+            proxies=self.proxy,
+            is_handle_error_required=False,
+            is_validation=False,
+        )
+        if resp.status_code == 200:
+            return resp
+        else:
+            self.netskope_api_plugin_helper.handle_error(
+                resp=resp,
+                logger_msg=logger_msg,
+                is_validation=False,
+            )
+
+    def download(self, timestamp):
+        if self.sub_type == CONST.EVENTS.get("clientstatus"):
+            # Your custom implementation here
+            return self.fetch_client_status_data()
+        else:
+            return super().download(timestamp)
+    
+    def next(self):
+        if self.sub_type == CONST.EVENTS.get("clientstatus"):
+            # Your custom implementation here
+            return self.fetch_client_status_data()
+        else:
+            return super().next()
+
     def set_timestamp(self, epoch):
         """Set epoch timestamp."""
         self.epoch = epoch
 
     @retry(
-        times=RETRY_COUNT_FOR_PULLING,
+        times=CONST.RETRY_COUNT_FOR_PULLING,
         exceptions=(
             ConnectionError,
             IncompleteTransactionError,
             requests.exceptions.ConnectionError,
         ),
-        sleep=DEFAULT_WAIT_TIME,
+        sleep=CONST.DEFAULT_WAIT_TIME,
     )
     def pull(self, parse_response=True, return_schema_headers=False):
         """Pull data from Netskope."""
         from netskope.common.utils.forbidden_notifier import (
             create_or_ack_forbidden_error_banner,
         )
-
         content = {}
         while True:
             if not self.tenant:
                 logger.error(
+                    f"{self.log_prefix}: "
                     f"Tenant with name {self.tenant_name} no longer exists.",
                     error_code="CE_1032",
                 )
                 return {"success": False}
             index_names = []
-            for sub_type_indexes in ITERATORS.values():
+            for sub_type_indexes in CONST.ITERATORS.values():
                 index_names.extend(sub_type_indexes)
             if self.epoch and self.index_name not in index_names:
                 data = self.download(self.epoch)
@@ -216,12 +235,13 @@ class NetskopeIteratorBuilder(NetskopeIterator):
             except requests.exceptions.HTTPError as e:
                 if e.response is not None and e.response.status_code in [409, 429]:
                     logger.error(
+                        f"{self.log_prefix}: "
                         f"Received status code {e.response.status_code} while pulling {self.sub_type} "
                         f"{self.type} for the tenant {self.tenant_name}. "
                         f"Performing retry for url {e.response.url}. "
-                        f"Retrying in {DEFAULT_WAIT_TIME} seconds."
+                        f"Retrying in {CONST.DEFAULT_WAIT_TIME} seconds."
                     )
-                    time.sleep(DEFAULT_WAIT_TIME)
+                    time.sleep(CONST.DEFAULT_WAIT_TIME)
                     continue
                 elif e.response is not None and e.response.status_code == 401:
                     self.should_apply_expo_backoff = True
@@ -252,6 +272,7 @@ class NetskopeIteratorBuilder(NetskopeIterator):
                 raise e
             except Exception as e:
                 logger.error(
+                    f"{self.log_prefix}: "
                     f"Error occurred while pulling {self.sub_type} {self.type} "
                     f"for the tenant {self.tenant_name}. {e}",
                     details=traceback.format_exc(),
@@ -281,13 +302,13 @@ class NetskopeIteratorBuilder(NetskopeIterator):
             if not return_schema_headers:
                 return content
             else:
-                headers = data.headers.get("schema_headers")
-                if headers:
-                    try:
-                        headers = json.loads(headers.replace("'", '"'))
-                    except json.decoder.JSONDecodeError:
-                        return content, None
-                return content, headers
+                headers = data.headers
+                if (
+                    headers.get("Content-Type", "").lower() == "text/csv"
+                ):
+                    return content, headers
+                else:
+                    return content, None
 
 
 class NetskopeClient:
@@ -313,6 +334,7 @@ class NetskopeClient:
         business_rule=None,
         compress_historical_data=False,
         headers=None,
+        log_prefix=None,
     ):
         """Initialize netskope client."""
         self.tenant = tenant
@@ -324,8 +346,14 @@ class NetskopeClient:
             self.start_time = int(start_time.strftime("%s"))
         if end_time:
             self.end_time = int(end_time.strftime("%s"))
+        self.proxy = {}
+        if tenant.get("use_proxy"):
+            self.proxy = tenant.get("proxy")
+        tenant_config_parameters = tenant.get("parameters", {})
+        self.tenant_hostname = tenant_config_parameters.get("tenantName", "")
+        from netskope.common.utils import resolve_secret
 
-        self.message_queue = Queue(maxsize=QUEUE_SIZE)
+        self.message_queue = Queue(maxsize=CONST.QUEUE_SIZE)
         self.lock = threading.Lock()
         self.running_thread = 0
         self.should_exit = threading.Event()
@@ -341,6 +369,17 @@ class NetskopeClient:
         self.business_rule = business_rule
         self.compress_historical_data = compress_historical_data
         self.headers = headers
+        self.headers["Authorization"] = "Bearer {}".format(
+            resolve_secret(tenant_config_parameters.get("v2token"))
+        )
+        self.log_prefix = log_prefix
+
+        self.netskope_api_plugin_helper = NetskopePluginHelper(
+            logger=logger,
+            log_prefix=self.log_prefix,
+            plugin_name=CONST.PLATFORM_NAME,
+            plugin_version=CONST.PLUGIN_VERSION,
+        )
 
     def get_iterator(
         self, sub_type, iterator_name, is_historical=False
@@ -357,6 +396,7 @@ class NetskopeClient:
                 destination_configuration=self.destination_configuration,
                 business_rule=self.business_rule,
                 headers=self.headers,
+                log_prefix=self.log_prefix,
             )
         return self.iterators[iterator_name]
 
@@ -380,7 +420,7 @@ class NetskopeClient:
                 [self.iterator_name % sub_type]
                 if self.pulling_type == NetskopeClient.HISTORICAL_PULLING
                 else (
-                    ITERATORS.get(f"iterator_{self.type.lower()}_{sub_type.lower().replace(' ', '_')}")
+                    CONST.ITERATORS.get(f"iterator_{self.type.lower()}_{sub_type.lower().replace(' ', '_')}")
                     or [self.iterator_name % sub_type]
                 )
             )
@@ -397,6 +437,25 @@ class NetskopeClient:
             return
         self._sub_types = iterator_indexes
         for sub_type, iterator_names in iterator_subtype_indexes.items():
+            if (
+                sub_type == CONST.EVENTS.get("clientstatus")
+            ):
+                if self.pulling_type == NetskopeClient.HISTORICAL_PULLING:
+                    logger.debug(
+                        f"{self.log_prefix}: "
+                        f"Skipping {sub_type} subtype for historical pull "
+                        "as the Client Status does not support historical pulling."
+                    )
+                    continue
+                else:
+                    is_iterator_ready = self.netskope_api_plugin_helper.check_iterator_status(
+                        tenant_hostname=self.tenant_hostname,
+                        headers=self.headers,
+                        proxies=self.proxy,
+                        tenant_storage=self.tenant.get("storage", {})
+                    )
+                    if not is_iterator_ready:
+                        continue
             for iterator_name in iterator_names:
                 iterator_name = iterator_name.strip()
                 if iterator_name not in self.threads:
@@ -421,6 +480,7 @@ class NetskopeClient:
                 yield self.message_queue.get()
             end_time = self.end_time or int(datetime.now().timestamp())
             logger.info(
+                f"{self.log_prefix}: "
                 f"Completed pull task for {datetime.fromtimestamp(start_time)} "
                 f"to {datetime.fromtimestamp(end_time)} time interval, "
                 f"Pulled {self.type} from {self.tenant_name} tenant."
@@ -429,6 +489,7 @@ class NetskopeClient:
             raise ex
         except Exception as ex:
             logger.error(
+                f"{self.log_prefix}: "
                 "Error occurred while running the pull threads for "
                 f"{self.type} for the tenant {self.tenant_name}. {ex}",
                 details=traceback.format_exc(),
@@ -501,6 +562,7 @@ class NetskopeClient:
             while True:
                 if not self.tenant:
                     logger.error(
+                        f"{self.log_prefix}: "
                         f"Tenant with name {self.tenant_name} no longer exists.",
                         error_code="CE_1030",
                     )
@@ -513,6 +575,7 @@ class NetskopeClient:
 
                 if back_pressure.STOP_PULLING:
                     logger.debug(
+                        f"{self.log_prefix}: "
                         f"Pulling of {sub_type} {self.type}(s) for tenant {self.tenant_name} "
                         "is stopped due to back pressure."
                     )
@@ -520,10 +583,11 @@ class NetskopeClient:
 
                 try:
                     self.tenant = plugin_provider_helper.get_tenant_details(
-                        self.tenant_name, DATA_TYPE[self.type]
+                        self.tenant_name, CONST.DATA_TYPE[self.type]
                     )
                 except Exception:
                     logger.error(
+                        f"{self.log_prefix}: "
                         f"Tenant with name {self.tenant_name} no longer exists.",
                         error_code="CE_1033",
                     )
@@ -556,49 +620,81 @@ class NetskopeClient:
                 response, headers = iterator.pull(
                     parse_response=False, return_schema_headers=True
                 )
-                if headers:  # data is in CSV format
-                    wait_time = headers.get("wait_time", DEFAULT_WAIT_TIME)
-                    schema_headers = {
-                        key.encode(): b"version," + value.encode()
-                        for key, value in headers.items()
-                        if key.lower().startswith("v")
-                    }
-                    if response:
-                        response = response.splitlines()
+                if headers:  # data is in CSV format Client status + index name
+                    schema_header = headers.get("schema_headers", "")
+                    wait_time = CONST.DEFAULT_WAIT_TIME
+                    if schema_header:
+                        try:
+                            schema_header = json.loads(headers.replace("'", '"'))
+                        except json.decoder.JSONDecodeError:
+                            error_msg = (
+                                "Error occurred while fetching the schema headers. "
+                                "Please check the logs for more details."
+                            )
+                            self.logger.error(
+                                f"{self.log_prefix}: {error_msg} Error: {error_msg}",
+                                details=traceback.format_exc(),
+                            )
+                            return {"success": False}
+                        wait_time = schema_header.get("wait_time", CONST.DEFAULT_WAIT_TIME)
+                        schema_headers = {
+                            key.encode(): b"version," + value.encode()
+                            for key, value in schema_header.items()
+                            if key.lower().startswith("v")
+                        }
+                        if response and schema_headers:
+                            response = response.splitlines()
+                            logger.info(
+                                f"{self.log_prefix}: "
+                                f"Pulled {len(response)} {sub_type} {self.type}(s) for tenant "
+                                f"{self.tenant.get('name')} in CSV format using {iterator_name} index."
+                            )
+                            for key, header in schema_headers.items():
+                                batch = b"\n".join(
+                                    [
+                                        header,
+                                        b"\n".join(
+                                            filter(
+                                                lambda x: x.startswith(key),
+                                                response,
+                                            )
+                                        ),
+                                    ]
+                                )
+                                content = gzip.compress(batch, compresslevel=3)
+                                self.message_queue.put((content, sub_type, False, True))
+                        else:
+                            logger.info(
+                                f"{self.log_prefix}: "
+                                f"Pulled 0 {sub_type} {self.type}(s) for tenant "
+                                f"{self.tenant.get('name')} in CSV format using {iterator_name} index."
+                            )
+                    elif response:
+                        wait_time = headers.get("wait_time", CONST.DEFAULT_WAIT_TIME)
+                        content = gzip.compress(response, compresslevel=3)
                         logger.info(
-                            f"Pulled {len(response)} {sub_type} {self.type}(s) for tenant "
+                            f"{self.log_prefix}: "
+                            f"Pulled {len(response.splitlines())-1} {sub_type} {self.type}(s) for tenant "
                             f"{self.tenant.get('name')} in CSV format using {iterator_name} index."
                         )
-                        for key, header in schema_headers.items():
-                            batch = b"\n".join(
-                                [
-                                    header,
-                                    b"\n".join(
-                                        filter(
-                                            lambda x: x.startswith(key),
-                                            response,
-                                        )
-                                    ),
-                                ]
-                            )
-                            content = gzip.compress(batch, compresslevel=3)
-                            self.message_queue.put((content, sub_type, False, True))
+                        self.message_queue.put((content, sub_type, False, True))
                     else:
                         logger.info(
+                            f"{self.log_prefix}: "
                             f"Pulled 0 {sub_type} {self.type}(s) for tenant "
                             f"{self.tenant.get('name')} in CSV format using {iterator_name} index."
                         )
                 else:
-                    number_of_alerts = len(re.findall(ID_PATTERN, response))
-                    ok_match = re.search(OK_PATTERN, response)
+                    number_of_alerts = len(re.findall(CONST.ID_PATTERN, response))
+                    ok_match = re.search(CONST.OK_PATTERN, response)
                     timestamp_hwm_match = re.search(
-                        TIMESTAMP_HWM_PATTERN, response
+                        CONST.TIMESTAMP_HWM_PATTERN, response
                     )
                     if timestamp_hwm_match:
                         iterator.timestamp_hwm = int(
                             timestamp_hwm_match.group(1).decode()
                         )
-                    wait_time_match = re.search(WAIT_TIME_PATTERN, response)
+                    wait_time_match = re.search(CONST.WAIT_TIME_PATTERN, response)
                     if not response or (
                         ok_match and int(ok_match.group(1).decode()) != 1
                     ):
@@ -607,7 +703,9 @@ class NetskopeClient:
                             f"Response: {response}"
                         )
                         notifier.error(message)
-                        logger.error(message)
+                        logger.error(
+                            message=f"{self.log_prefix}: {message}"
+                        )
                         return {"success": False}
                     pull_message = (
                         f", pulled data till {datetime.fromtimestamp(int(timestamp_hwm_match.group(1).decode()))}."
@@ -615,6 +713,7 @@ class NetskopeClient:
                         else "."
                     )
                     logger.info(
+                        f"{self.log_prefix}: "
                         f"Pulled {number_of_alerts} {sub_type} {self.type}(s) for tenant "
                         f"{self.tenant.get('name')} in JSON format using {iterator_name} index{pull_message}"
                     )
@@ -627,14 +726,15 @@ class NetskopeClient:
                             number_of_alerts != 0
                         )
                     )
-                    wait_time = DEFAULT_WAIT_TIME
+                    wait_time = CONST.DEFAULT_WAIT_TIME
                     if wait_time_match:
                         wait_time = int(wait_time_match.group(1).decode())
                 self.update_pull_status(sub_type)
-                time.sleep(wait_time)
+                time.sleep(int(wait_time))
 
         except Exception as ex:
             logger.error(
+                f"{self.log_prefix}: "
                 f"Error occurred while pulling {sub_type} {self.type}(s) "
                 f"for the tenant {self.tenant_name}. {ex}",
                 error_code="CE_1111",
@@ -693,12 +793,14 @@ class NetskopeClient:
             while True:
                 if not self.tenant:
                     logger.error(
+                        f"{self.log_prefix}: "
                         f"Tenant with name {self.tenant_name} no longer exists.",
                         error_code="CE_1034",
                     )
                     return {"success": False}
                 if back_pressure.STOP_PULLING:
                     logger.debug(
+                        f"{self.log_prefix}: "
                         f"Historical pulling of {sub_type} {self.type}(s) for tenant {self.tenant_name} "
                         "is paused due to back pressure."
                     )
@@ -710,6 +812,7 @@ class NetskopeClient:
                 )
                 if not self.tenant:
                     logger.error(
+                        f"{self.log_prefix}: "
                         f"Tenant with name {self.tenant_name} no longer exists.",
                         error_code="CE_1029",
                     )
@@ -719,25 +822,27 @@ class NetskopeClient:
 
                 if not response or response.get("ok") != 1:
                     logger.error(
+                        f"{self.log_prefix}: "
                         f"Error occurred while pulling {sub_type} {self.type}(s) "
                         f"from {self.tenant.get('name')} tenant. "
                         f"Response: {response}"
                     )
                     return {"success": False}
 
-                if response.get(TIMESTAMP_HWM, 0) > self.end_time or (
-                    pull_time == response.get(TIMESTAMP_HWM, 0)
-                    and not len(response.get(RESULT, []))
+                if response.get(CONST.TIMESTAMP_HWM, 0) > self.end_time or (
+                    pull_time == response.get(CONST.TIMESTAMP_HWM, 0)
+                    and not len(response.get(CONST.RESULT, []))
                 ):
                     logger.info(
+                        f"{self.log_prefix}: "
                         f"Historical pulling of {sub_type} {self.type}(s) for tenant {self.tenant.get('name')} "
                         f"is done for time window {datetime.fromtimestamp(self.start_time)} "
                         f"to {datetime.fromtimestamp(self.end_time)}."
                     )
                     return {"success": True}
 
-                filtered_data = self.filter_data(response.get(RESULT, []))
-                pull_time = response.get(TIMESTAMP_HWM, 0)
+                filtered_data = self.filter_data(response.get(CONST.RESULT, []))
+                pull_time = response.get(CONST.TIMESTAMP_HWM, 0)
                 pull_message = (
                     f" until {datetime.fromtimestamp(pull_time)} " if pull_time else " "
                 )
@@ -747,6 +852,7 @@ class NetskopeClient:
                     and self.business_rule
                 ):
                     logger.info(
+                        f"{self.log_prefix}: "
                         f"Pulled {len(filtered_data)} {sub_type} {self.type}(s) from historical "
                         f"{self.type}s in JSON format using {iterator_name} index{pull_message}"
                         f"for SIEM Mapping {self.source_configuration} to {self.destination_configuration} "
@@ -754,25 +860,27 @@ class NetskopeClient:
                     )
                 else:
                     logger.info(
+                        f"{self.log_prefix}: "
                         f"Pulled {len(filtered_data)} {sub_type} {self.type}(s) from historical "
                         f"{self.type}s in JSON format using {iterator_name} index{pull_message}"
                         f"for configuration {self.source_configuration}."
                     )
                 if self.compress_historical_data and filtered_data:
-                    filtered_data = gzip.compress(json.dumps({RESULT: filtered_data}).encode('utf-8'), compresslevel=3)
+                    filtered_data = gzip.compress(json.dumps({CONST.RESULT: filtered_data}).encode('utf-8'), compresslevel=3)
                 self.message_queue.put((filtered_data, sub_type, False, True))
                 # if not registered:
                 #     connector.collection(Collections.ITERATOR).insert_one(
                 #         {"name": self.iterator_name % sub_type}
                 #     )
                 #     registered = True
-                wait_time = DEFAULT_WAIT_TIME
-                if len(response.get(RESULT, [])) != 0:
-                    wait_time = response.get(WAIT_TIME, DEFAULT_WAIT_TIME)
+                wait_time = CONST.DEFAULT_WAIT_TIME
+                if len(response.get(CONST.RESULT, [])) != 0:
+                    wait_time = response.get(CONST.WAIT_TIME, CONST.DEFAULT_WAIT_TIME)
                 time.sleep(wait_time)
 
         except Exception as ex:
             logger.error(
+                f"{self.log_prefix}: "
                 f"Error occurred while pulling {sub_type} {self.type}(s) for "
                 f"the tenant {self.tenant_name}. {ex}",
                 error_code="CE_1111",

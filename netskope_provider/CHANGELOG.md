@@ -1,3 +1,7 @@
+# 1.4.0
+## Added
+- Added support for Client status events. To pull and ingest this event type update your CLS Netskope plugin version to 2.2.0.
+
 # 1.3.0
 ## Changed
 - Enhanced field learning workflow with updated plugin to identify fields and their data types.

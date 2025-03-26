@@ -1,50 +1,58 @@
 {
-  "name": "ExtraHop Reveal(x) 360",
-  "id": "extrahop",
-  "version": "1.0.0",
-  "description": "The ExtraHop Reveal(x) 360 plugin fetches Offender's IP Address and Hostname as URLs in CE. The Plugin does not support sharing indicators to ExtraHop Reveal(x) 360 platform.",
-  "patch_supported": false,
-  "push_supported": false,
-  "configuration": [
-    {
-      "label": "Base URL",
-      "key": "base_url",
-      "type": "text",
-      "default": "",
-      "mandatory": true,
-      "description": "ExtraHop Reveal(x) 360 API Base URL. This Base URL is displayed in the Reveal(x) 360 API Access page under API Endpoint. The Base URL should not include the /oauth/token."
-    },
-    {
-      "label": "Client ID",
-      "key": "client_id",
-      "type": "text",
-      "default": "",
-      "mandatory": true,
-      "description": "ExtraHop Reveal(x) 360 API Client ID."
-    },
-    {
-      "label": "Client Secret",
-      "key": "client_secret",
-      "type": "password",
-      "default": "",
-      "mandatory": true,
-      "description": "ExtraHop Reveal(x) 360 API Client Secret."
-    },
-    {
-      "label": "Minimum Risk Score",
-      "key": "min_risk_score",
-      "type": "number",
-      "default": 0,
-      "mandatory": false,
-      "description": "Only the indicators with severity greater than or equal to specified value will be fetched. Select a value between 0-99. If no value is provided all the indicators will be fetched."
-    },
-    {
-      "label": "Initial Range (in days)",
-      "key": "days",
-      "type": "number",
-      "mandatory": false,
-      "default": 7,
-      "description": "Number of days to pull the data for the initial run."
-    }
-  ]
+    "name": "ExtraHop Reveal(x) 360",
+    "id": "extrahop",
+    "version": "1.1.0",
+    "description": "The ExtraHop Reveal(x) 360 plugin fetches Offender's IP Address(ipv4) and Hostname from the Detections page of Extrahop platform. The Plugin does not support sharing indicators to ExtraHop Reveal(x) 360 platform.",
+    "patch_supported": false,
+    "push_supported": false,
+    "fetch_retraction_info": true,
+    "configuration": [
+        {
+            "label": "Base URL",
+            "key": "base_url",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "ExtraHop Reveal(x) 360 API Base URL. This Base URL is displayed in the Reveal(x) 360 API Access page under API Endpoint. The Base URL should not include /oauth/token."
+        },
+        {
+            "label": "Client ID",
+            "key": "client_id",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "ExtraHop Reveal(x) 360 API Client ID. To generate the Client ID go to Settings > API Access > Create Credentials."
+        },
+        {
+            "label": "Client Secret",
+            "key": "client_secret",
+            "type": "password",
+            "default": "",
+            "mandatory": true,
+            "description": "ExtraHop Reveal(x) 360 API Client Secret. To generate the Client Secret go to Settings > API Access > Create Credentials."
+        },
+        {
+            "label": "Minimum Risk Score",
+            "key": "min_risk_score",
+            "type": "number",
+            "default": 0,
+            "mandatory": false,
+            "description": "Only the indicators with severity greater than or equal to specified value will be fetched. Select a value between 0-99. If no value is provided all the indicators will be fetched."
+        },
+        {
+            "label": "Retraction Interval (in days)",
+            "key": "retraction_interval",
+            "type": "number",
+            "mandatory": false,
+            "description": "Retraction Interval days to run IoC(s) retraction for ExtraHop indicators. Note: This parameter will only be considered if \"IoC(s) Retraction\" is enabled in Threat Exchange Settings."
+        },
+        {
+            "label": "Initial Range (in days)",
+            "key": "days",
+            "type": "number",
+            "mandatory": true,
+            "default": 7,
+            "description": "Number of days to pull the data for the initial run."
+        }
+    ]
 }

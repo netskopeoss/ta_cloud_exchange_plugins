@@ -32,20 +32,21 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 CTE ExtraHop Reveal(x) 360 plugin helper module.
 """
 
+import base64
 import json
 import time
 import traceback
 from typing import Dict, Union
-import base64
 
 import requests
 from netskope.common.utils import add_user_agent
 
-from .extrahop_constants import (
+from .constants import (
     DEFAULT_WAIT_TIME,
     MAX_API_CALLS,
-    PLATFORM_NAME,
     MODULE_NAME,
+    PLATFORM_NAME,
+    RETRACTION,
 )
 
 
@@ -68,8 +69,6 @@ class ExtraHopPluginHelper(object):
         log_prefix: str,
         plugin_name: str,
         plugin_version: str,
-        ssl_validation,
-        proxy,
     ):
         """ExtraHopPluginHelper initializer.
 
@@ -83,8 +82,6 @@ class ExtraHopPluginHelper(object):
         self.logger = logger
         self.plugin_name = plugin_name
         self.plugin_version = plugin_version
-        self.verify = ssl_validation
-        self.proxies = proxy
 
     def _add_user_agent(self, headers: Union[Dict, None] = None) -> Dict:
         """Add User-Agent in the headers for third-party requests.
@@ -94,6 +91,8 @@ class ExtraHopPluginHelper(object):
         Returns:
             Dict: Dictionary after adding User-Agent.
         """
+        if headers and "User-Agent" in headers:
+            return headers
         headers = add_user_agent(headers)
         ce_added_agent = headers.get("User-Agent", "netskope-ce")
         user_agent = "{}-{}-{}-v{}".format(
@@ -105,7 +104,7 @@ class ExtraHopPluginHelper(object):
         headers.update({"User-Agent": user_agent})
         return headers
 
-    def generate_auth_token(self, configuration, logger_msg=""):
+    def generate_auth_token(self, configuration, verify, proxies, logger_msg=""):
         """Generate auth token.
 
         Returns:
@@ -113,10 +112,7 @@ class ExtraHopPluginHelper(object):
         """
         if not logger_msg:
             logger_msg = "generating auth token"
-        endpoint = (
-            f"{configuration.get('base_url').strip().rstrip('/')}"
-            "/oauth2/token"
-        )
+        endpoint = f"{configuration.get('base_url').strip().rstrip('/')}/oauth2/token"
         token = (
             f"{configuration.get('client_id', '').strip()}:"
             f"{configuration.get('client_secret')}"
@@ -133,6 +129,8 @@ class ExtraHopPluginHelper(object):
             params=params,
             headers=headers,
             logger_msg=logger_msg,
+            verify=verify,
+            proxies=proxies,
             is_handle_error_required=True,
             regenerate_auth_token=False,
         )
@@ -148,21 +146,42 @@ class ExtraHopPluginHelper(object):
         data=None,
         headers=None,
         json=None,
+        verify: bool = True,
+        proxies: Dict = {},
         is_handle_error_required=True,
         regenerate_auth_token=True,
+        is_retraction: bool = False,
+        is_validation: bool = False,
     ):
-        """API Helper perform API request to ThirdParty platform
+        """
+        API Helper perform API request to ThirdParty platform
         and captures all the possible errors for requests.
 
         Args:
-            request (request): Requests object.
-            logger_msg (str): Logger string.
-            is_handle_error_required (bool, optional): Is handling status
-            code is required?. Defaults to True.
+            configuration (dict): Configuration dictionary.
+            logger_msg (str): Logger message.
+            url (str): URL for the API request.
+            method (str): HTTP Method for the API request.
+            params (Dict, optional): Parameters for the API request.
+            data (Any, optional): Data to be sent to API. Defaults to None.
+            headers (Dict, optional): Headers for the API request.
+            json (dict): Json payload for request. Defaults to None.
+            verify (bool): SSL verification.
+            proxies (dict): Proxies for the API request.
+            is_handle_error_required (bool): Is handling status
+                code is required?
+            regenerate_auth_token (bool): Should regenerate
+                auth token if expired?
+            is_retraction (bool): Is it a retraction call?
+            is_validation (bool, optional): Does this request coming from
+            validate method?. Defaults to False.
 
         Returns:
             dict: Response dictionary.
         """
+        headers = self._add_user_agent(headers)
+        if is_retraction and RETRACTION not in self.log_prefix:
+            self.log_prefix = self.log_prefix + f" [{RETRACTION}]"
         try:
             for retry_counter in range(MAX_API_CALLS):
                 debug_msg = f"API endpoint for {logger_msg}: {url}"
@@ -179,8 +198,8 @@ class ExtraHopPluginHelper(object):
                     params=params,
                     data=data,
                     headers=headers,
-                    verify=self.verify,
-                    proxies=self.proxies,
+                    verify=verify,
+                    proxies=proxies,
                     json=json,
                 )
                 self.logger.debug(
@@ -190,32 +209,35 @@ class ExtraHopPluginHelper(object):
 
                 if (
                     (
-                        response.status_code == 400
-                        and response.text.strip()
-                        and response.text.split()[0] == "invalid"
+                        (
+                            response.status_code == 400
+                            and response.text.strip()
+                            and response.text.split()[0] == "invalid"
+                        )
+                        or (
+                            response.status_code == 401
+                            and response.text.strip()
+                            and "Error getting user from bearer token" in response.text
+                        )
                     )
-                    or (
-                        response.status_code == 401
-                        and response.text.strip()
-                        and "Error getting user from bearer token"
-                        in response.text
-                    )
-                ) and regenerate_auth_token:
+                    and regenerate_auth_token
+                    and not is_validation
+                ):
                     # regenerate auth token
                     self.logger.info(
                         f"{self.log_prefix}: "
                         "The auth token used is expired hence regenerating "
                         "the auth token."
                     )
-                    auth_token = self.generate_auth_token(configuration)
+                    auth_token = self.generate_auth_token(
+                        configuration, verify, proxies
+                    )
                     if not auth_token:
                         err_msg = (
                             "Error occurred while generating auth token."
                             "Check the Client ID and Client Secret."
                         )
-                        self.logger.error(
-                            f"{self.log_prefix}: {err_msg} "
-                        )
+                        self.logger.error(f"{self.log_prefix}: {err_msg} ")
                         raise ExtraHopPluginException(err_msg)
                     headers["Authorization"] = f"Bearer {auth_token}"
                     return self.api_helper(
@@ -227,15 +249,22 @@ class ExtraHopPluginHelper(object):
                         data=data,
                         headers=headers,
                         json=json,
+                        verify=verify,
+                        proxies=proxies,
                         is_handle_error_required=is_handle_error_required,
                         regenerate_auth_token=False,
                     )
                 if "authenticating" not in logger_msg and (
                     (response.status_code >= 500 and response.status_code <= 600)
                     or response.status_code == 429
+                    and not is_validation
                 ):
                     try:
-                        resp_json = self.parse_response(response=response)
+                        resp_json = self.parse_response(
+                            response=response,
+                            logger_msg=logger_msg,
+                            is_validation=is_validation,
+                        )
                         api_error = resp_json.get("error")
                         api_error_message = resp_json.get("error_message")
                         api_error_detail = resp_json.get("detail")
@@ -274,7 +303,7 @@ class ExtraHopPluginHelper(object):
                     time.sleep(DEFAULT_WAIT_TIME)
                 else:
                     return (
-                        self.handle_error(response, logger_msg)
+                        self.handle_error(response, logger_msg, is_validation)
                         if is_handle_error_required
                         else response
                     )
@@ -283,6 +312,10 @@ class ExtraHopPluginHelper(object):
                 f"Proxy error occurred while {logger_msg}. "
                 "Verify the provided proxy configuration."
             )
+            if is_validation:
+                err_msg = (
+                    "Proxy error occurred. Verify " "the proxy configuration provided."
+                )
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {error}",
                 details=str(traceback.format_exc()),
@@ -295,9 +328,29 @@ class ExtraHopPluginHelper(object):
                 f"Proxy server or {PLATFORM_NAME} "
                 "server is not reachable."
             )
+            if is_validation:
+                err_msg = (
+                    f"Unable to establish connection with {PLATFORM_NAME} "
+                    f"platform. Proxy server or {PLATFORM_NAME} "
+                    "server is not reachable."
+                )
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {error}",
                 details=str(traceback.format_exc()),
+            )
+            raise ExtraHopPluginException(err_msg)
+        except requests.exceptions.ReadTimeout as error:
+            err_msg = f"Read Timeout error occurred while {logger_msg}."
+            if is_validation:
+                err_msg = (
+                    "Read Timeout error occurred. "
+                    "Verify the 'Base URL' provided in the "
+                    "configuration parameters."
+                )
+
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg} Error: {error}",
+                details=traceback.format_exc(),
             )
             raise ExtraHopPluginException(err_msg)
         except requests.HTTPError as err:
@@ -317,11 +370,15 @@ class ExtraHopPluginHelper(object):
             )
             raise ExtraHopPluginException(err_msg)
 
-    def parse_response(self, response: requests.models.Response):
+    def parse_response(
+        self, response: requests.models.Response, logger_msg: str, is_validation: bool
+    ):
         """Parse Response will return JSON from response object.
 
         Args:
             response (response): Response object.
+            logger_msg (str): Logger message.
+            is_validation (bool): API call from validation method or not
 
         Returns:
             Any: Response Json.
@@ -330,33 +387,45 @@ class ExtraHopPluginHelper(object):
             return response.json()
         except json.JSONDecodeError as err:
             err_msg = (
-                f"Invalid JSON response received from API. Error: {str(err)}"
+                f"Invalid JSON response received from API while {logger_msg}."
+                f"Error: {str(err)}"
             )
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg}",
                 details=f"API response: {response.text}",
             )
+            if is_validation:
+                err_msg = (
+                    "Validation Error occurred. Invalid JSON response received from API"
+                )
             raise ExtraHopPluginException(err_msg)
         except Exception as exp:
             err_msg = (
-                "Unexpected error occurred while parsing"
-                f" json response. Error: {exp}"
+                "Unexpected error occurred while parsing "
+                f"json response for {logger_msg}. Error: {exp}"
             )
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg}",
                 details=f"API Response: {response.text}",
             )
+            if is_validation:
+                err_msg = (
+                    "Unexpected validation error occurred, Verify "
+                    "Base URL, Client ID and Client Secret provided in the"
+                    " configuration parameters. Check logs for more details."
+                )
             raise ExtraHopPluginException(err_msg)
 
     def handle_error(
-        self, resp: requests.models.Response, logger_msg: str
+        self, resp: requests.models.Response, logger_msg: str, is_validation: bool
     ) -> Dict:
         """Handle the different HTTP response code.
 
         Args:
             resp (requests.models.Response): Response object returned
                 from API call.
-            logger_msg: logger message.
+            logger_msg (str): logger message.
+            is_validation (bool): API call from validation method or not
         Returns:
             dict: Returns the dictionary of response JSON when the
                 response code is 200.
@@ -364,25 +433,52 @@ class ExtraHopPluginHelper(object):
             ExtraHopException: When the response code is
             not in 200 range.
         """
+        validation_error_msg = "Validation error occurred, "
+        error_dict = {
+            400: "Received exit code 400, HTTP client error",
+            401: "Received exit code 401, Unauthorized error, check the Client Secret provided.",
+            403: "Received exit code 403, Forbidden",
+            404: "Received exit code 404, Resource not found",
+        }
+        if is_validation:
+            error_dict = {
+                400: (
+                    "Received exit code 400, Bad Request, Verify the "
+                    " Base URL provided in the configuration parameters."
+                ),
+                401: (
+                    "Received exit code 401, Unauthorized, Verify "
+                    "Client ID and Client Secret provided in the "
+                    "configuration parameters."
+                ),
+                403: (
+                    "Received exit code 403, Forbidden, Verify API scopes "
+                    " provided to Token."
+                ),
+                404: (
+                    "Received exit code 404, Resource not found, Verify "
+                    "Base URL provided in the configuration parameters."
+                ),
+            }
+
         if resp.status_code in [200, 201, 202]:
             try:
-                return self.parse_response(response=resp)
+                return self.parse_response(
+                    response=resp, logger_msg=logger_msg, is_validation=is_validation
+                )
             except Exception:
-                err_msg = (
-                    "Invalid response received. "
-                    "Check the API Base URL provided."
-                )
-                self.logger.error(
-                    f"{self.log_prefix}: {err_msg}"
-                )
+                err_msg = "Invalid response received. Check the Base URL provided."
+                self.logger.error(f"{self.log_prefix}: {err_msg}")
                 raise ExtraHopPluginException(err_msg)
         try:
-            resp_json = self.parse_response(response=resp)
+            resp_json = self.parse_response(
+                response=resp, logger_msg=logger_msg, is_validation=is_validation
+            )
             api_error = resp_json.get("error")
             api_error_message = resp_json.get("error_message")
             api_error_detail = resp_json.get("detail")
             combined_err_msg = (
-                f"Received exit code {resp.status_code} for {logger_msg}."
+                f"Received exit code {resp.status_code} while {logger_msg}."
             )
             if api_error:
                 combined_err_msg += " API error - " + api_error
@@ -399,32 +495,17 @@ class ExtraHopPluginHelper(object):
                 "check the Client ID and Secret provided."
             )
             self.logger.error(
-                f"{self.log_prefix}: {combined_err_msg}",
-                details=resp.text
+                f"{self.log_prefix}: {combined_err_msg}", details=resp.text
             )
             raise ExtraHopPluginException(error_msg)
         elif resp.status_code == 204:
             return {}
-        elif resp.status_code == 401:
-            err_msg = (
-                "Unauthorized error, "
-                "check the Client Secret provided."
-            )
+        elif resp.status_code in error_dict:
+            err_msg = error_dict.get(resp.status_code)
+            if is_validation:
+                err_msg = validation_error_msg + err_msg
             self.logger.error(
-                f"{self.log_prefix}: {combined_err_msg} "
-                f"{err_msg}",
-                details=resp.text,
-            )
-            raise ExtraHopPluginException(err_msg)
-        elif resp.status_code == 403:
-            err_msg = (
-                "Forbidden error, "
-                "verify that the user has the required "
-                "permissions attached."
-            )
-            self.logger.error(
-                f"{self.log_prefix}: {combined_err_msg} "
-                f"{err_msg}",
+                f"{self.log_prefix}: {combined_err_msg} " f"{err_msg}",
                 details=resp.text,
             )
             raise ExtraHopPluginException(err_msg)

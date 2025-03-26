@@ -1,7 +1,12 @@
+# 2.2.0
+## Added
+- Added support for the endpoint event type. To pull and ingest this event type update your CE version to 5.1.0.
+## Fixed
+- Bug Fixes.
+
 # 2.1.0
 ## Fixed
 - Fixed performance issues.
-- Fixed parsing issue.
 
 ## Added
 - Added support for CTEP, Remediation and Watchlist alerts.

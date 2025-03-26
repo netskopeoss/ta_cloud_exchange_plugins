@@ -33,27 +33,31 @@ CTE Mimecast  plugin helper module.
 """
 
 import json
+import requests
 import time
 import traceback
 from typing import Dict, Union
-import base64
-from datetime import datetime
-import uuid
-import hashlib
-import hmac
 
-import requests
 from netskope.common.utils import add_user_agent
 
 from .mimecast_constants import (
     DEFAULT_WAIT_TIME,
+    GET_BEARER_TOKEN_ENDPOINT,
     MAX_API_CALLS,
     PLUGIN_NAME,
     MODULE_NAME,
+    BASE_URL,
+    RETRACTION
 )
 
 
 class MimecastPluginException(Exception):
+    """Mimecast plugin custom exception class."""
+
+    pass
+
+
+class QuotaNotAvailableException(Exception):
     """Mimecast plugin custom exception class."""
 
     pass
@@ -70,13 +74,10 @@ class MimecastPluginHelper(object):
         self,
         logger,
         log_prefix: str,
-        configuration: Dict,
         plugin_name: str,
         plugin_version: str,
-        ssl_validation,
-        proxy,
     ):
-        """MimecastPluginHelper initializer.
+        """Mimecast Plugin Helper initializer.
 
         Args:
             logger (logger object): Logger object.
@@ -86,11 +87,8 @@ class MimecastPluginHelper(object):
         """
         self.log_prefix = log_prefix
         self.logger = logger
-        self.configuration = configuration
         self.plugin_name = plugin_name
         self.plugin_version = plugin_version
-        self.verify = ssl_validation
-        self.proxies = proxy
 
     def _add_user_agent(self, headers: Union[Dict, None] = None) -> Dict:
         """Add User-Agent in the headers for third-party requests.
@@ -100,6 +98,8 @@ class MimecastPluginHelper(object):
         Returns:
             Dict: Dictionary after adding User-Agent.
         """
+        if headers and "User-Agent" in headers:
+            return headers
         headers = add_user_agent(headers)
         ce_added_agent = headers.get("User-Agent", "netskope-ce")
         user_agent = "{}-{}-{}-v{}".format(
@@ -114,44 +114,63 @@ class MimecastPluginHelper(object):
     def api_helper(
         self,
         logger_msg: str,
-        url_endpoint,
-        method,
-        configuration=None,
-        retry=True,
-        params=None,
+        url: str,
+        method: str = "GET",
+        params: Dict = {},
         data=None,
-        headers=None,
-        json_params=None,
+        files=None,
+        headers: Dict = {},
+        json=None,
+        verify=True,
+        proxies=None,
+        configuration=None,
+        is_retraction: bool = False,
         is_handle_error_required=True,
-        skewed_retry=True
+        is_validation=False,
+        regenerate_auth_token=True,
     ):
-        """API Helper perform API request to ThirdParty platform
+        """API Helper perform API request to ThirdParty platform \
         and captures all the possible errors for requests.
 
         Args:
-            request (request): Requests object.
-            logger_msg (str): Logger string.
+            logger_msg (str): Logger message.
+            url (str): API Endpoint.
+            method (str): Method for the endpoint.
+            params (Dict, optional): Request parameters dictionary.
+            Defaults to None.
+            data (Any,optional): Data to be sent to API. Defaults to None.
+            files (Any, optional): Files to be sent to API. Defaults to None.
+            headers (Dict, optional): Headers for the request. Defaults to {}.
+            json (optional): Json payload for request. Defaults to None.
+            verify (bool, optional): Verify SSL. Defaults to True.
+            proxies (Dict, optional): Proxies. Defaults to None.
+            configuration (Any, optional): Configuration. Defaults to None.
+            is_retraction (bool, optional): Is this called from the retraction.
+            is_handle_error_required (bool, optional): Does the API helper
+            should handle the status codes. Defaults to True.
+            is_validation (bool, optional): Does this request coming from
+            validate method?. Defaults to False.
             is_handle_error_required (bool, optional): Is handling status
             code is required?. Defaults to True.
 
         Returns:
             dict: Response dictionary.
         """
+
         try:
-            if not self.configuration:
-                self.configuration = configuration
-            url = self.configuration.get("url", "").strip().rstrip('/') + url_endpoint
-            display_headers = {
-                k: v for k, v in headers.items() if k not in {"Authorization"}
-            }
-            debug_msg = f"API endpoint for {logger_msg}: {url}, Headers: {display_headers}"
+            if is_retraction and RETRACTION not in self.log_prefix:
+                self.log_prefix = self.log_prefix + f" [{RETRACTION}]"
+            headers = self._add_user_agent(headers)
+            base_url = configuration.get("base_url", BASE_URL).strip().strip("/")
+            url = base_url + url
+            debug_log_msg = (
+                f"{self.log_prefix}: API Request for {logger_msg}. "
+                f"Endpoint: {method} {url}"
+            )
             if params:
-                debug_msg += f", API params: {params}"
-            if data and "hashlist" not in logger_msg:
-                debug_msg += f", API data: {data}"
-            if json_params and "decoding" not in logger_msg and "pushing URL" not in logger_msg:
-                debug_msg += f", API json body: {json_params}"
-            self.logger.debug(f"{self.log_prefix}: {debug_msg}")
+                debug_log_msg += f", params: {params}."
+
+            self.logger.debug(debug_log_msg)
             for retry_counter in range(MAX_API_CALLS):
                 response = requests.request(
                     url=url,
@@ -159,90 +178,127 @@ class MimecastPluginHelper(object):
                     params=params,
                     data=data,
                     headers=headers,
-                    verify=self.verify,
-                    proxies=self.proxies,
-                    json=json_params,
+                    verify=verify,
+                    proxies=proxies,
+                    json=json,
+                    files=files,
                 )
+                status_code = response.status_code
                 self.logger.debug(
-                    f"{self.log_prefix}: "
-                    f"API response status code for {logger_msg}: {response.status_code}."
+                    f"{self.log_prefix}: Received API Response for "
+                    f"{logger_msg}. Status Code={status_code}."
                 )
-                if response.status_code == 401 and "Date Header Too Skewed" in response.text and skewed_retry:
-                    self.logger.error(
-                        f"{self.log_prefix}: Received 401 status code - "
-                        "'Date Header Too Skewed'. Retrying by generating new "
-                        "authorization header."
-                    )
-                    headers_temp = self._get_auth_headers(self.configuration, url_endpoint)
-                    headers.update(headers_temp)
-                    skewed_retry = False
-                    continue
 
-                if retry and (
-                    (response.status_code >= 500 and response.status_code <= 600)
-                    or response.status_code == 429
+                if (
+                    status_code == 401
+                    and regenerate_auth_token
+                    and not is_validation
                 ):
+                    err_msg = (
+                        f"Received exit code {status_code} while"
+                        f" {logger_msg}. Hence regenerating access token."
+                    )
+                    self.logger.error(
+                        message=f"{self.log_prefix}: {err_msg}",
+                        details=f"API response: {str(response.text)}",
+                    )
+                    auth_header = self._get_auth_headers(configuration)
+                    headers.update(auth_header)
+                    return self.api_helper(
+                        url=url,
+                        method=method,
+                        params=params,
+                        headers=headers,
+                        json=json,
+                        files=files,
+                        data=data,
+                        proxies=proxies,
+                        verify=verify,
+                        is_handle_error_required=is_handle_error_required,
+                        is_validation=is_validation,
+                        logger_msg=logger_msg,
+                        regenerate_auth_token=False,
+                    )
+                elif (
+                    status_code == 429
+                    or 500 <= status_code <= 600
+                ) and not is_validation:
+                    api_err_msg = str(response.text)
                     if retry_counter == MAX_API_CALLS - 1:
                         err_msg = (
-                            "Received exit code {}, while"
-                            " {}. Max retries for rate limit "
-                            "handler exceeded hence returning status"
-                            " code {}.".format(
-                                response.status_code,
-                                logger_msg,
-                                response.status_code,
-                            )
+                            f"Received exit code {status_code}, "
+                            f"API rate limit exceeded while {logger_msg}. "
+                            "Max retries for rate limit handler exceeded "
+                            f"hence returning status code {status_code}."
                         )
                         self.logger.error(
                             message=f"{self.log_prefix}: {err_msg}",
-                            details=str(response.text),
+                            details=api_err_msg,
                         )
                         raise MimecastPluginException(err_msg)
-                    x_rate_limit_reset = int(response.headers.get("X-RateLimit-Reset", 0))
-                    if x_rate_limit_reset:
-                        retry_after = int((x_rate_limit_reset/1000) % 60)
-                    else:
-                        retry_after = DEFAULT_WAIT_TIME
+                    retry_after = int(
+                        response.headers.get(
+                            "X-Rate-Limit-Reset", DEFAULT_WAIT_TIME
+                        )
+                    )
+                    retry_after = retry_after // 1000
                     if retry_after > 300:
                         err_msg = (
-                            "Received response code {}, 'X-RateLimit_Reset' value "
-                            "received from response headers while {} is "
-                            "greater than 5 minutes. Hence exiting.".format(
-                                response.status_code,
-                                logger_msg,
-                            )
+                            "'X-Rate-Limit-Reset' value received from "
+                            f"response headers while {logger_msg} is "
+                            "greater than 5 minutes hence returning "
+                            f"status code {status_code}."
                         )
-                        self.logger.error(
-                            message=f"{self.log_prefix}: {err_msg}",
-                            details=f"{response.text}",
-                        )
+                        self.logger.error(f"{self.log_prefix}: {err_msg}")
                         raise MimecastPluginException(err_msg)
+                    if status_code == 429:
+                        log_err_msg = "API rate limit exceeded"
+                    else:
+                        log_err_msg = "HTTP server error occurred"
                     self.logger.error(
                         message=(
-                            "{}: Received exit code {}, while {}. "
-                            "Retrying after {} seconds. "
-                            "Retries remaining - {}.".format(
-                                self.log_prefix,
-                                response.status_code,
-                                logger_msg,
-                                retry_after,
-                                MAX_API_CALLS - 1 - retry_counter,
-                            )
+                            f"{self.log_prefix}: Received exit code "
+                            f"{status_code}, "
+                            f"{log_err_msg} while {logger_msg}. "
+                            f"Retrying after {retry_after} seconds. "
+                            f"{MAX_API_CALLS - 1 - retry_counter} "
+                            "retries remaining."
                         ),
-                        details=str(response.text),
+                        details=api_err_msg,
                     )
                     time.sleep(retry_after)
                 else:
                     return (
-                        self.handle_error(response, logger_msg)
+                        self.handle_error(response, logger_msg, is_validation)
                         if is_handle_error_required
                         else response
                     )
+        except requests.exceptions.ReadTimeout as error:
+            err_msg = (
+                f"Read Timeout error occurred while {logger_msg}."
+            )
+            if is_validation:
+                err_msg = (
+                    "Read Timeout error occurred. "
+                    "Verify the provided "
+                    "configuration parameters."
+                )
+
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg} Error: {error}",
+                details=str(traceback.format_exc()),
+            )
+            raise MimecastPluginException(err_msg)
         except requests.exceptions.ProxyError as error:
             err_msg = (
                 f"Proxy error occurred while {logger_msg}. "
                 "Verify the provided proxy configuration."
             )
+            if is_validation:
+                err_msg = (
+                    "Proxy error occurred. Verify "
+                    "the proxy configuration provided."
+                )
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {error}",
                 details=str(traceback.format_exc()),
@@ -255,6 +311,12 @@ class MimecastPluginHelper(object):
                 f"Proxy server or {PLUGIN_NAME} "
                 "server is not reachable."
             )
+            if is_validation:
+                err_msg = (
+                    f"Unable to establish connection with {PLUGIN_NAME} "
+                    f"platform. Proxy server or {PLUGIN_NAME} "
+                    "server is not reachable."
+                )
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {error}",
                 details=str(traceback.format_exc()),
@@ -262,6 +324,11 @@ class MimecastPluginHelper(object):
             raise MimecastPluginException(err_msg)
         except requests.HTTPError as err:
             err_msg = f"HTTP Error occurred while {logger_msg}."
+            if is_validation:
+                err_msg = (
+                    "HTTP error occurred. Verify "
+                    "configuration parameters provided."
+                )
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {err}",
                 details=str(traceback.format_exc()),
@@ -271,6 +338,11 @@ class MimecastPluginHelper(object):
             raise MimecastPluginException(exp)
         except Exception as exp:
             err_msg = f"Unexpected error occurred while {logger_msg}."
+            if is_validation:
+                err_msg = (
+                    "Unexpected error while performing "
+                    f"API call to {PLUGIN_NAME}."
+                )
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {exp}",
                 details=str(traceback.format_exc()),
@@ -278,62 +350,115 @@ class MimecastPluginHelper(object):
             raise MimecastPluginException(err_msg)
 
     def _get_auth_headers(
-        self, configuration: dict, endpoint: str
+        self,
+        proxy,
+        verify,
+        configuration: dict,
+        is_validation=False,
+        is_retraction: bool = False,
     ) -> str:
-        """Generate the Mimecast authentication headers."""
-        request_id = str(uuid.uuid4())
-        request_datetime = (
-            datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S") + " UTC"
-        )
+        """Generate the Mimecast authentication headers.
 
-        # Create the HMAC SHA1 of the Base64 decoded secret key for the
-        # Authorization header
+        Args:
+            proxy (str): The proxy server address.
+            verify (bool): Verify the SSL certificate of the server.
+            configuration (dict): The plugin configuration.
+            is_validation (bool, optional): Is this called from the validation.
+                Defaults to False.
+            is_retraction (bool, optional): Is this called from the retraction.
+                Defaults to False.
+
+        Returns:
+            str: The authentication headers.
+        """
         try:
-            hmac_sha1 = hmac.new(
-                base64.b64decode(configuration.get("secret_key")),
-                ":".join(
-                    [
-                        request_datetime,
-                        request_id,
-                        endpoint,
-                        configuration.get("app_key"),
-                    ]
-                ).encode("utf-8"),
-                digestmod=hashlib.sha1,
-            ).digest()
-        except Exception as err:
-            error_msg = (
-                "Invalid Secret Key provided in the configuration parameters."
+            client_id, client_secret = self._get_auth_params(configuration)
+
+            data = {
+                "grant_type": "client_credentials",
+                "client_id": client_id,
+                "client_secret": client_secret,
+            }
+            headers = {
+                'Content-Type': 'application/x-www-form-urlencoded'
+            }
+            logger_msg = f"generating authentication token from {PLUGIN_NAME}"
+
+            response = self.api_helper(
+                url=GET_BEARER_TOKEN_ENDPOINT,
+                method="POST",
+                data=data,
+                proxies=proxy,
+                verify=verify,
+                is_validation=is_validation,
+                configuration=configuration,
+                regenerate_auth_token=False,
+                logger_msg=logger_msg,
+                is_retraction=is_retraction
+            )
+            bearer_token = response.get("access_token", "")
+
+            if not bearer_token:
+                err_msg = (
+                    "Bearer Token not found. "
+                    "Verify Client ID and "
+                    "Client Secret provided in the "
+                    "configuration parameters. "
+                )
+                if is_validation:
+                    err_msg = (
+                        "Validation error occurred. "
+                        "Verify Client ID and "
+                        "Client Secret provided in the "
+                        "configuration parameters."
+                    )
+                self.logger.error(
+                    message=f"{self.log_prefix}: {err_msg}",
+                    details=f"API Response: {str(response)}",
+                )
+                raise MimecastPluginException(err_msg)
+            headers = {
+                "Authorization": f"Bearer {bearer_token}",
+            }
+            return headers
+        except MimecastPluginException:
+            raise
+        except Exception as exp:
+            err_msg = (
+                f"Unexpected error occurred while {logger_msg}."
             )
             self.logger.error(
-                f"{self.log_prefix}: Error occurred while generating Auth headers."
-                f"{error_msg}, Error: {err}",
-                details=traceback.format_exc()
+                message=f"{self.log_prefix}: {err_msg} Error: {exp}",
+                details=str(traceback.format_exc()),
             )
-            raise MimecastPluginException(error_msg)
+            raise MimecastPluginException(err_msg)
 
-        # Use the HMAC SHA1 value to sign hmac_sha1
-        sig = base64.b64encode(hmac_sha1).rstrip()
+    def _get_auth_params(self, configuration: Dict) -> Dict:
+        """Get auth params.
 
-        # Create request headers
-        headers = {
-            "Authorization": "MC "
-            + configuration.get("access_key")
-            + ":"
-            + sig.decode("utf-8"),
-            "x-mc-app-id": configuration.get("app_id"),
-            "x-mc-date": request_datetime,
-            "x-mc-req-id": request_id,
-            "Content-Type": "application/json",
-        }
-        headers = self._add_user_agent(headers)
-        return headers
+        Args:
+            configuration (Dict): Configuration parameter dictionary.
 
-    def parse_response(self, response: requests.models.Response, logger_msg):
+        Returns:
+            Tuple: Tuple containing Client ID and Client Secret.
+        """
+        return (
+            configuration.get("client_id", "").strip(),
+            configuration.get("client_secret")
+        )
+
+    def parse_response(
+        self,
+        response: requests.models.Response,
+        logger_msg,
+        is_validation: bool = False
+    ):
         """Parse Response will return JSON from response object.
 
         Args:
             response (response): Response object.
+            logger_msg (str): Logger message
+            is_validation: (bool): Check for validation
 
         Returns:
             Any: Response Json.
@@ -342,64 +467,97 @@ class MimecastPluginHelper(object):
             return response.json()
         except json.JSONDecodeError as err:
             err_msg = (
-                f"Invalid JSON response received from API. Error: {str(err)}"
-            )
-            toast_msg = (
-                f"Error occurred while {logger_msg}. Check the credentials provided. Check the logs for details."
+                "Invalid JSON response received "
+                f"from API while {logger_msg}. Error: {str(err)}"
             )
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg}",
                 details=f"API response: {response.text}",
             )
-            raise MimecastPluginException(toast_msg)
+            if is_validation:
+                err_msg = (
+                    "Verify Client ID and Client Secret provided in the "
+                    "configuration parameters. Check logs for more details."
+                )
+            raise MimecastPluginException(err_msg)
         except Exception as exp:
             err_msg = (
-                "Unexpected error occurred while parsing"
-                f" json response. Error: {exp}"
-            )
-            toast_msg = (
-                f"Error occurred while {logger_msg}. Check the credentials provided. Check the logs for details."
+                "Unexpected error occurred while parsing "
+                f"json response while {logger_msg}. Error: {exp}"
             )
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg}",
-                details=f"API Response: {response.text}",
+                details=f"API response: {response.text}",
             )
-            raise MimecastPluginException(toast_msg)
+            if is_validation:
+                err_msg = (
+                    "Unexpected validation error occurred, "
+                    "Verify Client ID and Client Secret provided in the "
+                    "configuration parameters. Check logs for more details."
+                )
+            raise MimecastPluginException(err_msg)
 
     def handle_error(
-        self, resp: requests.models.Response, logger_msg: str
+        self,
+        resp: requests.models.Response,
+        logger_msg: str,
+        is_validation: bool = False,
     ) -> Dict:
         """Handle the different HTTP response code.
 
         Args:
-            resp (requests.models.Response): Response object returned
-                from API call.
+            resp (requests.models.Response): Response object
+            returned from API call.
             logger_msg: logger message.
+            is_validation : API call from validation method or not
         Returns:
-            dict: Returns the dictionary of response JSON when the
-                response code is 200.
+            dict: Returns the dictionary of response JSON
+            when the response code is 200.
         Raises:
-            MimecastPluginException: When the response code is
-            not in 200 range.
+            MimecastPluginException: When the response code is not 200.
         """
-        if resp.status_code in [200, 201, 202]:
-            if "hashes" in logger_msg:
+        status_code = resp.status_code
+        validation_msg = "Validation error occurred, "
+        if status_code in [200, 201, 202]:
+            # Hash API is giving csv file in response
+            # Hence returning response object as is.
+            if "pulling file hash" in logger_msg:
                 return resp
             else:
-                return self.parse_response(resp, logger_msg)
+                return self.parse_response(resp, logger_msg, is_validation)
 
         error_dict = {
-            400: "Bad Request",
-            403: "Forbidden, access is denied to the requested resource. The user may not have enough permission to perform the action",
-            401: "Unauthorized, invalid Application keys provided",
-            404: "Not Found",
-            409: "Conflict, the current status of the relying data does not match what is defined in the request",
-            418: "Binding Expired, the TTL of the access key and secret key issued on successful login has lapsed and the binding should be refreshed as described in the Authentication guide"
+            400: "Received exit code 400, HTTP client error",
+            403: "Received exit code 403, Forbidden",
+            401: "Received exit code 401, Unauthorized access",
+            404: "Received exit code 404, Resource not found",
         }
+        if is_validation:
+            error_dict = {
+                400: (
+                    "Received exit code 400, Bad Request, Verify the "
+                    "Client ID and Client Secret provided in the "
+                    "configuration parameters."
+                ),
+                401: (
+                    "Received exit code 401, Unauthorized, Verify "
+                    "Client ID and Client Secret provided in the "
+                    "configuration parameters."
+                ),
+                403: (
+                    "Received exit code 403, Forbidden, Verify permissions "
+                    "provided to Client ID and Client Secret."
+                ),
+                404: (
+                    "Received exit code 404, Resource not found, Verify "
+                    "provided in the configuration parameters."
+                ),
+            }
+        api_error_message = ""
         try:
             json_response = self.parse_response(resp, logger_msg)
             fail_list = json_response.get("fail", [])
-            if "hashes" in logger_msg:
+            if "fetching file hash" in logger_msg:
                 if fail_list:
                     api_error_message = fail_list.get('message', '')
             else:
@@ -408,31 +566,41 @@ class MimecastPluginHelper(object):
                     api_error_message = error_list[0].get("message", "")
         except Exception:
             api_error_message = resp.text
-        if resp.status_code in error_dict:
-            error_msg = (
-                f"{self.log_prefix}: Received status code {resp.status_code} - "
-                f"{error_dict.get(resp.status_code)} while {logger_msg}."
-            )
-            if api_error_message:
-                error_msg += f" Error Message: {api_error_message}."
-            self.logger.error(
-                error_msg,
-                details=str(resp.text)
-            )
-            raise MimecastPluginException(error_msg)
+        if status_code in error_dict:
+            err_msg = error_dict[status_code]
+            if is_validation:
+                log_err_msg = validation_msg + err_msg
+                self.logger.error(
+                    message=f"{self.log_prefix}: {log_err_msg}",
+                    details=f"API response: {resp.text}",
+                )
+                raise MimecastPluginException(err_msg)
+            else:
+                err_msg = err_msg + " while " + logger_msg + "."
+                if status_code == 401:
+                    err_msg = (
+                        f"{err_msg} Check API Token provided in configuration "
+                        "parameters is expired or not."
+                    )
+                if api_error_message:
+                    err_msg += f" Error Message: {api_error_message}."
+                self.logger.error(
+                    message=f"{self.log_prefix}: {err_msg}",
+                    details=f"API response: {resp.text}",
+                )
+                raise MimecastPluginException(err_msg)
         else:
             err = (
                 "HTTP Server Error"
-                if (resp.status_code >= 500 and resp.status_code <= 600)
+                if (status_code >= 500 and status_code <= 600)
                 else "HTTP Error"
             )
             err_msg = (
-                f"{self.log_prefix}: Received status code {resp.status_code} - {err} "
-                f"while {logger_msg}."
+                f"{self.log_prefix}: Received status code {status_code}, "
+                f"{err} while {logger_msg}."
             )
             self.logger.error(
                 message=err_msg,
                 details=str(resp.text),
             )
             raise MimecastPluginException(err_msg)
-

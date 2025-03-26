@@ -55,6 +55,8 @@ ALERTS = {
     "Remediation": Const.ALERT_TYPE_REMEDIATION,
     "uba": Const.ALERT_TYPE_UBA,
     "ctep": Const.ALERT_TYPE_CTEP,
+    "Device": "device",
+    "Content": "content",
 }
 EVENTS = {
     "page": Const.EVENT_TYPE_PAGE,

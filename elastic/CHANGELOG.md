@@ -1,3 +1,8 @@
+# 2.2.1
+## Fixed
+- Terminate every event with a newline.
+- Close gracefully to avoid data truncation.
+
 # 2.2.0
 ## Added
 - Added support for the endpoint event type. To pull and ingest this event type update your CE version to 5.1.0.

@@ -1,7 +1,7 @@
 {
     "name": "Kafka",
     "id": "kafka",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "mapping": "Kafka Default Mappings",
     "types": [
         "alerts",

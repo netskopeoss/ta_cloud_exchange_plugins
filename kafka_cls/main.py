@@ -41,6 +41,12 @@ import traceback
 from typing import List
 
 from jsonpath import jsonpath
+
+import sys
+kafka_path = os.path.join(os.path.dirname(__file__), 'lib')
+if kafka_path not in sys.path:
+    sys.path.insert(0, kafka_path)
+
 from kafka import KafkaProducer, KafkaConsumer
 from kafka.errors import (
     AuthenticationFailedError,

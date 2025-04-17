@@ -1,0 +1,74 @@
+{
+    "name": "HPE Aruba Networking Central",
+    "description": "This plugin is used to fetch Wired and Wireless clients data from Aruba Networking Central of HPE Greenlake. It retrieves the clients from the Aruba Networking Central > Clients page. This plugin also supports performing Add client to blacklist, Remove client from blacklist and Disconnect client from networking device actions on Aruba Networking Central.",
+    "id": "hpe_aruba_networking_central",
+    "minimum_version": "5.1.0",
+    "version": "1.0.0",
+    "module": "CRE",
+    "netskope": false,
+    "configuration": [
+        {
+            "label": "API Base URL",
+            "key": "base_url",
+            "type": "text",
+            "mandatory": true,
+            "description": "API Base URL for Aruba Networking Central instance. To get base URL go to Aruba Networking Central > Organization > Platform Integration > APIs > Documentation , Copy the url. Make sure to only provide the base url."
+        },
+        {
+            "label": "Username",
+            "key": "username",
+            "type": "text",
+            "mandatory": true,
+            "description": "HPE Greenlake account username."
+        },
+        {
+            "label": "Password",
+            "key": "password",
+            "type": "password",
+            "mandatory": true,
+            "description": "HPE Greenlake account password."
+        },
+        {
+            "label": "Client ID",
+            "key": "client_id",
+            "type": "text",
+            "mandatory": true,
+            "description": "Aruba Networking Central Client ID. To generate Client ID go to Aruba Networking Central > Organization > Platform Integration > REST API > My Apps & Tokens > Add Apps & Tokens."
+        },
+        {
+            "label": "Client Secret",
+            "key": "client_secret",
+            "type": "password",
+            "mandatory": true,
+            "description": "Aruba Networking Central Client Secret. To generate Client Secret go to Aruba Networking Central > Organization > Platform Integration > REST API > My Apps & Tokens > Add Apps & Tokens."
+        },
+        {
+            "label": "Customer ID",
+            "key": "customer_id",
+            "type": "text",
+            "mandatory": true,
+            "description": "Aruba Networking Central Customer ID. To get Customer ID go to Aruba Networking Central > Click on User profile > Customer ID."
+        },
+        {
+            "label": "Client Type",
+            "key": "client_types",
+            "type": "multichoice",
+            "choices": [
+                {
+                    "key": "Wired",
+                    "value": "wired"
+                },
+                {
+                    "key": "Wireless",
+                    "value": "wireless"
+                }
+            ],
+            "default": [
+                "wired",
+                "wireless"
+            ],
+            "mandatory": true,
+            "description": "Client Type to be fetched from Aruba Networking Central. Select at least one of the client types."
+        }
+    ]
+}

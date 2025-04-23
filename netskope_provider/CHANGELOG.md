@@ -1,3 +1,7 @@
+# 1.4.1
+## Fixed
+- Bug Fix.
+
 # 1.4.0
 ## Added
 - Added support for Client status events. To pull and ingest this event type update your CLS Netskope plugin version to 2.2.0.

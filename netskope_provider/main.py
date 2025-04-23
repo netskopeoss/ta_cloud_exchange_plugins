@@ -495,6 +495,10 @@ class NetskopeProviderPlugin(PluginBase):
         Returns:
             GeneratorObject: List of indicator objects received from Netskope along with types.
         """
+        from netskope.common.utils.forbidden_notifier import (
+            create_or_ack_forbidden_error_banner,
+        )
+        create_or_ack_forbidden_error_banner()
         if data_type == "webtx":
             return self._pull_webtx_data(configuration_name)
         elif data_type == "webtx_metrics":

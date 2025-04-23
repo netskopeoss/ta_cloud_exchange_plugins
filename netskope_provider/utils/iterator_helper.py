@@ -625,7 +625,7 @@ class NetskopeClient:
                     wait_time = CONST.DEFAULT_WAIT_TIME
                     if schema_header:
                         try:
-                            schema_header = json.loads(headers.replace("'", '"'))
+                            schema_header = json.loads(schema_header.replace("'", '"'))
                         except json.decoder.JSONDecodeError:
                             error_msg = (
                                 "Error occurred while fetching the schema headers. "

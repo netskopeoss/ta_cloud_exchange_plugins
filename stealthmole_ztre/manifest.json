@@ -1,0 +1,51 @@
+{
+    "name": "StealthMole",
+    "netskope": false,
+    "description": "This plugin is used to fetch users based on searched domains available on 'UB' under 'Create New Case' of the StealthMole platform. This plugin does not support performing any actions on users on the StealthMole platform.",
+    "id": "stealthmole_ztre",
+    "version": "1.0.0",
+    "minimum_version": "5.1.0",
+    "module": "CRE",
+    "configuration": [
+        {
+            "label": "Access Key",
+            "key": "access_key",
+            "type": "password",
+            "default": "",
+            "mandatory": true,
+            "description": "Provide the Access Key from StealthMole platform."
+        },
+        {
+            "label": "Secret Key",
+            "key": "secret_key",
+            "type": "password",
+            "default": "",
+            "mandatory": true,
+            "description": "Provide the Secret Key from StealthMole platform."
+        },
+        {
+            "label": "Search Domain",
+            "key": "search_domain",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "Provide a domain to search from StealthMole database for users. e.g. gmail.com"
+        },
+        {
+            "label": "Score",
+            "key": "score",
+            "type": "number",
+            "mandatory": true,
+            "default": 0,
+            "description": "Score to be assigned to each user pulled from the StealthMole platform. Value should be in range of 0 to 1000."
+        },
+        {
+            "label": "Initial Range (in days)",
+            "key": "init_range",
+            "type": "number",
+            "mandatory": true,
+            "default": 7,
+            "description": "Number of days to pull the data for the initial run."
+        }
+    ]
+}

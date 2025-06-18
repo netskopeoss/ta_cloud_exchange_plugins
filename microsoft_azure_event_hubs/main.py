@@ -406,6 +406,10 @@ class MicrosoftAzureEventHubsPlugin(PluginBase):
         log_source_identifier = self.configuration.get(
             "log_source_identifier", LOG_SOURCE_IDENTIFIER
         )
+        skip_timestamp = self.configuration.get("skip_timestamp_field", "no")
+        skip_log_source = self.configuration.get(
+            "skip_log_source_identifier_field", "no"
+        )
         if not self.configuration.get("transformData", True):
             try:
                 (
@@ -455,14 +459,33 @@ class MicrosoftAzureEventHubsPlugin(PluginBase):
                     transformed_data = []
                     for data in raw_data:
                         if data:
-                            result = "{} {} {}".format(
-                                time.strftime(
-                                    "%b %d %H:%M:%S",
-                                    time.localtime(time.time()),
-                                ),
-                                log_source_identifier,
-                                json.dumps(data),
-                            )
+                            if (
+                                skip_timestamp == "yes"
+                                and skip_log_source == "yes"
+                            ):
+                                result = json.dumps(data)
+                            elif skip_timestamp == "yes":
+                                result = "{} {}".format(
+                                    log_source_identifier,
+                                    json.dumps(data),
+                                )
+                            elif skip_log_source == "yes":
+                                result = "{} {}".format(
+                                    time.strftime(
+                                        "%b %d %H:%M:%S",
+                                        time.localtime(time.time()),
+                                    ),
+                                    json.dumps(data),
+                                )
+                            else:
+                                result = "{} {} {}".format(
+                                    time.strftime(
+                                        "%b %d %H:%M:%S",
+                                        time.localtime(time.time()),
+                                    ),
+                                    log_source_identifier,
+                                    json.dumps(data),
+                                )
                             transformed_data.append(result)
                         else:
                             skipped_logs += 1
@@ -487,13 +510,29 @@ class MicrosoftAzureEventHubsPlugin(PluginBase):
             for data in raw_data:
                 mapped_dict = self.map_json_data(subtype_mapping, data)
                 if mapped_dict:
-                    result = "{} {} {}".format(
-                        time.strftime(
-                            "%b %d %H:%M:%S", time.localtime(time.time())
-                        ),
-                        log_source_identifier,
-                        json.dumps(mapped_dict),
-                    )
+                    if skip_timestamp == "yes" and skip_log_source == "yes":
+                        result = json.dumps(mapped_dict)
+                    elif skip_timestamp == "yes":
+                        result = "{} {}".format(
+                            log_source_identifier,
+                            json.dumps(mapped_dict),
+                        )
+                    elif skip_log_source == "yes":
+                        result = "{} {}".format(
+                            time.strftime(
+                                "%b %d %H:%M:%S",
+                                time.localtime(time.time()),
+                            ),
+                            json.dumps(mapped_dict),
+                        )
+                    else:
+                        result = "{} {} {}".format(
+                            time.strftime(
+                                "%b %d %H:%M:%S", time.localtime(time.time())
+                            ),
+                            log_source_identifier,
+                            json.dumps(mapped_dict),
+                        )
                     transformed_data.append(result)
                 else:
                     skipped_logs += 1
@@ -1026,7 +1065,7 @@ class MicrosoftAzureEventHubsPlugin(PluginBase):
             message.
         """
         validation_err_msg = f"{self.log_prefix}: Validation error occurred,"
-
+        transform_data = configuration.get("transformData", True)
         microsoft_azure_event_hubs_validator = (
             MicrosoftAzureEventHubsValidator(self.logger, self.log_prefix)
         )
@@ -1117,28 +1156,96 @@ class MicrosoftAzureEventHubsPlugin(PluginBase):
             "log_source_identifier", ""
         ).strip()
 
-        if not log_source_identifier:
-            err_msg = (
-                "Log Source Identifier is a required configuration parameter."
-            )
-            self.logger.error(f"{validation_err_msg} {err_msg}")
-            return ValidationResult(
-                success=False,
-                message=err_msg,
-            )
+        skip_timestamp_field = configuration.get(
+            "skip_timestamp_field", ""
+        ).strip()
+        skip_log_source_identifier_field = configuration.get(
+            "skip_log_source_identifier_field", ""
+        ).strip()
+        if not transform_data:
+            if not skip_timestamp_field:
+                err_msg = (
+                    "Exclude Timestamp Field is a required configuration parameter,"
+                    " if transformed data is not enabled in 'Basic Information'."
+                )
+                self.logger.error(f"{validation_err_msg} {err_msg}")
+                return ValidationResult(
+                    success=False,
+                    message=err_msg,
+                )
 
-        elif not isinstance(log_source_identifier, str):
-            err_msg = (
-                "Invalid Log Source Identifier found in"
-                " configuration parameters."
-            )
-            self.logger.error(
-                f"{validation_err_msg} {err_msg}",
-            )
-            return ValidationResult(
-                success=False,
-                message=err_msg,
-            )
+            elif skip_timestamp_field not in ["yes", "no"]:
+                err_msg = (
+                    "Invalid value provided in Exclude Timestamp Field"
+                    " configuration parameter. Allowed values are Yes or No."
+                )
+                self.logger.error(
+                    f"{validation_err_msg} {err_msg}",
+                )
+                return ValidationResult(
+                    success=False,
+                    message=err_msg,
+                )
+            if not skip_log_source_identifier_field:
+                err_msg = (
+                    "Exclude Log Source Identifier Field is a required"
+                    " configuration parameter, if transformed data is not enabled"
+                    " in 'Basic Information'."
+                )
+                self.logger.error(f"{validation_err_msg} {err_msg}")
+                return ValidationResult(
+                    success=False,
+                    message=err_msg,
+                )
+
+            elif skip_log_source_identifier_field not in ["yes", "no"]:
+                err_msg = (
+                    "Invalid value provided in Exclude Log Source Identifier"
+                    " Field configuration parameter. Allowed values are Yes or No."
+                )
+                self.logger.error(
+                    f"{validation_err_msg} {err_msg}",
+                )
+                return ValidationResult(success=False, message=err_msg)
+        if transform_data:
+            if not log_source_identifier:
+                err_msg = (
+                    "Log Source Identifier is a required configuration"
+                    " parameter if transformed data is enabled in 'Basic"
+                    " Information'."
+                )
+                self.logger.error(f"{validation_err_msg} {err_msg}")
+                return ValidationResult(
+                    success=False,
+                    message=err_msg,
+                )
+            elif not isinstance(log_source_identifier, str):
+                err_msg = (
+                    "Invalid Log Source Identifier provided in configuration"
+                    " parameters."
+                )
+                self.logger.error(f"{validation_err_msg} {err_msg}")
+                return ValidationResult(success=False, message=err_msg)
+
+        if skip_log_source_identifier_field == "no":
+            if not log_source_identifier:
+                err_msg = (
+                    "Log Source Identifier is a required configuration"
+                    " parameter, if 'Exclude Log Source Identifier Field'"
+                    " is set to No."
+                )
+                self.logger.error(f"{validation_err_msg} {err_msg}")
+                return ValidationResult(
+                    success=False,
+                    message=err_msg,
+                )
+            elif not isinstance(log_source_identifier, str):
+                err_msg = (
+                    "Invalid Log Source Identifier provided in configuration"
+                    " parameters."
+                )
+                self.logger.error(f"{validation_err_msg} {err_msg}")
+                return ValidationResult(success=False, message=err_msg)
 
         mappings = self.mappings.get("jsonData", None)
         mappings = json.loads(mappings)
@@ -1194,7 +1301,6 @@ class MicrosoftAzureEventHubsPlugin(PluginBase):
                 self.logger.error(f"{validation_err_msg} {err_msg}")
                 return ValidationResult(message=err_msg, success=False)
         except MicrosoftAzureEventHubsPluginError as exp:
-            
             return ValidationResult(success=False, message=str(exp))
         except Exception as exp:
             self.logger.error(

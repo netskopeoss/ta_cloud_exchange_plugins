@@ -1,3 +1,11 @@
+# 1.3.0
+## Added
+ - Added the support for 'UCI Reset' action.
+ - Added the feature to remove tag from application using the 'Tag/Untag Application' action.
+ - Added logger messages.
+## Fixed
+ - Bug fixes.
+
 # 1.2.0
 ## Added
 - Added bulk action support starting from CE v5.1.1.

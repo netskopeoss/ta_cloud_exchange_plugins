@@ -1,3 +1,8 @@
+# 1.4.2
+## Fixed
+- Updated pulling workflow.
+- Bug Fixes.
+
 # 1.4.1
 ## Fixed
 - Bug Fix.

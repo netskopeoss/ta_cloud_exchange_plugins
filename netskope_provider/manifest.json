@@ -8,7 +8,7 @@
         "webtx"
     ],
     "netskope": true,
-    "version": "1.4.1",
+    "version": "1.4.2",
     "module": "Tenant",
     "minimum_version": "5.1.1",
     "description": "This plugin is required to configure Netskope Tenant in Cloud Exchange. The Netskope Tenant will be used by the Netskope plugins to fetch the required data for each module.",

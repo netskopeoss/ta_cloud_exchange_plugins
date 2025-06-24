@@ -2,12 +2,17 @@
 
 import datetime
 import gzip
+import collections
+import json
 import re
 import threading
 import time
 import traceback
 from typing import Dict, List
 from urllib.parse import urlparse
+import pandas as pd
+import numpy as np
+from io import StringIO
 
 import requests
 from netskope.common.models.other import NotificationType
@@ -131,6 +136,90 @@ class NetskopeProviderPlugin(PluginBase):
                 details=traceback.format_exc(),
             )
             raise exp
+
+    def convert_numpy_types(self, obj):
+        """Convert numpy datatype into python datatype."""
+        if isinstance(obj, dict):
+            return {k: self.convert_numpy_types(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [self.convert_numpy_types(v) for v in obj]
+        elif isinstance(obj, np.generic):  # catches np.int64, np.float64, etc.
+            return obj.item()
+        else:
+            return obj
+
+
+    def parse_csv_response(self, df: pd.DataFrame):
+        """Parse complex datatype in CSV response."""
+
+        # Step 1: Group columns by root key
+        column_groups = collections.defaultdict(list)
+        for col in df.columns:
+            if '.' in col:
+                root = col.split('.')[0]
+                column_groups[root].append(col)
+
+        # Step 2: Create a new dataframe column-wise
+        result = pd.DataFrame()
+
+        def parse_complex_obj(val):
+            if isinstance(val, str) and '|' in val:
+                parts = val.split('|')
+                if any('=' not in segment for segment in parts):
+                    return parts
+                else:
+                    result_dict = {}
+                    for segment in parts:
+                        key, value = segment.split('=', 1)
+                        result_dict[key] = value
+                    return result_dict
+            return val
+
+        # Direct (non-nested) columns and check for list conversion
+        for col in df.columns:
+            if '.' not in col:
+                result[col] = df[col].apply(parse_complex_obj)
+
+        # Nested columns
+        for root, cols in column_groups.items():
+            nested_values = []
+            for i in range(len(df)):
+                temp = {}
+                for col in cols:
+                    keys = col.split('.')[1:]  # exclude root
+                    val = df.at[i, col]
+
+                    # Convert comma-separated strings to list
+                    val = parse_complex_obj(val)
+
+                    cur = temp
+                    for k in keys[:-1]:
+                        cur = cur.setdefault(k, {})
+                    cur[keys[-1]] = val
+
+                nested_values.append(self.convert_numpy_types(temp))
+
+            result[root] = nested_values
+        return result.to_dict(orient="records")
+
+    def parse_incident_events(self, events_data):
+        for event in events_data:
+            for key in CONST.STRING_FIELDS:
+                if key in event and event[key] is not None:
+                    event[key] = str(event[key])
+        return events_data
+
+    def parse_data(self, events: bytes, data_type: str, sub_type: str):
+        """Parse incoming data."""
+        decompressed_events = gzip.decompress(events)
+        try:
+            if data_type in ['event', 'events'] and sub_type == "incident":
+                return self.parse_incident_events(json.loads(decompressed_events).get("result", []))
+            return json.loads(decompressed_events)
+        except json.decoder.JSONDecodeError:
+            if data_type in ['event', 'events'] and sub_type == "incident":
+                return self.parse_incident_events(self.parse_csv_response(pd.read_csv(StringIO(decompressed_events.decode("utf-8")), keep_default_na=False)))
+            return self.parse_csv_response(pd.read_csv(StringIO(decompressed_events.decode("utf-8")), keep_default_na=False))
 
     def transform(self, raw_data, data_type, subtype, **kwargs) -> List:
         """Transform the raw netskope target platform supported."""
@@ -650,7 +739,7 @@ class NetskopeProviderPlugin(PluginBase):
                     )
                 )
                 plugin_provider_helper.store_new_field(
-                    field, typeOfField, datatype
+                    field, typeOfField, FieldDataType.TEXT if field in CONST.STRING_FIELDS else datatype
                 )
 
             fields = fields.union(item.keys())
@@ -773,6 +862,8 @@ class NetskopeProviderPlugin(PluginBase):
                 error_code="CE_1045",
                 custom_message=f"Error occurred while validating v1 token for the tenant {self.name}",
                 notify=False,
+                plugin=self.log_prefix,
+                log=True,
             )
 
             if resp_json.get("status") == "success":
@@ -1034,6 +1125,8 @@ class NetskopeProviderPlugin(PluginBase):
                         f"Error occurred while sharing analytics for {tenant.get('name')}"
                         " in User-Agent with Netskope"
                     ),
+                    plugin=self.log_prefix,
+                    log=True,
                 )
                 return False
         except Exception:

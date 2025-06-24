@@ -36,7 +36,7 @@ from netskope_api.iterator.const import Const
 import os
 
 MODULE_NAME = "TENANT"
-PLUGIN_VERSION = "1.4.1"
+PLUGIN_VERSION = "1.4.2"
 PLATFORM_NAME = "Netskope"
 MAX_API_CALLS = 4
 DATE_FORMAT = "%Y-%m-%dT%H:%M:%S.%fZ"
@@ -97,3 +97,4 @@ if isinstance(RETRY_COUNT_FOR_PULLING, str) and RETRY_COUNT_FOR_PULLING.isnumeri
         RETRY_COUNT_FOR_PULLING = DEFAULT_RETRY_COUNT
 else:
     RETRY_COUNT_FOR_PULLING = DEFAULT_RETRY_COUNT
+STRING_FIELDS = ['dlp_incident_id', 'connection_id', 'app_session_id', 'dlp_parent_id', 'browser_session_id']

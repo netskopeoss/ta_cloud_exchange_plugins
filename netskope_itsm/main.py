@@ -56,7 +56,7 @@ MAX_RETRIES_ON_RATE_LIMIT = 3
 INCIDENT_UPDATE_API = "{}/api/v2/incidents/update"
 MODULE_NAME = "CTO"
 PLUGIN_NAME = "Netskope CTO"
-PLUGIN_VERSION = "2.2.0"
+PLUGIN_VERSION = "2.2.1"
 DEFAULT_STATUS_VALUE_MAP = {
     "New": "new",
     "In Progress": "in_progress",
@@ -282,7 +282,18 @@ class NetskopePlugin(PluginBase):
 
     def _get_raw_dict(self, data):
         """Get raw dict."""
-        data_item = {k: v for k, v in data.items() if k not in IGNORED_RAW_KEYS}
+        
+        data_item = {
+            k: (
+                str(v)
+                if not (
+                    isinstance(v, int) or isinstance(v, float) or isinstance(v, bool)
+                )
+                else v
+            )
+            for k, v in data.items()
+            if k not in IGNORED_RAW_KEYS
+        }
         for k, v in self.get_severity_status_mapping().items():
             if k == "severity" and k in data_item.keys():
                 data_item.update(

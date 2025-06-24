@@ -6,7 +6,7 @@
     "pulling_supported": true,
     "receiving_supported": false,
     "sharing_supported": true,
-    "version": "2.2.0",
+    "version": "2.2.1",
     "module": "CTO",
     "minimum_version": "5.1.1",
     "minimum_provider_version": "1.3.0",

@@ -1,3 +1,7 @@
+# 2.2.1
+## Added
+- Added support of filtering using limited operators(LIKE, EQUALS TO) for complex data types.
+
 # 2.2.0
 ## Changed
 - Updated Netskope ITSM plugin to preserve data types while storing alerts/events.

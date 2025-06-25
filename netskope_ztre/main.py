@@ -1,21 +1,16 @@
 """Netskope CRE plugin."""
 
 import json
-import os
 import re
 import time
 import traceback
 from typing import Dict, List, Optional, Union
 
-import requests
 from netskope.common.utils import (
     AlertsHelper,
-    add_installation_id,
-    add_user_agent,
     resolve_secret,
 )
 from netskope.common.utils.handle_exception import (
-    handle_exception,
     handle_status_code,
 )
 from netskope.common.utils.plugin_provider_helper import PluginProviderHelper
@@ -30,7 +25,6 @@ from netskope.integrations.crev2.plugin_base import (
 from netskope.integrations.crev2.utils import get_latest_values
 from requests.exceptions import ConnectionError
 from .utils.constants import (
-    MAX_RETRY_COUNT,
     PAGE_SIZE,
     MAX_HOSTS_PER_PRIVATE_APP,
     REGEX_HOST,
@@ -39,21 +33,20 @@ from .utils.constants import (
     PLUGIN,
     PLUGIN_VERSION,
     URLS,
-    ERROR_TAG_EXISTS,
     ERROR_APP_DOES_NOT_EXIST,
     SUCCESS,
     ADD_REMOVE_USER_BATCH_SIZE,
     APP_INSTANCE_BATCH_SIZE,
     TAG_APP_BATCH_SIZE,
+    TAG_NOT_FOUND,
+    USERS_BATCH_SIZE,
+    APPLICATIONS_BATCH_SIZE,
+    TAG_APP_TAG_LENGTH,
+    TAG_EXISTS,
 )
+from .utils.helper import NetskopePluginHelper, NetskopeException
 
 plugin_provider_helper = PluginProviderHelper()
-
-
-class NetskopeException(Exception):
-    """Netskope exception class."""
-
-    pass
 
 
 class NetskopePlugin(PluginBase):
@@ -83,6 +76,10 @@ class NetskopePlugin(PluginBase):
         self.log_prefix = f"{MODULE_NAME} {self.plugin_name}"
         if name:
             self.log_prefix = f"{self.log_prefix} [{name}]"
+        self.netskope_helper = NetskopePluginHelper(
+            logger=self.logger,
+            log_prefix=self.log_prefix,
+        )
 
     def _get_plugin_info(self) -> tuple:
         """Get plugin name and version from manifest.
@@ -91,15 +88,10 @@ class NetskopePlugin(PluginBase):
             tuple: Tuple of plugin's name and version fetched from manifest.
         """
         try:
-            file_path = os.path.join(
-                str(os.path.dirname(os.path.abspath(__file__))),
-                "manifest.json",
-            )
-            with open(file_path, "r") as manifest:
-                manifest_json = json.load(manifest)
-                plugin_name = manifest_json.get("name", PLUGIN)
-                plugin_version = manifest_json.get("version", PLUGIN)
-                return (plugin_name, plugin_version)
+            manifest_json = NetskopePlugin.metadata
+            plugin_name = manifest_json.get("name", PLUGIN)
+            plugin_version = manifest_json.get("version", PLUGIN_VERSION)
+            return plugin_name, plugin_version
         except Exception as exp:
             self.logger.error(
                 message=(
@@ -159,7 +151,14 @@ class NetskopePlugin(PluginBase):
         ]
 
     def fetch_records(self, entity: str) -> list[dict]:
-        """Fetch and extract list of new users from Netskope alerts."""
+        """Fetch user and application records from Netskope alerts.
+
+        Args:
+            entity (str): Entity to be fetched.
+
+        Returns:
+            List: List of records to be stored on the platform.
+        """
         helper = AlertsHelper()
         self.tenant = helper.get_tenant_crev2(self.name)
         if entity == "Users":
@@ -181,7 +180,7 @@ class NetskopePlugin(PluginBase):
         application_dict = {}
         for application_event in application_events:
             existing_user = application_dict.get(
-                application_event["app"].lower(), {}
+                application_event.get("app", "").lower(), {}
             ).get("user", [])
             if not existing_user:
                 users = (
@@ -192,7 +191,7 @@ class NetskopePlugin(PluginBase):
             else:
                 existing_user.append(application_event.get("user", []))
                 users = existing_user
-            application_dict[application_event["app"].lower()] = {
+            application_dict[application_event.get("app", "").lower()] = {
                 "applicationName": application_event.get("app"),
                 "cci": application_event.get("cci", None),
                 "ccl": application_event.get("ccl", "unknown"),
@@ -201,116 +200,107 @@ class NetskopePlugin(PluginBase):
             }
         return application_dict
 
-    def _api_call_helper(
-        self,
-        endpoint,
-        method,
-        error_codes,
-        message="",
-        params={},
-        data=None,
-        auth=None,
-    ):
-        """Call the API helper for getting application related data."""
-        request_func = getattr(requests, method)
-
-        tenant_name = self.tenant.parameters.get("tenantName").replace(" ", "")
-        token = resolve_secret(self.tenant.parameters.get("v2token"))
-        url = f"{tenant_name}/api/v2{endpoint}"
-        headers = {
-            "Netskope-API-Token": token,
-            "Content-Type": "application/json",
-        }
-        response = {}
-
-        for attempt in range(MAX_RETRY_COUNT):
-            success, response = handle_exception(
-                request_func,
-                error_code=error_codes[0],
-                custom_message=message,
-                plugin=PLUGIN,
-                url=url,
-                headers=add_installation_id(add_user_agent(headers)),
-                json=data,
-                params=params,
-                proxies=self.proxy,
-            )
-            if not success:
-                raise response
-
-            if response.status_code == 429 and attempt < (MAX_RETRY_COUNT - 1):
-                self.logger.error(
-                    f"{self.log_prefix}: Received Too Many Requests error. "
-                    f"Performing retry for url {url}. "
-                    f"Retry count: {attempt + 1}.",
-                    details=f"Retrying for url {url}.",
-                )
-                time.sleep(60)
-                continue
-            response = handle_status_code(
-                response,
-                error_code=error_codes[1],
-                custom_message=message,
-                plugin=PLUGIN,
-                notify=False,
-            )
-            return response
-        else:
-            raise requests.exceptions.HTTPError("Maximum retry limit reached")
-
     def _fetch_app_details(self, applications):
-        """Fetch the application details."""
-        endpoint = "/services/cci/app"
-        max_applications = 100
+        """Fetch application details from Netskope.
+
+        Args:
+            applications (dict): Dictionary of applications.
+
+        Raises:
+            NetskopeException: Error while fetching application details.
+        """
+        url = (
+            f"{self.tenant.parameters.get('tenantName').strip()}"
+            f"{URLS.get('V2_CCI_APP')}"
+        )
+        headers = {
+            "Netskope-API-Token": resolve_secret(
+                self.tenant.parameters.get("v2token", "")
+            )
+        }
         application_names = []
         last_element_counter = 0
         total_event_len = len(applications.keys())
-        for application in applications.keys():
-            application_names.append(application)
-            last_element_counter += 1
-            if (
-                len(application_names) == max_applications
-                or last_element_counter >= total_event_len
-            ):
-                app_names_req = ";".join(application_names)
-                params = {"apps": app_names_req}
-                response = self._api_call_helper(
-                    endpoint=endpoint,
-                    method="get",
-                    params=params,
-                    error_codes=["CRE_1033", "CRE_1034"],
-                    message="Error occurred while fetching the application details of the applications",
-                )
+        logger_msg = "fetching application details"
+        self.logger.debug(
+            f"{self.log_prefix}: {logger_msg.capitalize()} for "
+            f"{total_event_len} applications."
+        )
+        try:
+            for application in applications.keys():
+                application_names.append(application)
+                last_element_counter += 1
+                if (
+                    len(application_names) == APPLICATIONS_BATCH_SIZE
+                    or last_element_counter >= total_event_len
+                ):
+                    app_names_req = ";".join(application_names)
+                    params = {"apps": app_names_req}
+                    response = self.netskope_helper._api_call_helper(
+                        url=url,
+                        method="get",
+                        params=params,
+                        error_codes=["CRE_1033", "CRE_1034"],
+                        headers=headers,
+                        proxies=self.proxy,
+                        message=(
+                            f"Error occurred while {logger_msg}"
+                        ),
+                        logger_msg=logger_msg
+                    )
 
-                if response.get("data"):
-                    for apps in response["data"]:
-                        if apps.get("app_name").lower() not in applications:
-                            continue
-                        applications[apps.get("app_name").lower()][
-                            "applicationId"
-                        ] = (str(apps["id"]) if "id" in apps else None)
-                        applications[apps.get("app_name").lower()][
-                            "vendor"
-                        ] = apps.get("organisation", None)
-                        if apps.get("cci", None) is not None:
+                    if response.get("data", []):
+                        for apps in response.get("data", []):
+                            if (
+                                apps.get("app_name").lower() not in
+                                applications
+                            ):
+                                continue
                             applications[apps.get("app_name").lower()][
-                                "cci"
-                            ] = apps.get("cci", None)
-                        if apps.get("ccl", None):
+                                "applicationId"
+                            ] = (str(apps["id"]) if "id" in apps else None)
                             applications[apps.get("app_name").lower()][
-                                "ccl"
-                            ] = apps.get("ccl", None)
-                        if apps.get("category_name", None):
-                            applications[apps.get("app_name").lower()][
-                                "categoryName"
-                            ] = apps.get("category_name", None)
-                application_names = []
+                                "vendor"
+                            ] = apps.get("organisation", None)
+                            if apps.get("cci", None) is not None:
+                                applications[apps.get("app_name").lower()][
+                                    "cci"
+                                ] = apps.get("cci", None)
+                            if apps.get("ccl", None):
+                                applications[apps.get("app_name").lower()][
+                                    "ccl"
+                                ] = apps.get("ccl", None)
+                            if apps.get("category_name", None):
+                                applications[apps.get("app_name").lower()][
+                                    "categoryName"
+                                ] = apps.get("category_name", None)
+                    application_names = []
+        except NetskopeException:
+            raise
+        except Exception as err:
+            error_message = f"Error occurred while {logger_msg}."
+            self.logger.error(
+                message=(
+                    f"{self.log_prefix}: {error_message} "
+                    f"Error: {err}"
+                ),
+                details=str(traceback.format_exc()),
+            )
+            raise NetskopeException(error_message)
+        self.logger.debug(
+            f"{self.log_prefix}: Successfully fetched application "
+            f"details for {total_event_len} application(s)."
+        )
 
     def _create_applications(self, applications):
         """Pull the app information from Netskope Tenant.
 
+        Args:
+            applications (dict): Dictionary of applications.
+
         Returns:
-            List[grc.models.Application]: List of app data received from the Netskope.
+            List[grc.models.Application]: List of app data \
+                received from the Netskope.
         """
         app_data = []
 
@@ -347,116 +337,212 @@ class NetskopePlugin(PluginBase):
                     skip_app_count += 1
             self.logger.info(
                 f"{self.log_prefix}: Successfully extracted"
-                f" {len(app_data)} application(s) from "
-                f"Netskope Tenant. Skipped {skip_app_count} application(s) due to invalid data."
+                f" {len(app_data)} application(s) from the "
+                f"Netskope Tenant. Skipped {skip_app_count} "
+                "application(s) due to invalid data."
             )
             apps = [
                 {k: v for k, v in app.items() if v} for app in app_data
             ]
             return apps
         except Exception as e:
-            self.logger.info(
-                f"{self.log_prefix}: Polling is disabled, skipping. {e}"
+            self.logger.error(
+                f"{self.log_prefix}: Error occurred while "
+                f"processing applications. Error: {e}"
             )
         return app_data
 
     def _fetch_app_domains(self, applications):
-        """Fetch the domain details for each application."""
-        endpoint = "/services/cci/domain"
-        max_applications = 100
+        """Fetch the domain details for each application.
+
+        Args:
+            applications (dict): Dictionary of applications.
+
+        Returns:
+            None
+        """
+        url = (
+            f"{self.tenant.parameters.get('tenantName').strip()}"
+            f"{URLS.get('V2_CCI_DOMAINS')}"
+        )
+        headers = {
+            "Netskope-API-Token": resolve_secret(
+                self.tenant.parameters.get("v2token", "")
+            )
+        }
         application_ids = []
         last_element_counter = 0
         total_event_len = len(applications.keys())
-        for _, application_details in applications.items():
-            application_ids.append(str(application_details["applicationId"]))
-            last_element_counter += 1
-            if (
-                len(application_ids) == max_applications
-                or last_element_counter >= total_event_len
-            ):
-                app_ids_req = ";".join(application_ids)
-                params = {"ids": app_ids_req}
-
-                response = self._api_call_helper(
-                    endpoint=endpoint,
-                    method="get",
-                    params=params,
-                    error_codes=["CRE_1026", "CRE_1027"],
-                    message="Error occurred while fetching the domain details of the applications",
+        logger_msg = "fetching the domain details of the application(s)"
+        self.logger.debug(
+            f"{self.log_prefix}: {logger_msg.capitalize()} for "
+            f"{total_event_len} application(s)."
+        )
+        try:
+            for _, application_details in applications.items():
+                application_ids.append(
+                    str(application_details.get("applicationId", ""))
                 )
+                last_element_counter += 1
+                if (
+                    len(application_ids) == APPLICATIONS_BATCH_SIZE
+                    or last_element_counter >= total_event_len
+                ):
+                    app_ids_req = ";".join(application_ids)
+                    params = {"ids": app_ids_req}
 
-                if response.get("data"):
-                    for domain_details in response["data"]:
-                        app_name = domain_details.get("app_name", "").lower()
-                        if app_name not in applications:
-                            continue
-                        applications[app_name]["domain_details"] = {
-                            "id": domain_details.get("id", ""),
-                            "discovery_domains": domain_details.get(
-                                "discovery_domains", []
-                            ),
-                            "steering_domains": domain_details.get(
-                                "steering_domains", []
-                            ),
-                        }
+                    response = self.netskope_helper._api_call_helper(
+                        url=url,
+                        method="get",
+                        params=params,
+                        headers=headers,
+                        proxies=self.proxy,
+                        error_codes=["CRE_1026", "CRE_1027"],
+                        message=(
+                            f"Error occurred while {logger_msg}"
+                        ),
+                        logger_msg=logger_msg
+                    )
 
-                application_ids = []
+                    if response.get("data"):
+                        for domain_details in response.get("data", []):
+                            app_name = (
+                                domain_details.get("app_name", "").lower()
+                            )
+                            if app_name not in applications:
+                                continue
+                            applications[app_name]["domain_details"] = {
+                                "id": domain_details.get("id", ""),
+                                "discovery_domains": domain_details.get(
+                                    "discovery_domains", []
+                                ),
+                                "steering_domains": domain_details.get(
+                                    "steering_domains", []
+                                ),
+                            }
+
+                    application_ids = []
+        except NetskopeException:
+            raise
+        except Exception as err:
+            error_message = f"Error occurred while {logger_msg}."
+            self.logger.error(
+                message=(
+                    f"{self.log_prefix}: {error_message} "
+                    f"Error: {err}"
+                ),
+                details=str(traceback.format_exc()),
+            )
+            raise NetskopeException(error_message)
+        self.logger.debug(
+            f"{self.log_prefix}: Successfully fetched the domain "
+            f"details for {total_event_len} application(s)."
+        )
 
     def _fetch_app_tags(self, applications):
-        """Fetch the tag details for each applications."""
-        endpoint = "/services/cci/tags"
-        max_applications = 100
+        """Fetch the tag details for each applications.
+
+        Args:
+            applications (dict): Dictionary of applications.
+
+        Returns:
+            None
+        """
+        url = (
+            f"{self.tenant.parameters.get('tenantName').strip()}"
+            f"{URLS.get('V2_CCI_TAGS')}"
+        )
+        headers = {
+            "Netskope-API-Token": resolve_secret(
+                self.tenant.parameters.get("v2token", "")
+            )
+        }
         application_names = []
         last_element_counter = 0
         total_event_len = len(applications.keys())
-        for application in applications.keys():
-            application_names.append(application)
-            last_element_counter += 1
-            if (
-                len(application_names) == max_applications
-                or last_element_counter >= total_event_len
-            ):
-                app_names_req = ";".join(application_names)
-                params = {"apps": app_names_req}
-                response = self._api_call_helper(
-                    endpoint=endpoint,
-                    method="get",
-                    params=params,
-                    error_codes=["CRE_1028", "CRE_1029"],
-                    message="Error occurred while fetching the tag details of the applications",
-                )
+        logger_msg = "fetching the tag details of the applications"
+        self.logger.debug(
+            f"{self.log_prefix}: {logger_msg.capitalize()} for "
+            f"{total_event_len} applications."
+        )
+        try:
+            for application in applications.keys():
+                application_names.append(application)
+                last_element_counter += 1
+                if (
+                    len(application_names) == APPLICATIONS_BATCH_SIZE
+                    or last_element_counter >= total_event_len
+                ):
+                    app_names_req = ";".join(application_names)
+                    params = {"apps": app_names_req}
+                    response = self.netskope_helper._api_call_helper(
+                        url=url,
+                        method="get",
+                        params=params,
+                        headers=headers,
+                        proxies=self.proxy,
+                        error_codes=["CRE_1028", "CRE_1029"],
+                        message=(
+                            f"Error occurred while {logger_msg}"
+                        ),
+                        logger_msg=logger_msg
+                    )
 
-                if response.get("data"):
-                    for app_name, tag_details in response["data"].items():
-                        tag_dict_with_sanctioned = {
-                            "id": tag_details.get("id"),
-                            "tags": [],
-                        }
-                        sanction_value = tag_details.get(
-                            "sanctioned", ""
-                        ).lower()
-                        app_type = tag_details.get("app_type")
-                        custom_tags = tag_details.get("tags", [])
-                        if sanction_value == "no":
-                            tag_dict_with_sanctioned["tags"].append(
-                                "Unsanctioned"
+                    if response.get("data"):
+                        for app_name, tag_details in response.get("data", {}).items():
+                            tag_dict_with_sanctioned = {
+                                "id": tag_details.get("id"),
+                                "tags": [],
+                            }
+                            sanction_value = tag_details.get(
+                                "sanctioned", ""
+                            ).lower()
+                            app_type = tag_details.get("app_type")
+                            custom_tags = tag_details.get("tags", [])
+                            if sanction_value == "no":
+                                tag_dict_with_sanctioned["tags"].append(
+                                    "Unsanctioned"
+                                )
+                            elif sanction_value == "yes":
+                                tag_dict_with_sanctioned["tags"].append(
+                                    "Sanctioned"
+                                )
+
+                            tag_dict_with_sanctioned["tags"].append(app_type)
+                            tag_dict_with_sanctioned["tags"].extend(
+                                custom_tags
                             )
-                        elif sanction_value == "yes":
-                            tag_dict_with_sanctioned["tags"].append(
-                                "Sanctioned"
+                            applications[app_name.lower()]["tag_details"] = (
+                                tag_dict_with_sanctioned["tags"]
                             )
 
-                        tag_dict_with_sanctioned["tags"].append(app_type)
-                        tag_dict_with_sanctioned["tags"].extend(custom_tags)
-                        applications[app_name.lower()]["tag_details"] = (
-                            tag_dict_with_sanctioned["tags"]
-                        )
-
-                application_names = []
+                    application_names = []
+        except NetskopeException:
+            raise
+        except Exception as err:
+            error_message = f"Error occurred while {logger_msg}."
+            self.logger.error(
+                message=(
+                    f"{self.log_prefix}: {error_message} "
+                    f"Error: {err}"
+                ),
+                details=str(traceback.format_exc()),
+            )
+            raise NetskopeException(error_message)
+        self.logger.debug(
+            f"{self.log_prefix}: Successfully fetched the tag "
+            f"details for {total_event_len} application(s)."
+        )
 
     def _fetch_applications(self) -> list[dict]:
+        """Fetch applications from Netskope application events."""
+        events = self.data if self.data_type == "events" else []
+        self.logger.info(
+            f"{self.log_prefix}: Processing {len(events)} "
+            "application events."
+        )
         applications_dict = self._get_applications_dict(
-            self.data if self.data_type == "events" else []
+            events
         )
         self._fetch_app_details(applications_dict)
         applications = self._create_applications(applications_dict)
@@ -464,89 +550,155 @@ class NetskopePlugin(PluginBase):
         return applications
 
     def _fetch_users(self) -> list[dict]:
+        """Fetch users from Netskope UBA alerts."""
         alerts = self.data if self.data_type == "alerts" else []
         self.logger.info(
             f"{self.log_prefix}: Processing {len(alerts)} UBA alerts."
         )
-        return [
+        users = [
             {
                 "email": alert.get("userkey", None),
-                "policyName": alert.get("policy_name", None),
+                "policyName": alert.get("policy", None),
             }
             for alert in alerts
             if alert.get("userkey", None) is not None
         ]
+        self.logger.info(
+            f"{self.log_prefix}: Successfully extracted "
+            f"{len(users)} user(s) from the "
+            f"Netskope Tenant."
+        )
+        return users
 
     def _update_users(self, records: list[dict]):
-        """Update user scores."""
-        tenant_name = self.tenant.parameters["tenantName"].replace(" ", "")
-        url = f"{tenant_name}/api/v2/incidents/uba/getuci"
-        token = resolve_secret(self.tenant.parameters["v2token"])
+        """Update user scores.
+
+        Args:
+            records (list): List of users to update.
+
+        Returns:
+            list: List of updated users.
+        """
+        tenant_name = (
+            self.tenant.parameters.get('tenantName', '').strip()
+        )
+        url = f"{tenant_name}{URLS.get('V2_GET_UCI')}"
+        token = resolve_secret(self.tenant.parameters.get("v2token", ""))
         headers = {
             "Netskope-API-Token": token,
             "Content-Type": "application/json",
         }
-        out = []
-        for i in range(0, len(records), 512):
-            users = []
-            for record in records[i : i + 512]:  # noqa: E203
-                users.append(record["email"])
-            payload = json.dumps(
-                {"users": users, "fromTime": 0, "capPerUser": 1}
-            )
-            success, response = handle_exception(
-                requests.post,
-                error_code="CRE_1014",
-                custom_message=f"Error occurred while fetching score for user(s): {','.join(users)}",
-                plugin=PLUGIN,
-                url=url,
-                headers=add_installation_id(add_user_agent(headers)),
-                data=payload,
-                proxies=self.proxy,
-            )
-            if not success:
-                raise response
-            try:
-                response = handle_status_code(
-                    response,
-                    error_code="CRE_1027",
-                    custom_message=f"Error occurred while fetching score for user(s): {','.join(users)}",
-                    plugin=PLUGIN,
-                    notify=False,
+        updated_users = []
+        batch_count = 1
+        try:
+            for i in range(0, len(records), USERS_BATCH_SIZE):
+                users = []
+                for record in records[i : i + USERS_BATCH_SIZE]:  # noqa: E203
+                    users.append(record.get("email", ""))
+                payload = json.dumps(
+                    {"users": users, "fromTime": 0, "capPerUser": 1}
                 )
-                for record in records[i : i + 512]:  # noqa
-                    match = list(
-                        filter(
-                            lambda user: user["userId"] in record["email"],
-                            response.get("usersUci", []),
+                logger_msg = (
+                    f"fetching scores for {len(users)} user(s) in "
+                    f"batch {batch_count}"
+                )
+                response = self.netskope_helper._api_call_helper(
+                    url=url,
+                    method="post",
+                    error_codes=["CRE_1014", "CRE_1027"],
+                    headers=headers,
+                    data=payload,
+                    proxies=self.proxy,
+                    message=f"Error occurred while {logger_msg}",
+                    logger_msg=logger_msg,
+                )
+
+                try:
+                    for record in records[i : i + USERS_BATCH_SIZE]:  # noqa
+                        match = list(
+                            filter(
+                                lambda user: user.get("userId", "") in
+                                record.get("email", ""),
+                                response.get("usersUci", []),
+                            )
                         )
+                        if (
+                            "confidences" in match[0] and
+                            match[0].get("confidences", [])
+                        ):
+                            record["ubaScore"] = (
+                                match[0]["confidences"][-1].get(
+                                    "confidenceScore", None
+                                )
+                            )
+                            if "policyName" in record:
+                                record.pop("policyName", None)
+                            updated_users.append(record)
+                except Exception as e:
+                    self.logger.error(
+                        message=(
+                            f"{self.log_prefix}: Error occurred while "
+                            f"{logger_msg}. Error: {e}"
+                        ),
+                        details=str(traceback.format_exc()),
                     )
-                    if "confidences" in match[0] and match[0]["confidences"]:
-                        record["ubaScore"] = match[0]["confidences"][-1][
-                            "confidenceScore"
-                        ]
-                        record.pop("policyName")
-                        out.append(record)
-            except Exception:
-                pass
-        return out
+                batch_count += 1
+        except NetskopeException:
+            raise
+        except Exception as err:
+            error_message = f"Error occurred while {logger_msg}."
+            self.logger.error(
+                message=(
+                    f"{self.log_prefix}: {error_message} "
+                    f"Error: {err}"
+                ),
+                details=str(traceback.format_exc()),
+            )
+            raise NetskopeException(error_message)
+        self.logger.info(
+            f"{self.log_prefix}: Successfully fetched scores "
+            f"for {len(updated_users)} user(s) from the Netskope Tenant."
+        )
+        return updated_users
 
     def _update_applications(self, records: list[dict]):
-        """Update application scores."""
+        """Update application scores.
+
+        Args:
+            records (list): List of applications to update.
+
+        Returns:
+            list: List of updated applications.
+        """
         applications = {}
         for app in records:
-            applications[app["applicationName"].lower()] = app
+            applications[app.get("applicationName", "").lower()] = app
         self._fetch_app_details(applications)
         self._fetch_app_domains(applications)
         self._fetch_app_tags(applications)
         apps = self._create_applications(applications)
+        self.logger.info(
+            f"{self.log_prefix}: Successfully updated {len(apps)} "
+            "application records from the Netskope Tenant."
+        )
         return apps
-        # return self._create_applications(applications)
 
     def update_records(self, entity: str, records: List[dict]):
-        """Fetch user scores."""
+        """Fetch user scores.
+
+        Args:
+            entity (str): Entity to update.
+            records (list): List of records to update.
+
+        Returns:
+            list: List of updated records.
+        """
         helper = AlertsHelper()
         self.tenant = helper.get_tenant_crev2(self.name)
+        self.logger.info(
+            f"{self.log_prefix}: Updating {len(records)} "
+            f"{entity} record(s) from the Netskope Tenant."
+        )
         if entity == "Users":
             return self._update_users(records)
         elif entity == "Applications":
@@ -562,19 +714,20 @@ class NetskopePlugin(PluginBase):
                 label="Remove user from group", value="remove"
             ),
             ActionWithoutParams(label="Update UCI score", value="impact"),
+            ActionWithoutParams(label="UCI Reset", value="uci_reset"),
             ActionWithoutParams(
                 label="Add host to Private App", value="private_app"
             ),
             ActionWithoutParams(
                 label="Create or Update App Instance", value="app_instance"
             ),
-            ActionWithoutParams(label="Tag application", value="tag_app"),
+            ActionWithoutParams(
+                label="Tag/Untag Application", value="tag_app"
+            ),
             ActionWithoutParams(label="No actions", value="generate"),
         ]
 
-    def _get_all_groups(
-        self, log_in_status_check=False
-    ) -> List:
+    def _get_all_groups(self) -> List:
         """Get list of all the groups.
 
         Args:
@@ -585,42 +738,55 @@ class NetskopePlugin(PluginBase):
         """
         all_groups = []
         start_at = 1
+        url = (
+            f"{self.tenant.parameters.get('tenantName', '').strip()}"
+            f"{URLS.get('V2_SCIM_GROUPS')}"
+        )
+        headers = {
+            "Netskope-API-Token": resolve_secret(
+                self.tenant.parameters.get("v2token", "")
+            )
+        }
+        logger_msg = "fetching groups from the Netskope Tenant"
+        self.logger.debug(
+            f"{self.log_prefix}: {logger_msg.capitalize()}."
+        )
         while True:
-            headers = {
-                "Netskope-API-Token": resolve_secret(
-                    self.tenant.parameters.get("v2token")
+            try:
+                params = {"count": PAGE_SIZE, "startIndex": start_at}
+                response = self.netskope_helper._api_call_helper(
+                    url=url,
+                    method="get",
+                    error_codes=["CRE_1015", "CRE_1028"],
+                    headers=headers,
+                    params=params,
+                    proxies=self.proxy,
+                    message=f"Error occurred while {logger_msg}",
+                    logger_msg=logger_msg,
                 )
-            }
-            success, groups = handle_exception(
-                requests.get,
-                error_code="CRE_1015",
-                custom_message="Error occurred while fetching groups",
-                plugin=PLUGIN,
-                url=(
-                    f"{self.tenant.parameters.get('tenantName').replace(' ', '')}"
-                    f"{URLS.get('V2_SCIM_GROUPS')}"
-                ),
-                headers=add_installation_id(add_user_agent(headers)),
-                params={"count": PAGE_SIZE, "startIndex": start_at},
-                proxies=self.proxy,
-            )
-            if not success:
-                raise groups
-            groups = handle_status_code(
-                groups,
-                error_code="CRE_1028",
-                custom_message="Error occurred while fetching groups",
-                plugin=PLUGIN,
-                notify=False,
-                log=log_in_status_check,
-            )
-            if not isinstance(groups, dict):
-                groups = json.loads(groups)
-            groups_in_page = groups.get("Resources", [])
-            if not groups_in_page:
-                break
-            all_groups += groups_in_page
-            start_at += PAGE_SIZE
+                if not isinstance(response, dict):
+                    groups = json.loads(response)
+                groups_in_page = groups.get("Resources", [])
+                if not groups_in_page:
+                    break
+                all_groups += groups_in_page
+                start_at += PAGE_SIZE
+            except NetskopeException:
+                raise
+            except Exception as err:
+                error_message = f"Error occurred while {logger_msg}."
+                self.logger.error(
+                    message=(
+                        f"{self.log_prefix}: {error_message} "
+                        f"Error: {err}"
+                    ),
+                    details=str(traceback.format_exc()),
+                )
+                raise NetskopeException(error_message)
+        self.logger.debug(
+            f"{self.log_prefix}: Successfully fetched {len(all_groups)} "
+            f"groups."
+        )
         return all_groups
 
     def _get_all_users(self) -> List:
@@ -631,38 +797,55 @@ class NetskopePlugin(PluginBase):
         """
         all_users = []
         start_at = 1
+        url = (
+            f"{self.tenant.parameters.get('tenantName', '').strip()}"
+            f"{URLS.get('V2_SCIM_USERS')}"
+        )
+        headers = {
+            "Netskope-API-Token": resolve_secret(
+                self.tenant.parameters.get("v2token", "")
+            )
+        }
+        logger_msg = "fetching users from the Netskope Tenant"
+        self.logger.debug(
+            f"{self.log_prefix}: {logger_msg.capitalize()}."
+        )
         while True:
-            headers = {
-                "Netskope-API-Token": resolve_secret(
-                    self.tenant.parameters.get("v2token")
+            try:
+                params = {"count": PAGE_SIZE, "startIndex": start_at}
+                response = self.netskope_helper._api_call_helper(
+                    url=url,
+                    method="get",
+                    error_codes=["CRE_1016", "CRE_1029"],
+                    headers=headers,
+                    params=params,
+                    proxies=self.proxy,
+                    message=f"Error occurred while {logger_msg}",
+                    logger_msg=logger_msg,
                 )
-            }
-            success, users = handle_exception(
-                requests.get,
-                error_code="CRE_1016",
-                custom_message="Error occurred while fetching users",
-                plugin=PLUGIN,
-                url=f"{self.tenant.parameters.get('tenantName').replace(' ', '')}/api/v2/scim/Users",
-                headers=add_installation_id(add_user_agent(headers)),
-                params={"count": PAGE_SIZE, "startIndex": start_at},
-                proxies=self.proxy,
-            )
-            if not success:
-                raise users
-            users = handle_status_code(
-                users,
-                error_code="CRE_1029",
-                custom_message="Error occurred while fetching users",
-                plugin=PLUGIN,
-                notify=False,
-            )
-            if not isinstance(users, dict):
-                users = json.loads(users)
-            users_in_page = users.get("Resources", [])
-            if not users_in_page:
-                break
-            all_users += users_in_page
-            start_at += PAGE_SIZE
+                if not isinstance(response, dict):
+                    users = json.loads(response)
+                users_in_page = users.get("Resources", [])
+                if not users_in_page:
+                    break
+                all_users += users_in_page
+                start_at += PAGE_SIZE
+            except NetskopeException:
+                raise
+            except Exception as err:
+                error_message = f"Error occurred while {logger_msg}."
+                self.logger.error(
+                    message=(
+                        f"{self.log_prefix}: {error_message} "
+                        f"Error: {err}"
+                    ),
+                    details=str(traceback.format_exc()),
+                )
+                raise NetskopeException(error_message)
+        self.logger.debug(
+            f"{self.log_prefix}: Successfully fetched {len(all_users)} "
+            f"users."
+        )
         return all_users
 
     def _find_user_by_email(self, users: List, email: str) -> Optional[Dict]:
@@ -677,7 +860,7 @@ class NetskopePlugin(PluginBase):
         """
         for user in users:
             for e in user.get("emails", []):
-                if e.get("value") == email:
+                if e.get("value", "") == email:
                     return user
         return None
 
@@ -692,7 +875,7 @@ class NetskopePlugin(PluginBase):
             Optional[Dict]: Group dictionary if found, None otherwise.
         """
         for group in groups:
-            if group.get("displayName") == name:
+            if group.get("displayName", "") == name:
                 return group
         return None
 
@@ -711,7 +894,7 @@ class NetskopePlugin(PluginBase):
         """
         headers = {
             "Netskope-API-Token": resolve_secret(
-                self.tenant.parameters.get("v2token")
+                self.tenant.parameters.get("v2token", "")
             )
         }
         body = {
@@ -724,34 +907,56 @@ class NetskopePlugin(PluginBase):
                 }
             ],
         }
-        success, response = handle_exception(
-            requests.patch,
-            error_code="CRE_1017",
-            custom_message="Error occurred while removing user from group",
-            plugin=PLUGIN,
-            url=(
-                f"{self.tenant.parameters.get('tenantName').replace(' ', '')}"
-                f"{URLS.get('V2_SCIM_GROUPS')}/{group_id}"
-            ),
-            headers=add_installation_id(add_user_agent(headers)),
-            json=body,
-            proxies=self.proxy,
+        url = (
+            f"{self.tenant.parameters.get('tenantName', '').strip()}"
+            f"{URLS.get('V2_SCIM_GROUPS')}/{group_id}"
         )
-        if not success:
-            raise response
-        if response.status_code == 404:
-            raise NetskopeException(
-                f"{self.log_prefix}: Group with id {group_id} does not exist."
+        logger_msg = "removing user(s) from group"
+        try:
+            response = self.netskope_helper._api_call_helper(
+                url=url,
+                method="patch",
+                error_codes=["CRE_1017", "CRE_1030"],
+                headers=headers,
+                json=body,
+                proxies=self.proxy,
+                message=f"Error occurred while {logger_msg}",
+                logger_msg=logger_msg,
+                is_handle_error_required=False
             )
-        response = handle_status_code(
-            response,
-            error_code="CRE_1030",
-            custom_message="Error occurred while removing user from group",
-            plugin=PLUGIN,
-            notify=False,
-        )
+            if response.status_code == 404:
+                err_msg = f"Group with id {group_id} does not exist"
+                self.logger.error(
+                    f"{self.log_prefix}: {err_msg} while {logger_msg}."
+                )
+                raise NetskopeException(err_msg)
+            response = handle_status_code(
+                response,
+                error_code="CRE_1030",
+                custom_message=f"Error occurred while {logger_msg}",
+                plugin=self.log_prefix,
+                notify=False,
+                log=True,
+            )
+        except NetskopeException:
+            raise
+        except Exception as err:
+            error_message = f"Error occurred while {logger_msg}."
+            self.logger.error(
+                message=(
+                    f"{self.log_prefix}: {error_message} "
+                    f"Error: {err}"
+                ),
+                details=str(traceback.format_exc()),
+            )
+            raise NetskopeException(error_message)
 
-    def _add_to_group(self, configuration: Dict, user_ids: List[Dict], group_id: str):
+    def _add_to_group(
+        self,
+        configuration: Dict,
+        user_ids: List[Dict],
+        group_id: str
+    ):
         """Add specified user to the specified group.
 
         Args:
@@ -764,7 +969,7 @@ class NetskopePlugin(PluginBase):
         """
         headers = {
             "Netskope-API-Token": resolve_secret(
-                self.tenant.parameters.get("v2token")
+                self.tenant.parameters.get("v2token", "")
             )
         }
         body = {
@@ -777,32 +982,49 @@ class NetskopePlugin(PluginBase):
                 }
             ],
         }
-        success, response = handle_exception(
-            requests.patch,
-            error_code="CRE_1018",
-            custom_message="Error occurred while adding user to group",
-            plugin=PLUGIN,
-            url=(
-                f"{self.tenant.parameters.get('tenantName').replace(' ', '')}"
-                f"{URLS.get('V2_SCIM_GROUPS')}/{group_id}"
-            ),
-            headers=add_installation_id(add_user_agent(headers)),
-            json=body,
-            proxies=self.proxy,
+        url = (
+            f"{self.tenant.parameters.get('tenantName', '').strip()}"
+            f"{URLS.get('V2_SCIM_GROUPS')}/{group_id}"
         )
-        if not success:
-            raise response
-        if response.status_code == 404:
-            raise NetskopeException(
-                f"{self.log_prefix}: Group with id {group_id} does not exist."
+        logger_msg = "adding user(s) to group"
+        try:
+            response = self.netskope_helper._api_call_helper(
+                url=url,
+                method="patch",
+                error_codes=["CRE_1018", "CRE_1031"],
+                headers=headers,
+                json=body,
+                proxies=self.proxy,
+                message=f"Error occurred while {logger_msg}",
+                logger_msg=logger_msg,
+                is_handle_error_required=False
             )
-        response = handle_status_code(
-            response,
-            error_code="CRE_1031",
-            custom_message="Error occurred while removing user from group",
-            plugin=PLUGIN,
-            notify=False,
-        )
+            if response.status_code == 404:
+                err_msg = f"Group with id {group_id} does not exist"
+                self.logger.error(
+                    f"{self.log_prefix}: {err_msg} while {logger_msg}."
+                )
+                raise NetskopeException(err_msg)
+            response = handle_status_code(
+                response,
+                error_code="CRE_1031",
+                custom_message=f"Error occurred while {logger_msg}",
+                plugin=self.log_prefix,
+                notify=False,
+                log=True,
+            )
+        except NetskopeException:
+            raise
+        except Exception as err:
+            error_message = f"Error occurred while {logger_msg}."
+            self.logger.error(
+                message=(
+                    f"{self.log_prefix}: {error_message} "
+                    f"Error: {err}"
+                ),
+                details=str(traceback.format_exc()),
+            )
+            raise NetskopeException(error_message)
 
     def _update_impact_score(
         self,
@@ -811,6 +1033,26 @@ class NetskopePlugin(PluginBase):
         source: str = "",
         reason: str = "",
     ):
+        """Update the impact score of a user.
+
+        Args:
+            user (str): User ID of the user.
+            score (int): Score of the user.
+            source (str): Source of the score.
+            reason (str): Reason for the score.
+
+        Raises:
+            NetskopeException: If the user does not exist on Netskope.
+        """
+        url = (
+            f"{self.tenant.parameters.get('tenantName', '').strip()}"
+            f"{URLS.get('V2_UCI_IMPACT')}"
+        )
+        headers = {
+            "Netskope-API-Token": resolve_secret(
+                self.tenant.parameters.get("v2token", "")
+            )
+        }
         data = {
             "user": user.strip(),
             "score": score,
@@ -818,13 +1060,96 @@ class NetskopePlugin(PluginBase):
             "source": source.strip(),
             "reason": reason.strip(),
         }
-        self._api_call_helper(
-            endpoint="/incidents/user/uciimpact",
-            method="post",
-            data=data,
-            error_codes=["CRE_1028", "CRE_1029"],
-            message="Error occurred while updating the impact score.",
+        logger_msg = "updating the impact score"
+        try:
+            self.netskope_helper._api_call_helper(
+                url=url,
+                method="post",
+                json=data,
+                headers=headers,
+                proxies=self.proxy,
+                error_codes=["CRE_1028", "CRE_1029"],
+                message=f"Error occurred while {logger_msg}",
+                logger_msg=logger_msg
+            )
+        except NetskopeException:
+            raise
+        except Exception as err:
+            error_message = f"Error occurred while {logger_msg}."
+            self.logger.error(
+                message=(
+                    f"{self.log_prefix}: {error_message} "
+                    f"Error: {err}"
+                ),
+                details=str(traceback.format_exc()),
+            )
+            raise NetskopeException(error_message)
+
+    def _reset_uci_score(
+        self,
+        user_list: list
+    ):
+        """Reset the impact score of a user.
+
+        Args:
+            user_list (list): List of User ID of the user.
+
+        Raises:
+            NetskopeException: If the user does not exist on Netskope.
+        """
+        url = (
+            f"{self.tenant.parameters.get('tenantName', '').strip()}"
+            f"{URLS.get('V2_UCI_RESET')}"
         )
+        headers = {
+            "Netskope-API-Token": resolve_secret(
+                self.tenant.parameters.get("v2token", "")
+            )
+        }
+        data = {
+            "users": user_list,
+        }
+        logger_msg = "performing the 'UCI Reset' action on the users"
+        try:
+            response = self.netskope_helper._api_call_helper(
+                url=url,
+                headers=headers,
+                method="post",
+                json=data,
+                proxies=self.proxy,
+                error_codes=["CRE_1028", "CRE_1029"],
+                message=(
+                    f"Error occurred while {logger_msg}"
+                ),
+                logger_msg=logger_msg,
+                is_handle_error_required=False
+            )
+            if response.status_code == 400:
+                err_msg = "Some of the provided users' UCI not found"
+                self.logger.error(
+                    f"{self.log_prefix}: {err_msg} while {logger_msg}."
+                )
+                raise NetskopeException(err_msg)
+            response = handle_status_code(
+                response,
+                error_code="CRE_1030",
+                custom_message=f"Error occurred while {logger_msg}",
+                plugin=self.log_prefix,
+                notify=False,
+                log=True,
+            )
+        except NetskopeException:
+            raise
+        except Exception as err:
+            error_message = f"Error occurred while {logger_msg}."
+            self.logger.error(
+                message=(
+                    f"{self.log_prefix}: {error_message} "
+                    f"Error: {err}"
+                ),
+                details=str(traceback.format_exc()),
+            )
+            raise NetskopeException(error_message)
 
     def _create_group(self, configuration: Dict, name: str) -> Dict:
         """Create a new group with name.
@@ -838,7 +1163,7 @@ class NetskopePlugin(PluginBase):
         """
         headers = {
             "Netskope-API-Token": resolve_secret(
-                self.tenant.parameters.get("v2token")
+                self.tenant.parameters.get("v2token", "")
             )
         }
         body = {
@@ -847,38 +1172,66 @@ class NetskopePlugin(PluginBase):
             "meta": {"resourceType": "Group"},
             "externalId": None,
         }
-        success, response = handle_exception(
-            requests.post,
-            error_code="CRE_1019",
-            custom_message="Error occurred while creating group",
-            plugin=PLUGIN,
-            url=(
-                f"{self.tenant.parameters.get('tenantName').replace(' ', '')}"
-                f"{URLS.get('V2_SCIM_GROUPS')}"
-            ),
-            headers=add_installation_id(add_user_agent(headers)),
-            json=body,
-            proxies=self.proxy,
+        url = (
+            f"{self.tenant.parameters.get('tenantName', '').strip()}"
+            f"{URLS.get('V2_SCIM_GROUPS')}"
         )
-        if not success:
-            raise response
-        if response.status_code == 409:
-            raise NetskopeException(
-                f"{self.log_prefix}: Group {name} already exists."
+        logger_msg = f"creating group '{name}'"
+        self.logger.debug(
+            f"{self.log_prefix}: {logger_msg.capitalize()} on "
+            "the Netskope Tenant."
+        )
+        try:
+            response = self.netskope_helper._api_call_helper(
+                url=url,
+                method="post",
+                error_codes=["CRE_1019", "CRE_1032"],
+                headers=headers,
+                json=body,
+                proxies=self.proxy,
+                message=f"Error occurred while {logger_msg}",
+                logger_msg=logger_msg,
+                is_handle_error_required=False
             )
-        response = handle_status_code(
-            response,
-            error_code="CRE_1032",
-            custom_message="Error occurred while creating group",
-            plugin=PLUGIN,
-            notify=False,
+            if response.status_code == 409:
+                err_msg = f"Group {name} already exists."
+                self.logger.error(
+                    f"{self.log_prefix}: {err_msg} while {logger_msg}."
+                )
+                raise NetskopeException(err_msg)
+            response = handle_status_code(
+                response,
+                error_code="CRE_1032",
+                custom_message=f"Error occurred while {logger_msg}",
+                plugin=self.log_prefix,
+                notify=False,
+                log=True,
+            )
+            if not isinstance(response, dict):
+                response = json.loads(response)
+        except NetskopeException:
+            raise
+        except Exception as err:
+            error_message = f"Error occurred while {logger_msg}."
+            self.logger.error(
+                message=(
+                    f"{self.log_prefix}: {error_message} "
+                    f"Error: {err}"
+                ),
+                details=str(traceback.format_exc()),
+            )
+            raise NetskopeException(error_message)
+        self.logger.debug(
+            f"{self.log_prefix}: Successfully created group '{name}' "
+            "on the Netskope Tenant."
         )
-        if not isinstance(response, dict):
-            response = json.loads(response)
         return response
 
     def get_types_to_pull(self, data_type):
         """Get the types of data to pull.
+
+        Args:
+            data_type (str): Type of data
 
         Returns:
             List of sub types to pull
@@ -895,17 +1248,30 @@ class NetskopePlugin(PluginBase):
         return []
 
     def validate(self, configuration: Dict):
-        """Validate Netskope configuration."""
+        """Validate Netskope configuration.
+
+        Args:
+            configuration (Dict): Configuration parameters.
+
+        Returns:
+            ValidationResult: Validation result.
+        """
         initial_range = configuration.get("initial_range")
         if initial_range is None:
-            err_msg = "Initial Range for Events is a required configuration parameter."
+            err_msg = (
+                "Initial Range for Events is a "
+                "required configuration parameter."
+            )
             self.logger.error(f"{self.log_prefix}: {err_msg}")
             return ValidationResult(
                 success=False,
                 message=err_msg,
             )
         elif not isinstance(initial_range, int):
-            err_msg = "Invalid Initial Range for Events provided in configuration parameter."
+            err_msg = (
+                "Invalid Initial Range for Events "
+                "provided in configuration parameter."
+            )
             self.logger.error(f"{self.log_prefix}: {err_msg}")
             return ValidationResult(
                 success=False,
@@ -923,14 +1289,20 @@ class NetskopePlugin(PluginBase):
             )
         days = configuration.get("days")
         if days is None:
-            err_msg = "Initial Range for Alerts is a required configuration parameter."
+            err_msg = (
+                "Initial Range for Alerts is a required "
+                "configuration parameter."
+            )
             self.logger.error(f"{self.log_prefix}: {err_msg}")
             return ValidationResult(
                 success=False,
                 message=err_msg,
             )
         elif not isinstance(days, int):
-            err_msg = "Invalid Initial Range for Alerts provided in configuration parameter."
+            err_msg = (
+                "Invalid Initial Range for Alerts provided in "
+                "configuration parameter."
+            )
             self.logger.error(f"{self.log_prefix}: {err_msg}")
             return ValidationResult(
                 success=False,
@@ -946,15 +1318,18 @@ class NetskopePlugin(PluginBase):
                 success=False,
                 message=err_msg,
             )
-        helper = AlertsHelper()
-        self.tenant = helper.get_tenant(configuration["tenant"])
-        token = resolve_secret(self.tenant.parameters["v2token"])
         try:
+            helper = AlertsHelper()
+            self.tenant = helper.get_tenant(configuration.get("tenant", ""))
+            token = resolve_secret(self.tenant.parameters.get("v2token", ""))
             if token is None:
                 return ValidationResult(
                     success=False,
-                    message="V2 token is required in the tenant configuration to configure Netskope CRE plugin."
-                    " It can be configured from Settings > Tenants.",
+                    message=(
+                        "V2 token is required in the tenant configuration "
+                        "to configure Netskope CRE plugin. It can be "
+                        "configured from Settings > Tenants."
+                    ),
                 )
             provider = plugin_provider_helper.get_provider(
                 tenant_name=self.tenant.name
@@ -968,17 +1343,42 @@ class NetskopePlugin(PluginBase):
                 plugin_name=self.plugin_name,
                 configuration_name=self.name,
             )
+
+            logger_msg = (
+                "Successfully validated the plugin "
+                "configuration parameters."
+            )
+            self.logger.debug(
+                f"{self.log_prefix}: {logger_msg}"
+            )
             return ValidationResult(
-                success=True, message="Validation successful."
+                success=True, message=logger_msg
             )
         except ConnectionError:
             return ValidationResult(
                 success=False,
-                message="Could not connect validate the credentials.",
+                message="Could not connect to validate the credentials.",
+            )
+        except Exception as exp:
+            err_msg = "Unexpected validation error occurred."
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg} Error: {exp}",
+                details=str(traceback.format_exc()),
+            )
+            return ValidationResult(
+                success=False,
+                message=f"{err_msg} Check logs for more details.",
             )
 
     def _validate_port(self, port):
-        """Validate the port."""
+        """Validate the port.
+
+        Args:
+            port (str): Port number.
+
+        Returns:
+            bool: True if the port is valid, False otherwise.
+        """
         try:
             port = int(port)
         except ValueError:
@@ -988,7 +1388,14 @@ class NetskopePlugin(PluginBase):
         return True
 
     def validate_action(self, action: Action):
-        """Validate Netskope configuration."""
+        """Validate Netskope configuration.
+
+        Args:
+            action (Action): Action object.
+
+        Returns:
+            ValidationResult: Validation result.
+        """
 
         helper = AlertsHelper()
         self.tenant = helper.get_tenant_crev2(self.name)
@@ -999,6 +1406,14 @@ class NetskopePlugin(PluginBase):
         elif action.value == "impact":
             try:
                 self._process_params_for_impact_action(action.parameters)
+            except NetskopeException as ex:
+                return ValidationResult(success=False, message=str(ex))
+            return ValidationResult(
+                success=True, message="Validation successful."
+            )
+        elif action.value == "uci_reset":
+            try:
+                self._process_params_for_reset_action(action.parameters)
             except NetskopeException as ex:
                 return ValidationResult(success=False, message=str(ex))
             return ValidationResult(
@@ -1021,18 +1436,6 @@ class NetskopePlugin(PluginBase):
                 success=True, message="Validation successful."
             )
         elif action.value == "private_app":
-            self.session = requests.Session()
-            self.session.headers.update(
-                add_installation_id(
-                    add_user_agent(
-                        {
-                            "Netskope-API-Token": resolve_secret(
-                                self.tenant.parameters["v2token"]
-                            ),
-                        }
-                    )
-                )
-            )
             try:
                 existing_private_apps = self._get_private_apps()
                 existing_publishers = self._get_publishers()
@@ -1059,42 +1462,52 @@ class NetskopePlugin(PluginBase):
             list_of_private_apps_list = list(existing_private_apps.keys())
             list_of_private_apps_list.append("create")
             if (
-                action.parameters.get("private_app_name")
+                action.parameters.get("private_app_name", "")
                 not in list_of_private_apps_list
             ):
                 return ValidationResult(
                     success=False, message="Invalid private app provided."
                 )
-            if action.parameters.get("private_app_name") == "create":
+            if action.parameters.get("private_app_name", "") == "create":
                 if (action.parameters.get("name") or "").strip() == "":
                     return ValidationResult(
                         success=False,
-                        message="If you have selected 'Create new private app' in Private App Name,"
-                        " New Private App Name should not be empty.",
+                        message=(
+                            "If you have selected 'Create new private app' "
+                            "in Private App Name, New Private App Name "
+                            "should not be empty."
+                        ),
                     )
 
                 if "$" in (action.parameters.get("name") or "").strip():
                     return ValidationResult(
                         success=False,
                         message=(
-                            "'Create New Private App' contains Source field value. "
-                            "Please provide new private app name in Static field only."
+                            "'Create New Private App' contains Source "
+                            "field value. Please provide "
+                            "new private app name in Static field only."
                         ),
                     )
 
             protocols = action.parameters.get("protocol", [])
             if (
-                action.parameters.get("private_app_name") == "create"
+                action.parameters.get("private_app_name", "") == "create"
                 and not protocols
             ):
                 return ValidationResult(
                     success=False,
-                    message="Protocol is a required field to create a new private app.",
+                    message=(
+                        "Protocol is a required field to "
+                        "create a new private app."
+                    ),
                 )
             if not all(protocol in ["TCP", "UDP"] for protocol in protocols):
                 return ValidationResult(
                     success=False,
-                    message="Invalid Protocol provided. Valid values are TCP or UDP.",
+                    message=(
+                        "Invalid Protocol provided. "
+                        "Valid values are TCP or UDP."
+                    ),
                 )
             tcp_port = action.parameters.get("tcp_ports") or ""
             tcp_port_list = [
@@ -1109,27 +1522,39 @@ class NetskopePlugin(PluginBase):
                 if not tcp_port_list:
                     return ValidationResult(
                         success=False,
-                        message="If you have selected 'TCP' in Protocols, TCP Port should not be empty.",
+                        message=(
+                            "If you have selected 'TCP' in Protocols, "
+                            "TCP Port should not be empty."
+                        ),
                     )
                 if not all(
                     self._validate_port(port) for port in tcp_port_list
                 ):
                     return ValidationResult(
                         success=False,
-                        message="Invalid TCP Port provided. Valid values are between 0 and 65535.",
+                        message=(
+                            "Invalid TCP Port provided. "
+                            "Valid values are between 0 and 65535."
+                        ),
                     )
             if "UDP" in protocols:
                 if not udp_port_list:
                     return ValidationResult(
                         success=False,
-                        message="If you have selected 'UDP' in Protocols, UDP Port should not be empty.",
+                        message=(
+                            "If you have selected 'UDP' in Protocols, "
+                            "UDP Port should not be empty."
+                        ),
                     )
                 if not all(
                     self._validate_port(port) for port in udp_port_list
                 ):
                     return ValidationResult(
                         success=False,
-                        message="Invalid UDP Port provided. Valid values are between 0 and 65535.",
+                        message=(
+                            "Invalid UDP Port provided. "
+                            "Valid values are between 0 and 65535."
+                        ),
                     )
 
             publishers = action.parameters.get("publishers", [])
@@ -1153,12 +1578,15 @@ class NetskopePlugin(PluginBase):
                 )
 
             default_url = action.parameters.get("default_url", "")
-            if action.parameters.get("private_app_name") == "create":
+            if action.parameters.get("private_app_name", "") == "create":
                 if not default_url:
                     return ValidationResult(
                         success=False,
-                        message="If you have selected 'Create new private app' in Private App Name,"
-                        " Default Host should not be empty.",
+                        message=(
+                            "If you have selected 'Create new private app' "
+                            "in Private App Name, "
+                            "Default Host should not be empty."
+                        ),
                     )
                 if "$" in default_url:
                     return ValidationResult(
@@ -1177,16 +1605,17 @@ class NetskopePlugin(PluginBase):
                 success=True, message="Validation successful."
             )
         elif action.value in ["add", "remove"]:
-            groups = self._get_all_groups(
-                log_in_status_check=True
-            )
-            if action.parameters.get("group") != "create" and len(groups) <= 0:
+            groups = self._get_all_groups()
+            if (
+                action.parameters.get("group", "") != "create" and
+                len(groups) <= 0
+            ):
                 return ValidationResult(
                     success=False, message="No groups available."
                 )
-            if action.parameters.get("group") != "create" and not any(
+            if action.parameters.get("group", "") != "create" and not any(
                 map(
-                    lambda g: g["id"] == action.parameters.get("group"),
+                    lambda g: g["id"] == action.parameters.get("group", ""),
                     groups,
                 )
             ):
@@ -1195,7 +1624,7 @@ class NetskopePlugin(PluginBase):
                 )
             if (
                 action.value == "add"
-                and action.parameters.get("group") == "create"
+                and action.parameters.get("group", "") == "create"
                 and len(action.parameters.get("name", "").strip()) == 0
             ):
                 return ValidationResult(
@@ -1211,77 +1640,136 @@ class NetskopePlugin(PluginBase):
     def _get_publishers(self) -> Dict:
         """Retrieve a dictionary of publishers.
 
-        :return: A dictionary containing publisher names as keys and publisher IDs as values.
-        :rtype: dict
+        Returns:
+            Dict: Dictionary of publishers.
         """
         dict_publishers = {}
-        tenant_name = self.tenant.parameters["tenantName"].strip()
-        success, publishers_resp = handle_exception(
-            self.session.get,
-            error_code="CRE_1047",
-            custom_message="Error occurred while fetching publishers",
-            plugin=self.log_prefix,
-            url=URLS["V2_PUBLISHER"].format(tenant_name),
-            params={
-                "fields": "publisher_id,publisher_name"
-            },  # we need only 2 fields
+        tenant_name = (
+            self.tenant.parameters.get('tenantName', '').strip()
         )
-        if not success:
-            raise publishers_resp
-        publishers_json = handle_status_code(
-            publishers_resp,
-            error_code="CRE_1048",
-            custom_message="Error occurred while fetching publishers",
-            plugin=self.log_prefix,
-            notify=False,
+        url = (
+            f"{tenant_name}{URLS.get('V2_PUBLISHER')}"
         )
+        headers = {
+            "Netskope-API-Token": resolve_secret(
+                self.tenant.parameters.get("v2token", "")
+            )
+        }
+        params = {
+            "fields": "publisher_id,publisher_name"
+        }  # we need only 2 fields
+        logger_msg = "fetching publishers from the Netskope Tenant"
+        self.logger.debug(
+            f"{self.log_prefix}: {logger_msg.capitalize()}."
+        )
+        try:
+            response = self.netskope_helper._api_call_helper(
+                url=url,
+                method="get",
+                error_codes=["CRE_1047", "CRE_1048"],
+                headers=headers,
+                params=params,
+                proxies=self.proxy,
+                message=f"Error occurred while {logger_msg}",
+                logger_msg=logger_msg,
+            )
 
-        existing_publishers = publishers_json.get("data", {}).get(
-            "publishers", []
+            existing_publishers = response.get("data", {}).get(
+                "publishers", []
+            )
+            # Private app from netskope.
+            for x in existing_publishers:
+                dict_publishers[x["publisher_name"]] = x.get("publisher_id", "")
+        except NetskopeException:
+            raise
+        except Exception as err:
+            error_message = f"Error occurred while {logger_msg}."
+            self.logger.error(
+                message=(
+                    f"{self.log_prefix}: {error_message} "
+                    f"Error: {err}"
+                ),
+                details=str(traceback.format_exc()),
+            )
+            raise NetskopeException(error_message)
+        self.logger.debug(
+            f"{self.log_prefix}: Successfully fetched {len(dict_publishers)} "
+            f"publisher(s)."
         )
-        # Private app from netskope.
-        for x in existing_publishers:
-            dict_publishers[x["publisher_name"]] = x["publisher_id"]
         return dict_publishers
 
     def _get_private_apps(
         self, get_hosts_of: Optional[str] = None
     ) -> Union[dict, tuple]:
-        """Check private app present in Netskope and create a new one if not found."""
-        dict_of_private_apps = {}
-        tenant_name = self.tenant.parameters["tenantName"].strip()
-        success, private_app_netskope = handle_exception(
-            self.session.get,
-            error_code="CRE_1040",
-            custom_message="Error occurred while checking private apps",
-            plugin=self.log_prefix,
-            url=URLS["V2_PRIVATE_APP"].format(tenant_name),
-            params={"fields": "app_id,app_name,host"},  # we need only 3 fields
-        )
-        if not success:
-            raise private_app_netskope
-        private_app_netskope_json = handle_status_code(
-            private_app_netskope,
-            error_code="CRE_1041",
-            custom_message="Error occurred while checking private apps",
-            plugin=self.log_prefix,
-            notify=False,
-        )
+        """Check private app present in Netskope \
+            and create a new one if not found.
 
-        existing_private_apps = private_app_netskope_json.get("data", {}).get(
-            "private_apps", []
+        Args:
+            get_hosts_of (str): Private app name.
+
+        Returns:
+            Dict: Dictionary of private apps.
+        """
+        dict_of_private_apps = {}
+        tenant_name = (
+            self.tenant.parameters.get('tenantName', '').strip()
         )
-        # Private app from netskope.
-        for x in existing_private_apps:
-            dict_of_private_apps[x["app_name"]] = {
-                "id": x["app_id"],
-                "host_count": len(x["host"].split(",")),
-            } | (
-                {"hosts": x["host"].split(",")}
-                if get_hosts_of
-                and x["app_name"].startswith(get_hosts_of.removesuffix("]"))
-                else {}
+        headers = {
+            "Netskope-API-Token": resolve_secret(
+                self.tenant.parameters.get("v2token", "")
             )
+        }
+        url = (
+            f"{tenant_name}{URLS.get('V2_PRIVATE_APP')}"
+        )
+        params = {"fields": "app_id,app_name,host"}  # we need only 3 fields
+        logger_msg = "fetching private apps on the Netskope Tenant"
+        self.logger.debug(
+            f"{self.log_prefix}: {logger_msg.capitalize()}."
+        )
+        try:
+            response = self.netskope_helper._api_call_helper(
+                url=url,
+                method="get",
+                error_codes=["CRE_1040", "CRE_1041"],
+                headers=headers,
+                params=params,
+                proxies=self.proxy,
+                message=f"Error occurred while {logger_msg}",
+                logger_msg=logger_msg,
+            )
+            existing_private_apps = response.get("data", {}).get(
+                "private_apps", []
+            )
+            # Private app from netskope.
+            for x in existing_private_apps:
+                dict_of_private_apps[x["app_name"]] = {
+                    "id": x["app_id"],
+                    "host_count": len(x["host"].split(",")),
+                } | (
+                    {"hosts": x["host"].split(",")}
+                    if get_hosts_of
+                    and x["app_name"].startswith(
+                        get_hosts_of.removesuffix("]")
+                    )
+                    else {}
+                )
+        except NetskopeException:
+            raise
+        except Exception as err:
+            error_message = f"Error occurred while {logger_msg}."
+            self.logger.error(
+                message=(
+                    f"{self.log_prefix}: {error_message} "
+                    f"Error: {err}"
+                ),
+                details=str(traceback.format_exc()),
+            )
+            raise NetskopeException(error_message)
+        self.logger.debug(
+            f"{self.log_prefix}: Successfully fetched "
+            f"{len(dict_of_private_apps)} private app(s)."
+        )
         return dict_of_private_apps
 
     def _get_private_app(
@@ -1289,42 +1777,78 @@ class NetskopePlugin(PluginBase):
         prefix: str,
         has_host: Optional[str] = None,
     ) -> Union[dict, tuple]:
-        """Check private app present in Netskope and create a new one if not found."""
-        dict_of_private_apps = {}
-        tenant_name = self.tenant.parameters["tenantName"].strip()
-        success, private_app_netskope = handle_exception(
-            self.session.get,
-            error_code="CRE_1040",
-            custom_message="Error occurred while checking private apps",
-            plugin=self.log_prefix,
-            url=URLS["V2_PRIVATE_APP"].format(tenant_name),
-            params={"fields": "app_id,app_name,host"},  # we need only 3 fields
-        )
-        if not success:
-            raise private_app_netskope
-        private_app_netskope_json = handle_status_code(
-            private_app_netskope,
-            error_code="CRE_1041",
-            custom_message="Error occurred while checking private apps",
-            plugin=self.log_prefix,
-            notify=False,
-        )
+        """Check private app present in Netskope and \
+            create a new one if not found.
 
-        existing_private_apps = private_app_netskope_json.get("data", {}).get(
-            "private_apps", []
+        Args:
+            prefix (str): Private app name.
+            has_host (str): Private app name.
+
+        Returns:
+            Dict: Dictionary of private apps.
+        """
+        tenant_name = (
+            self.tenant.parameters.get('tenantName', '').strip()
         )
-        # Private app from netskope.
-        for app in existing_private_apps:
-            split_hosts = app["host"].split(",")
-            if not app["app_name"].startswith(prefix.removesuffix("]")):
-                continue
-            if has_host not in split_hosts:
-                continue
-            return app
+        headers = {
+            "Netskope-API-Token": resolve_secret(
+                self.tenant.parameters.get("v2token", "")
+            )
+        }
+        url = (
+            f"{tenant_name}{URLS.get('V2_PRIVATE_APP')}"
+        )
+        params = {"fields": "app_id,app_name,host"}  # we need only 3 fields
+        logger_msg = "fetching private apps on the Netskope Tenant"
+        self.logger.debug(
+            f"{self.log_prefix}: {logger_msg.capitalize()}."
+        )
+        try:
+            response = self.netskope_helper._api_call_helper(
+                url=url,
+                method="get",
+                error_codes=["CRE_1040", "CRE_1041"],
+                headers=headers,
+                params=params,
+                proxies=self.proxy,
+                message=f"Error occurred while {logger_msg}",
+                logger_msg=logger_msg,
+            )
+
+            existing_private_apps = response.get("data", {}).get(
+                "private_apps", []
+            )
+            # Private app from netskope.
+            for app in existing_private_apps:
+                split_hosts = app.get("host", "").split(",")
+                if not app["app_name"].startswith(prefix.removesuffix("]")):
+                    continue
+                if has_host not in split_hosts:
+                    continue
+                return app
+        except NetskopeException:
+            raise
+        except Exception as err:
+            error_message = f"Error occurred while {logger_msg}."
+            self.logger.error(
+                message=(
+                    f"{self.log_prefix}: {error_message} "
+                    f"Error: {err}"
+                ),
+                details=str(traceback.format_exc()),
+            )
+            raise NetskopeException(error_message)
         return None
 
     def get_action_params(self, action: Action) -> list:
-        """Get fields required for an action."""
+        """Get fields required for an action.
+
+        Args:
+            action (Action): Action object.
+
+        Returns:
+            List: List of fields required for the action.
+        """
         helper = AlertsHelper()
         self.tenant = helper.get_tenant_crev2(self.name)
         if action.value == "generate":
@@ -1352,7 +1876,10 @@ class NetskopePlugin(PluginBase):
                         "key": "group",
                         "type": "choice",
                         "choices": [
-                            {"key": g["displayName"], "value": g["id"]}
+                            {
+                                "key": g.get("displayName", ""),
+                                "value": g.get("id", ""),
+                            }
                             for g in groups
                         ]
                         + [{"key": "Create new group", "value": "create"}],
@@ -1360,7 +1887,10 @@ class NetskopePlugin(PluginBase):
                             groups[0]["id"] if len(groups) > 0 else "create"
                         ),
                         "mandatory": True,
-                        "description": "Select a group to add the user to.",
+                        "description": (
+                            "Select an existing group from Static field "
+                            "dropdown or select 'Create new group'."
+                        ),
                     },
                     {
                         "label": "Group Name",
@@ -1368,7 +1898,10 @@ class NetskopePlugin(PluginBase):
                         "type": "text",
                         "default": "",
                         "mandatory": False,
-                        "description": "Name of the SCIM group to create if it does not exist.",
+                        "description": (
+                            "Provide a SCIM group name if 'Create new group' "
+                            "is selected in 'Group' field."
+                        ),
                     },
                 ]
             elif action.value == "remove":
@@ -1389,7 +1922,10 @@ class NetskopePlugin(PluginBase):
                         "key": "group",
                         "type": "choice",
                         "choices": [
-                            {"key": g["displayName"], "value": g["id"]}
+                            {
+                                "key": g.get("displayName", ""),
+                                "value": g.get("id", ""),
+                            }
                             for g in groups
                         ]
                         + [{"key": "No groups available", "value": "group"}],
@@ -1397,7 +1933,10 @@ class NetskopePlugin(PluginBase):
                             groups[0]["id"] if len(groups) > 0 else "group"
                         ),
                         "mandatory": True,
-                        "description": "Select a group to remove the user from.",
+                        "description": (
+                            "Select an existing group from Static field "
+                            "dropdown."
+                        ),
                     },
                 ]
         elif action.value == "impact":
@@ -1408,7 +1947,9 @@ class NetskopePlugin(PluginBase):
                     "type": "text",
                     "default": "",
                     "mandatory": True,
-                    "description": "Email of the user to send the impact request for.",
+                    "description": (
+                        "Email of the user to trigger the score change."
+                    ),
                 },
                 {
                     "label": "Score (Reduction)",
@@ -1435,19 +1976,23 @@ class NetskopePlugin(PluginBase):
                     "description": "Reason for this score change.",
                 },
             ]
+        elif action.value == "uci_reset":
+            return [
+                {
+                    "label": "User Email",
+                    "key": "user",
+                    "type": "text",
+                    "default": "",
+                    "mandatory": True,
+                    "description": (
+                        "Select field for the User Email or provide "
+                        "Static comma separated User Emails to reset "
+                        "the UCI score."
+                        "User's UCI score will be reset to 1000."
+                    ),
+                }
+            ]
         elif action.value == "private_app":
-            self.session = requests.Session()
-            self.session.headers.update(
-                add_installation_id(
-                    add_user_agent(
-                        {
-                            "Netskope-API-Token": resolve_secret(
-                                self.tenant.parameters["v2token"]
-                            ),
-                        }
-                    )
-                )
-            )
             existing_private_apps = self._get_private_apps()
             existing_publishers = self._get_publishers()
             return [
@@ -1472,7 +2017,8 @@ class NetskopePlugin(PluginBase):
                     "placeholder": "i.e. tag-1, tag-2",
                     "mandatory": False,
                     "description": (
-                        "Tags to set for the private app. These tags will overwrite existing "
+                        "Tags to set for the private app. "
+                        "These tags will overwrite existing "
                         "tags available on your tenant. "
                         "Multiple comma-separated values are supported. "
                         "Example: tag-1, tag-2"
@@ -1489,7 +2035,9 @@ class NetskopePlugin(PluginBase):
                     + [{"key": "Create new private app", "value": "create"}],
                     "default": "",
                     "mandatory": True,
-                    "description": "Select a private app from Static field dropdown.",
+                    "description": (
+                        "Select a private app from Static field dropdown."
+                    ),
                 },
                 {
                     "label": "Create New Private App",
@@ -1497,8 +2045,12 @@ class NetskopePlugin(PluginBase):
                     "type": "text",
                     "default": "",
                     "mandatory": False,
-                    "description": "Create private app with given name. \
-Provide private app name in Static field if you have selected 'Create new private app' in Private App Name.",
+                    "description": (
+                        "Create private app with given name. "
+                        "Provide private app name in Static field "
+                        "if you have selected 'Create new private app' "
+                        "in Private App Name."
+                    ),
                 },
                 {
                     "label": "Protocol",
@@ -1510,7 +2062,10 @@ Provide private app name in Static field if you have selected 'Create new privat
                     ],
                     "default": ["TCP", "UDP"],
                     "mandatory": False,
-                    "description": "Select Protocol from Static field dropdown. Valid values are TCP and UDP.",
+                    "description": (
+                        "Select Protocol from Static field dropdown. "
+                        "Valid values are TCP and UDP."
+                    ),
                 },
                 {
                     "label": "TCP Ports",
@@ -1518,8 +2073,11 @@ Provide private app name in Static field if you have selected 'Create new privat
                     "type": "text",
                     "default": "",
                     "mandatory": False,
-                    "description": "Comma-separated ports for the TCP protocol. \
-Only enter in Static field if you have selected 'TCP' in Protocol.",
+                    "description": (
+                        "Comma-separated ports for the TCP protocol. "
+                        "Only enter in Static field if you have "
+                        "selected 'TCP' in Protocol."
+                    ),
                 },
                 {
                     "label": "UDP Ports",
@@ -1527,8 +2085,11 @@ Only enter in Static field if you have selected 'TCP' in Protocol.",
                     "type": "text",
                     "default": "",
                     "mandatory": False,
-                    "description": "Comma-separated ports for the UDP protocol. \
-Only enter in Static field if you have selected 'UDP' in Protocol.",
+                    "description": (
+                        "Comma-separated ports for the UDP protocol. "
+                        "Only enter in Static field if you have "
+                        "selected 'UDP' in Protocol."
+                    ),
                 },
                 {
                     "label": "Publisher",
@@ -1544,7 +2105,9 @@ Only enter in Static field if you have selected 'UDP' in Protocol.",
                         else [list(existing_publishers.keys())[0]]
                     ),
                     "mandatory": False,
-                    "description": "Select Publishers from Static field dropdown only.",
+                    "description": (
+                        "Select Publishers from Static field dropdown only."
+                    ),
                 },
                 {
                     "label": "Use Publisher DNS",
@@ -1556,7 +2119,10 @@ Only enter in Static field if you have selected 'UDP' in Protocol.",
                     ],
                     "default": False,
                     "mandatory": True,
-                    "description": "Select Yes or No from Static field dropdown for Use Publishers DNS.",
+                    "description": (
+                        "Select Yes or No from Static field dropdown "
+                        "for Use Publishers DNS."
+                    ),
                 },
                 {
                     "label": "Default Host",
@@ -1564,12 +2130,40 @@ Only enter in Static field if you have selected 'UDP' in Protocol.",
                     "type": "text",
                     "default": "cedefaultpush.io",
                     "mandatory": False,
-                    "description": "The default Host to be used when new private app is created. \
-Provide Default Host in Static field if you have selected 'Create new private app' in Private App Name.",
+                    "description": (
+                        "The default Host to be used when "
+                        "new private app is created. "
+                        "Provide Default Host in Static field "
+                        "if you have selected 'Create new private app' "
+                        "in Private App Name."
+                    ),
                 },
             ]
         elif action.value == "tag_app":
             return [
+                {
+                    "label": "Tag Action",
+                    "key": "tag_action",
+                    "type": "choice",
+                    "choices": [
+                        {
+                            "key": "Add",
+                            "value": "append"
+                        },
+                        {
+                            "key": "Remove",
+                            "value": "remove"
+                        }
+                    ],
+                    "default": "append",
+                    "placeholder": "Add",
+                    "mandatory": True,
+                    "description": (
+                        "Whether to Add/Remove tag(s) from "
+                        "the application(s). Select Tag Action "
+                        "from Static field dropdown only."
+                    ),
+                },
                 {
                     "label": "Tags",
                     "key": "tags",
@@ -1577,7 +2171,10 @@ Provide Default Host in Static field if you have selected 'Create new private ap
                     "default": "",
                     "placeholder": "i.e. tag-1, tag-2",
                     "mandatory": True,
-                    "description": "Comma separated tag values.",
+                    "description": (
+                        "Select field for the tags or provide Static comma "
+                        "separated tag values."
+                    ),
                 },
                 {
                     "label": "Application Names",
@@ -1586,16 +2183,24 @@ Provide Default Host in Static field if you have selected 'Create new private ap
                     "default": "",
                     "placeholder": "i.e. Dropbox, Google Drive",
                     "mandatory": False,
-                    "description": "Comma separated application names. 100 is the max allowed input size.",
+                    "description": (
+                        "Select field for the Application Names or provide "
+                        "Static comma separated Application Names. "
+                        "100 is the max allowed input size for Static values."
+                    ),
                 },
                 {
-                    "label": "Application Ids",
+                    "label": "Application IDs",
                     "key": "ids",
                     "type": "text",
                     "default": "",
                     "placeholder": "i.e. 3324, 1233",
                     "mandatory": False,
-                    "description": "Comma separated application ids. 100 is the max allowed input size.",
+                    "description": (
+                        "Select field for the Application IDs or provide "
+                        "Static comma separated Application IDs. "
+                        "100 is the max allowed input size for Static values."
+                    ),
                 },
             ]
         elif action.value == "app_instance":
@@ -1646,7 +2251,7 @@ Provide Default Host in Static field if you have selected 'Create new private ap
                     ],
                     "default": "None",
                     "mandatory": False,
-                    "description": "Tags to add.",
+                    "description": "Select Tag from Static field dropdown.",
                 },
             ]
         return []
@@ -1664,21 +2269,31 @@ Provide Default Host in Static field if you have selected 'Create new private ap
         default_url: str,
         tags: list[str] = [],
     ):
-        """Push a private app to Netskope with the provided indicators, app names, protocols, and publishers.
+        """Push a private app to Netskope with the provided indicators, \
+            app names, protocols, and publishers.
 
         Args:
-            indicators (List[Indicator]): The list of indicators to be pushed.
-            existing_private_app_name (str): The name of an existing private app.
+            host (Union[str, list[str]]): The host to be pushed.
+            existing_private_app_name (str): The name of an \
+                existing private app.
             new_private_app_name (str): The name of a new private app.
             protocol_type (List[str]): The list of protocol types.
             tcp_ports (List[int]): The list of TCP ports.
             udp_ports (List[int]): The list of UDP ports.
             publishers (List[str]): The list of publishers.
-            use_publisher_dns (bool): A boolean indicating whether to use the publisher DNS.
-            enable_tagging (bool): A boolean indicating whether to enable tagging.
+            use_publisher_dns (bool): A boolean indicating whether \
+                to use the publisher DNS.
             default_url (str): The default host.
+            tags (List[str], optional): The list of tags. Defaults to [].
         """
-        tenant_name = self.tenant.parameters["tenantName"].strip()
+        tenant_name = (
+            self.tenant.parameters.get('tenantName', '').strip()
+        )
+        headers = {
+            "Netskope-API-Token": resolve_secret(
+                self.tenant.parameters.get("v2token", "")
+            )
+        }
 
         try:
             if existing_private_app_name == "create":
@@ -1697,7 +2312,7 @@ Provide Default Host in Static field if you have selected 'Create new private ap
                     ).removesuffix("]")
                     break
                 if (
-                    existing_private_apps[final_name]["host_count"]
+                    existing_private_apps[final_name].get("host_count", 0)
                     < MAX_HOSTS_PER_PRIVATE_APP
                 ):
                     break
@@ -1731,22 +2346,27 @@ Provide Default Host in Static field if you have selected 'Create new private ap
 
             if not publishers_list and skipped_publishers:
                 self.logger.error(
-                    f"{self.log_prefix}: Unable to find the provided publishers [{','.join(skipped_publishers)}]."
+                    f"{self.log_prefix}: Unable to find the "
+                    f"provided publishers [{','.join(skipped_publishers)}]."
                 )
                 raise NetskopeException(
-                    f"{self.log_prefix}: Could not create new private app to share host."
+                    f"{self.log_prefix}: Could not create new private app "
+                    "to share host."
                 )
 
             if skipped_publishers:
                 self.logger.error(
-                    f"{self.log_prefix}: Unable to find the following publishers [{','.join(skipped_publishers)}]."
-                    f" Hence ignoring them while creating the private app '{private_app_name}'."
+                    f"{self.log_prefix}: Unable to find the following "
+                    f"publishers [{','.join(skipped_publishers)}]."
+                    " Hence ignoring them while creating "
+                    f"the private app '{private_app_name}'."
                 )
             # Check if the private app already exists
             if private_app_name not in existing_private_apps:
                 # Creating URL List
                 self.logger.debug(
-                    f"{self.log_prefix}: Private app '{private_app_name}' does not exist. Creating a new private app."
+                    f"{self.log_prefix}: Private app '{private_app_name}' "
+                    "does not exist. Creating a new private app."
                 )
 
                 if existing_private_app_name == "create":
@@ -1762,46 +2382,56 @@ Provide Default Host in Static field if you have selected 'Create new private ap
                 }
                 if protocols_list:
                     data["protocols"] = protocols_list
-                success, create_private_app = handle_exception(
-                    self.session.post,
-                    error_code="CRE_1043",
-                    custom_message="Error occurred while creating private app in Netskope",
-                    plugin=self.log_prefix,
-                    url=URLS["V2_PRIVATE_APP"].format(tenant_name),
-                    json=data,
+                logger_msg = "creating private app on the Netskope Tenant"
+                url = (
+                    f"{tenant_name}{URLS.get('V2_PRIVATE_APP')}"
                 )
-                if not success or create_private_app.status_code not in [
+                response = self.netskope_helper._api_call_helper(
+                    url=url,
+                    method="post",
+                    error_codes=["CRE_1043", "CRE_1044"],
+                    headers=headers,
+                    json=data,
+                    proxies=self.proxy,
+                    message=f"Error occurred while {logger_msg}",
+                    logger_msg=logger_msg,
+                    is_handle_error_required=False
+                )
+
+                if response.status_code not in [
                     200,
                     201,
                 ]:
+                    err_msg = (
+                        f"Error occurred while {logger_msg}. "
+                    )
                     self.logger.error(
-                        f"{self.log_prefix}: Error occurred while creating private app.",
-                        details=(
-                            repr(create_private_app)
-                            if not success
-                            else create_private_app.text
-                        ),
+                        message=err_msg,
+                        details=str(response.text),
                     )
                     raise NetskopeException(
-                        f"{self.log_prefix}: Could not create new private app to share host.",
+                        "Could not create new private app to share host.",
                     )
-
                 create_private_app_json = handle_status_code(
-                    create_private_app,
+                    response,
                     error_code="CRE_1044",
-                    custom_message="Error occurred while creating private app in Netskope",
+                    custom_message=f"Error occurred while {logger_msg}.",
                     plugin=self.log_prefix,
                     notify=False,
+                    log=True,
                 )
 
                 if create_private_app_json.get("status", "") != "success":
                     self.logger.error(
-                        f"{self.log_prefix}: Error occurred while creating private app. "
-                        f"Received exit code {create_private_app.status_code}.",
+                        message=(
+                            f"{self.log_prefix}: Error occurred while "
+                            "creating private app. "
+                            f"Received exit code {response.status_code}."
+                        ),
                         details=repr(create_private_app_json),
                     )
                     raise NetskopeException(
-                        f"{self.log_prefix}: Could not create new private app to share the host."
+                        "Could not create new private app to share the host."
                     )
 
                 existing_private_apps[
@@ -1818,7 +2448,9 @@ Provide Default Host in Static field if you have selected 'Create new private ap
                 "host": ",".join(
                     list(
                         set(
-                            existing_private_apps[private_app_name]["hosts"]
+                            existing_private_apps[private_app_name].get(
+                                "hosts", []
+                            )
                         ).union(host)
                     )
                 ),
@@ -1832,13 +2464,20 @@ Provide Default Host in Static field if you have selected 'Create new private ap
                 data["protocols"] = protocols_list
             return self._patch_private_app(
                 tenant_name,
-                existing_private_apps[private_app_name]["id"],
+                existing_private_apps[private_app_name].get("id", ""),
                 data,
             )
-        except Exception as e:
+        except NetskopeException:
+            raise
+        except Exception as err:
+            error_message = (
+                "Error occurred while pushing data to private app."
+            )
             self.logger.error(
-                f"{self.log_prefix}: "
-                f"Exception occurred while pushing data to Netskope.",
+                message=(
+                    f"{self.log_prefix}: {error_message} "
+                    f"Error: {err}"
+                ),
                 details=re.sub(
                     r"token=([0-9a-zA-Z]*)",
                     "token=********&",
@@ -1846,82 +2485,226 @@ Provide Default Host in Static field if you have selected 'Create new private ap
                 ),
                 error_code="CRE_1021",
             )
-            raise NetskopeException(f"{self.log_prefix}: {str(e)}")
+            raise NetskopeException(error_message)
 
     def _tag_application(
-        self, tags: list[str], apps: list[str], ids: list[int]
+        self,
+        tags: list[str],
+        apps: list[str],
+        ids: list[int],
+        cci_tag_action: str
     ):
-        tenant_name = self.tenant.parameters["tenantName"].strip()
+        """Tag the application(s) on Netskope.
+
+        Args:
+            tags (list[str]): List of tags to be attached to \
+                the application(s).
+            apps (list[str]): List of application names to be tagged.
+            ids (list[int]): List of application IDs to be tagged.
+            cci_tag_action (str): Action to be performed on the tags.
+        """
+        tenant_name = (
+            self.tenant.parameters.get('tenantName', '').strip()
+        )
+        headers = {
+            "Netskope-API-Token": resolve_secret(
+                self.tenant.parameters.get("v2token", "")
+            )
+        }
         for tag in tags:
-            data = (
-                {"tag": tag}
-                | ({"apps": apps} if apps else {})
-                | ({"ids": ids} if ids else {})
+            log_message = (
+                f"tagging {', '.join(apps if apps else ids)} application(s) "
+                f"with the tag '{tag}'"
             )
-            add_tags_success, add_tags = handle_exception(
-                self.session.post,
-                error_code="CRE_1043",
-                custom_message="Error occurred while creating the tag.",
-                plugin=self.log_prefix,
-                url=URLS["V2_CCI_TAG_CREATE"].format(tenant_name),
-                json=data,
-            )
-            if not add_tags_success:
-                raise NetskopeException(
-                    f"{self.log_prefix}: Error occurred while tagging the application on Netskope."
-                ) from add_tags
-            add_tags_response = handle_status_code(
-                add_tags,
-                error_code="CRE1046",
-                custom_message="Error occurred while creating a tag on Netskope.",
-                plugin=self.log_prefix,
-                notify=False,
-            )
-            if add_tags_response.get("message") == ERROR_APP_DOES_NOT_EXIST:
-                raise NetskopeException(
-                    f"{self.log_prefix}: Error occurred while tagging the application on Netskope. "
-                    f"Invalid app provided."
+            if cci_tag_action == "remove":
+                log_message = (
+                    f"untagging {', '.join(apps if apps else ids)} "
+                    f"application(s) with the tag '{tag}'"
                 )
-            elif add_tags_response.get("status_code") == 400:
-                # either the tag is one of the pre-defined ones or
-                # the tag already exists;
-                # try updating the existing record
-                update_tags_success, update_tags = handle_exception(
-                    self.session.patch,
-                    error_code="CRE_1043",
-                    custom_message=f"Error occurred while creating the {tag} tag.",
-                    plugin=self.log_prefix,
-                    url=URLS["V2_CCI_TAG_UPDATE"].format(tenant_name, tag),
-                    json=data,
+            try:
+                self.logger.debug(
+                    f"{self.log_prefix}: {log_message.capitalize()}."
                 )
-                if not update_tags_success:
-                    raise NetskopeException(
-                        f"{self.log_prefix}: Error occurred while tagging the application on Netskope."
-                    ) from update_tags
-                update_tags_response = handle_status_code(
-                    update_tags,
-                    error_code="CRE1047",
-                    custom_message=f"Error occurred while updating the {tag} tag on Netskope.",
-                    plugin=self.log_prefix,
-                    notify=False,
+                data = (
+                    {"tag": tag}
+                    | ({"apps": apps} if apps else {})
+                    | ({"ids": ids} if ids else {})
                 )
-
-                if update_tags_response.get("status") != SUCCESS:
-                    self.logger.error(
-                        f"{self.log_prefix}: Error occurred while tagging the application on Netskope. "
-                        f"Received exit code {update_tags.status_code}.",
-                        details=json.dumps(update_tags_response),
+                url = (
+                    f"{tenant_name}{URLS.get('V2_CCI_TAG_CREATE')}"
+                )
+                if cci_tag_action == "append":
+                    log_msg = f"creating tag '{tag}'"
+                    add_tags_response = self.netskope_helper._api_call_helper(
+                        url=url,
+                        method="post",
+                        error_codes=["CRE_1043", "CRE_1046"],
+                        headers=headers,
+                        json=data,
+                        proxies=self.proxy,
+                        message=f"Error occurred while {log_msg}",
+                        logger_msg=log_msg,
                     )
-
-            elif add_tags_response.get("status") != SUCCESS:
+                    if (
+                        add_tags_response.get("message", "") ==
+                        ERROR_APP_DOES_NOT_EXIST
+                    ):
+                        err_msg = (
+                            f"Error occurred while {log_message}. "
+                            "Invalid Application Name/ID provided."
+                        )
+                        self.logger.error(f"{self.log_prefix}: {err_msg}")
+                        raise NetskopeException(err_msg)
+                    elif (
+                        add_tags_response.get("status_code") == 400 and
+                        TAG_EXISTS in add_tags_response.get("error", "")
+                    ):
+                        # either the tag is one of the pre-defined ones or
+                        # the tag already exists;
+                        # try updating the existing record
+                        data["action"] = cci_tag_action
+                        url = (
+                            f"{tenant_name}"
+                            f"{URLS.get('V2_CCI_TAG_UPDATE').format(tag)}"
+                        )
+                        update_tags_response = self.netskope_helper._api_call_helper(
+                            url=url,
+                            method="patch",
+                            error_codes=["CRE_1043", "CRE_1047"],
+                            headers=headers,
+                            json=data,
+                            proxies=self.proxy,
+                            message=f"Error occurred while {log_message}",
+                            logger_msg=log_message,
+                        )
+                        if (
+                            update_tags_response.get("message", "") ==
+                            ERROR_APP_DOES_NOT_EXIST
+                        ):
+                            error_msg = (
+                                f"Error occurred while "
+                                f"{log_message}. "
+                                "Invalid Application Name/ID provided."
+                            )
+                            self.logger.error(
+                                f"{self.log_prefix}: {error_msg}"
+                            )
+                            raise NetskopeException(error_msg)
+                        elif (
+                            TAG_NOT_FOUND in update_tags_response.get(
+                                "error", ""
+                            )
+                        ):
+                            error_msg = (
+                                f"Error occurred while "
+                                f"{log_message}. "
+                                f"Tag '{tag}' does not exists."
+                            )
+                            self.logger.error(
+                                f"{self.log_prefix}: {error_msg}"
+                            )
+                            raise NetskopeException(error_msg)
+                        elif update_tags_response.get("status", "") != SUCCESS:
+                            error_msg = (
+                                "Error occurred while "
+                                f"{log_message}."
+                            )
+                            self.logger.error(
+                                message=(
+                                    f"{self.log_prefix}: {error_msg}"
+                                ),
+                                details=json.dumps(update_tags_response),
+                            )
+                            raise NetskopeException(error_msg)
+                    elif add_tags_response.get("status", "") != SUCCESS:
+                        err_msg = (
+                            f"Error occurred while {log_msg}."
+                        )
+                        self.logger.error(
+                            message=f"{self.log_prefix}: {err_msg}",
+                            details=json.dumps(add_tags_response),
+                        )
+                        raise NetskopeException(err_msg)
+                else:
+                    # For Removing the tags, tag creation should not be done
+                    url = (
+                        f"{tenant_name}"
+                        f"{URLS.get('V2_CCI_TAG_UPDATE').format(tag)}"
+                    )
+                    data["action"] = cci_tag_action
+                    update_tags_response = self.netskope_helper._api_call_helper(
+                        url=url,
+                        method="patch",
+                        error_codes=["CRE_1043", "CRE_1047"],
+                        headers=headers,
+                        json=data,
+                        proxies=self.proxy,
+                        message=f"Error occurred while {log_message}",
+                        logger_msg=log_message,
+                    )
+                    if (
+                        update_tags_response.get("message", "") ==
+                        ERROR_APP_DOES_NOT_EXIST
+                    ):
+                        error_msg = (
+                            f"Error occurred while "
+                            f"{log_message}. "
+                            "Invalid Application Name/ID provided."
+                        )
+                        self.logger.error(
+                            f"{self.log_prefix}: {error_msg}"
+                        )
+                        raise NetskopeException(error_msg)
+                    elif (
+                        TAG_NOT_FOUND in update_tags_response.get(
+                            "error", ""
+                        )
+                    ):
+                        error_msg = (
+                            f"Error occurred while "
+                            f"{log_message}. "
+                            f"Tag '{tag}' does not exists."
+                        )
+                        self.logger.error(
+                            f"{self.log_prefix}: {error_msg}"
+                        )
+                        raise NetskopeException(error_msg)
+                    elif update_tags_response.get("status", "") != SUCCESS:
+                        error_msg = (
+                            "Error occurred while "
+                            f"{log_message}."
+                        )
+                        self.logger.error(
+                            message=(
+                                f"{self.log_prefix}: {error_msg}"
+                            ),
+                            details=json.dumps(update_tags_response),
+                        )
+                        raise NetskopeException(error_msg)
+            except NetskopeException:
+                raise
+            except Exception as err:
+                error_message = f"Error occurred while {log_message}."
                 self.logger.error(
-                    f"{self.log_prefix}: Error occurred while tagging the application on Netskope. "
-                    f"Received exit code {add_tags.status_code}.",
-                    details=json.dumps(add_tags_response),
+                    message=(
+                        f"{self.log_prefix}: {error_message} "
+                        f"Error: {err}"
+                    ),
+                    details=str(traceback.format_exc()),
                 )
-                raise NetskopeException(
-                    f"{self.log_prefix}: Error occurred while tagging the application on Netskope."
+                raise NetskopeException(error_message)
+            log_msg = (
+                f"Successfully tagged the '{tag}' tag to "
+                "the application(s) on the Netskope Tenant."
+            )
+            if cci_tag_action == "remove":
+                log_msg = (
+                    f"Successfully untagged the '{tag}' tag from "
+                    "the application(s) on the Netskope Tenant."
                 )
+            self.logger.debug(
+                f"{self.log_prefix}: {log_msg}"
+            )
 
     def _create_app_instance(
         self,
@@ -1940,61 +2723,56 @@ Provide Default Host in Static field if you have selected 'Create new private ap
             tags (str): Tag.
             auth_token (str): Auth token.
         """
-        tenant_name = self.tenant.parameters["tenantName"].strip()
-        list_instances_success, list_instances = handle_exception(
-            self.session.post,
-            error_code="CRE_1045",
-            custom_message="Error occurred while listing app instances.",
-            plugin=self.log_prefix,
-            url=URLS["V1_APP_INSTANCE"].format(tenant_name),
-            params={
-                "op": "list",
-                "app": app,
-                "instance_id": instance_id,
-                "instance_name": instance_name,
-            },
-            data={"token": auth_token},
+        tenant_name = (
+            self.tenant.parameters.get('tenantName', '').strip()
         )
-        if not list_instances_success:
-            raise NetskopeException(
-                f"{self.log_prefix}: Error occurred while listing "
-                f"app instances on Netskope."
-            ) from list_instances
-        list_instances_response = handle_status_code(
-            list_instances,
-            error_code="CRE1049",
-            custom_message=(
-                "Error occurred while listing app instances from Netskope."
-            ),
-            plugin=self.log_prefix,
-            notify=False,
+        url = (
+            f"{tenant_name}{URLS.get('V1_APP_INSTANCE')}"
         )
-        if list_instances_response.get("status").lower() != SUCCESS.lower():
-            self.logger.error(
-                f"{self.log_prefix}: Error occurred while listing "
-                f"app instances from Netskope. "
-                f"Received exit code {list_instances.status_code}.",
-                details=json.dumps(list_instances_response),
+        params = {
+            "op": "list",
+            "app": app,
+            "instance_id": instance_id,
+            "instance_name": instance_name,
+        }
+        logger_msg = f"listing app instances for application: {app}"
+        try:
+            list_instances_response = self.netskope_helper._api_call_helper(
+                url=url,
+                method="post",
+                error_codes=["CRE_1045", "CRE_1049"],
+                params=params,
+                data={"token": auth_token},
+                proxies=self.proxy,
+                message=f"Error occurred while {logger_msg}",
+                logger_msg=logger_msg,
             )
-            raise NetskopeException(
-                f"{self.log_prefix}: Error occurred while listing "
-                f"app instances from Netskope."
+            if (
+                list_instances_response.get("status", "").lower() !=
+                SUCCESS.lower()
+            ):
+                err_msg = (
+                    f"Error occurred while {logger_msg}"
+                )
+                self.logger.error(
+                    message=(
+                        f"{self.log_prefix}: {err_msg}."
+                    ),
+                    details=json.dumps(list_instances_response),
+                )
+                raise NetskopeException(err_msg)
+            if len(list_instances_response.get("data", [])):
+                op = "update"
+            else:
+                op = "add"
+            params = {"op": op}
+            url = (
+                f"{tenant_name}{URLS.get('V1_APP_INSTANCE')}"
             )
-        if len(list_instances_response.get("data")):
-            op = "update"
-        else:
-            op = "add"
-        create_instance_success, create_instance = handle_exception(
-            self.session.post,
-            error_code="CRE_1044",
-            custom_message=(
-                f"Error occurred while "
-                f"{'updating' if op == 'update' else 'adding'} app instance."
-            ),
-            plugin=self.log_prefix,
-            url=URLS["V1_APP_INSTANCE"].format(tenant_name),
-            params={"op": op},
-            json={
+            custom_message = (
+                f"{'updating' if op == 'update' else 'adding'} app instance"
+            )
+            data = {
                 "instances": [
                     {
                         "instance_id": instance_id,
@@ -2004,43 +2782,69 @@ Provide Default Host in Static field if you have selected 'Create new private ap
                     }
                 ],
                 "token": auth_token,
-            },
-        )
-        if not create_instance_success:
-            raise NetskopeException(
-                f"{self.log_prefix}: Error occurred while "
-                f"{'updating' if op == 'update' else 'adding'} app instance "
-                "on Netskope."
-            ) from create_instance
-        create_instance_response = handle_status_code(
-            create_instance,
-            error_code="CRE1048",
-            custom_message=(
-                f"Error occurred while "
-                f"{'updating' if op == 'update' else 'adding'} app instance "
-                f"on Netskope."
-            ),
-            plugin=self.log_prefix,
-            notify=False,
-        )
-        if create_instance_response.get("status").lower() != SUCCESS.lower():
+            }
+            create_instances_response = self.netskope_helper._api_call_helper(
+                url=url,
+                method="post",
+                error_codes=["CRE_1044", "CRE_1048"],
+                params=params,
+                json=data,
+                proxies=self.proxy,
+                message=(
+                    f"Error occurred while {custom_message} on "
+                    "the Netskope Tenant"
+                ),
+                logger_msg=custom_message,
+            )
+            if create_instances_response.get("errors", []):
+                if len(create_instances_response.get("errors", [])) > 0:
+                    errs = ", ".join(
+                        create_instances_response.get("errors", [])
+                    )
+                    err_msg = (
+                        f"Error occurred while {custom_message} "
+                        "app instance on the Netskope Tenant."
+                    )
+                    self.logger.error(
+                        message=f"{self.log_prefix}: {err_msg} ",
+                        details=errs,
+                    )
+                    raise NetskopeException(err_msg)
+            elif (
+                create_instances_response.get("status", "").lower() !=
+                SUCCESS.lower()
+            ):
+                err_msg = (
+                    f"Error occurred while {custom_message} on "
+                    "the Netskope Tenant."
+                )
+                self.logger.error(
+                    message=(
+                        f"{self.log_prefix}: {err_msg}"
+                    ),
+                    details=json.dumps(create_instances_response),
+                )
+                raise NetskopeException(err_msg)
+        except NetskopeException:
+            raise
+        except Exception as err:
+            error_message = (
+                f"Error occurred while {custom_message} on "
+                "the Netskope Tenant."
+            )
             self.logger.error(
-                f"{self.log_prefix}: Error occurred while "
-                f"{'updating' if op == 'update' else 'adding'} app instance "
-                f"on Netskope. "
-                f"Received exit code {create_instance.status_code}.",
-                details=json.dumps(create_instance_response),
+                message=(
+                    f"{self.log_prefix}: {error_message} "
+                    f"Error: {err}"
+                ),
+                details=str(traceback.format_exc()),
             )
-            raise NetskopeException(
-                f"{self.log_prefix}: Error occurred while "
-                f"{'updating' if op == 'update' else 'adding'} app instance "
-                f"on Netskope."
-            )
+            raise NetskopeException(error_message)
 
     def _process_params_for_app_instance_action(
         self, params: dict
     ) -> tuple[str, str, str, list[str]]:
-        """Procss parameters.
+        """Process parameters for app instance action.
 
         Args:
             params (dict): Params dictionary.
@@ -2063,7 +2867,7 @@ Provide Default Host in Static field if you have selected 'Create new private ap
             app_name, str
         ) and app_name.startswith("$")
 
-        if not skip_tag_validation and (
+        if (
             tag.strip() not in ["Unsanctioned", "Sanctioned", "None", ""]
         ):
             raise NetskopeException(
@@ -2101,7 +2905,7 @@ Provide Default Host in Static field if you have selected 'Create new private ap
     def _process_params_for_impact_action(
         self, params: dict
     ) -> tuple[str, str, str, str]:
-        """Procss parameters.
+        """Process parameters for impact action.
 
         Args:
             params (dict): Params dictionary.
@@ -2127,36 +2931,56 @@ Provide Default Host in Static field if you have selected 'Create new private ap
 
         if not skip_user_validation:
             user = user.strip()
-            if not re.match(REGEX_EMAIL, user):
-                raise NetskopeException(
-                    "Invalid value for User Email provided. It must be a valid email address."
+            if len(user.split(",")) > 1:
+                err_msg = (
+                    "Invalid value for User Email provided. "
+                    "Multiple comma separated emails are not allowed."
                 )
+                self.logger.error(f"{self.log_prefix}: {err_msg}")
+                raise NetskopeException(err_msg)
+            if not re.match(REGEX_EMAIL, user):
+                err_msg = (
+                    "Invalid value for User Email provided. "
+                    "It must be a valid email address."
+                )
+                self.logger.error(f"{self.log_prefix}: {err_msg}")
+                raise NetskopeException(err_msg)
 
         if not skip_score_validation:
             try:
                 score = int(score)
             except Exception:
-                raise NetskopeException(
-                    "Invalid value for Score (Reduction) provided. It must be an integer."
+                err_msg = (
+                    "Invalid value for Score (Reduction) provided. "
+                    "It must be an integer."
                 )
+                self.logger.error(f"{self.log_prefix}: {err_msg}")
+                raise NetskopeException(err_msg)
             if not 1 <= score <= 1000:
-                raise NetskopeException(
-                    "Invalid value for Score (Reduction) provided. It must be between 1 and 1000."
+                err_msg = (
+                    "Invalid value for Score (Reduction) provided. "
+                    "It must be between 1 and 1000."
                 )
+                self.logger.error(f"{self.log_prefix}: {err_msg}")
+                raise NetskopeException(err_msg)
 
         if not skip_source_validation:
             source = source.strip()
             if not source:
-                raise NetskopeException(
+                err_msg = (
                     "Invalid value for Source provided. It must not be empty."
                 )
+                self.logger.error(f"{self.log_prefix}: {err_msg}")
+                raise NetskopeException(err_msg)
 
         if not skip_reason_validation:
             reason = reason.strip()
             if not reason:
-                raise NetskopeException(
+                err_msg = (
                     "Invalid value for Reason provided. It must not be empty."
                 )
+                self.logger.error(f"{self.log_prefix}: {err_msg}")
+                raise NetskopeException(err_msg)
 
         return (
             user,
@@ -2165,15 +2989,64 @@ Provide Default Host in Static field if you have selected 'Create new private ap
             reason,
         )
 
-    def _process_params_for_add_tag_action(self, params: dict) -> tuple:
+    def _process_params_for_reset_action(
+        self, params: dict,
+        bulk_action: bool = False
+    ) -> list[str]:
+        """Process parameters for reset action.
+
+        Args:
+            params (dict): Params dictionary.
+
+        Returns:
+            list[str]: Processed params.
+        """
+        user = str(params.get("user") or "")
+        skip_user_validation = isinstance(user, str) and user.startswith("$")
+        skipped_user_count = 0
+        valid_users = []
+        if not skip_user_validation:
+            users = user.split(",")
+            for user in users:
+                user = user.strip()
+                if not re.match(REGEX_EMAIL, user):
+                    if bulk_action:
+                        skipped_user_count += 1
+                        continue
+                    err_msg = (
+                        f"Invalid User Email '{user}' provided. "
+                        "It must be a valid email address."
+                    )
+                    self.logger.error(
+                        f"{self.log_prefix}: {err_msg}"
+                    )
+                    raise NetskopeException(err_msg)
+                valid_users.append(user)
+
+        return valid_users, skipped_user_count
+
+    def _process_params_for_add_tag_action(
+        self,
+        params: dict,
+        is_execute: bool = False
+    ) -> tuple:
+        """Process parameters for add tag action.
+
+        Args:
+            params (dict): Params dictionary.
+
+        Returns:
+            tuple: Processed params.
+        """
 
         def convert_to_list(value: Union[str, list[str]]) -> list[str]:
             """Convert to list.
 
-            :param value: Value to be converted.
-            :type value: Union[str, list[str]]
-            :return: Convrted list.
-            :rtype: list[str]
+            Args:
+                value (Union[str, list[str]]): Value to be converted.
+
+            Returns:
+                list[str]: List of values.
             """
             if isinstance(value, list):
                 return value
@@ -2196,6 +3069,22 @@ Provide Default Host in Static field if you have selected 'Create new private ap
         skip_ids_validation = isinstance(ids, str) and ids.startswith("$")
         ids = convert_to_list(ids)
 
+        tag_action = params.get("tag_action") or "append"
+        if isinstance(tag_action, str) and tag_action.startswith("$"):
+            err_msg = (
+                "Select Tag Action "
+                "from Static field dropdown only."
+            )
+            self.logger.error(f"{self.log_prefix}: {err_msg}")
+            raise NetskopeException(err_msg)
+        if tag_action not in ["append", "remove"]:
+            err_msg = (
+                "Invalid value for Tag Action provided. "
+                "It must be either 'Add' or 'Remove'."
+            )
+            self.logger.error(f"{self.log_prefix}: {err_msg}")
+            raise NetskopeException(err_msg)
+
         if not tags and not skip_tag_validation:
             err_msg = (
                 "Invalid value for tags provided. Tags can not be empty."
@@ -2203,20 +3092,32 @@ Provide Default Host in Static field if you have selected 'Create new private ap
             self.logger.error(f"{self.log_prefix}: {err_msg}")
             raise NetskopeException(err_msg)
 
+        if not skip_tag_validation and not is_execute:
+            for tag in tags:
+                tag = tag.strip()
+                if len(tag) > TAG_APP_TAG_LENGTH:
+                    err_msg = (
+                        "Invalid value for Tags provided. "
+                        "Each tag length can not exceed "
+                        f"{TAG_APP_TAG_LENGTH} characters."
+                    )
+                    self.logger.error(f"{self.log_prefix}: {err_msg}")
+                    raise NetskopeException(err_msg)
+
         if (not apps and not ids) and not (
             skip_apps_validation or skip_ids_validation
         ):
             err_msg = (
-                "Invalid value for apps/ids provided. "
-                "Application Names and Ids can not be empty."
+                "Invalid value for Application Names/IDs provided. "
+                "Application Names and IDs can not be empty."
             )
             self.logger.error(f"{self.log_prefix}: {err_msg}")
             raise NetskopeException(err_msg)
 
-        if apps and ids and not (skip_apps_validation or skip_ids_validation):
+        if apps and ids:
             err_msg = (
-                "Invalid value for apps/ids provided. "
-                "Application Names and Ids both can not be "
+                "Invalid value for Application Names/IDs provided. "
+                "Application Names and IDs both can not be "
                 "provided at the same time."
             )
             self.logger.error(f"{self.log_prefix}: {err_msg}")
@@ -2227,38 +3128,30 @@ Provide Default Host in Static field if you have selected 'Create new private ap
         except ValueError as ex:
             if not skip_ids_validation:
                 err_msg = (
-                    "Invalid value for Application Ids provided. "
-                    "One of the id is not a valid integer."
+                    "Invalid value for Application IDs provided. "
+                    "One of the ID is not a valid integer."
                 )
                 self.logger.error(f"{self.log_prefix}: {err_msg}")
                 raise NetskopeException(err_msg) from ex
 
-        return tags, apps, ids
+        return tags, apps, ids, tag_action
 
     def revert_action(self, action: Action):
-        """Revert the action."""
+        """Revert the action.
+
+        Args:
+            action (Action): Action to be reverted.
+        """
         helper = AlertsHelper()
         self.tenant = helper.get_tenant_crev2(self.name)
         action.parameters = get_latest_values(
             action.parameters, exclude_keys=["tags", "protocol", "publishers"]
         )
         if action.value == "private_app":
-            self.session = requests.Session()
-            self.session.headers.update(
-                add_installation_id(
-                    add_user_agent(
-                        {
-                            "Netskope-API-Token": resolve_secret(
-                                self.tenant.parameters["v2token"]
-                            ),
-                        }
-                    )
-                )
-            )
             action_dict = action.parameters
             existing_private_app_name = action_dict.get("private_app_name", "")
             new_private_app_name = action_dict.get("name", "")
-            host = action_dict["host"]
+            host = action_dict.get("host", "")
             if existing_private_app_name == "create":
                 private_app_name = f"[{new_private_app_name}]"
             else:
@@ -2271,25 +3164,29 @@ Provide Default Host in Static field if you have selected 'Create new private ap
                 )
                 return
             self.logger.info(
-                f"{self.log_prefix}: Attempting to remove the host {host} from private app {private_app_name}."
+                f"{self.log_prefix}: Attempting to remove the host {host} "
+                f"from private app {private_app_name}."
             )
             app = self._get_private_app(
-                prefix=private_app_name, has_host=action_dict["host"]
+                prefix=private_app_name, has_host=action_dict.get("host", "")
             )
             if not app:
                 self.logger.info(
-                    f"{self.log_prefix}: Host {host} not found in {private_app_name}. "
+                    f"{self.log_prefix}: Host {host} not found "
+                    f"in {private_app_name}. "
                     "Hence, skipped execution of revert action."
                 )
                 return
             data = {
                 "host": ",".join(
-                    list(filter(lambda x: x != host, app["host"].split(",")))
+                    list(filter(
+                        lambda x: x != host, app.get("host", "").split(",")
+                    ))
                 )
             }
             return self._patch_private_app(
-                self.tenant.parameters["tenantName"].strip(),
-                app["app_id"],
+                self.tenant.parameters.get('tenantName').strip(),
+                app.get("app_id", ""),
                 data,
             )
         raise NotImplementedError()
@@ -2306,67 +3203,86 @@ Provide Default Host in Static field if you have selected 'Create new private ap
             NetskopeException: Error in the response.
             NetskopeException: Non-2xx status code.
         """
-        (
-            success,
-            append_privateapp_netskope,
-        ) = handle_exception(
-            self.session.patch,
-            error_code="CRE_1045",
-            custom_message="Error occurred while adding host to private app to Netskope",
-            plugin=self.log_prefix,
-            url=URLS["V2_PRIVATE_APP_PATCH"].format(tenant, app_id),
-            json=data,
+        logger_msg = "adding host to private app"
+        url = (
+            f"{tenant}{URLS.get('V2_PRIVATE_APP_PATCH').format(app_id)}"
         )
-        if not success or append_privateapp_netskope.status_code not in [
-            200,
-            201,
-        ]:
+        headers = {
+            "Netskope-API-Token": resolve_secret(
+                self.tenant.parameters.get("v2token", "")
+            )
+        }
+        try:
+            append_privateapp_response = self.netskope_helper._api_call_helper(
+                url=url,
+                method="patch",
+                error_codes=["CRE_1045", "CRE_1046"],
+                headers=headers,
+                json=data,
+                proxies=self.proxy,
+                message=f"Error occurred while {logger_msg}",
+                logger_msg=logger_msg,
+                is_handle_error_required=False
+            )
+            if append_privateapp_response.status_code not in [
+                200,
+                201,
+            ]:
+                err_msg = (
+                    f"Error occurred while {logger_msg}. "
+                )
+                self.logger.error(
+                    message=err_msg,
+                    details=str(append_privateapp_response.text),
+                )
+                raise NetskopeException(
+                    "Could not share host."
+                )
+
+            append_privateapp_response = handle_status_code(
+                append_privateapp_response,
+                error_code="CRE_1046",
+                custom_message=f"Error occurred while {logger_msg}",
+                plugin=self.log_prefix,
+                notify=False,
+                log=True,
+            )
+            if append_privateapp_response.get("status", "") != "success":
+                self.logger.error(
+                    message=(
+                        f"{self.log_prefix}: Error occurred while "
+                        f"{logger_msg}."
+                    ),
+                    details=repr(append_privateapp_response),
+                )
+                raise NetskopeException(
+                    "Could not add host to private app."
+                )
+
+            self.logger.info(
+                f"{self.log_prefix}: Successfully updated the private app for "
+                f"configuration {self.plugin_name}."
+            )
+        except NetskopeException:
+            raise
+        except Exception as err:
+            error_message = f"Error occurred while {logger_msg}."
             self.logger.error(
-                f"{self.log_prefix}: Error occurred while adding host to private app.",
-                details=repr(success),
+                message=(
+                    f"{self.log_prefix}: {error_message} "
+                    f"Error: {err}"
+                ),
+                details=str(traceback.format_exc()),
             )
-            raise NetskopeException(
-                f"{self.log_prefix}: Could not share host."
-            )
-
-        patch_private_app_json = handle_status_code(
-            append_privateapp_netskope,
-            error_code="CRE_1046",
-            custom_message="Error occurred while updating private app in Netskope",
-            plugin=self.log_prefix,
-            notify=False,
-        )
-
-        if patch_private_app_json.get("status", "") != "success":
-            self.logger.error(
-                f"{self.log_prefix}: Error occurred while adding host to private app. "
-                f"Received exit code {append_privateapp_netskope.status_code}.",
-                details=repr(patch_private_app_json),
-            )
-            raise NetskopeException(
-                f"{self.log_prefix}: Could not add host to private app."
-            )
-
-        self.logger.info(
-            f"{self.log_prefix}: Successfully updated the private app for "
-            f"configuration {self.plugin_name}."
-        )
+            raise NetskopeException(error_message)
         return
 
     def _execute_private_app_action(self, action_dict: dict):
-        """Execute action on the given parameters."""
-        self.session = requests.Session()
-        self.session.headers.update(
-            add_installation_id(
-                add_user_agent(
-                    {
-                        "Netskope-API-Token": resolve_secret(
-                            self.tenant.parameters["v2token"]
-                        ),
-                    }
-                )
-            )
-        )
+        """Execute action on the given parameters.
+
+        Args:
+            action_dict (dict): Action parameters.
+        """
         protocols = action_dict.get("protocol", [])
         tcp_port = action_dict.get("tcp_ports", "") or ""
         tcp_port_list = [
@@ -2377,7 +3293,7 @@ Provide Default Host in Static field if you have selected 'Create new private ap
             port.strip() for port in udp_port.split(",") if port.strip()
         ]
         use_publisher_dns = action_dict.get("use_publisher_dns", False)
-        if not action_dict.get("host"):
+        if not action_dict.get("host", ""):
             err_msg = (
                 "Empty Host found in the record. "
                 "Host can not be empty."
@@ -2393,7 +3309,8 @@ Provide Default Host in Static field if you have selected 'Create new private ap
                 if len(tag) > 30:
                     err_msg = (
                         "Found tag length greater than 30 characters. "
-                        "Tag length should be less than or equal to 30 characters."
+                        "Tag length should be less than or "
+                        "equal to 30 characters."
                     )
                     self.logger.error(
                         message=err_msg,
@@ -2402,7 +3319,7 @@ Provide Default Host in Static field if you have selected 'Create new private ap
                     raise NetskopeException(err_msg)
 
         return self._push_private_app(
-            action_dict["host"],
+            action_dict.get("host", ""),
             existing_private_app_name=action_dict.get("private_app_name", ""),
             new_private_app_name=action_dict.get("name", ""),
             protocol_type=protocols,
@@ -2415,14 +3332,26 @@ Provide Default Host in Static field if you have selected 'Create new private ap
         )
 
     def execute_action(self, action: Action):
-        """Execute action on the user."""
+        """Execute action on the user.
+
+        Args:
+            action (Action): Action object.
+        """
         helper = AlertsHelper()
         self.tenant = helper.get_tenant_crev2(self.name)
         action.parameters = get_latest_values(
             action.parameters,
             exclude_keys=["host", "tags", "protocol", "publishers"],
         )
+        self.logger.info(
+            f"{self.log_prefix}: Executing '{action.label}' action."
+        )
         if action.value == "generate":
+            self.logger.info(
+                f"{self.log_prefix}: Successfully executed '{action.label}' "
+                "action. Note: No processing will be done from plugin for "
+                f"the '{action.label}' action."
+            )
             return
         elif action.value == "impact":
             user, score, source, reason = (
@@ -2435,7 +3364,33 @@ Provide Default Host in Static field if you have selected 'Create new private ap
                 reason,
             )
             self.logger.info(
-                f"{self.log_prefix}: UCI score updated for user {user} successfully."
+                f"{self.log_prefix}: UCI score updated for user {user} "
+                "successfully."
+            )
+            return
+        elif action.value == "uci_reset":
+            user_list, skipped_users = (
+                self._process_params_for_reset_action(action.parameters, True)
+            )
+            if skipped_users > 0:
+                err_msg = (
+                    f"Skipped {skipped_users} user email(s) "
+                    "due to invalid email address."
+                )
+                self.logger.info(f"{self.log_prefix}: {err_msg}")
+            if not user_list:
+                err_msg = (
+                    "Invalid user email(s) provided in "
+                    "configuration parameters."
+                )
+                self.logger.error(f"{self.log_prefix}: {err_msg}")
+                raise NetskopeException(err_msg)
+            self._reset_uci_score(
+                user_list
+            )
+            self.logger.info(
+                f"{self.log_prefix}: UCI score reset successfully "
+                f"for user {', '.join(user_list)}'."
             )
             return
         elif action.value in ["add", "remove"]:
@@ -2443,10 +3398,14 @@ Provide Default Host in Static field if you have selected 'Create new private ap
             users = self._get_all_users()
             match = self._find_user_by_email(users, user)
             if match is None:
-                self.logger.info(
-                    f"{self.log_prefix}: User with email {user} not found on Netskope via SCIM."
+                err_message = (
+                    f"User with email {user} not found on the Netskope "
+                    "Tenant via SCIM."
                 )
-                return
+                self.logger.error(
+                    f"{self.log_prefix}: {err_message}"
+                )
+                raise NetskopeException(err_message)
             if action.value == "add":
                 group_id = action.parameters.get("group", "")
                 if group_id == "create":
@@ -2457,71 +3416,75 @@ Provide Default Host in Static field if you have selected 'Create new private ap
                         group = self._create_group(
                             self.configuration, group_name
                         )
-                        group_id = group["id"]
+                        group_id = group.get("id", "")
                     else:
-                        group_id = group_match["id"]
+                        group_id = group_match.get("id", "")
                 self._add_to_group(
                     self.configuration,
-                    [{"value": match["id"]}],
+                    [{"value": match.get("id", "")}],
                     group_id
                 )
                 self.logger.info(
-                    f"{self.log_prefix}: Added {user} to group with ID {group_id} successfully."
+                    f"{self.log_prefix}: Added {user} to group with "
+                    f"ID {group_id} successfully."
                 )
             if action.value == "remove":
                 self._remove_from_group(
                     self.configuration,
-                    [{"value": match["id"]}],
+                    [{"value": match.get("id", "")}],
                     action.parameters.get("group", ""),
                 )
                 self.logger.info(
                     f"{self.log_prefix}: Removed {user} from group with ID "
-                    f"{action.parameters.get('group')} successfully."
+                    f"{action.parameters.get('group', '')} successfully."
                 )
         elif action.value == "private_app":
             self._execute_private_app_action(action.parameters)
         elif action.value == "tag_app":
-            self.session = requests.Session()
-            self.session.headers.update(
-                add_installation_id(
-                    add_user_agent(
-                        {
-                            "Netskope-API-Token": resolve_secret(
-                                self.tenant.parameters["v2token"]
-                            ),
-                        }
-                    )
+            # Append for adding the tags, remove for removing the tags
+            (
+                tags,
+                apps,
+                ids,
+                cci_tag_action
+            ) = self._process_params_for_add_tag_action(
+                action.parameters, True
+            )
+            self._tag_application(tags, apps, ids, cci_tag_action)
+            logger_msg = (
+                f"Added tag(s) {','.join(tags)} to "
+                "application(s) successfully"
+            )
+            if cci_tag_action == "remove":
+                logger_msg = (
+                    f"Removed tag(s) {','.join(tags)} from "
+                    "application(s) successfully"
                 )
-            )
-            tags, apps, ids = self._process_params_for_add_tag_action(
-                action.parameters
-            )
-            self._tag_application(tags, apps, ids)
             self.logger.info(
-                f"{self.log_prefix}: Added tag(s) {','.join(tags)} to application(s) successfully."
+                f"{self.log_prefix}: {logger_msg}."
             )
         elif action.value == "app_instance":
             instance_id, instance_name, app, tags = (
                 self._process_params_for_app_instance_action(action.parameters)
             )
 
-            self.session = requests.Session()
-            self.session.headers.update(
-                add_installation_id(add_user_agent({}))
-            )
-
-            token = resolve_secret(self.tenant.parameters["token"])
+            token = resolve_secret(self.tenant.parameters.get("token", ""))
 
             self._create_app_instance(
                 instance_id, instance_name, app, tags, token
             )
 
             self.logger.info(
-                f"{self.log_prefix}: Created/updated app instance {instance_name} successfully."
+                f"{self.log_prefix}: Created/updated app instance "
+                f"{instance_name} successfully."
             )
 
     def execute_actions(self, actions: List[Action]):
-        """Execute actions in bulk."""
+        """Execute actions in bulk.
+
+        Args:
+            actions (List[Action]): List of Action objects.
+        """
         helper = AlertsHelper()
         self.tenant = helper.get_tenant_crev2(self.name)
         first_action = actions[0]
@@ -2535,9 +3498,9 @@ Provide Default Host in Static field if you have selected 'Create new private ap
             for action in actions:
                 private_apps.setdefault(
                     (
-                        action.parameters["private_app_name"]
-                        if action.parameters["private_app_name"] != "create"
-                        else action.parameters["name"]
+                        action.parameters.get("private_app_name", "")
+                        if action.parameters.get("private_app_name", "") != "create"
+                        else action.parameters.get("name", "")
                     ),
                     [],
                 ).append(action.parameters)
@@ -2545,9 +3508,13 @@ Provide Default Host in Static field if you have selected 'Create new private ap
                 first_action = batched_actions[0]
                 params = first_action.copy()
                 params["host"] = [
-                    action["host"]
+                    host_item
                     for action in batched_actions
-                    if action["host"]
+                    for host_item in (
+                        action["host"] if isinstance(action["host"], list)
+                        else [action["host"]]
+                    )
+                    if host_item
                 ]
                 params = get_latest_values(
                     params,
@@ -2576,12 +3543,13 @@ Provide Default Host in Static field if you have selected 'Create new private ap
                         group_id = group_match.get("id", "")
 
                 for action in actions:
-                    user = action.parameters.get("user", "")
+                    params = get_latest_values(action.parameters)
+                    user = params.get("user", "")
                     match = self._find_user_by_email(all_users, user)
                     if match is None:
                         self.logger.info(
                             f"{self.log_prefix}: User with email {user} "
-                            f"not found on Netskope via SCIM. "
+                            f"not found on the Netskope Tenant via SCIM. "
                             "Hence skipping execution of action "
                             f"'{action_label}' on '{user}'."
                         )
@@ -2589,7 +3557,7 @@ Provide Default Host in Static field if you have selected 'Create new private ap
                         continue
 
                     bulk_payload.append(
-                        {"value": match["id"]}
+                        {"value": match.get("id", "")}
                     )
 
                 total_users = 0
@@ -2619,22 +3587,23 @@ Provide Default Host in Static field if you have selected 'Create new private ap
                     self.logger.info(
                         f"{self.log_prefix}: Skipped adding {skip_count} "
                         f"user(s) to the group with ID '{group_id}' as they "
-                        "were not found on Netskope."
+                        "were not found on the Netskope Tenant."
                     )
                 self.logger.info(
-                    f"{self.log_prefix}: Sucessfully added "
+                    f"{self.log_prefix}: Successfully added "
                     f"{len(bulk_payload)} user(s) to the group with "
                     f"ID '{group_id}'."
                 )
             elif first_action.value == "remove":
                 group_id = action_parameters.get("group", "")
                 for action in actions:
-                    user = action.parameters.get("user", "")
+                    params = get_latest_values(action.parameters)
+                    user = params.get("user", "")
                     match = self._find_user_by_email(all_users, user)
                     if match is None:
                         self.logger.info(
                             f"{self.log_prefix}: User with email {user} "
-                            f"not found on Netskope via SCIM. "
+                            f"not found on the Netskope Tenant via SCIM. "
                             "Hence skipping execution of action "
                             f"'{action_label}' on '{user}'."
                         )
@@ -2642,7 +3611,7 @@ Provide Default Host in Static field if you have selected 'Create new private ap
                         continue
 
                     bulk_payload.append(
-                        {"value": match["id"]}
+                        {"value": match.get("id", "")}
                     )
 
                 total_removed = 0
@@ -2672,30 +3641,24 @@ Provide Default Host in Static field if you have selected 'Create new private ap
                     self.logger.info(
                         f"{self.log_prefix}: Skipped removing {skip_count} "
                         f"user(s) from the group with ID '{group_id}' "
-                        "as they were not found on Netskope."
+                        "as they were not found on the Netskope Tenant."
                     )
                 self.logger.info(
-                    f"{self.log_prefix}: Sucessfully removed "
+                    f"{self.log_prefix}: Successfully removed "
                     f"{len(bulk_payload)} user(s) from the group with ID "
                     f"'{group_id}'."
                 )
         elif first_action.value == "tag_app":
-            self.session = requests.Session()
-            self.session.headers.update(
-                add_installation_id(
-                    add_user_agent(
-                        {
-                            "Netskope-API-Token": resolve_secret(
-                                self.tenant.parameters["v2token"]
-                            ),
-                        }
-                    )
-                )
-            )
             tags_ids_apps = {}
             for action in actions:
-                tags, apps, ids = self._process_params_for_add_tag_action(
-                    action.parameters
+                (
+                    tags,
+                    apps,
+                    ids,
+                    cci_tag_action
+                ) = self._process_params_for_add_tag_action(
+                    action.parameters,
+                    True
                 )
 
                 for tag in tags:
@@ -2710,102 +3673,115 @@ Provide Default Host in Static field if you have selected 'Create new private ap
                         tags_ids_apps[tag]["ids"] = (
                             list(set(tags_ids_apps[tag]["ids"]) | set(ids))
                         )
-            self._bulk_tag_application(tags_ids_apps)
-            self.logger.info(
-                f"{self.log_prefix}: Successfully added tag(s) "
-                f"{','.join(tags_ids_apps.keys())} to application(s)."
+            skipped_tags_info = self._bulk_tag_application(
+                tags_ids_apps,
+                cci_tag_action
             )
+            log_msg_add_remove = (
+                "tagged" if cci_tag_action == "append" else "untagged"
+            )
+            for tag, counts in skipped_tags_info.items():
+                self.logger.info(
+                    f"{self.log_prefix}: Successfully {log_msg_add_remove} "
+                    f"{counts['tagged']} and skipped {counts['skipped']} "
+                    f"application(s) with tag '{tag}'."
+                )
         elif first_action.value == "app_instance":
             bulk_app_instance_payload = {
                 "update": [],
                 "add": []
             }
             skip_count = 0
-            self.session = requests.Session()
-            self.session.headers.update(
-                add_installation_id(add_user_agent({}))
+            tenant_name = (
+                self.tenant.parameters.get('tenantName', '').strip()
             )
-            tenant_name = self.tenant.parameters["tenantName"].strip()
-            token = resolve_secret(self.tenant.parameters["token"])
-            for action in actions:
-                instance_id, instance_name, app, tags = (
-                    self._process_params_for_app_instance_action(
-                        action.parameters
+            token = resolve_secret(self.tenant.parameters.get("token", ""))
+            logger_msg = "listing app instances"
+            try:
+                for action in actions:
+                    params = get_latest_values(action.parameters)
+                    instance_id, instance_name, app, tags = (
+                        self._process_params_for_app_instance_action(
+                            params
+                        )
                     )
-                )
-                list_instances_success, list_instances = handle_exception(
-                    self.session.post,
-                    error_code="CRE_1045",
-                    custom_message=(
-                        "Error occurred while listing app instances."
-                    ),
-                    plugin=self.log_prefix,
-                    url=URLS["V1_APP_INSTANCE"].format(tenant_name),
-                    params={
+                    url = (
+                        f"{tenant_name}{URLS.get('V1_APP_INSTANCE')}"
+                    )
+                    params = {
                         "op": "list",
                         "app": app,
                         "instance_id": instance_id,
                         "instance_name": instance_name,
-                    },
-                    data={"token": token},
-                )
-                if not list_instances_success:
-                    skip_count += 1
-                    err_msg = (
-                        "Error occurred while listing app instances "
-                        "from Netskope."
+                    }
+                    list_instances_response = self.netskope_helper._api_call_helper(
+                        url=url,
+                        method="post",
+                        error_codes=["CRE_1045", "CRE_1049"],
+                        params=params,
+                        data={"token": token},
+                        proxies=self.proxy,
+                        message=f"Error occurred while {logger_msg}",
+                        logger_msg=logger_msg,
                     )
-                    self.logger.error(f"{self.log_prefix}: {err_msg}")
-                    raise NetskopeException(err_msg) from list_instances
-                list_instances_response = handle_status_code(
-                    list_instances,
-                    error_code="CRE1049",
-                    custom_message=(
-                        "Error occurred while listing app instances "
-                        "from Netskope."
+                    if (
+                        list_instances_response.get("status", "").lower() !=
+                        SUCCESS.lower()
+                    ):
+                        skip_count += 1
+                        err_msg = (
+                            f"Error occurred while {logger_msg} "
+                            "from the Netskope Tenant."
+                        )
+                        self.logger.error(
+                            message=f"{self.log_prefix}: {err_msg} ",
+                            details=json.dumps(list_instances_response),
+                        )
+                        raise NetskopeException(err_msg)
+                    if list_instances_response.get("data", []):
+                        bulk_app_instance_payload.get("update", []).append(
+                            {
+                                "instance_id": instance_id,
+                                "instance_name": instance_name,
+                                "app": app,
+                                "tags": tags
+                            }
+                        )
+                    else:
+                        bulk_app_instance_payload.get("add", []).append(
+                            {
+                                "instance_id": instance_id,
+                                "instance_name": instance_name,
+                                "app": app,
+                                "tags": tags
+                            }
+                        )
+            except NetskopeException:
+                raise
+            except Exception as err:
+                error_message = f"Error occurred while {logger_msg}."
+                self.logger.error(
+                    message=(
+                        f"{self.log_prefix}: {error_message} "
+                        f"Error: {err}"
                     ),
-                    plugin=self.log_prefix,
-                    notify=False,
+                    details=str(traceback.format_exc()),
                 )
-                if (
-                    list_instances_response.get("status").lower() !=
-                    SUCCESS.lower()
-                ):
-                    skip_count += 1
-                    err_msg = (
-                        "Error occurred while listing app instances "
-                        "from Netskope."
-                    )
-                    self.logger.error(
-                        f"{self.log_prefix}: {err_msg} "
-                        f"Received exit code {list_instances.status_code}.",
-                        details=json.dumps(list_instances_response),
-                    )
-                    raise NetskopeException(err_msg)
-                if list_instances_response.get("data"):
-                    bulk_app_instance_payload.get("update").append(
-                        {
-                            "instance_id": instance_id,
-                            "instance_name": instance_name,
-                            "app": app,
-                            "tags": tags
-                        }
-                    )
-                else:
-                    bulk_app_instance_payload.get("add").append(
-                        {
-                            "instance_id": instance_id,
-                            "instance_name": instance_name,
-                            "app": app,
-                            "tags": tags
-                        }
-                    )
+                raise NetskopeException(error_message)
 
-            self._create_update_app_instance_bulk(
+            success = self._create_update_app_instance_bulk(
                 bulk_app_instance_payload,
                 tenant_name,
                 token
             )
+            if not success:
+                err_msg = (
+                    "Error occurred while creating/updating app instance(s)."
+                )
+                self.logger.error(
+                    message=f"{self.log_prefix}: {err_msg}",
+                )
+                raise NetskopeException(err_msg)
             if skip_count > 0:
                 self.logger.info(
                     f"{self.log_prefix}: Skipped creating/updating "
@@ -2813,14 +3789,44 @@ Provide Default Host in Static field if you have selected 'Create new private ap
                 )
             self.logger.info(
                 f"{self.log_prefix}: Successfully "
-                f"created {len(bulk_app_instance_payload.get('add'))} and "
-                f"updated {len(bulk_app_instance_payload.get('update'))} "
+                f"created {len(bulk_app_instance_payload.get('add', []))} and "
+                f"updated {len(bulk_app_instance_payload.get('update', []))} "
                 "app instance(s)."
+            )
+        elif first_action.value == "uci_reset":
+            user_list = []
+            total_skipped_users = 0
+            for action in actions:
+                params = get_latest_values(action.parameters)
+                users, skipped_users = self._process_params_for_reset_action(
+                    params, True
+                )
+                user_list.extend(users)
+                total_skipped_users += skipped_users
+            if total_skipped_users > 0:
+                err_msg = (
+                    f"Skipped {total_skipped_users} user email(s) "
+                    "due to invalid email address."
+                )
+                self.logger.info(f"{self.log_prefix}: {err_msg}")
+            if not user_list:
+                err_msg = (
+                    "Invalid user email(s) provided in "
+                    "configuration parameters."
+                )
+                self.logger.error(f"{self.log_prefix}: {err_msg}")
+                raise NetskopeException(err_msg)
+            self._reset_uci_score(user_list)
+            self.logger.info(
+                f"{self.log_prefix}: UCI score reset for {len(user_list)} "
+                "user(s) successfully."
             )
         elif first_action.value == "generate":
             self.logger.info(
                 f"{self.log_prefix}: Successfully performed action "
                 f"'{action_label}' on {len(actions)} records."
+                "Note: No processing will be done from plugin for "
+                f"the '{action_label}' action."
             )
             return
         else:
@@ -2840,6 +3846,7 @@ Provide Default Host in Static field if you have selected 'Create new private ap
             auth_token (str): Auth token.
         """
         op_counter = 1
+        success = True
         for op, payload in bulk_payload.items():
             batch = 1
             create_update_msg = 'updating' if op == 'update' else 'adding'
@@ -2856,49 +3863,71 @@ Provide Default Host in Static field if you have selected 'Create new private ap
                 batch_app_instances = payload[
                     index: index + APP_INSTANCE_BATCH_SIZE
                 ]
-                create_instance_success, create_instance = handle_exception(
-                    self.session.post,
-                    error_code="CRE_1044",
-                    custom_message=(
-                        f"Error occurred while {create_update_msg} "
-                        f"app instance for batch {batch}."
-                    ),
-                    plugin=self.log_prefix,
-                    url=URLS["V1_APP_INSTANCE"].format(tenant_name),
-                    params={"op": op},
-                    json={
-                        "instances": batch_app_instances,
-                        "token": auth_token,
-                    },
+                url = (
+                    f"{tenant_name}{URLS.get('V1_APP_INSTANCE')}"
                 )
-                if not create_instance_success:
-                    err_msg = (
-                        f"Error occurred while {create_update_msg} "
-                        f"app instance on Netskope for batch {batch}."
-                    )
-                    self.logger.error(f"{self.log_prefix}: {err_msg}")
-                    continue
-                create_instance_response = handle_status_code(
-                    create_instance,
-                    error_code="CRE1048",
-                    custom_message=(
-                        f"Error occurred while {create_update_msg} "
-                        f"app instance on Netskope for batch {batch}."
-                    ),
-                    plugin=self.log_prefix,
-                    notify=False,
+                params = {"op": op}
+                logger_msg = (
+                    f"{create_update_msg} app instance for batch {batch}"
                 )
-                if create_instance_response.get("status").lower() != SUCCESS.lower():
-                    err_msg = (
-                        f"Error occurred while {create_update_msg} "
-                        f"app instance on Netskope for batch {batch}."
+                try:
+                    create_instance_response = self.netskope_helper._api_call_helper(
+                        url=url,
+                        method="post",
+                        error_codes=["CRE_1044", "CRE_1048"],
+                        params=params,
+                        json={
+                            "instances": batch_app_instances,
+                            "token": auth_token,
+                        },
+                        proxies=self.proxy,
+                        message=f"Error occurred while {logger_msg}",
+                        logger_msg=logger_msg,
                     )
+                    if create_instance_response.get("errors", []):
+                        if len(create_instance_response.get("errors", [])) > 0:
+                            errs = ", ".join(
+                                create_instance_response.get("errors", [])
+                            )
+                            err_msg = (
+                                f"Error occurred while {create_update_msg} "
+                                "app instance on the Netskope Tenant "
+                                f"for batch {batch}."
+                            )
+                            self.logger.error(
+                                message=f"{self.log_prefix}: {err_msg} ",
+                                details=errs,
+                            )
+                            success = False
+                            continue
+                    elif (
+                        create_instance_response.get("status", "").lower() !=
+                        SUCCESS.lower()
+                    ):
+                        err_msg = (
+                            f"Error occurred while {create_update_msg} "
+                            "app instance on the Netskope Tenant "
+                            f"for batch {batch}."
+                        )
+                        self.logger.error(
+                            message=f"{self.log_prefix}: {err_msg} ",
+                            details=json.dumps(create_instance_response),
+                        )
+                        success = False
+                        continue
+                    success = True
+                except NetskopeException:
+                    raise
+                except Exception as err:
+                    error_message = f"Error occurred while {logger_msg}."
                     self.logger.error(
-                        f"{self.log_prefix}: {err_msg} "
-                        f"Received exit code {create_instance.status_code}.",
-                        details=json.dumps(create_instance_response),
+                        message=(
+                            f"{self.log_prefix}: {error_message} "
+                            f"Error: {err}"
+                        ),
+                        details=str(traceback.format_exc()),
                     )
-                    continue
+                    raise NetskopeException(error_message)
                 total_app_instances += len(batch_app_instances)
                 added_msg = 'updated' if op == 'update' else 'added'
                 self.logger.info(
@@ -2909,129 +3938,257 @@ Provide Default Host in Static field if you have selected 'Create new private ap
                     f"{total_app_instances}."
                 )
                 batch += 1
-            op_counter += 1
+            if op_counter and payload:
+                op_counter += 1
+        return success
 
     def _bulk_tag_application(
-        self, tags_ids_apps: dict
+        self, tags_ids_apps: dict, cci_tag_action: str
     ):
         """Bulk tag application.
 
         Args:
             tags_ids_apps (dict): Dictionary of tags and ids/apps.
+            cci_tag_action (str): Action to perform.
         """
         tenant_name = self.tenant.parameters.get("tenantName", "").strip()
+        headers = {
+            "Netskope-API-Token": resolve_secret(
+                self.tenant.parameters.get("v2token", "")
+            )
+        }
+        tags_apps_info = {}
         for tag, values in tags_ids_apps.items():
             apps = values.get("apps", [])
             ids = values.get("ids", [])
             total = apps + ids
-            batch_count = 1
-            total_tagged_count = 0
+            batch_count = 0
+            tagged_count = 0
+            skip_tag_count = 0
+            if len(tag) > TAG_APP_TAG_LENGTH:
+                self.logger.info(
+                    f"{self.log_prefix}: Skipping "
+                    f"{'tagging' if cci_tag_action == 'append' else 'untagging'} "
+                    f"application(s) with the tag '{tag}' "
+                    "as the tag name contains more than "
+                    f"{TAG_APP_TAG_LENGTH} characters."
+                )
+                tags_apps_info[tag] = {
+                    "skipped": len(total),
+                    "tagged": 0,
+                }
+                continue
             for i in range(0, len(total), TAG_APP_BATCH_SIZE):
+                batch_count += 1
                 batch = total[i: i + TAG_APP_BATCH_SIZE]
                 data = (
                     {"tag": tag}
                     | ({"apps": batch} if apps else {})
                     | ({"ids": batch} if ids else {})
                 )
-
-                add_tags_success, add_tags = handle_exception(
-                    self.session.post,
-                    error_code="CRE_1043",
-                    custom_message=(
-                        f"Error occurred while creating the tag '{tag}' "
-                        f"for batch {batch_count}."
-                    ),
-                    plugin=self.log_prefix,
-                    url=URLS["V2_CCI_TAG_CREATE"].format(tenant_name),
-                    json=data,
+                data["action"] = cci_tag_action
+                url = (
+                    f"{tenant_name}{URLS.get('V2_CCI_TAG_CREATE')}"
                 )
-                if not add_tags_success:
-                    err_msg = (
-                        f"Error occurred while tagging "
-                        f"the application on Netskope for batch "
-                        f"{batch_count}."
-                    )
-                    self.logger.error(f"{self.log_prefix}: {err_msg}")
-                    raise NetskopeException(err_msg) from add_tags
-                add_tags_response = handle_status_code(
-                    add_tags,
-                    error_code="CRE1046",
-                    custom_message=(
-                        f"Error occurred while creating a tag '{tag}' "
-                        f"on Netskope for batch {batch_count}."
-                    ),
-                    plugin=self.log_prefix,
-                    notify=False,
+                log_message = (
+                    f"tagging application(s) "
+                    f"with the tag '{tag}' for batch {batch_count}"
                 )
-                if add_tags_response.get("message") == ERROR_APP_DOES_NOT_EXIST:
-                    err_msg = (
-                        f"Error occurred while tagging "
-                        f"the application on Netskope for batch "
-                        f"{batch_count}. Invalid app provided."
+                if cci_tag_action == "remove":
+                    log_message = (
+                        f"untagging application(s) "
+                        f"with the tag '{tag}' for batch {batch_count}"
                     )
-                    self.logger.error(f"{self.log_prefix}: {err_msg}")
-                    raise NetskopeException(err_msg)
-                elif add_tags_response.get("status_code") == 400:
-                    # either the tag is one of the pre-defined ones or
-                    # the tag already exists;
-                    # try updating the existing record
-                    update_tags_success, update_tags = handle_exception(
-                        self.session.patch,
-                        error_code="CRE_1043",
-                        custom_message=(
-                            f"Error occurred while creating the '{tag}' tag "
-                            f"for batch {batch_count}."
-                        ),
-                        plugin=self.log_prefix,
-                        url=URLS["V2_CCI_TAG_UPDATE"].format(tenant_name, tag),
-                        json=data,
-                    )
-                    if not update_tags_success:
-                        err_msg = (
-                            f"Error occurred while tagging "
-                            f"the application on Netskope for batch "
-                            f"{batch_count}."
+                try:
+                    if cci_tag_action == "append":
+                        logger_msg = (
+                            f"creating the tag '{tag}' for tagging "
+                            f"application(s) for batch {batch_count}"
                         )
-                        self.logger.error(f"{self.log_prefix}: {err_msg}")
-                        raise NetskopeException(err_msg) from update_tags
-                    update_tags_response = handle_status_code(
-                        update_tags,
-                        error_code="CRE1047",
-                        custom_message=(
-                            f"Error occurred while updating the '{tag}' tag "
-                            f"on Netskope for batch {batch_count}."
-                        ),
-                        plugin=self.log_prefix,
-                        notify=False,
-                    )
-
-                    if update_tags_response.get("status") != SUCCESS:
-                        self.logger.error(
-                            f"{self.log_prefix}: Error occurred while tagging "
-                            f"the application on Netskope for batch "
-                            f"{batch_count}. "
-                            f"Received exit code {update_tags.status_code}.",
-                            details=json.dumps(update_tags_response),
+                        add_tags_response = self.netskope_helper._api_call_helper(
+                            url=url,
+                            method="post",
+                            error_codes=["CRE_1043", "CRE_1046"],
+                            json=data,
+                            headers=headers,
+                            proxies=self.proxy,
+                            message=f"Error occurred while {logger_msg}",
+                            logger_msg=logger_msg,
                         )
-
-                elif add_tags_response.get("status") != SUCCESS:
-                    err_msg = (
-                        f"Error occurred while tagging "
-                        f"the application on Netskope for batch "
-                        f"{batch_count}."
-                    )
+                        if (
+                            add_tags_response.get("message", "") ==
+                            ERROR_APP_DOES_NOT_EXIST
+                        ):
+                            err_msg = (
+                                f"Error occurred while {log_message}. "
+                                "Invalid Application Name/ID provided."
+                            )
+                            self.logger.error(f"{self.log_prefix}: {err_msg}")
+                            skip_tag_count += len(batch)
+                            continue
+                        elif (
+                            add_tags_response.get("status_code") == 400 and
+                            TAG_EXISTS in add_tags_response.get("error", "")
+                        ):
+                            # either the tag is one of the pre-defined ones or
+                            # the tag already exists;
+                            # try updating the existing record
+                            url = (
+                                f"{tenant_name}"
+                                f"{URLS.get('V2_CCI_TAG_UPDATE').format(tag)}"
+                            )
+                            update_tags_response = self.netskope_helper._api_call_helper(
+                                url=url,
+                                method="patch",
+                                error_codes=["CRE_1043", "CRE_1047"],
+                                json=data,
+                                headers=headers,
+                                proxies=self.proxy,
+                                message=(
+                                    f"Error occurred while {log_message}"
+                                ),
+                                logger_msg=log_message,
+                            )
+                            if (
+                                update_tags_response.get("message", "") ==
+                                ERROR_APP_DOES_NOT_EXIST
+                            ):
+                                error_msg = (
+                                    f"Error occurred while "
+                                    f"{log_message}. "
+                                    "Invalid Application Name/ID provided."
+                                )
+                                self.logger.error(
+                                    f"{self.log_prefix}: {error_msg}"
+                                )
+                                skip_tag_count += len(batch)
+                                continue
+                            elif (
+                                TAG_NOT_FOUND in update_tags_response.get(
+                                    "error", ""
+                                )
+                            ):
+                                error_msg = (
+                                    f"Error occurred while "
+                                    f"{log_message}. "
+                                    f"Tag '{tag}' does not exists."
+                                )
+                                self.logger.error(
+                                    f"{self.log_prefix}: {error_msg}"
+                                )
+                                skip_tag_count += len(batch)
+                                continue
+                            elif update_tags_response.get("status", "") != SUCCESS:
+                                error_msg = (
+                                    "Error occurred while "
+                                    f"{log_message}."
+                                )
+                                self.logger.error(
+                                    message=(
+                                        f"{self.log_prefix}: {error_msg}"
+                                    ),
+                                    details=json.dumps(update_tags_response),
+                                )
+                                skip_tag_count += len(batch)
+                                continue
+                        elif add_tags_response.get("status", "") != SUCCESS:
+                            err_msg = (
+                                f"Error occurred while {logger_msg}."
+                            )
+                            self.logger.error(
+                                message=f"{self.log_prefix}: {err_msg}",
+                                details=json.dumps(add_tags_response),
+                            )
+                            skip_tag_count += len(batch)
+                            continue
+                    else:
+                        url = (
+                            f"{tenant_name}"
+                            f"{URLS.get('V2_CCI_TAG_UPDATE').format(tag)}"
+                        )
+                        update_tags_response = self.netskope_helper._api_call_helper(
+                            url=url,
+                            method="patch",
+                            error_codes=["CRE_1043", "CRE_1047"],
+                            headers=headers,
+                            json=data,
+                            proxies=self.proxy,
+                            message=f"Error occurred while {log_message}",
+                            logger_msg=log_message,
+                        )
+                        if (
+                            update_tags_response.get("message", "") ==
+                            ERROR_APP_DOES_NOT_EXIST
+                        ):
+                            error_msg = (
+                                f"Error occurred while "
+                                f"{log_message}. "
+                                "Invalid Application Name/ID provided."
+                            )
+                            self.logger.error(
+                                f"{self.log_prefix}: {error_msg}"
+                            )
+                            skip_tag_count += len(batch)
+                            continue
+                        elif (
+                            TAG_NOT_FOUND in update_tags_response.get(
+                                "error", ""
+                            )
+                        ):
+                            error_msg = (
+                                f"Error occurred while "
+                                f"{log_message}. "
+                                f"Tag '{tag}' does not exists."
+                            )
+                            self.logger.error(
+                                f"{self.log_prefix}: {error_msg}"
+                            )
+                            skip_tag_count += len(batch)
+                            continue
+                        elif update_tags_response.get("status", "") != SUCCESS:
+                            error_msg = (
+                                "Error occurred while "
+                                f"{log_message}."
+                            )
+                            self.logger.error(
+                                message=(
+                                    f"{self.log_prefix}: {error_msg}"
+                                ),
+                                details=json.dumps(update_tags_response),
+                            )
+                            skip_tag_count += len(batch)
+                            continue
+                except Exception as err:
+                    error_message = f"Error occurred while {logger_msg}."
                     self.logger.error(
-                        f"{self.log_prefix}: {err_msg} "
-                        f"Received exit code {add_tags.status_code}.",
-                        details=json.dumps(add_tags_response),
+                        message=(
+                            f"{self.log_prefix}: {error_message} "
+                            f"Error: {err}"
+                        ),
+                        details=str(traceback.format_exc()),
                     )
-                    raise NetskopeException(err_msg)
+                    skip_tag_count += len(batch)
+                    continue
 
-                total_tagged_count += len(batch)
-                self.logger.info(
-                    f"{self.log_prefix}: Successfully tagged "
+                tagged_count += len(batch)
+                logger_msg = (
+                    "Successfully tagged "
                     f"{len(batch)} application(s) with tag '{tag}' "
                     f"for batch {batch_count}. "
-                    f"Total tagged applications: {total_tagged_count}."
+                    f"Total tagged applications: {tagged_count}."
                 )
-                batch_count += 1
+                if cci_tag_action == "remove":
+                    logger_msg = (
+                        "Successfully "
+                        f"untagged the tag '{tag}' from {len(batch)} "
+                        f"application(s) for batch {batch_count}. "
+                        f"Total untagged applications: {tagged_count}."
+                    )
+                self.logger.debug(
+                    f"{self.log_prefix}: {logger_msg}"
+                )
+            tags_apps_info[tag] = {
+                "skipped": skip_tag_count,
+                "tagged": tagged_count
+            }
+        return tags_apps_info

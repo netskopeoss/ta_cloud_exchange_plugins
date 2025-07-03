@@ -4,7 +4,7 @@
   "id": "jira_itsm",
   "pulling_supported": false,
   "receiving_supported": true,
-  "version": "2.0.0",
+  "version": "2.1.1",
   "module": "CTO",
   "minimum_version": "5.1.0",
   "configuration": [

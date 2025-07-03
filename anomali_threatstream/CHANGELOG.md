@@ -1,3 +1,7 @@
+# 1.3.1
+## Fixed
+- Bug fixes.
+
 # 1.3.0
 ## Added
 - Support for IoC(s) Retraction starting from CE v5.1.0.

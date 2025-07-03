@@ -1,3 +1,7 @@
+# 1.3.0
+## Added
+- Support for Global Scope account user.
+
 # 1.2.0
 ## Added
 - Support for IoC(s) Retraction.

@@ -34,7 +34,7 @@ CTE Web Page IOC Scraper Plugin constants.
 
 MODULE_NAME = "CTE"
 PLATFORM_NAME = "Web Page IOC Scraper"
-PLUGIN_VERSION = "1.1.1"
+PLUGIN_VERSION = "1.2.0"
 MAX_API_CALLS = 3
 DEFAULT_WAIT_TIME = 60
 THREAT_TYPES = ["sha256", "md5", "url", "domain", "ipv4", "ipv6"]

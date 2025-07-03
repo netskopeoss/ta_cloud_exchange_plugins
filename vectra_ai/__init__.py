@@ -1,0 +1,1 @@
+"""Vectra AI Plugin."""

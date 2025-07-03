@@ -1,18 +1,21 @@
 {
     "name": "ThreatQ",
     "id": "tq_mw_netskope",
-    "version": "1.0.2",
-    "description": "ThreatQ Plugin for Netskope",
+    "version": "1.1.0",
+    "description": "The ThreatQ plugin is used to fetch the indicators of type URL, IP (IPv4, IPv6), FQDN, SHA256 and MD5 from the ThreatQ Library > Indicators page on the ThreatQ platform. This plugin does not support sharing of indicators to ThreatQ platform.",
     "patch_supported": false,
     "push_supported": false,
+    "delete_supported": false,
+    "fetch_retraction_info": true,
+    "module": "CTE",
     "configuration": [
         {
-            "label": "ThreatQ URL",
+            "label": "ThreatQ Base URL",
             "key": "tq_host",
             "type": "text",
             "default": "",
             "mandatory": true,
-            "description": "This is the URL to the ThreatQ instance."
+            "description": "Base URL of the ThreatQ instance to pull indicators from."
         },
         {
             "label": "ThreatQ Client ID",
@@ -20,7 +23,7 @@
             "type": "text",
             "default": "",
             "mandatory": true,
-            "description": "This is the ThreatQ Oauth2 Client ID."
+            "description": "ThreatQ Oauth2 Client ID."
         },
         {
             "label": "ThreatQ Client Secret",
@@ -28,7 +31,7 @@
             "type": "password",
             "default": "",
             "mandatory": true,
-            "description": "This is the ThreatQ Oauth2 Client Secret."
+            "description": "ThreatQ Oauth2 Client Secret."
         },
         {
             "label": "ThreatQ Search Names",
@@ -36,7 +39,25 @@
             "type": "text",
             "default": "",
             "mandatory": true,
-            "description": "This is the ThreatQ search names that contain the data to be imported. This should be a comma separated list of search names, or a single search name."
+            "description": "ThreatQ search names that contain the data to be imported. This should be a comma separated list of search names, or a single search name."
+        },
+        {
+            "label": "Enable Tagging",
+            "key": "enable_tagging",
+            "type": "choice",
+            "default": "yes",
+            "choices": [
+                {
+                    "key": "Yes",
+                    "value": "yes"
+                },
+                {
+                    "key": "No",
+                    "value": "no"
+                }
+            ],
+            "mandatory": false,
+            "description": "Enable/Disable tagging functionality."
         }
     ]
 }

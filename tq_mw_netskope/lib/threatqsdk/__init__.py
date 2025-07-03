@@ -83,8 +83,23 @@ __all__ = [
 _logger = getLogger(__name__)
 
 VERSION = "1.8.0"
+MODULE_NAME = "cte"
+PLUGIN_NAME = "threatq"
+PLUGIN_VERSION = "1.1.0"
 
 requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
+
+
+class WrappedSession(requests.Session):
+    """A wrapper for requests.Session to override 'verify' property, ignoring REQUESTS_CA_BUNDLE environment variable.
+
+    This is a workaround for https://github.com/kennethreitz/requests/issues/3829 (will be fixed in requests 3.0.0)
+    """
+    def merge_environment_settings(self, url, proxies, stream, verify, *args, **kwargs):
+        if self.verify is False:
+            verify = False
+
+        return super(WrappedSession, self).merge_environment_settings(url, proxies, stream, verify, *args, **kwargs)
 
 
 class Threatq(object):
@@ -126,7 +141,7 @@ class Threatq(object):
         threatq_host = "https://" + host[1]
 
         self.threatq_host = threatq_host
-        self.session = requests.Session()
+        self.session = WrappedSession()
         if proxy is not None:
             self.session.proxies = {"https": proxy}
         self.session.verify = verify
@@ -134,6 +149,27 @@ class Threatq(object):
         self.auth = authentication.TokenHolder(
             threatq_host, auth, private, self.session
         )
+
+    def _add_user_agent(self, headers=None):
+        """Add User-Agent in the headers for threatq requests.
+
+        Args:
+            headers (Dict): Dictionary containing headers for any request.
+        Returns:
+            Dict: Dictionary after adding User-Agent.
+        """
+        if headers and "User-Agent" in headers:
+            return headers
+        headers = add_user_agent(headers)
+        ce_added_agent = headers.get("User-Agent", "netskope-ce")
+        user_agent = "{}-{}-{}-v{}".format(
+            ce_added_agent,
+            MODULE_NAME,
+            PLUGIN_NAME,
+            PLUGIN_VERSION,
+        )
+        headers.update({"User-Agent": user_agent})
+        return headers
 
     def now(self):
         """Get the current time in the string format that the TQ API expects"""
@@ -166,11 +202,12 @@ class Threatq(object):
         if endpoint[0] != "/":
             endpoint = "/" + endpoint
 
+        headers = {"Authorization": "Bearer %s" % self.auth.accesstoken}
+        headers = self._add_user_agent(headers)
+
         r = self.session.get(
             self.threatq_host + endpoint,
-            headers=add_user_agent(
-                {"Authorization": "Bearer %s" % self.auth.accesstoken}
-            ),
+            headers=headers,
             params=params,
         )
         r.raise_for_status()
@@ -204,14 +241,15 @@ class Threatq(object):
         if endpoint[0] != "/":
             endpoint = "/" + endpoint
 
+        headers = {
+            "Authorization": "Bearer %s" % self.auth.accesstoken,
+            "content-type": "application/json",
+        }
+        headers = self._add_user_agent(headers)
+
         r = self.session.put(
             self.threatq_host + endpoint,
-            headers=add_user_agent(
-                {
-                    "Authorization": "Bearer %s" % self.auth.accesstoken,
-                    "content-type": "application/json",
-                }
-            ),
+            headers=headers,
             data=json.dumps(data),
             params=params,
         )
@@ -243,11 +281,12 @@ class Threatq(object):
         if endpoint[0] != "/":
             endpoint = "/" + endpoint
 
+        headers = {"Authorization": "Bearer %s" % self.auth.accesstoken}
+        headers = self._add_user_agent(headers)
+
         r = self.session.delete(
             self.threatq_host + endpoint,
-            headers=add_user_agent(
-                {"Authorization": "Bearer %s" % self.auth.accesstoken}
-            ),
+            headers=headers,
         )
 
         r.raise_for_status()
@@ -276,27 +315,22 @@ class Threatq(object):
         if endpoint[0] != "/":
             endpoint = "/" + endpoint
 
+        headers = {"Authorization": "Bearer %s" % self.auth.accesstoken}
+        headers = self._add_user_agent(headers)
+
         if files:
             r = self.session.post(
                 self.threatq_host + endpoint,
-                headers=add_user_agent(
-                    {
-                        "Authorization": "Bearer %s" % self.auth.accesstoken,
-                    }
-                ),
+                headers=headers,
                 data=data,
                 files=files,
                 params=params,
             )
         else:
+            headers.update({"content-type": "application/json"})
             r = self.session.post(
                 self.threatq_host + endpoint,
-                headers=add_user_agent(
-                    {
-                        "Authorization": "Bearer %s" % self.auth.accesstoken,
-                        "content-type": "application/json",
-                    }
-                ),
+                headers=headers,
                 data=json.dumps(data),
                 params=params,
             )

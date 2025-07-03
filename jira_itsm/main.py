@@ -194,9 +194,9 @@ class JiraPlugin(PluginBase):
             email=email_address, api_token=api_token
         )
 
-        params = {"startAt": start_at, "maxResults": LIMIT, "expand": "issueTypes"}
         while not is_last:
             try:
+                params = {"startAt": start_at, "maxResults": LIMIT, "expand": "issueTypes"}
                 response = self.jira_helper.api_helper(
                     url=endpoint,
                     method="GET",
@@ -435,7 +435,7 @@ class JiraPlugin(PluginBase):
                         return
                     else:
                         self.jira_helper.handle_error(
-                            response=response,
+                            resp=response,
                             logger_msg=(
                                 f"setting status for {logger_message}."
                             )
@@ -523,7 +523,7 @@ class JiraPlugin(PluginBase):
                     raise JiraITSMPluginException(err_msg)
                 else:
                     self.jira_helper.handle_error(
-                        response=response,
+                        resp=response,
                         logger_msg=f"fetching {logger_message}",
                     )
             except JiraITSMPluginException:
@@ -586,7 +586,7 @@ class JiraPlugin(PluginBase):
                 return []
             else:
                 self.jira_helper.handle_error(
-                    response=response,
+                    resp=response,
                     logger_msg=f"fetching {logger_message}",
                 )
         except JiraITSMPluginException:
@@ -729,7 +729,7 @@ class JiraPlugin(PluginBase):
                 )
                 raise JiraITSMPluginException(f"Error occurred while creating {logger_message}.")
             else:
-                _ = self.jira_helper.handle_error(response, f"creating {logger_message}")
+                _ = self.jira_helper.handle_error(resp=response, logger_msg=f"creating {logger_message}")
         except JiraITSMPluginException:
             raise
         except Exception as exp:
@@ -756,7 +756,7 @@ class JiraPlugin(PluginBase):
             f"ticket(s) with {PLATFORM_NAME}."
         )
         url, email_address, api_token = self.jira_helper.get_auth_params(self.configuration)
-        endpoint = f"{url}/rest/api/3/search"
+        endpoint = f"{url}/rest/api/3/search/jql"
         headers = self.jira_helper.basic_auth(
             email=email_address, api_token=api_token
         )
@@ -766,21 +766,20 @@ class JiraPlugin(PluginBase):
         skip, size = 0, 100
         batch_count = 1
         total_count = 0
+        next_page_token = None
         while True:
             log_msg = (
                 f"getting ticket(s) for batch {batch_count} from {PLATFORM_NAME}"
             )
             try:
-                ids = task_ids[skip:skip + size]
-                if not ids:
+                if not task_ids:
                     break
 
                 body = {
-                    "jql": f"key IN ({','.join(ids)})",
+                    "jql": f"key IN ({','.join(task_ids)})",
                     "maxResults": size,
                     "fields": ["status", "assignee"],
-                    "startAt": 0,
-                    "validateQuery": "none",
+                    "nextPageToken": next_page_token,
                 }
 
                 response = self.jira_helper.api_helper(
@@ -793,6 +792,7 @@ class JiraPlugin(PluginBase):
                     logger_msg=log_msg,
                 )
                 issues = response.get("issues", [])
+                next_page_token = response.get("nextPageToken")
 
                 for issue in issues:
                     assignee = issue.get("fields", {}).get("assignee", {})
@@ -817,8 +817,10 @@ class JiraPlugin(PluginBase):
 
                 skip += size
                 batch_count += 1
-                if issue_count < size:
+
+                if not next_page_token:
                     break
+               
             except JiraITSMPluginException:
                 raise
             except Exception as exp:

@@ -1,3 +1,13 @@
+# 2.1.1
+## Fixed
+- Bug fixes.
+
+# 2.1.0
+## Changed
+- Changed deprecated API '/rest/api/3/search' with new API '/rest/api/3/search/jql'.
+## Fixed
+- Bug fixes.
+
 # 2.0.0
 ## Added
 - Added support for Endpoint and Incident Events.

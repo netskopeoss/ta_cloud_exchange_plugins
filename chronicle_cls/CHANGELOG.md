@@ -1,3 +1,7 @@
+# 2.2.0
+## Added
+- Added support for raw JSON data.
+
 # 2.1.0
 ## Added
 - Added support for CTEP alert type.

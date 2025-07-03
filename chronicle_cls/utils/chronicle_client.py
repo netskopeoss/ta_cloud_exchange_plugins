@@ -44,6 +44,8 @@ from google.auth.transport import requests as gRequest
 from .chronicle_constants import (
     SCOPES,
     DEFAULT_URL,
+    LOG_SOURCE_IDENTIFIER,
+    LOG_TYPE,
 )
 
 from .chronicle_exceptions import GoogleChroniclePluginException
@@ -83,12 +85,22 @@ class ChronicleClient:
                 BASE_URL = self.configuration.get("custom_region", "")
             else:
                 BASE_URL = DEFAULT_URL[self.configuration.get("region", "usa")]
-
-            url = f"{BASE_URL}/v2/udmevents:batchCreate"
-            payload = {
-                "customer_id": self.configuration["customer_id"].strip(),
-                "events": transformed_data,
-            }
+            if not self.configuration.get("transformData", True):
+                url = f"{BASE_URL}/v2/unstructuredlogentries:batchCreate"
+                payload = {
+                    "customer_id": self.configuration["customer_id"].strip(),
+                    "log_type": LOG_TYPE,
+                    "namespace": self.configuration.get(
+                        "log_source_identifier", LOG_SOURCE_IDENTIFIER
+                    ).strip(),
+                    "entries": transformed_data,
+                }
+            else:
+                url = f"{BASE_URL}/v2/udmevents:batchCreate"
+                payload = {
+                    "customer_id": self.configuration["customer_id"].strip(),
+                    "events": transformed_data,
+                }
 
             response = self.http_session.request(
                 "POST",

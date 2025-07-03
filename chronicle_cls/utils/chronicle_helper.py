@@ -255,17 +255,17 @@ def split_into_size(data_list):
     """
     result = []
     current_part = []
-    current_size_mb = 0
+    current_size_b = 0
 
     for item in data_list:
-        item_size_mb = sys.getsizeof(f"{item}") / (1024 * 1024)  # Convert bytes to MB
-        if current_size_mb + item_size_mb <= 1:
+        item_size_b = sys.getsizeof(f"{item}")
+        if current_size_b + item_size_b <= 800000:
             current_part.append(item)
-            current_size_mb += item_size_mb
-        else:
+            current_size_b += item_size_b
+        else:   
             result.append(current_part)
             current_part = [item]
-            current_size_mb = item_size_mb
+            current_size_b = item_size_b
 
     if current_part:
         result.append(current_part)

@@ -1,7 +1,7 @@
 {
   "name": "Elastic",
   "id": "elastic",
-  "version": "2.2.1",
+  "version": "2.3.0",
   "mapping": "Elastic Default Mappings (Recommended)",
   "description": "This plugin is used to deliver Alerts (DLP, Malware, Policy, Compromised Credential, Malsite, Quarantine, Remediation, Security Assessment, Watchlist, UBA, CTEP) and Events (Page, Application, Audit, Infrastructure, Network, Incident, Endpoint) in ECS (Elastic Common Schema) and JSON formats to the Elastic platform. For details on Elastic Agent deployment, refer the [documentation](https://docs.elastic.co/integrations/netskope).\n\nNote: This plugin does not support sending WebTx logs to Elastic.",
   "netskope": false,

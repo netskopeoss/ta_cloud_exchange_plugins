@@ -53,10 +53,7 @@ from netskope.integrations.cls.plugin_base import (
 from .utils.chronicle_client import (
     ChronicleClient,
 )
-from .utils.chronicle_helper import (
-    get_chronicle_mappings,
-    split_into_size
-)
+from .utils.chronicle_helper import get_chronicle_mappings, split_into_size
 from .utils.chronicle_udm_generator import (  # NOQA: E501
     UDMGenerator,
 )
@@ -64,7 +61,7 @@ from .utils.chronicle_exceptions import (
     MappingValidationError,
     EmptyExtensionError,
     FieldNotFoundError,
-    GoogleChroniclePluginException
+    GoogleChroniclePluginException,
 )
 from .utils.chronicle_validator import (
     ChronicleValidator,
@@ -75,7 +72,9 @@ from .utils.chronicle_constants import (
     DEFAULT_URL,
     MODULE_NAME,
     PLUGIN_NAME,
-    PLUGIN_VERSION
+    PLUGIN_VERSION,
+    DUMMY_DATA_JSON,
+    LOG_SOURCE_IDENTIFIER,
 )
 
 
@@ -147,31 +146,41 @@ class ChroniclePlugin(PluginBase):
         # validating transformData is enabled
         transformData = configuration.get("transformData", True)
         if not transformData:
-            error_message = (
-                "Cannot send raw data to Google Chronicle - "
-                "Please enable 'Transformation Toggle' from basic information."
-            )
-            self.logger.error(f"{validation_msg} {error_message}")
-            return ValidationResult(
-                success=False, message=error_message
-            )
-
+            log_source_identifier = configuration.get(
+                "log_source_identifier", ""
+            ).strip()
+            if not log_source_identifier:
+                err_msg = (
+                    "Log Source Identifier is a required configuration"
+                    " parameter if transformed data is not enabled in 'Basic"
+                    " Information'."
+                )
+                self.logger.error(f"{validation_msg} {err_msg}")
+                return ValidationResult(
+                    success=False,
+                    message=err_msg,
+                )
+            elif not isinstance(log_source_identifier, str):
+                err_msg = (
+                    "Invalid Log Source Identifier provided in configuration"
+                    " parameters."
+                )
+                self.logger.error(f"{validation_msg} {err_msg}")
+                return ValidationResult(success=False, message=err_msg)
         # validate service account key
-        service_account_key = configuration.get("service_account_key", "").strip()
+        service_account_key = configuration.get(
+            "service_account_key", ""
+        ).strip()
         if not service_account_key:
             error_message = (
                 "Service Account Key is a required configuration parameter."
             )
             self.logger.error(f"{validation_msg} {error_message}")
-            return ValidationResult(
-                success=False, message=error_message
-            )
+            return ValidationResult(success=False, message=error_message)
         elif not isinstance(service_account_key, str):
             error_message = "Invalid Service Account Key provided."
             self.logger.error(f"{validation_msg} {error_message}")
-            return ValidationResult(
-                success=False, message=error_message
-            )
+            return ValidationResult(success=False, message=error_message)
 
         # validating customer id
         customer_id = configuration.get("customer_id", "").strip()
@@ -180,52 +189,38 @@ class ChroniclePlugin(PluginBase):
                 "Customer ID is a required configuration parameter."
             )
             self.logger.error(f"{validation_msg} {error_message}")
-            return ValidationResult(
-                success=False, message=error_message
-            )
+            return ValidationResult(success=False, message=error_message)
         elif not isinstance(customer_id, str):
             error_message = "Invalid Customer ID provided."
             self.logger.error(f"{validation_msg} {error_message}")
-            return ValidationResult(
-                success=False, message=error_message
-            )
+            return ValidationResult(success=False, message=error_message)
 
         # validate region
         region = configuration.get("region", "").strip()
         if not region:
-            error_message = (
-                "Region is a required configuration parameter."
-            )
+            error_message = "Region is a required configuration parameter."
             self.logger.error(f"{validation_msg} {error_message}")
-            return ValidationResult(
-                success=False, message=error_message
-            )
+            return ValidationResult(success=False, message=error_message)
         elif not isinstance(region, str):
             error_message = "Invalid Region provided."
             self.logger.error(f"{validation_msg} {error_message}")
-            return ValidationResult(
-                success=False, message=error_message
-            )
+            return ValidationResult(success=False, message=error_message)
         elif region not in ["usa", "europe", "asia", "custom"]:
             error_message = (
                 "Invalid Region provided."
                 "Allowed values are 'usa, europe, asia, custom'."
             )
             self.logger.error(f"{validation_msg} {error_message}")
-            return ValidationResult(
-                success=False, message=error_message
-            )
+            return ValidationResult(success=False, message=error_message)
 
         # validate credentials
         try:
             self._validate_auth(configuration)
         except GoogleChroniclePluginException as err:
-            err_msg = (
-                re.sub(
-                    r"key=(.*?) ",
-                    "key=******** ",
-                    f"Could not validate authentication credentials. Error: {repr(err)}.",
-                )
+            err_msg = re.sub(
+                r"key=(.*?) ",
+                "key=******** ",
+                f"Could not validate authentication credentials. Error: {repr(err)}.",
             )
             self.logger.error(
                 message=f"{validation_msg} {err_msg}",
@@ -249,10 +244,12 @@ class ChroniclePlugin(PluginBase):
                 message=error_message,
             )
 
-        if not isinstance(mappings, dict) or not chronicle_validator.validate_chronicle_map(
-            mappings
-        ):
-            error_message = "Invalid Google Chronicle attribute mapping provided."
+        if not isinstance(
+            mappings, dict
+        ) or not chronicle_validator.validate_chronicle_map(mappings):
+            error_message = (
+                "Invalid Google Chronicle attribute mapping provided."
+            )
             self.logger.error(f"{validation_msg} {error_message}")
             return ValidationResult(
                 success=False,
@@ -262,8 +259,10 @@ class ChroniclePlugin(PluginBase):
         try:
 
             flag, url_path_value = self.udm_events_url_check(configuration)
-            if (not flag):
-                error_message = f"Please enter the URL without {url_path_value}"
+            if not flag:
+                error_message = (
+                    f"Please enter the URL without {url_path_value}"
+                )
                 self.logger.error(f"{self.log_prefix}: {error_message}")
                 return ValidationResult(
                     success=False,
@@ -273,14 +272,14 @@ class ChroniclePlugin(PluginBase):
             region = configuration.get("region", "")
             custom_region = configuration.get("custom_region", "").strip()
             result = self._check_dummy_post(configuration)
-            if (not result and region != "custom"):
+            if not result and region != "custom":
                 error_message = "Invalid credentials or region."
                 self.logger.error(f"{validation_msg} {error_message}")
                 return ValidationResult(
                     success=False,
                     message=error_message,
                 )
-            if (region == "custom" and (not result or custom_region == "")):
+            if region == "custom" and (not result or custom_region == ""):
                 error_message = "Invalid custom region URL provided."
                 self.logger.error(f"{validation_msg} {error_message}")
                 return ValidationResult(
@@ -288,12 +287,12 @@ class ChroniclePlugin(PluginBase):
                     message=error_message,
                 )
         except GoogleChroniclePluginException as ex:
-            if (region != "custom"):
+            if region != "custom":
                 error_message = (
                     "Error occurred while validating the credentials. "
                     "Make sure that the Service Account Key, Region or Customer ID is correct."
                 )
-            elif (region == "custom" or custom_region == ""):
+            elif region == "custom" or custom_region == "":
                 error_message = (
                     "Error occurred while validating the credentials. "
                     "Make sure that the custom region URL is correct."
@@ -303,7 +302,7 @@ class ChroniclePlugin(PluginBase):
                     f"{self.log_prefix}: {error_message} "
                     f"Exception: {repr(ex)}."
                 ),
-                details=str(traceback.format_exc())
+                details=str(traceback.format_exc()),
             )
             return ValidationResult(
                 success=False,
@@ -316,7 +315,7 @@ class ChroniclePlugin(PluginBase):
                     f"{self.log_prefix}: {error_message} "
                     f"Exception: {repr(ex)}."
                 ),
-                details=str(traceback.format_exc())
+                details=str(traceback.format_exc()),
             )
             return ValidationResult(
                 success=False,
@@ -335,7 +334,7 @@ class ChroniclePlugin(PluginBase):
         parsed = urllib.parse.urlparse(BASE_URL)
         if not (parsed.scheme in ["http", "https"] and parsed.netloc != ""):
             return True, ""
-        if (parsed.path.strip() == "/" or parsed.path == ""):
+        if parsed.path.strip() == "/" or parsed.path == "":
             return True, parsed.path.strip()
         else:
             return False, parsed.path.strip()
@@ -360,17 +359,32 @@ class ChroniclePlugin(PluginBase):
             else:
                 BASE_URL = DEFAULT_URL[configuration.get("region", "usa")]
 
-            if (not self._url_valid(BASE_URL) and configuration.get("region", "") == "custom"):
+            if (
+                not self._url_valid(BASE_URL)
+                and configuration.get("region", "") == "custom"
+            ):
                 return False
 
             chronicle_client = ChronicleClient(
-                configuration,
-                self.logger,
-                self.log_prefix,
-                self.plugin_name
+                configuration, self.logger, self.log_prefix, self.plugin_name
             )
             headers = self._add_user_agent()
-            result = chronicle_client.ingest(DUMMY_DATA, headers=headers, is_validate=True)
+            if configuration.get("region", "") == "custom":
+                headers.update(
+                    {
+                        "x-goog-user-project": configuration.get(
+                            "custom_region", ""
+                        ).strip()
+                    }
+                )
+            if not configuration.get("transformData", True):
+                result = chronicle_client.ingest(
+                    DUMMY_DATA_JSON, headers=headers, is_validate=True
+                )
+            else:
+                result = chronicle_client.ingest(
+                    DUMMY_DATA, headers=headers, is_validate=True
+                )
 
             if result:
                 return True
@@ -383,7 +397,7 @@ class ChroniclePlugin(PluginBase):
 
     def _url_valid(self, base_url):
         parsed = urllib.parse.urlparse(base_url.strip())
-        if (parsed.scheme in ["http", "https"] and parsed.netloc != ""):
+        if parsed.scheme in ["http", "https"] and parsed.netloc != "":
             return True
         else:
             return False
@@ -401,8 +415,8 @@ class ChroniclePlugin(PluginBase):
             PushResult: Result indicating ingesting outcome and message
         """
         try:
-            batch_size = sys.getsizeof(f"{transformed_data}") / (1024 * 1024)
-            if batch_size > 1:
+            batch_size = sys.getsizeof(f"{transformed_data}")
+            if batch_size > 800000:
                 transformed_data = split_into_size(transformed_data)
             else:
                 transformed_data = [transformed_data]
@@ -411,7 +425,7 @@ class ChroniclePlugin(PluginBase):
                 self.configuration,
                 self.logger,
                 self.log_prefix,
-                self.plugin_name
+                self.plugin_name,
             )
             headers = self._add_user_agent()
 
@@ -467,10 +481,9 @@ class ChroniclePlugin(PluginBase):
             )
             self.logger.error(
                 message=(
-                    f"{self.log_prefix}: {err_msg}"
-                    f" Error: {str(err)}"
+                    f"{self.log_prefix}: {err_msg}" f" Error: {str(err)}"
                 ),
-                details=str(traceback.format_exc())
+                details=str(traceback.format_exc()),
             )
             raise err
 
@@ -537,12 +550,10 @@ class ChroniclePlugin(PluginBase):
         mapping_variables = {"$tenant_name": tenant.name}
 
         try:
-            headers[
-                "metadata.event_timestamp"
-            ] = datetime.datetime.utcfromtimestamp(
-                data.get("timestamp", time.time())
-            ).strftime(
-                "%Y-%m-%dT%H:%M:%SZ"
+            headers["metadata.event_timestamp"] = (
+                datetime.datetime.utcfromtimestamp(
+                    data.get("timestamp", time.time())
+                ).strftime("%Y-%m-%dT%H:%M:%SZ")
             )
         except Exception:
             raise
@@ -721,19 +732,101 @@ class ChroniclePlugin(PluginBase):
             List: list of transformed data.
         """
         skip_count = 0
+        skipped_logs = 0
+        data_type_sub_type = f"[{data_type}][{subtype}] - "
         transformData = self.configuration.get("transformData", True)
         if not transformData:
-            error_message = (
-                f'{self.log_prefix}: Error occurred - '
-                f'cannot send raw data to {PLUGIN_NAME}: "{data_type}"'
-                f' (subtype "{subtype}"). '
-                "Transformation will be skipped."
-            )
-            self.logger.error(
-                message=error_message,
-                details=str(traceback.format_exc())
-            )
-            raise GoogleChroniclePluginException(error_message)
+            try:
+                udm_version, chronicle_mappings = get_chronicle_mappings(
+                    self.mappings, data_type
+                )
+            except KeyError as err:
+                error_msg = (
+                    f"{data_type_sub_type}"
+                    "An error occurred while fetching the mappings."
+                )
+                self.logger.error(
+                    message=(f"{self.log_prefix}: {error_msg} Error: {err}"),
+                    details=str(traceback.format_exc()),
+                )
+                raise GoogleChroniclePluginException(error_msg)
+            except MappingValidationError as err:
+                error_msg = (
+                    f"{data_type_sub_type}"
+                    "An error occurred while validating the mapping file."
+                )
+                self.logger.error(
+                    message=(f"{self.log_prefix}: {error_msg} {err}"),
+                    details=str(traceback.format_exc()),
+                )
+                raise GoogleChroniclePluginException(error_msg)
+            except Exception as err:
+                error_msg = (
+                    f"{data_type_sub_type}"
+                    "An error occurred while mapping "
+                    "data using given json mappings."
+                )
+                self.logger.error(
+                    message=(f"{self.log_prefix}: {error_msg} Error: {err}"),
+                    details=str(traceback.format_exc()),
+                )
+                raise GoogleChroniclePluginException(error_msg)
+
+            try:
+                subtype_mapping = self.get_subtype_mapping(
+                    chronicle_mappings["json"][data_type], subtype
+                )
+                if not subtype_mapping:
+                    transformed_data = []
+                    for data in raw_data:
+                        if data:
+                            result = {
+                                "log_text": json.dumps(data),
+                                "ts_epoch_microseconds": int(datetime.datetime.now().timestamp() * 1_000_000)
+                            }
+                            transformed_data.append(result)
+                        else:
+                            skipped_logs += 1
+                    return transformed_data
+
+            except GoogleChroniclePluginException:
+                raise
+            except Exception as err:
+                error_msg = (
+                    f"{data_type_sub_type}"
+                    "Error occurred while retrieving "
+                    f"mappings."
+                )
+                self.logger.error(
+                    message=(f"{self.log_prefix}: {error_msg} Error: {err}"),
+                    details=str(traceback.format_exc()),
+                )
+                raise GoogleChroniclePluginException(error_msg)
+
+            transformed_data = []
+
+            for data in raw_data:
+                mapped_dict = self.map_json_data(subtype_mapping, data)
+                if mapped_dict:
+                    result = {
+                            "log_text": json.dumps(mapped_dict),
+                            "ts_epoch_microseconds": int(datetime.datetime.now().timestamp() * 1_000_000)
+                        }
+                    transformed_data.append(result)
+                else:
+                    skipped_logs += 1
+
+            if skipped_logs > 0:
+                self.logger.info(
+                    "{}: {} Plugin couldn't process {} records because they "
+                    "either had no data or contained invalid/missing "
+                    "fields according to the configured JSON mapping. "
+                    "Therefore, the transformation and ingestion for those "
+                    "records were skipped.".format(
+                        self.log_prefix, data_type_sub_type, skipped_logs
+                    )
+                )
+            return transformed_data
 
         else:
             try:
@@ -746,9 +839,7 @@ class ChroniclePlugin(PluginBase):
                     f"Error: {str(err)}"
                 )
                 self.logger.error(
-                    message=(
-                        f"{self.log_prefix}: {err_msg}"
-                    ),
+                    message=(f"{self.log_prefix}: {err_msg}"),
                     details=str(traceback.format_exc()),
                 )
                 raise
@@ -758,9 +849,7 @@ class ChroniclePlugin(PluginBase):
                     f"file. Error: {str(err)}"
                 )
                 self.logger.error(
-                    message=(
-                        f"{self.log_prefix}: {err_msg}"
-                    ),
+                    message=(f"{self.log_prefix}: {err_msg}"),
                     details=str(traceback.format_exc()),
                 )
                 raise
@@ -770,19 +859,14 @@ class ChroniclePlugin(PluginBase):
                     f"json mappings. Error: {str(err)}"
                 )
                 self.logger.error(
-                    message=(
-                        f"{self.log_prefix}: {err_msg}"
-                    ),
+                    message=(f"{self.log_prefix}: {err_msg}"),
                     details=str(traceback.format_exc()),
                 )
                 raise
 
             transformed_data = []
             udm_generator = UDMGenerator(
-                self.mappings,
-                udm_version,
-                self.logger,
-                self.log_prefix
+                self.mappings, udm_version, self.logger, self.log_prefix
             )
             # First retrieve the mapping of subtype being transformed
             try:
@@ -796,9 +880,7 @@ class ChroniclePlugin(PluginBase):
                     "Transformation of current batch will be skipped."
                 )
                 self.logger.error(
-                    message=(
-                        f"{self.log_prefix}: {err_msg}"
-                    ),
+                    message=(f"{self.log_prefix}: {err_msg}"),
                     details=str(traceback.format_exc()),
                 )
                 raise
@@ -819,9 +901,7 @@ class ChroniclePlugin(PluginBase):
                         f"current record will be skipped."
                     )
                     self.logger.error(
-                        message=(
-                            f"{self.log_prefix}: {err_msg}"
-                        ),
+                        message=(f"{self.log_prefix}: {err_msg}"),
                         details=str(traceback.format_exc()),
                     )
                     skip_count += 1
@@ -838,9 +918,7 @@ class ChroniclePlugin(PluginBase):
                         f" Transformation of the current record will be skipped."
                     )
                     self.logger.error(
-                        message=(
-                            f"{self.log_prefix}: {err_msg}"
-                        ),
+                        message=(f"{self.log_prefix}: {err_msg}"),
                         details=str(traceback.format_exc()),
                     )
                     skip_count += 1
@@ -860,9 +938,7 @@ class ChroniclePlugin(PluginBase):
                         "Transformation of current record will be skipped."
                     )
                     self.logger.error(
-                        message=(
-                            f"{self.log_prefix}: {err_msg}"
-                        ),
+                        message=(f"{self.log_prefix}: {err_msg}"),
                         details=str(traceback.format_exc()),
                     )
                     skip_count += 1
@@ -872,9 +948,7 @@ class ChroniclePlugin(PluginBase):
                         f"during transformation. Error: {str(err)}."
                     )
                     self.logger.error(
-                        message=(
-                            f"{self.log_prefix}: {err_msg}"
-                        ),
+                        message=(f"{self.log_prefix}: {err_msg}"),
                         details=str(traceback.format_exc()),
                     )
                     skip_count += 1

@@ -1,9 +1,10 @@
 {
   "name": "Google Chronicle",
   "id": "chronicle",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "mapping": "Chronicle Default Mappings",
-  "description": "This plugin is used to deliver alerts and events data to Google Chronicle platform. The plugin supports sharing of UDM formatted data. The required API keys are linked to customers and are provided by your Google Chronicle representative.",
+  "module": "CLS",
+  "description": "This plugin is used to deliver alerts (DLP, Malware, Policy, Compromised Credential, Malsite, Quarantine, Remediation, Security Assessment, Watchlist, UBA, CTEP, Anomaly, Legal Hold) and events (Page, Application, Audit, Infrastructure, Network, Incident) data to Google Chronicle platform. The plugin supports sharing of UDM and JSON formatted data. The required API keys are linked to customers and are provided by your Google Chronicle representative.",
   "types": [
     "events",
     "alerts"
@@ -58,6 +59,14 @@
       "default": "",
       "mandatory": true,
       "description": "Unique identifier (UUID) corresponding to a particular Chronicle instance. Provided by your Chronicle representative."
-    }
+    },
+    {
+      "label": "Log Source Identifier",
+      "key": "log_source_identifier",
+      "type": "text",
+      "default": "netskopece",
+      "mandatory": false,
+      "description": "This will be added as namespace to all the JSON formatted data. The log source identifier should not contain whitespaces."
+  }
   ]
 }

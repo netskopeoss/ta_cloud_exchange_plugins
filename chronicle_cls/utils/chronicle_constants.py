@@ -34,12 +34,12 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 MODULE_NAME = "CLS"
 PLUGIN_NAME = "Google Chronicle"
-PLUGIN_VERSION = "2.1.0"
+PLUGIN_VERSION = "2.2.0"
 
 DEFAULT_URL = {
-   "usa": "https://malachiteingestion-pa.googleapis.com",
-   "europe": "https://europe-malachiteingestion-pa.googleapis.com",
-   "asia": "https://asia-southeast1-malachiteingestion-pa.googleapis.com",
+    "usa": "https://malachiteingestion-pa.googleapis.com",
+    "europe": "https://europe-malachiteingestion-pa.googleapis.com",
+    "asia": "https://asia-southeast1-malachiteingestion-pa.googleapis.com",
 }
 SCOPES = ["https://www.googleapis.com/auth/malachite-ingestion"]
 
@@ -70,27 +70,32 @@ SEVERITY_MAP = {
 }
 
 DUMMY_DATA = [
-   {
-      "metadata":{
-         "event_timestamp":"2022-07-04T06:39:49Z",
-         "product_name":"Netskope Alert",
-         "product_version":"NULL",
-         "product_event_type":"[test] - test",
-         "event_type":"GENERIC_EVENT",
-         "product_log_id":"111111111111111111111111",
-         "vendor_name":"Netskope",
-         "description":"test"
-      },
-      "security_result":{
-         "severity":"Low",
-         "action_details":"no action"
-      },
-      "principal":{
-         "user":{
-            "user_display_name":"testurl@xyz.com",
-            "userid":"testurl@xyz.com",
-            "email_addresses":"testurl@xyz.com"
-         }
-      }
-   }
+    {
+        "metadata": {
+            "event_timestamp": "2022-07-04T06:39:49Z",
+            "product_name": "Netskope Alert",
+            "product_version": "NULL",
+            "product_event_type": "[test] - test",
+            "event_type": "GENERIC_EVENT",
+            "product_log_id": "111111111111111111111111",
+            "vendor_name": "Netskope",
+            "description": "test",
+        },
+        "security_result": {"severity": "Low", "action_details": "no action"},
+        "principal": {
+            "user": {
+                "user_display_name": "testurl@xyz.com",
+                "userid": "testurl@xyz.com",
+                "email_addresses": "testurl@xyz.com",
+            }
+        },
+    }
 ]
+LOG_TYPE = "NETSKOPE_ALERT_V2"
+DUMMY_DATA_JSON = [
+    {
+        "log_text": "26-Feb-2019 13:35:02.187 client 10.120.20.32#4238: query: altostrat.com IN A + (203.0.113.102)",
+        "ts_epoch_microseconds": 1551188102187000,
+    }
+]
+LOG_SOURCE_IDENTIFIER = "netskopece"

@@ -1,0 +1,155 @@
+{
+    "name": "BMC Helix ITSM",
+    "id": "bmc_helix_itsm",
+    "description": "This plugin is used to create incidents on the BMC Helix ITSM platform. It also supports syncing BMC Helix incident status and impact as severity.",
+    "version": "2.0.0",
+    "pulling_supported": false,
+    "receiving_supported": true,
+    "module": "CTO",
+    "minimum_version": "5.1.0",
+    "configuration": [
+      {
+        "label": "Authentication",
+        "name": "auth",
+        "type": "step",
+        "fields": [
+          {
+            "label": "BMC Helix API Base URL",
+            "key": "servername",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "BMC Helix API URL based on cloud or On-Prem setup. Example: http(s)://<instance-name>.com"
+          },
+          {
+            "label": "Username",
+            "key": "username",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "The Username associated with the BMC Helix ITSM account."
+          },
+          {
+            "label": "Password",
+            "key": "password",
+            "type": "password",
+            "default": "",
+            "mandatory": true,
+            "description": "The Password associated with the BMC Helix ITSM username."
+          }
+        ]
+      },
+      {
+        "label": "Mapping Configurations",
+        "name": "mapping_config",
+        "type": "step",
+        "fields": [
+          {
+            "label": "Status Mapping",
+            "key": "status_mapping",
+            "type": "mapping_table",
+            "value_type": "text",
+            "destination_label": "BMC Helix Incident Status",
+            "fields": [
+              {
+                "label": "New",
+                "value": "new",
+                "multi": false,
+                "mandatory": false
+              },
+              {
+                "label": "In Progress",
+                "value": "in_progress",
+                "multi": false,
+                "mandatory": false
+              },
+              {
+                "label": "On Hold",
+                "value": "on_hold",
+                "multi": false,
+                "mandatory": false
+              },
+              {
+                "label": "Closed",
+                "value": "closed",
+                "multi": false,
+                "mandatory": false
+              },
+              {
+                "label": "Deleted",
+                "value": "deleted",
+                "multi": false,
+                "mandatory": false
+              },
+              {
+                "label": "Other",
+                "value": "other",
+                "multi": false,
+                "mandatory": false
+              }
+            ],
+            "mandatory": false,
+            "default": {
+              "new": "New",
+              "in_progress": "In Progress",
+              "closed": "Closed"
+            },
+            "description": "Status Mapping will be used to map the ticket status from Cloud Exchange to the BMC Helix incident status. This mapping will also be used to transform the status while creating the incident on the BMC Helix platform."
+          },
+          {
+            "label": "Severity Mapping",
+            "key": "severity_mapping",
+            "type": "mapping_table",
+            "value_type": "text",
+            "destination_label": "BMC Helix Incident Impact",
+            "fields": [
+              {
+                "label": "Critical",
+                "value": "critical",
+                "multi": false,
+                "mandatory": true
+              },
+              {
+                "label": "High",
+                "value": "high",
+                "multi": false,
+                "mandatory": true
+              },
+              {
+                "label": "Medium",
+                "value": "medium",
+                "multi": false,
+                "mandatory": true
+              },
+              {
+                "label": "Low",
+                "value": "low",
+                "multi": false,
+                "mandatory": true
+              },
+              {
+                "label": "Informational",
+                "value": "informational",
+                "multi": false,
+                "mandatory": true
+              },
+              {
+                "label": "Other",
+                "value": "other",
+                "multi": false,
+                "mandatory": true
+              }
+            ],
+            "mandatory": true,
+            "default": {
+              "critical": "1-Extensive/Widespread",
+              "high": "2-Significant/Large",
+              "medium": "3-Moderate/Limited",
+              "low": "4-Minor/Localized"
+            },
+            "description": "Severity Mapping will be used to map the ticket severity from Cloud Exchange to 'impact' field of the BMC Helix incident. This mapping will also be used to transform severity while creating the incident on the BMC Helix platform."
+          }
+        ]
+      }
+    ]
+  }

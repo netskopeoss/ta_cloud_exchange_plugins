@@ -1,7 +1,7 @@
 {
     "name": "Anomali ThreatStream XDR",
     "id": "anomali_threatstream",
-    "version": "1.3.0",
+    "version": "1.3.1",
     "description": "The Anomali ThreatStream XDR plugin is used to fetch the indicators of type URL, IP (IPv4), Domain, IPv6, SHA256 and MD5 from the Observables on Anomali ThreatStream (XDR). This plugin supports sharing MD5, SHA256, URL, Domain, IPv4 and IPv6 to Observables on the Anomali ThreatStream (XDR) platform using the Share Indicators action.",
     "patch_supported": true,
     "push_supported": true,

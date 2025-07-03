@@ -811,7 +811,7 @@ class AnomaliThreatstreamPlugin(PluginBase):
                                     skip_indicator = True
                                     break
                         if not skip_indicator:
-                            if self.configuration["enable_tagging"] == "No":
+                            if self.configuration.get("enable_tagging", "Yes") == "No":
                                 tags_data = []
 
                             indicator_type = indicator.get("type", "")
@@ -900,12 +900,12 @@ class AnomaliThreatstreamPlugin(PluginBase):
                         len(current_extracted_indicators),
                         current_page_skip_count,
                         page_count,
-                        indicator_type_count["sha256"],
-                        indicator_type_count["md5"],
-                        indicator_type_count["url"],
-                        indicator_type_count["domain"],
-                        indicator_type_count["ip"],
-                        indicator_type_count["ipv6"],
+                        indicator_type_count.get("sha256", 0),
+                        indicator_type_count.get("md5", 0),
+                        indicator_type_count.get("url", 0),
+                        indicator_type_count.get("domain", 0),
+                        indicator_type_count.get("ip", 0),
+                        indicator_type_count.get("ipv6", 0),
                         total_indicators,
                     )
                 )

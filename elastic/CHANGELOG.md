@@ -1,7 +1,6 @@
-# 2.2.1
+# 2.3.0
 ## Fixed
-- Terminate every event with a newline.
-- Close gracefully to avoid data truncation.
+- Bug Fixes and socket connection handling.
 
 # 2.2.0
 ## Added

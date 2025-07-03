@@ -1,3 +1,8 @@
+# 3.3.0
+## Added
+- Added support for the content and device alert type. 
+- Added support for clientstatus and BWAN events.
+
 # 3.2.2
 ## Added
 - Enhancement in the error handling.

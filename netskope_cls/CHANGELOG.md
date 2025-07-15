@@ -1,6 +1,6 @@
 # 2.2.1
 ## Fixed
-- Fixed argument mismatch in cleanup when using newer Netskope CLS plugin with older provider versions.
+- Fixed compatibility issue when using newer Netskope CLS plugin with older provider versions.
 
 # 2.2.0
 ## Added

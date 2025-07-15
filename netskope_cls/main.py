@@ -1,5 +1,6 @@
 """Netskope Plugin."""
 import traceback
+import inspect
 from typing import List
 
 from netskope.integrations.cls.plugin_base import (
@@ -20,7 +21,7 @@ plugin_provider_helper = PluginProviderHelper()
 
 MODULE_NAME = "CLS"
 PLUGIN_NAME = "Netskope CLS"
-PLUGIN_VERSION = "2.2.0"
+PLUGIN_VERSION = "2.2.1"
 
 
 class NetskopeCLSPlugin(PluginBase):
@@ -217,9 +218,14 @@ class NetskopeCLSPlugin(PluginBase):
                 ]
             except Exception as e:
                 return ValidationResult(success=False, message=str(e))
-        else:
-            if tenant_configuration:
-                provider.cleanup(tenant_configuration, is_validation=True)
+        elif tenant_configuration:
+            try:
+                cleanup_params = inspect.signature(provider.cleanup).parameters
+                cleanup_kwargs = {'is_validation': True} if 'is_validation' in cleanup_params else {}
+            except Exception as e:
+                cleanup_kwargs = {}
+
+            provider.cleanup(tenant_configuration, **cleanup_kwargs)
 
         # use the modified_type_map for the permission check    
         provider.permission_check(

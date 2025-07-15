@@ -1,3 +1,7 @@
+# 2.2.1
+## Fixed
+- Fixed compatibility issue when using newer Netskope CLS plugin with older provider versions.
+
 # 2.2.0
 ## Added
 - Added support for Client status events, To pull and ingest this event type update your Netskope Tenant version to 1.4.0.

@@ -2196,7 +2196,7 @@ class NetskopePlugin(PluginBase):
         verdict_updated = false_positive_data.get("verdict_updated", "")
         if (
             (verdict_updated and verdict_updated.lower() == "clean") or
-            (verdict and verdict.lower() == "clean")
+            (not verdict_updated and verdict and verdict.lower() == "clean")
         ):
             self.logger.debug(
                 f"{self.log_prefix}: Skipping indicator {ioc.value} "

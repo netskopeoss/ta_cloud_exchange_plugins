@@ -1,3 +1,12 @@
+# 2.2.0
+## Added
+- Added support for retraction of False Positive if IoC type is File Hash.
+- Added support for port range in Add to Private App Target.
+- Added support for severity in URL IoCs.
+## Changed
+- Pull only malicious file hash IoCs using Retrohunt.
+- Updated URL List limit to 7 MB from 8 MB.
+
 # 2.1.3
 ## Changed
 - Bug fixes.

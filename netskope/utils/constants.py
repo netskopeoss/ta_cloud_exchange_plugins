@@ -32,6 +32,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 """Netskope CTE Plugin constants."""
 
+from netskope.integrations.cte.models import SeverityType
 
 REGEX_FOR_MD5 = r"^[0-9a-fA-F]{32}$"
 REGEX_FOR_SHA256 = r"^[0-9a-fA-F]{64}$"
@@ -45,7 +46,7 @@ MAX_PUSH_INDICATORS = 300000
 MAX_PUSH_HOSTS = 500
 MAX_QUERY_INDICATORS = 500
 # MAX_PUSH_INDICATORS = 300
-JSON_DATA_OFFSET = 30
+JSON_DATA_OFFSET = 35
 URLS = {
     "V2_URL_LIST": "{}/api/v2/policy/urllist",
     "V2_URL_LIST_DEPLOY": "{}/api/v2/policy/urllist/deploy",
@@ -58,4 +59,12 @@ URLS = {
 }
 MODULE_NAME = "CTE"
 PLUGIN_NAME = "Netskope CTE"
-PLUGIN_VERSION = "2.1.3"
+PLUGIN_VERSION = "2.2.0"
+RETROHUNT_FP_SEVERITY_MAPPING = {
+    "1": SeverityType.LOW,
+    "2": SeverityType.MEDIUM,
+    "3": SeverityType.HIGH,
+}
+BYTES_TO_MB = 1024 * 1024
+# Retraction Constant
+RETRACTION = "Retraction"

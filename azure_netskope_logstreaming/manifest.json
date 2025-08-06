@@ -1,0 +1,33 @@
+{
+    "name": "Azure Netskope LogStreaming",
+    "id": "azure_netskope_logstreaming",
+    "types": [
+        "alerts",
+        "events",
+        "webtx"
+    ],
+    "netskope": false,
+    "pull_supported": true,
+    "push_supported": false,
+    "version": "1.0.0",
+    "module": "CLS",
+    "minimum_version": "5.1.2",
+    "description": "This plugin is used to fetch the Netskope Alerts (DLP, Malware, Policy, Compromised Credential, Malsite, Quarantine, Remediation, Security Assessment, Watchlist, UBA, CTEP, Device, and Content), Events (Page, Application, Audit, Infrastructure, Network, Incident and Client Status) and WebTx logs from the Azure Containers using Storage Queue of Microsoft Azure Storage Account.",
+    "configuration": [
+        {
+            "label": "Microsoft Azure Storage Account Connection String",
+            "key": "connection_string",
+            "type": "password",
+            "mandatory": true,
+            "description": "Microsoft Azure Storage Account Connection String. To get the connection string navigate to your Microsoft Azure Storage Account -> Security + networking -> Access keys -> 'Connection string'. Eg: DefaultEndpointsProtocol=https;AccountName={STORAGE_ACCOUNT_NAME};AccountKey={STORAGE_ACCOUNT_KEY};EndpointSuffix=core.windows.net. "
+        },
+        {
+            "label": "Microsoft Azure Data Storage Queue Name",
+            "key": "queue_name",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "Microsoft Azure Data Storage Queue Name with which the Event Subscription is setup. To get the detail navigate to Microsoft Azure > Storage Account > Events > Event Subscription. Note: Make sure that the provided queue is pre-configured in your Microsoft Azure Storage Account. A new queue will not be created if the provided queue does not exist."
+        }
+    ]
+}

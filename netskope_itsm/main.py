@@ -6,7 +6,7 @@ import re
 import requests
 import time
 import traceback
-from typing import List, Union, Tuple
+from typing import List, Union, Tuple, Generator
 from datetime import datetime
 from jsonschema import validate, ValidationError
 
@@ -35,34 +35,21 @@ from netskope.integrations.itsm.models import (
 )
 from netskope.integrations.itsm.utils import alert_event_query_schema
 from netskope.common.utils.plugin_provider_helper import PluginProviderHelper
+from .utils.netskope_itsm_constants import (
+    IGNORED_RAW_KEYS,
+    REQUEST_RATE_LIMIT_DELAY,
+    REQUEST_RATE_LIMIT_DELAY_ON_ERROR,
+    MAX_RETRIES_ON_RATE_LIMIT,
+    INCIDENT_UPDATE_API,
+    MODULE_NAME,
+    PLUGIN_NAME,
+    PLUGIN_VERSION,
+    DEFAULT_STATUS_VALUE_MAP,
+    INCIDENT_BATCH_SIZE
+)
 
 helper = AlertsHelper()
 plugin_provider_helper = PluginProviderHelper()
-
-IGNORED_RAW_KEYS = [
-    "_id",
-    "alert_name",
-    "alert_type",
-    "app",
-    "appcategory",
-    "type",
-    "file_type",
-    "user",
-    "timestamp",
-]
-REQUEST_RATE_LIMIT_DELAY = 30
-REQUEST_RATE_LIMIT_DELAY_ON_ERROR = 2
-MAX_RETRIES_ON_RATE_LIMIT = 3
-INCIDENT_UPDATE_API = "{}/api/v2/incidents/update"
-MODULE_NAME = "CTO"
-PLUGIN_NAME = "Netskope CTO"
-PLUGIN_VERSION = "2.2.1"
-DEFAULT_STATUS_VALUE_MAP = {
-    "New": "new",
-    "In Progress": "in_progress",
-    "Resolved": "closed"
-}
-INCIDENT_BATCH_SIZE = 10
 
 
 class NetskopePlugin(PluginBase):
@@ -114,6 +101,7 @@ class NetskopePlugin(PluginBase):
         """Validate a given step."""
         if name == "params":
             config = configuration.get(name, {})
+            # Validate alert_types
             if "alert_types" not in config or not isinstance(config["alert_types"], list):
                 self.logger.error(
                     "Netskope ITSM Plugin: Validation error occurred. Error: "
@@ -123,6 +111,7 @@ class NetskopePlugin(PluginBase):
                 return ValidationResult(
                     success=False, message="Invalid alert type provided."
                 )
+            # Validate event_types
             if "event_types" not in config or not isinstance(config["event_types"], list):
                 self.logger.info(
                     "Netskope ITSM Plugin: Validation error occurred. Error: "
@@ -132,11 +121,13 @@ class NetskopePlugin(PluginBase):
                 return ValidationResult(
                     success=False, message="Invalid event type provided."
                 )
+            # Validate either alert_types or event_types is provided
             if not config.get("alert_types") and not config.get("event_types"):
                 return ValidationResult(
                     success=False,
                     message="Alert types or Event types either should be provided.",
                 )
+            # Validate hours
             hours = config.get("hours")
             if hours is None:
                 err_msg = "Initial Range for Events is a required configuration parameter."
@@ -164,6 +155,7 @@ class NetskopePlugin(PluginBase):
                     success=False,
                     message=err_msg,
                 )
+            # Validate days
             days = config.get("days")
             if days is None:
                 err_msg = "Initial Range for Alerts is a required configuration parameter."
@@ -191,11 +183,28 @@ class NetskopePlugin(PluginBase):
                     success=False,
                     message=err_msg,
                 )
+            # Validate incident_forensics
+            incident_forensics = config.get("incident_forensics", "")
+            if (
+                not isinstance(incident_forensics, str) 
+                or not incident_forensics
+                or incident_forensics not in ["yes", "no"]
+            ):
+                err_msg = (
+                    "Invalid DLP Incident Forensics option "
+                    "provided in configuration parameter."
+                )
+                self.logger.error(f"{self.log_prefix}: {err_msg}")
+                return ValidationResult(
+                    success=False,
+                    message=err_msg,
+                )
 
             tenant_name = configuration.get("tenant")
             if not configuration.get("tenant"):
                 tenant_name = helper.get_tenant_itsm(self.name).name
             provider = plugin_provider_helper.get_provider(tenant_name=tenant_name)
+
             type_map = {}
             if config.get("alert_types"):
                 type_map["alerts"] = config["alert_types"]
@@ -208,6 +217,16 @@ class NetskopePlugin(PluginBase):
                     success=False,
                     message=str(error),
                 )
+
+            # If all validations are successful, update tenant storage with incident 
+            # enrichment option
+            provider.update_incident_enrichment_option_to_storage(
+                tenant_name=tenant_name,
+                module_name="cto",
+                plugin_name=self.name,
+                incident_enrichment_option=incident_forensics,
+                operation="set",
+            )
         elif name == "incident_update_config":
             config = configuration.get(name, {})
             if "user_email" not in config or not isinstance(config["user_email"], str):
@@ -605,7 +624,7 @@ class NetskopePlugin(PluginBase):
                     continue
             except requests.exceptions.HTTPError:
                 self.logger.error(
-                    f"{self.log_prefix}: Error occured while updating the {field}"
+                    f"{self.log_prefix}: Error occurred while updating the {field}"
                     f" for the incidents on the Netskope Tenant for batch no. {batch_no}.",
                     details=traceback.format_exc(),
                     error_code="CTO_1044",
@@ -632,7 +651,7 @@ class NetskopePlugin(PluginBase):
         self,
         incidents: List[Task],
         batch_size: int
-    ) -> List[Task]:
+    ) -> Generator[List[Task], None, None]:
         """Get incidents in batches."""
         n_incidents = len(incidents)
         for ndx in range(0, n_incidents, batch_size):
@@ -674,4 +693,19 @@ class NetskopePlugin(PluginBase):
             message=message,
             success=True,
             results=results
+        )
+
+    def cleanup(self, action_type: str):
+        """Unsert Incident option"""
+        tenant_name = helper.get_tenant_itsm(self.name).name
+        provider = plugin_provider_helper.get_provider(
+            tenant_name=tenant_name
+        )
+
+        provider.update_incident_enrichment_option_to_storage(
+            tenant_name=tenant_name,
+            module_name="cto",
+            plugin_name=self.name,
+            incident_enrichment_option="no",
+            operation="unset",
         )

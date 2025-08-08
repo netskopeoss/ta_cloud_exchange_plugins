@@ -1,7 +1,7 @@
 """Netskope Plugin."""
 import traceback
 import inspect
-from typing import List
+from typing import List, Literal
 
 from netskope.integrations.cls.plugin_base import (
     PluginBase,
@@ -13,15 +13,17 @@ from netskope.common.utils import DBConnector, AlertsHelper
 from netskope.common.utils.alerts_helper import AlertsHelper
 from netskope.common.utils.plugin_provider_helper import PluginProviderHelper
 
+from .utils.netskope_cls_constants import (
+    MODULE_NAME,
+    PLUGIN_NAME,
+    PLUGIN_VERSION
+)
+
 helper = AlertsHelper()
 
 connector = DBConnector()
 alerts_helper = AlertsHelper()
 plugin_provider_helper = PluginProviderHelper()
-
-MODULE_NAME = "CLS"
-PLUGIN_NAME = "Netskope CLS"
-PLUGIN_VERSION = "2.2.1"
 
 
 class NetskopeCLSPlugin(PluginBase):
@@ -100,6 +102,7 @@ class NetskopeCLSPlugin(PluginBase):
 
     def validate(self, configuration: dict, tenant_name=None) -> ValidationResult:
         """Validate the configuration parameters dict."""
+        # Validate alert types and event types
         if (
             "event_type" not in configuration
             or type(configuration["event_type"]) is not list
@@ -136,7 +139,7 @@ class NetskopeCLSPlugin(PluginBase):
                 success=False,
                 message="Event Types and Alert Types both can not be empty.",
             )
-
+        # Validate initial range for events
         hours = configuration.get("hours")
         if hours is None:
             err_msg = "Initial Range for Events is a required configuration parameter."
@@ -164,6 +167,7 @@ class NetskopeCLSPlugin(PluginBase):
                 success=False,
                 message=err_msg,
             )
+        # Validate initial range for alerts
         days = configuration.get("days")
         if days is None:
             err_msg = "Initial Range for Alerts is a required configuration parameter."
@@ -191,6 +195,23 @@ class NetskopeCLSPlugin(PluginBase):
                 success=False,
                 message=err_msg,
             )
+        
+        # Validate incident_forensics
+        incident_forensics = configuration.get("incident_forensics", "")
+        if (
+            not isinstance(incident_forensics, str) 
+            or not incident_forensics
+            or incident_forensics not in ["yes", "no"]
+        ):
+            err_msg = (
+                "Invalid DLP Incident Forensics option "
+                "provided in configuration parameter."
+            )
+            self.logger.error(f"{self.log_prefix}: {err_msg}")
+            return ValidationResult(
+                success=False,
+                message=err_msg,
+            )
 
         if not tenant_name:
             tenant_name = helper.get_tenant_cls(self.name).name
@@ -201,7 +222,7 @@ class NetskopeCLSPlugin(PluginBase):
             tenant_configuration = helper.get_tenant_cls(self.name).parameters
         except Exception as e:
             tenant_configuration = {}
-        provider = plugin_provider_helper.get_provider(tenant_name=tenant_name) 
+        provider = plugin_provider_helper.get_provider(tenant_name=tenant_name)
         type_map = {
             "events": configuration.get("event_type", []),
             "alerts": configuration.get("alert_types", []),
@@ -227,11 +248,36 @@ class NetskopeCLSPlugin(PluginBase):
 
             provider.cleanup(tenant_configuration, **cleanup_kwargs)
 
-        # use the modified_type_map for the permission check    
+        # use the modified_type_map for the permission check
         provider.permission_check(
             modified_type_map,
             plugin_name=self.plugin_name,
-            configuration_name=self.name
+            configuration_name=self.name,
+        )
+
+        # If all validations are successful, update tenant storage with incident 
+        # enrichment option
+        provider.update_incident_enrichment_option_to_storage(
+            tenant_name=tenant_name,
+            module_name="cls",
+            plugin_name=self.name,
+            incident_enrichment_option=incident_forensics,
+            operation="set",
         )
 
         return ValidationResult(success=True, message="Validation successful.")
+
+    def cleanup(self, action_type: str):
+        """Unsert Incident option"""
+        tenant_name = helper.get_tenant_cls(self.name).name
+        provider = plugin_provider_helper.get_provider(
+            tenant_name=tenant_name
+        )
+
+        provider.update_incident_enrichment_option_to_storage(
+            tenant_name=tenant_name,
+            module_name="cls",
+            plugin_name=self.name,
+            incident_enrichment_option="no",
+            operation="unset",
+        )

@@ -2,16 +2,14 @@
 
 import datetime
 import gzip
-import collections
 import json
 import re
 import threading
 import time
 import traceback
-from typing import Dict, List
+from typing import Dict, List, Literal
 from urllib.parse import urlparse
 import pandas as pd
-import numpy as np
 from io import StringIO
 
 import requests
@@ -36,6 +34,7 @@ from netskope_api.iterator.netskope_iterator import NetskopeIterator
 from .utils.iterator_helper import (
     NetskopeClient,
     NetskopeIteratorBuilder,
+    parse_csv_response
 )
 from .utils.router_helper import get_all_subtypes
 from .utils.webtx_metrics_collector import get_webtx_metrics_data
@@ -137,76 +136,20 @@ class NetskopeProviderPlugin(PluginBase):
             )
             raise exp
 
-    def convert_numpy_types(self, obj):
-        """Convert numpy datatype into python datatype."""
-        if isinstance(obj, dict):
-            return {k: self.convert_numpy_types(v) for k, v in obj.items()}
-        elif isinstance(obj, list):
-            return [self.convert_numpy_types(v) for v in obj]
-        elif isinstance(obj, np.generic):  # catches np.int64, np.float64, etc.
-            return obj.item()
-        else:
-            return obj
-
-
-    def parse_csv_response(self, df: pd.DataFrame):
-        """Parse complex datatype in CSV response."""
-
-        # Step 1: Group columns by root key
-        column_groups = collections.defaultdict(list)
-        for col in df.columns:
-            if '.' in col:
-                root = col.split('.')[0]
-                column_groups[root].append(col)
-
-        # Step 2: Create a new dataframe column-wise
-        result = pd.DataFrame()
-
-        def parse_complex_obj(val):
-            if isinstance(val, str) and '|' in val:
-                parts = val.split('|')
-                if any('=' not in segment for segment in parts):
-                    return parts
-                else:
-                    result_dict = {}
-                    for segment in parts:
-                        key, value = segment.split('=', 1)
-                        result_dict[key] = value
-                    return result_dict
-            return val
-
-        # Direct (non-nested) columns and check for list conversion
-        for col in df.columns:
-            if '.' not in col:
-                result[col] = df[col].apply(parse_complex_obj)
-
-        # Nested columns
-        for root, cols in column_groups.items():
-            nested_values = []
-            for i in range(len(df)):
-                temp = {}
-                for col in cols:
-                    keys = col.split('.')[1:]  # exclude root
-                    val = df.at[i, col]
-
-                    # Convert comma-separated strings to list
-                    val = parse_complex_obj(val)
-
-                    cur = temp
-                    for k in keys[:-1]:
-                        cur = cur.setdefault(k, {})
-                    cur[keys[-1]] = val
-
-                nested_values.append(self.convert_numpy_types(temp))
-
-            result[root] = nested_values
-        return result.to_dict(orient="records")
-
     def parse_incident_events(self, events_data):
+        tenant_name = self.configuration.get("tenantName", "").strip().rstrip("/")
         for event in events_data:
             for key in CONST.STRING_FIELDS:
                 if key in event and event[key] is not None:
                     event[key] = str(event[key])
+            dlp_incident_id = event.get("dlp_incident_id")
+            if dlp_incident_id:
+                event["forensics_originalfile_url"] = CONST.DLP_INCIDENT_ORIGINAL_FILE_ENDPOINT.format(
+                    base_url=tenant_name, dlp_incident_id=dlp_incident_id
+                )
+                event["forensics_subfile_url"] = CONST.DLP_INCIDENT_SUB_FILE_ENDPOINT.format(
+                    base_url=tenant_name, dlp_incident_id=dlp_incident_id
+                )
         return events_data
 
     def parse_data(self, events: bytes, data_type: str, sub_type: str):
@@ -218,8 +161,8 @@ class NetskopeProviderPlugin(PluginBase):
             return json.loads(decompressed_events)
         except json.decoder.JSONDecodeError:
             if data_type in ['event', 'events'] and sub_type == "incident":
-                return self.parse_incident_events(self.parse_csv_response(pd.read_csv(StringIO(decompressed_events.decode("utf-8")), keep_default_na=False)))
-            return self.parse_csv_response(pd.read_csv(StringIO(decompressed_events.decode("utf-8")), keep_default_na=False))
+                return self.parse_incident_events(parse_csv_response(pd.read_csv(StringIO(decompressed_events.decode("utf-8")), keep_default_na=False)))
+            return parse_csv_response(pd.read_csv(StringIO(decompressed_events.decode("utf-8")), keep_default_na=False))
 
     def transform(self, raw_data, data_type, subtype, **kwargs) -> List:
         """Transform the raw netskope target platform supported."""
@@ -637,6 +580,7 @@ class NetskopeProviderPlugin(PluginBase):
         else:
             client.sub_types = override_subtypes
 
+        client.incident_enrichment = self.is_incident_enrichment_enabled()
         for (
             data,
             sub_type,
@@ -744,7 +688,7 @@ class NetskopeProviderPlugin(PluginBase):
 
             fields = fields.union(item.keys())
 
-    def client_status_validation(self): 
+    def client_status_validation(self):
         """Validate client status endpoint."""
         iterator_name = CONST.CLIENT_STATUS_ITERATOR_NAME
         tenant_name = self.configuration.get("tenantName", "").strip().rstrip("/")
@@ -834,6 +778,64 @@ class NetskopeProviderPlugin(PluginBase):
                 details=traceback.format_exc(),
             )
             raise NetskopeProviderPluginException(error_msg)
+
+    def update_incident_enrichment_option_to_storage(
+        self,
+        tenant_name: str,
+        module_name: Literal["cls", "cto"],
+        plugin_name: str,
+        incident_enrichment_option: bool,
+        operation: Literal["set", "unset"],
+    ) -> None:
+        """
+        Update incident enrichment type to tenant storage.
+        """
+        # Can self.name be used instead of tenant_name?
+        if operation == "set":
+            plugin_provider_helper.update_tenant_storage(
+                tenant_name=tenant_name,
+                update_set={
+                    f"dlp_incident_enrichment_option.{module_name}.{plugin_name}": incident_enrichment_option
+                },
+            )
+        elif operation == "unset":
+            # used during cleanup i.e. cls or cto plugin delete
+            # TODO will below delete?
+            plugin_provider_helper.update_tenant_storage(
+                tenant_name=tenant_name,
+                update_unset={
+                    f"dlp_incident_enrichment_option.{module_name}.{plugin_name}": ""
+                },
+            )
+        else:
+            raise ValueError("Invalid operation. Must be 'set' or 'unset'.")
+
+    def is_incident_enrichment_enabled(self):
+        """
+        Check if incident enrichment is enabled for any module or plugin.
+
+        Returns:
+            bool: True if at least one module/plugin has enrichment set to "yes",
+                False if all are "no" or if no enrichment options are configured.
+        """
+        storage = self.storage
+        dlp_incident_dict = storage.get("dlp_incident_enrichment_option", {})
+
+        if not dlp_incident_dict:
+            return False
+
+        # Check both cls and cto modules
+        for module in ["cls", "cto"]:
+            module_dict = dlp_incident_dict.get(module, {})
+
+            # Check each plugin in the module
+            for plugin_name, enrichment_options in module_dict.items():
+                # If any option is "yes", return True
+                if "yes" in enrichment_options:
+                    return True
+
+        # If we've checked everything and found no "yes", return False
+        return False
 
     def validate_token(self, token, tenant_name):
         """Validate v1 API Token."""
@@ -1030,8 +1032,8 @@ class NetskopeProviderPlugin(PluginBase):
                     f"{tenant_name}/api/v2/events/dataexport/iterator/{client_status_iterator}"
                 )
                 headers = {
-                'accept': 'application/json',
-                'Authorization': f'Bearer {v2token}'
+                    'accept': 'application/json',
+                    'Authorization': f'Bearer {v2token}'
                 }
                 logger_msg = (
                     f"Deleting Client Status Iterator {client_status_iterator} "
@@ -1045,7 +1047,7 @@ class NetskopeProviderPlugin(PluginBase):
                     proxies=self.proxy,
                     is_handle_error_required=True
                 )
-                update_unset =  {"client_status_iterator": ""}
+                update_unset = {"client_status_iterator": ""}
                 plugin_provider_helper.update_tenant_storage(
                     self.name, update_unset=update_unset
                 )

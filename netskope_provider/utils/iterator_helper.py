@@ -5,17 +5,22 @@ import re
 import gzip
 import json
 from queue import Queue
+import collections
 import traceback
 from datetime import datetime
-from typing import List
+from typing import Dict, List
 from urllib.parse import urlparse
+from collections import defaultdict
+import pandas as pd
+import numpy as np
+from io import StringIO
 
 import requests.exceptions
 from celery.exceptions import SoftTimeLimitExceeded
 from netskope_api.iterator.const import Const
 from netskope_api.iterator.netskope_iterator import NetskopeIterator
 from . import constants as CONST
-from .iterator_api_helper import NetskopePluginHelper
+from .iterator_api_helper import NetskopePluginHelper, NetskopeProviderPluginException
 from netskope.common.api import __version__
 from netskope.common.utils import (
     Logger,
@@ -33,6 +38,72 @@ connector = DBConnector()
 logger = Logger()
 notifier = Notifier()
 plugin_provider_helper = PluginProviderHelper()
+
+
+def convert_numpy_types(obj):
+    """Convert numpy datatype into python datatype."""
+    if isinstance(obj, dict):
+        return {k: convert_numpy_types(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_numpy_types(v) for v in obj]
+    elif isinstance(obj, np.generic):  # catches np.int64, np.float64, etc.
+        return obj.item()
+    else:
+        return obj
+
+
+def parse_csv_response(df: pd.DataFrame):
+    """Parse complex datatype in CSV response."""
+
+    # Step 1: Group columns by root key
+    column_groups = collections.defaultdict(list)
+    for col in df.columns:
+        if '.' in col:
+            root = col.split('.')[0]
+            column_groups[root].append(col)
+
+    # Step 2: Create a new dataframe column-wise
+    result = pd.DataFrame()
+
+    def parse_complex_obj(val):
+        if isinstance(val, str) and '|' in val:
+            parts = val.split('|')
+            if any('=' not in segment for segment in parts):
+                return parts
+            else:
+                result_dict = {}
+                for segment in parts:
+                    key, value = segment.split('=', 1)
+                    result_dict[key] = value
+                return result_dict
+        return val
+
+    # Direct (non-nested) columns and check for list conversion
+    for col in df.columns:
+        if '.' not in col:
+            result[col] = df[col].apply(parse_complex_obj)
+
+    # Nested columns
+    for root, cols in column_groups.items():
+        nested_values = []
+        for i in range(len(df)):
+            temp = {}
+            for col in cols:
+                keys = col.split('.')[1:]  # exclude root
+                val = df.at[i, col]
+
+                # Convert comma-separated strings to list
+                val = parse_complex_obj(val)
+
+                cur = temp
+                for k in keys[:-1]:
+                    cur = cur.setdefault(k, {})
+                cur[keys[-1]] = val
+
+            nested_values.append(convert_numpy_types(temp))
+
+        result[root] = nested_values
+    return result.to_dict(orient="records")
 
 
 class NetskopeIteratorBuilder(NetskopeIterator):
@@ -120,7 +191,7 @@ class NetskopeIteratorBuilder(NetskopeIterator):
 
     def fetch_client_status_data(self):
         """
-        Fetch client status data form the stored 
+        Fetch client status data form the stored
         Client Status iterator.
         """
         client_status_storage = self.tenant.get(
@@ -131,7 +202,7 @@ class NetskopeIteratorBuilder(NetskopeIterator):
             iterator_name = client_status_storage
         else:
             iterator_name = self.netskope_api_plugin_helper.create_iterator(
-                tenant_name=self.tenant_hostname,
+                tenant_url=self.tenant_hostname,
                 tenant_configuration_name=self.tenant_name,
                 headers=self.headers,
                 iterator_name=CONST.CLIENT_STATUS_ITERATOR_NAME,
@@ -169,7 +240,7 @@ class NetskopeIteratorBuilder(NetskopeIterator):
             return self.fetch_client_status_data()
         else:
             return super().download(timestamp)
-    
+
     def next(self):
         if self.sub_type == CONST.EVENTS.get("clientstatus"):
             # Your custom implementation here
@@ -293,8 +364,8 @@ class NetskopeIteratorBuilder(NetskopeIterator):
             is_forbidden_value_changed = new_forbidden_endpoints != current_forbidden_endpoints
             if (
                 (
-                    self.tenant and 
-                    self.tenant.get("storage", {}).get("is_v2_token_expired")
+                    self.tenant
+                    and self.tenant.get("storage", {}).get("is_v2_token_expired")
                 )
                 or is_forbidden_value_changed
             ):
@@ -361,6 +432,7 @@ class NetskopeClient:
         self.iterators = {}
         self.threads = set()
         self._sub_types = []
+        self._incident_enrichment = False
         self.pulling_type = pulling_type
         self.handle_forbidden = handle_forbidden
         self.pulling_started = False
@@ -470,6 +542,15 @@ class NetskopeClient:
             if type_ not in iterator_indexes:
                 self.threads.remove(type_)
 
+    @property
+    def incident_enrichment(self) -> bool:
+        """Return all sub_sub_types."""
+        return self._incident_enrichment
+
+    @incident_enrichment.setter
+    def incident_enrichment(self, incident_enrichment: bool):
+        self._incident_enrichment = incident_enrichment
+
     def create_job(self):
         """Create queue and threads for pull alerts."""
         try:
@@ -534,7 +615,7 @@ class NetskopeClient:
                             f"disabled_{sub_type}_pull"
                         )
                     )
-                    == int
+                    is int
                 ):
                     iterator.set_timestamp(
                         tenant_dict_storage.get(f"disabled_{self.type}_pull", {}).get(
@@ -631,7 +712,7 @@ class NetskopeClient:
                                 "Error occurred while fetching the schema headers. "
                                 "Please check the logs for more details."
                             )
-                            self.logger.error(
+                            logger.error(
                                 f"{self.log_prefix}: {error_msg} Error: {error_msg}",
                                 details=traceback.format_exc(),
                             )
@@ -649,20 +730,49 @@ class NetskopeClient:
                                 f"Pulled {len(response)} {sub_type} {self.type}(s) for tenant "
                                 f"{self.tenant.get('name')} in CSV format using {iterator_name} index."
                             )
-                            for key, header in schema_headers.items():
-                                batch = b"\n".join(
-                                    [
-                                        header,
-                                        b"\n".join(
-                                            filter(
-                                                lambda x: x.startswith(key),
-                                                response,
-                                            )
-                                        ),
-                                    ]
+                            # Try enrichment if needed
+                            if sub_type == CONST.EVENTS.get("incident") and self.incident_enrichment:
+                                response_decoded = [
+                                    line.decode() if isinstance(line, bytes) else line for line in response if line
+                                ]
+                                enriched_batches = self._enrich_csv_incident_data(
+                                    response_decoded, sub_type, iterator_name, schema_headers=schema_headers
                                 )
-                                content = gzip.compress(batch, compresslevel=3)
-                                self.message_queue.put((content, sub_type, False, True))
+                                if enriched_batches:
+                                    for batch in enriched_batches:
+                                        self.message_queue.put(batch)
+                                else:
+                                    # Fallback to original logic
+                                    for key, header in schema_headers.items():
+                                        batch = b"\n".join(
+                                            [
+                                                header,
+                                                b"\n".join(
+                                                    filter(
+                                                        lambda x: x.startswith(key),
+                                                        response
+                                                    )
+                                                )
+                                            ]
+                                        )
+                                        content = gzip.compress(batch, compresslevel=3)
+                                        self.message_queue.put((content, sub_type, False, True))
+                            else:
+                                # Original logic for non-incident data
+                                for key, header in schema_headers.items():
+                                    batch = b"\n".join(
+                                        [
+                                            header,
+                                            b"\n".join(
+                                                filter(
+                                                    lambda x: x.startswith(key),
+                                                    response,
+                                                )
+                                            ),
+                                        ]
+                                    )
+                                    content = gzip.compress(batch, compresslevel=3)
+                                    self.message_queue.put((content, sub_type, False, True))
                         else:
                             logger.info(
                                 f"{self.log_prefix}: "
@@ -671,20 +781,39 @@ class NetskopeClient:
                             )
                     elif response:
                         wait_time = headers.get("wait_time", CONST.DEFAULT_WAIT_TIME)
-                        content = gzip.compress(response, compresslevel=3)
-                        logger.info(
-                            f"{self.log_prefix}: "
-                            f"Pulled {len(response.splitlines())-1} {sub_type} {self.type}(s) for tenant "
-                            f"{self.tenant.get('name')} in CSV format using {iterator_name} index."
-                        )
-                        self.message_queue.put((content, sub_type, False, True))
+                        # Try enrichment if needed
+                        if sub_type == CONST.EVENTS.get("incident") and self.incident_enrichment:
+                            enriched_batches = self._enrich_csv_incident_data(
+                                response, sub_type, iterator_name
+                            )
+                            if enriched_batches:
+                                for batch in enriched_batches:
+                                    self.message_queue.put(batch)
+                            else:
+                                # Fallback to original logic
+                                content = gzip.compress(response, compresslevel=3)
+                                logger.info(
+                                    f"{self.log_prefix}: "
+                                    f"Pulled {len(response.splitlines())-1} {sub_type} {self.type}(s) for tenant "
+                                    f"{self.tenant.get('name')} in CSV format using {iterator_name} index (enrichment failed)."
+                                )
+                                self.message_queue.put((content, sub_type, False, True))
+                        else:
+                            # Original logic for non-incident data
+                            content = gzip.compress(response, compresslevel=3)
+                            logger.info(
+                                f"{self.log_prefix}: "
+                                f"Pulled {len(response.splitlines())-1} {sub_type} {self.type}(s) for tenant "
+                                f"{self.tenant.get('name')} in CSV format using {iterator_name} index."
+                            )
+                            self.message_queue.put((content, sub_type, False, True))
                     else:
                         logger.info(
                             f"{self.log_prefix}: "
                             f"Pulled 0 {sub_type} {self.type}(s) for tenant "
                             f"{self.tenant.get('name')} in CSV format using {iterator_name} index."
                         )
-                else:
+                else:  # data is in json
                     number_of_alerts = len(re.findall(CONST.ID_PATTERN, response))
                     ok_match = re.search(CONST.OK_PATTERN, response)
                     timestamp_hwm_match = re.search(
@@ -717,6 +846,11 @@ class NetskopeClient:
                         f"Pulled {number_of_alerts} {sub_type} {self.type}(s) for tenant "
                         f"{self.tenant.get('name')} in JSON format using {iterator_name} index{pull_message}"
                     )
+                    if sub_type == CONST.EVENTS.get("incident") and self.incident_enrichment:
+                        response = response.decode()
+                        response = json.loads(response)
+                        response[CONST.RESULT] = self.enrich_incident_data(response.get(CONST.RESULT, []))
+                        response = json.dumps(response).encode('utf-8')
                     content = gzip.compress(response, compresslevel=3)
                     self.message_queue.put(
                         (
@@ -731,7 +865,6 @@ class NetskopeClient:
                         wait_time = int(wait_time_match.group(1).decode())
                 self.update_pull_status(sub_type)
                 time.sleep(int(wait_time))
-
         except Exception as ex:
             logger.error(
                 f"{self.log_prefix}: "
@@ -865,6 +998,9 @@ class NetskopeClient:
                         f"{self.type}s in JSON format using {iterator_name} index{pull_message}"
                         f"for configuration {self.source_configuration}."
                     )
+                # If sub type is incident and forensics enabled, enrich
+                if sub_type == CONST.EVENTS.get("incident") and self.incident_enrichment:
+                    filtered_data = self.enrich_incident_data(filtered_data)
                 if self.compress_historical_data and filtered_data:
                     filtered_data = gzip.compress(json.dumps({CONST.RESULT: filtered_data}).encode('utf-8'), compresslevel=3)
                 self.message_queue.put((filtered_data, sub_type, False, True))
@@ -877,7 +1013,6 @@ class NetskopeClient:
                 if len(response.get(CONST.RESULT, [])) != 0:
                     wait_time = response.get(CONST.WAIT_TIME, CONST.DEFAULT_WAIT_TIME)
                 time.sleep(wait_time)
-
         except Exception as ex:
             logger.error(
                 f"{self.log_prefix}: "
@@ -908,3 +1043,215 @@ class NetskopeClient:
     #         tenant = TenantDB(**tenant)
     #         alerts = tenant.alert_types
     #     return alerts, latest_checked
+
+    def _enrich_csv_incident_data(self, response_data, sub_type, iterator_name, schema_headers=None, header=None):
+        """
+        Enrich CSV incident data with forensics information.
+        And return compressed json.
+
+        Args:
+            response_data: Raw CSV response data (bytes or string)
+            sub_type: The sub type of data being processed
+            iterator_name: Name of the iterator
+            schema_headers: Dict of schema headers for versioned CSV (optional)
+                key, value in bytes
+            header: Single header for simple CSV (optional)
+
+        Returns:
+            List of tuples (content, sub_type, False, True) for message queue
+        """
+
+        enriched_batches = []
+
+        try:
+            if schema_headers:
+                # Handle versioned CSV format
+                for key_bytes, header_bytes in schema_headers.items():
+                    key = key_bytes.decode() if isinstance(key_bytes, bytes) else key_bytes
+                    header = header_bytes.decode() if isinstance(header_bytes, bytes) else header_bytes
+                    # Filter lines for the current version and decode from bytes to string
+                    response_data = [
+                        line.decode() if isinstance(line, bytes) else line
+                        for line in response_data
+                    ]
+                    csv_data = "\n".join(
+                        [
+                            line
+                            for line in response_data
+                            if line.startswith(key)
+                        ]
+                    )
+                    if not csv_data:
+                        continue
+
+                    # Get column names from the original schema_header dict
+                    columns = [
+                        h.strip() for h in header.split(',')
+                    ]
+                    # Read CSV with version column
+                    df = pd.read_csv(StringIO(csv_data), header=None, names=columns)
+
+                    # Convert to dict format and enrich
+                    # incidents_list = df.to_dict('records')
+                    incidents_list = parse_csv_response(df)
+
+                    enriched_incidents = self.enrich_incident_data(incidents_list)
+
+                    if enriched_incidents:
+                        content = gzip.compress(
+                            json.dumps({CONST.RESULT: enriched_incidents}).encode('utf-8'),
+                            compresslevel=3
+                        )
+
+                        enriched_batches.append((content, sub_type, False, True))
+
+                        logger.info(
+                            f"{self.log_prefix}: "
+                            f"Pulled and enriched {len(enriched_incidents)} {sub_type} {self.type}(s) for tenant "
+                            f"{self.tenant.get('name')} in CSV format using {iterator_name} index."
+                        )
+            else:
+                # Handle simple CSV format
+                response_lines = response_data.splitlines() if isinstance(response_data, str) else response_data.decode().splitlines()
+                if len(response_lines) > 1:  # Must have at least header + 1 data row
+                    # Read CSV data using pandas
+                    csv_string = response_data if isinstance(response_data, str) else response_data.decode()
+                    df = pd.read_csv(StringIO(csv_string), sep=',')
+
+                    # Convert to dict format and enrich
+                    # incidents_list = df.to_dict('records')
+                    incidents_list = parse_csv_response(df)
+                    enriched_incidents = self.enrich_incident_data(incidents_list)
+
+                    if enriched_incidents:
+                        content = gzip.compress(
+                            json.dumps({CONST.RESULT: enriched_incidents}).encode('utf-8'),
+                            compresslevel=3
+                        )
+
+                        enriched_batches.append((content, sub_type, False, True))
+
+                        logger.info(
+                            f"{self.log_prefix}: "
+                            f"Pulled and enriched {len(enriched_incidents)} {sub_type} {self.type}(s) for tenant "
+                            f"{self.tenant.get('name')} in CSV format using {iterator_name} index."
+                        )
+                    else:
+                        # No enrichment needed, return original
+                        return None
+                else:
+                    # Empty or header-only response
+                    return None
+
+        except Exception as e:
+            logger.error(
+                f"{self.log_prefix}: Error enriching CSV data: {e}",
+                details=traceback.format_exc(),
+            )
+            # Return None to indicate fallback to original logic
+            return None
+
+        return enriched_batches if enriched_batches else None
+
+    def _fetch_forensics_data(self, incident_id: str):
+        """Fetch forensics data for a specific incident ID.
+
+        Args:
+            incident_id: The DLP incident ID to fetch forensics data for
+
+        Returns:
+            Dictionary containing parsed forensics data or empty dict if failed
+        """
+        logger.info(
+            "Enriching incident data with forensics"
+            f"data for incident id: {incident_id}."
+        )
+        logger_msg = (
+            f"fetching forensics data for incident {incident_id}"
+        )
+        try:
+            forensics_data = self.netskope_api_plugin_helper.api_helper(
+                logger_msg=logger_msg,
+                url=CONST.DLP_INCIDENT_FORENSICS_ENDPOINT.format(
+                    base_url=self.tenant_hostname,
+                    dlp_incident_id=incident_id
+                ),
+                method="GET",
+                headers=self.headers,
+                proxies=self.proxy,
+                is_validation=False,
+                handle_rate_limit=True
+            )
+
+            # Extract the different components we want to return
+            result = {
+                "forensics_content": forensics_data.get("data", {}).get("content", ""),
+            }
+
+            # Parse the meta field if it exists
+            meta_data = forensics_data.get("data", {}).get("meta")
+            if meta_data:
+                try:
+                    parsed_meta = json.loads(meta_data)
+                    result["forensics_metadata_content"] = parsed_meta.get("metadata_content", "")
+                    result["forensics_dlp_match_info"] = parsed_meta.get("dlp_match_info", [])
+                except json.JSONDecodeError:
+                    logger.error(
+                        f"{self.log_prefix}: Error parsing meta data JSON for incident {incident_id}",
+                        details=traceback.format_exc(),
+                    )
+
+            return result
+
+        except NetskopeProviderPluginException as err:
+            logger.error(
+                message=(
+                    f"{self.log_prefix}: Error occurred while {logger_msg}."
+                    f" Error: {err}"
+                ),
+                details=traceback.format_exc(),
+            )
+            return {}
+        except Exception as err:
+            logger.error(
+                message=(
+                    f"{self.log_prefix}: Unexpected error occurred while"
+                    f" {logger_msg}. Error: {err}"
+                ),
+                details=traceback.format_exc(),
+            )
+            return {}
+
+    def _get_unique_incident_ids(self, data: List[Dict]):
+        incident_ids_dict = defaultdict(list)
+        for dlp_incident in data:
+            dlp_id = dlp_incident.get('dlp_incident_id')
+            if dlp_id:
+                incident_ids_dict[dlp_id].append(dlp_incident)
+        return incident_ids_dict
+
+    def enrich_incident_data(self, incident_data: List[Dict]):
+        """Enrich incident data with forensics information in-place, keeping all incidents.
+
+        Args:
+            incident_data: List of incident dictionaries to enrich.
+
+        Returns:
+            The same incident_data list with enriched information.
+        """
+        # Group incidents by 'dlp_incident_id'
+        incident_ids_dict = self._get_unique_incident_ids(incident_data)
+
+        # Fetch forensics data and update incidents
+        for incident_id, incidents in incident_ids_dict.items():
+            forensics_data = self._fetch_forensics_data(incident_id)
+
+            # Update each incident with the forensics data
+            for incident in incidents:
+                # Add each field from the forensics data to the incident
+                for key, value in forensics_data.items():
+                    incident[key] = value
+
+        # For incidents without 'dlp_incident_id', they remain unchanged in incident_data
+
+        return incident_data

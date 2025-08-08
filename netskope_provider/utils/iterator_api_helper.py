@@ -46,6 +46,8 @@ from .constants import (
     MODULE_NAME,
     MAX_API_CALLS,
     DEFAULT_WAIT_TIME,
+    RATELIMIT_RESET,
+    RATELIMIT_REMAINING,
     CLIENT_STATUS_ITERATOR_NAME
 )
 
@@ -58,10 +60,12 @@ class NetskopeProviderPluginException(Exception):
 
     pass
 
+
 class IteratorAlreadyExists(Exception):
     """Iterator already exists custom exception class."""
 
     pass
+
 
 class NetskopePluginHelper(object):
     """NetskopePluginHelper class.
@@ -126,6 +130,7 @@ class NetskopePluginHelper(object):
         is_handle_error_required=True,
         is_validation=False,
         regenerate_auth_token=True,
+        handle_rate_limit=False
     ):
         """API Helper to perform API request on ThirdParty platform \
         and captures all the possible errors for requests.
@@ -259,6 +264,8 @@ class NetskopePluginHelper(object):
                     time.sleep(DEFAULT_WAIT_TIME)
 
                 else:
+                    if handle_rate_limit:
+                        self.honor_rate_limiting(response.headers)
                     return (
                         self.handle_error(response, logger_msg, is_validation)
                         if is_handle_error_required
@@ -340,6 +347,31 @@ class NetskopePluginHelper(object):
                 details=traceback.format_exc(),
             )
             raise NetskopeProviderPluginException(err_msg)
+
+    def honor_rate_limiting(self, headers):
+        """
+        Identify the response headers carrying the rate limiting value.
+        If the rate limit remaining for this endpoint is 0 then wait for 
+            the rate limit reset time before sending the response to the client.
+        """
+        try:
+            if RATELIMIT_REMAINING in headers:
+                remaining = headers[RATELIMIT_REMAINING]
+                if int(remaining) <= 0:
+                    self.logger.info(
+                        "Rate limiting reached while pulling forensics."
+                    )
+                    if RATELIMIT_RESET in headers:
+                        time.sleep(int(headers[RATELIMIT_RESET]))
+                    else:
+                        # if the RESET value does not exist in the header then
+                        # sleep for default 1 second as the rate limit remaining is 0
+                        time.sleep(1)
+        except ValueError as ve:
+            self.logger.error(
+                f"Value error when honoring the rate limiting"
+                f" wait time {headers} {str(ve)}."
+            )
 
     def parse_response(self, response, is_validation: bool = False):
         """Parse Response will return JSON from response object.

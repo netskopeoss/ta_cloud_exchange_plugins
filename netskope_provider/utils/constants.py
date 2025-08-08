@@ -36,7 +36,7 @@ from netskope_api.iterator.const import Const
 import os
 
 MODULE_NAME = "TENANT"
-PLUGIN_VERSION = "1.4.2"
+PLUGIN_VERSION = "1.5.0"
 PLATFORM_NAME = "Netskope"
 MAX_API_CALLS = 4
 DATE_FORMAT = "%Y-%m-%dT%H:%M:%S.%fZ"
@@ -98,3 +98,10 @@ if isinstance(RETRY_COUNT_FOR_PULLING, str) and RETRY_COUNT_FOR_PULLING.isnumeri
 else:
     RETRY_COUNT_FOR_PULLING = DEFAULT_RETRY_COUNT
 STRING_FIELDS = ['dlp_incident_id', 'connection_id', 'app_session_id', 'dlp_parent_id', 'browser_session_id']
+DLP_INCIDENT_FORENSICS_ENDPOINT = "{base_url}/api/v2/incidents/dlpincidents/{dlp_incident_id}/forensics"
+DLP_INCIDENT_ORIGINAL_FILE_ENDPOINT = "{base_url}/api/v2/incidents/dlpincidents/{dlp_incident_id}/originalfile"
+DLP_INCIDENT_SUB_FILE_ENDPOINT = "{base_url}/api/v2/incidents/dlpincidents/{dlp_incident_id}/subfile"
+# Rate limit remaining
+RATELIMIT_REMAINING = "ratelimit-remaining"
+# Rate limit RESET value is in seconds
+RATELIMIT_RESET = "ratelimit-reset"

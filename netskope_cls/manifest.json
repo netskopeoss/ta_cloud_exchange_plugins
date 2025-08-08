@@ -2,10 +2,10 @@
   "name":"Netskope Log Shipper",
   "id":"netskope_cls",
   "netskope":true,
-  "version":"2.2.1",
+  "version":"2.3.0",
   "module":"CLS",
-  "minimum_version":"5.1.0",
-  "minimum_provider_version":"1.0.0",
+  "minimum_version":"5.1.2",
+  "minimum_provider_version":"1.5.0",
   "provider_id":"netskope_provider",
   "patch_supported":true,
   "types":[
@@ -180,6 +180,24 @@
         ],
         "mandatory":false,
         "description":"Types of the events to fetch."
+     },
+     {
+      "label": "Pull DLP Incident Forensics",
+      "key": "incident_forensics",
+      "type": "choice",
+      "choices": [
+          {
+              "key": "Yes",
+              "value": "yes"
+          },
+          {
+              "key": "No",
+              "value": "no"
+          }
+      ],
+      "default": "no",
+      "mandatory": true,
+      "description": "Forensics fields for DLP Incidents will be fetched."
      },
      {
         "label":"Initial Range for Events (in hours)",

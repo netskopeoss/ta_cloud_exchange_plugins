@@ -1,3 +1,9 @@
+# 1.4.0
+## Added
+- Added support for pulling Devices from Client Status Events.
+- Added additional fields to pull for Users entity.
+- Added support for port range in 'Add host to Private App' action.
+
 # 1.3.0
 ## Added
  - Added the support for 'UCI Reset' action.

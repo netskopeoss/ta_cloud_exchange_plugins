@@ -4,6 +4,7 @@ import json
 import re
 import time
 import traceback
+from datetime import datetime, timezone
 from typing import Dict, List, Optional, Union
 
 from netskope.common.utils import (
@@ -39,10 +40,12 @@ from .utils.constants import (
     APP_INSTANCE_BATCH_SIZE,
     TAG_APP_BATCH_SIZE,
     TAG_NOT_FOUND,
+    USER_FIELD_MAPPING,
     USERS_BATCH_SIZE,
     APPLICATIONS_BATCH_SIZE,
     TAG_APP_TAG_LENGTH,
     TAG_EXISTS,
+    DEVICE_FIELD_MAPPING,
 )
 from .utils.helper import NetskopePluginHelper, NetskopeException
 
@@ -117,6 +120,36 @@ class NetskopePlugin(PluginBase):
                     EntityField(
                         name="policyName", type=EntityFieldType.STRING
                     ),
+                    EntityField(
+                        name="cci", type=EntityFieldType.NUMBER
+                    ),
+                    EntityField(
+                        name="ccl", type=EntityFieldType.STRING
+                    ),
+                    EntityField(
+                        name="deviceClassification", type=EntityFieldType.STRING
+                    ),
+                    EntityField(
+                        name="policyAction", type=EntityFieldType.LIST
+                    ),
+                    EntityField(
+                        name="severity", type=EntityFieldType.STRING
+                    ),
+                    EntityField(
+                        name="destinationIP", type=EntityFieldType.STRING
+                    ),
+                    EntityField(
+                        name="sourceRegion", type=EntityFieldType.STRING
+                    ),
+                    EntityField(
+                        name="sourceIP", type=EntityFieldType.STRING
+                    ),
+                    EntityField(
+                        name="userIP", type=EntityFieldType.STRING
+                    ),
+                    EntityField(
+                        name="policyID", type=EntityFieldType.STRING
+                    ),
                 ],
             ),
             Entity(
@@ -148,7 +181,204 @@ class NetskopePlugin(PluginBase):
                     ),
                 ],
             ),
+            Entity(
+                name="Devices",
+                fields=[
+                    EntityField(
+                        name="Device ID",
+                        type=EntityFieldType.STRING,
+                        required=True,
+                    ),
+                    EntityField(
+                        name="Hostname",
+                        type=EntityFieldType.STRING
+                    ),
+                    EntityField(
+                        name="Netskope Device UID",
+                        type=EntityFieldType.STRING
+                    ),
+                    EntityField(
+                        name="Mac Addresses",
+                        type=EntityFieldType.LIST
+                    ),
+                    EntityField(
+                        name="Last Connected from Private IP",
+                        type=EntityFieldType.STRING
+                    ),
+                    EntityField(
+                        name="Last Connected from Public IP",
+                        type=EntityFieldType.STRING
+                    ),
+                    EntityField(
+                        name="Device Serial Number",
+                        type=EntityFieldType.STRING
+                    ),
+                    EntityField(
+                        name="Operating System",
+                        type=EntityFieldType.STRING
+                    ),
+                    EntityField(
+                        name="Operating System Version",
+                        type=EntityFieldType.STRING
+                    ),
+                    EntityField(
+                        name="Device Make",
+                        type=EntityFieldType.STRING
+                    ),
+                    EntityField(
+                        name="Device Model",
+                        type=EntityFieldType.STRING
+                    ),
+                    EntityField(
+                        name="Last Updated Timestamp",
+                        type=EntityFieldType.DATETIME
+                    ),
+                    EntityField(
+                        name="Management ID",
+                        type=EntityFieldType.STRING
+                    ),
+                    EntityField(
+                        name="Steering Config",
+                        type=EntityFieldType.STRING
+                    ),
+                    EntityField(
+                        name="Region",
+                        type=EntityFieldType.STRING
+                    ),
+                    EntityField(
+                        name="User Name",
+                        type=EntityFieldType.STRING
+                    ),
+                    EntityField(
+                        name="User Key",
+                        type=EntityFieldType.STRING
+                    ),
+                    EntityField(
+                        name="Device Classification Status",
+                        type=EntityFieldType.STRING
+                    ),
+                ],
+            )
         ]
+
+    def _convert_string_to_list(self, data_object: Dict, key: str) -> Dict:
+        """
+        Converts a string field in a dictionary to a list field, if needed.
+
+        Args:
+            data_object (Dict): The dictionary containing the field.
+            key (str): The key of the field to convert.
+
+        Returns:
+            Dict: The dictionary with the field converted to a list if needed.
+        """
+        if isinstance(data_object.get(key), str):
+            data_object[key] = [data_object.get(key)]
+        return data_object
+
+    def _add_field(self, fields_dict: dict, field_name: str, value):
+        """Add field to the extracted_fields dictionary.
+
+        Args:
+            fields_dict (dict): Field dictionary to update.
+            field_name (str): Field name to add.
+            value: Field to add.
+        """
+        if isinstance(value, int) or isinstance(value, float):
+            fields_dict[field_name] = value
+            return
+        if value:
+            fields_dict[field_name] = value
+
+    def _extract_field_from_event(
+        self,
+        key: str,
+        event: dict,
+        default,
+        transformation=None,
+    ):
+        """Extract field from event.
+
+        Args:
+            key (str): Key to fetch.
+            event (dict): Event dictionary.
+            default (str,None): Default value to set.
+            transformation (str, None, optional): Transformation
+                to perform on key. Defaults to None.
+
+        Returns:
+            Any: Value of the key from event.
+        """
+        keys = key.split(".")
+        while keys:
+            k = keys.pop(0)
+            if k not in event and default is not None:
+                return default
+            event = event.get(k, {})
+        if transformation and transformation == "string":
+            return str(event)
+        return event
+
+    def _extract_entity_fields(
+        self,
+        event: dict,
+        entity_field_mapping: Dict[str, Dict[str, str]],
+        entity: str,
+    ) -> dict:
+        """
+        Extracts the required entity fields from the event payload as
+        per the mapping provided.
+
+        Args:
+            event (dict): Event payload.
+            entity_field_mapping (Dict): Mapping of entity fields to
+                their corresponding keys in the event payload and
+                default values.
+            entity (str): Entity name.
+
+        Returns:
+            dict: Dictionary containing the extracted entity fields.
+        """
+        extracted_fields = {}
+        for field_name, field_value in entity_field_mapping.items():
+            key, default, transformation = (
+                field_value.get("key"),
+                field_value.get("default"),
+                field_value.get("transformation"),
+            )
+            self._add_field(
+                fields_dict=extracted_fields,
+                field_name=field_name,
+                value=self._extract_field_from_event(
+                    key=key,
+                    event=event,
+                    default=default,
+                    transformation=transformation,
+                ),
+            )
+        # If the CSV response has multiple values for mac address field they
+        # are separated by '|' and the tenant plugin parses it into a list
+        # of strings but for single value in mac address field it is parsed
+        # to a string hence converting it into list of string
+        if entity == "Devices":
+            extracted_fields = self._convert_string_to_list(
+                data_object=extracted_fields,
+                key="Mac Addresses",
+            )
+            # Converting Unix timestamp to datetime object
+            last_updated_timestamp = extracted_fields.get(
+                "Last Updated Timestamp"
+            )
+            try:
+                converted_datetime = (
+                    datetime.fromtimestamp(
+                        last_updated_timestamp, timezone.utc
+                    )
+                )
+            except Exception:
+                converted_datetime = None
+            extracted_fields["Last Updated Timestamp"] = converted_datetime
+        return extracted_fields
 
     def fetch_records(self, entity: str) -> list[dict]:
         """Fetch user and application records from Netskope alerts.
@@ -163,6 +393,8 @@ class NetskopePlugin(PluginBase):
         self.tenant = helper.get_tenant_crev2(self.name)
         if entity == "Users":
             return self._fetch_users()
+        elif entity == "Devices":
+            return self._fetch_devices()
         elif entity == "Applications":
             return self._fetch_applications()
         else:
@@ -536,7 +768,7 @@ class NetskopePlugin(PluginBase):
 
     def _fetch_applications(self) -> list[dict]:
         """Fetch applications from Netskope application events."""
-        events = self.data if self.data_type == "events" else []
+        events = self.data if (self.data_type == "events" and self.sub_type == "application") else []
         self.logger.info(
             f"{self.log_prefix}: Processing {len(events)} "
             "application events."
@@ -555,18 +787,41 @@ class NetskopePlugin(PluginBase):
         self.logger.info(
             f"{self.log_prefix}: Processing {len(alerts)} UBA alerts."
         )
-        users = [
-            {
-                "email": alert.get("userkey", None),
-                "policyName": alert.get("policy", None),
-            }
-            for alert in alerts
-            if alert.get("userkey", None) is not None
-        ]
+        users = []
+        empty_userkey_count = 0
+        skipped_count = 0
+        for users_data in alerts:
+            if users_data.get("userkey", None) is None:
+                empty_userkey_count += 1
+            extracted_data = None
+            try:
+                extracted_data = self._extract_entity_fields(
+                    event=users_data,
+                    entity_field_mapping=USER_FIELD_MAPPING,
+                    entity="Users",
+                )
+                if extracted_data:
+                    users.append(extracted_data)
+                else:
+                    skipped_count += 1
+            except Exception as err:
+                self.logger.error(
+                    message=(
+                        f"{self.log_prefix}: Error occurred while "
+                        f"extracting user fields. Error: {err}"
+                    ),
+                    details=str(traceback.format_exc()),
+                )
+                skipped_count += 1
+        if empty_userkey_count > 0:
+            self.logger.info(
+                f"{self.log_prefix}: Skipped {empty_userkey_count}"
+                " alerts due to empty userkey."
+            )
         self.logger.info(
-            f"{self.log_prefix}: Successfully extracted "
-            f"{len(users)} user(s) from the "
-            f"Netskope Tenant."
+            f"{self.log_prefix}: Successfully fetched {len(users)}"
+            f" user(s) and skipped {skipped_count} user(s) records"
+            " from the Netskope Tenant."
         )
         return users
 
@@ -631,9 +886,12 @@ class NetskopePlugin(PluginBase):
                                     "confidenceScore", None
                                 )
                             )
-                            if "policyName" in record:
-                                record.pop("policyName", None)
-                            updated_users.append(record)
+                            updated_users.append(
+                                {
+                                    "email": record.get("email"),
+                                    "ubaScore": record.get("ubaScore")
+                                }
+                            )
                 except Exception as e:
                     self.logger.error(
                         message=(
@@ -683,6 +941,45 @@ class NetskopePlugin(PluginBase):
         )
         return apps
 
+    def _fetch_devices(self):
+        """Fetch devices from Netskope client status events."""
+        client_status_events = self.data if (
+            self.data_type == "events" and self.sub_type == "clientstatus"
+        ) else []
+        self.logger.info(
+            f"{self.log_prefix}: Processing {len(client_status_events)} "
+            "client status events."
+        )
+        devices = []
+        skipped_count = 0
+        for device_data in client_status_events:
+            try:
+                extracted_data = self._extract_entity_fields(
+                    event=device_data,
+                    entity_field_mapping=DEVICE_FIELD_MAPPING,
+                    entity="Devices",
+                )
+                if extracted_data:
+                    devices.append(extracted_data)
+                else:
+                    skipped_count += 1
+            except Exception as e:
+                self.logger.error(
+                    message=(
+                        f"{self.log_prefix}: Error occurred while "
+                        f"extracting device fields. Error: {e}"
+                    ),
+                    details=str(traceback.format_exc()),
+                )
+                skipped_count += 1
+                continue
+        self.logger.info(
+            f"{self.log_prefix}: Successfully fetched {len(devices)}"
+            f" device(s) and skipped {skipped_count} device(s) records"
+            " from the Netskope Tenant."
+        )
+        return devices
+
     def update_records(self, entity: str, records: List[dict]):
         """Fetch user scores.
 
@@ -695,14 +992,20 @@ class NetskopePlugin(PluginBase):
         """
         helper = AlertsHelper()
         self.tenant = helper.get_tenant_crev2(self.name)
-        self.logger.info(
+        update_logger_msg = (
             f"{self.log_prefix}: Updating {len(records)} "
             f"{entity} record(s) from the Netskope Tenant."
         )
         if entity == "Users":
+            self.logger.info(update_logger_msg)
             return self._update_users(records)
         elif entity == "Applications":
+            self.logger.info(update_logger_msg)
             return self._update_applications(records)
+        elif entity == "Devices":
+            # There is no score related field in Devices entity
+            # hence returning empty list.
+            return []
         else:
             raise ValueError(f"Unsupported entity '{entity}'")
 
@@ -1237,10 +1540,27 @@ class NetskopePlugin(PluginBase):
             List of sub types to pull
         """
         sub_types = []
-        if data_type == "alerts":
-            sub_types.extend(["uba"])
-        elif data_type == "events":
-            sub_types.extend(["application"])
+        # mappedEntities is currently not being passed in configuration
+        # but will be present in configuration starting from CE v6.0.0
+        # This will ensure the data pull call are only dependant on
+        # the mapped entities.
+        # Till then if the user wants to pull Devices they will have to
+        # map application entity.
+        # (IPE for this fix https://engjira.cdsys.local/browse/NCTE-25648)
+        mapped_entities = self.mappedEntities if hasattr(self, "mappedEntities") else []
+        if mapped_entities:
+            for mapped_entity in mapped_entities:
+                if data_type == "alerts" and mapped_entity.get("entity") == "Users":
+                    sub_types.extend(["uba"])
+                elif data_type == "events" and mapped_entity.get("entity") == "Applications":
+                    sub_types.extend(["application"])
+                elif data_type == "events" and mapped_entity.get("entity") == "Devices":
+                    sub_types.extend(["clientstatus"])
+        else:
+            if data_type == "alerts":
+                sub_types.extend(["uba"])
+            elif data_type == "events":
+                sub_types.extend(["application", "clientstatus"])
         return sub_types
 
     def get_target_fields(self, plugin_id, plugin_parameters):
@@ -1321,7 +1641,8 @@ class NetskopePlugin(PluginBase):
         try:
             helper = AlertsHelper()
             self.tenant = helper.get_tenant(configuration.get("tenant", ""))
-            token = resolve_secret(self.tenant.parameters.get("v2token", ""))
+            tenant_configuration = self.tenant.parameters
+            token = resolve_secret(tenant_configuration.get("v2token", ""))
             if token is None:
                 return ValidationResult(
                     success=False,
@@ -1334,12 +1655,45 @@ class NetskopePlugin(PluginBase):
             provider = plugin_provider_helper.get_provider(
                 tenant_name=self.tenant.name
             )
+            # mappedEntities is currently not being passed in configuration
+            # but will be present in configuration starting from CE v6.0.0
+            # This will ensure the plugin validates/creates client status
+            # iterator if and only if Device entity is mapped.
+            # Till then plugin will validate/create client status iterator
+            # regardless of whether Device entity is mapped or not
+            # (IPE for this fix https://engjira.cdsys.local/browse/NCTE-25648)
+            mapped_entities = self.mappedEntities if hasattr(self, "mappedEntities") else []
             type_map = {
-                "events": ["application"],
-                "alerts": ["uba"],
+                "events": [],
+                "alerts": [],
             }
+            if mapped_entities:
+                for mapped_entity in mapped_entities:
+                    if mapped_entity.get("entity") == "Users":
+                        type_map["alerts"].append("uba")
+                    if mapped_entity.get("entity") == "Applications":
+                        type_map["events"].append("application")
+                    if mapped_entity.get("entity") == "Devices":
+                        type_map["events"].append("clientstatus")
+            else:
+                type_map = {
+                    "events": ["application", "clientstatus"],
+                    "alerts": ["uba"],
+                }
+            modified_type_map = type_map.copy()
+            if "events" in modified_type_map and "clientstatus" in modified_type_map.get("events", []):
+                try:
+                    provider.client_status_validation()
+                    modified_type_map["events"] = [
+                        event_type
+                        for event_type in modified_type_map.get("events", [])
+                        if event_type != "clientstatus"
+                    ]
+                except Exception as e:
+                    return ValidationResult(success=False, message=str(e))
+
             provider.permission_check(
-                type_map,
+                modified_type_map,
                 plugin_name=self.plugin_name,
                 configuration_name=self.name,
             )
@@ -1371,21 +1725,37 @@ class NetskopePlugin(PluginBase):
             )
 
     def _validate_port(self, port):
-        """Validate the port.
+        """Validate the port or port range.
 
         Args:
-            port (str): Port number.
+            port: Port number as int/str or port range as 'lower-upper' string
 
         Returns:
-            bool: True if the port is valid, False otherwise.
+            bool: True if port or port range is valid, False otherwise
         """
+        # Handle port range (e.g., '1000-2000')
+        if isinstance(port, str) and '-' in port:
+            try:
+                lower, upper = port.split('-')
+                lower_port = int(lower.strip())
+                upper_port = int(upper.strip())
+                # Check if ports are within valid range
+                if not (0 <= lower_port <= 65535 and 0 <= upper_port <= 65535):
+                    return False
+                # Check if lower is less than upper and they are not equal
+                if lower_port >= upper_port:
+                    return False
+                return True
+            except (ValueError, AttributeError):
+                return False
+
+        # Handle single port
         try:
             port = int(port)
-        except ValueError:
+            return 0 <= port <= 65535
+        except (ValueError, TypeError):
             return False
-        if not 0 <= port <= 65535:
-            return False
-        return True
+
 
     def validate_action(self, action: Action):
         """Validate Netskope configuration.
@@ -1533,8 +1903,8 @@ class NetskopePlugin(PluginBase):
                     return ValidationResult(
                         success=False,
                         message=(
-                            "Invalid TCP Port provided. "
-                            "Valid values are between 0 and 65535."
+                            "Invalid TCP Port or Port Range provided."
+                            " Valid values are between 0 and 65535."
                         ),
                     )
             if "UDP" in protocols:
@@ -1552,8 +1922,8 @@ class NetskopePlugin(PluginBase):
                     return ValidationResult(
                         success=False,
                         message=(
-                            "Invalid UDP Port provided. "
-                            "Valid values are between 0 and 65535."
+                            "Invalid UDP Port or Port Range provided."
+                            " Valid values are between 0 and 65535."
                         ),
                     )
 
@@ -2074,9 +2444,9 @@ class NetskopePlugin(PluginBase):
                     "default": "",
                     "mandatory": False,
                     "description": (
-                        "Comma-separated ports for the TCP protocol. "
-                        "Only enter in Static field if you have "
-                        "selected 'TCP' in Protocol."
+                        "Comma-separated ports or port ranges for "
+                        "the TCP protocol. (e.g. 443, 8080-8090)"
+                        "(Only enter if you have selected 'TCP' in Protocol.)"
                     ),
                 },
                 {
@@ -2086,9 +2456,9 @@ class NetskopePlugin(PluginBase):
                     "default": "",
                     "mandatory": False,
                     "description": (
-                        "Comma-separated ports for the UDP protocol. "
-                        "Only enter in Static field if you have "
-                        "selected 'UDP' in Protocol."
+                        "Comma-separated ports or port ranges for "
+                        "the UDP protocol. (e.g. 443, 8080-8090)"
+                        "(Only enter if you have selected 'UDP' in Protocol.)"
                     ),
                 },
                 {
@@ -4192,3 +4562,5 @@ class NetskopePlugin(PluginBase):
                 "tagged": tagged_count
             }
         return tags_apps_info
+
+    # TODO: Implement cleanup method to delete client status iterator

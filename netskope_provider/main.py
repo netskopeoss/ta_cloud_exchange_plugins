@@ -315,7 +315,7 @@ class NetskopeProviderPlugin(PluginBase):
         """Remove tenant from banner."""
         new_message = (
             "Configure tenant(s) **{}** "
-            "with V2 API Token. Navigate to Settings > Netskope Tenants to update tenants with V2 API Token. "
+            "with a V2 or RBAC V3 API Token. Navigate to Settings > Netskope Tenants to update tenants with a new Token. "
         )
         self.remove_tenant_from_banner(
             banner_id="BANNER_ERROR_1000",
@@ -336,8 +336,9 @@ class NetskopeProviderPlugin(PluginBase):
 
         new_message = (
             "The Netskope tenant API token has expired for **{}**. "
-            "Generate the new token or re-issue the token and update the tenant configuration "
-            "to resume communication between Netskope Tenant and Cloud Exchange."
+            "To resume communication between Netskope Tenant and Cloud Exchange, please take action based on your token type. "
+            "For V2 tokens, generate a new token or re-issue the existing one, then update the tenant configuration. "
+            "For RBAC V3 tokens, either generate a new token or extend the expiration date of the current one."
         )
         self.remove_tenant_from_banner(
             banner_id="BANNER_ERROR_0999",

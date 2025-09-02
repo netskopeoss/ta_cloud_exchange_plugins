@@ -1,3 +1,8 @@
+# 1.5.1
+## Fixed
+- Updated WebTx creds retrieval interval on authentication error.
+- Updated pulling workflow. 
+
 # 1.5.0
 ## Added 
 - Added support to pull forensics for DLP Incident events. To pull and ingest these fields update your CLS Netskope plugin version to 2.3.0, CTO Netskope plugin version to 2.3.0 and CE version to 5.1.2.

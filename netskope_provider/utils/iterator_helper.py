@@ -609,28 +609,14 @@ class NetskopeClient:
             if tenant_dict_storage.get(f"first_{self.type}_pull", {}).get(
                 f"first_{sub_type}_pull", True
             ):
-                if (
-                    type(
-                        tenant_dict_storage.get(f"disabled_{self.type}_pull", {}).get(
-                            f"disabled_{sub_type}_pull"
-                        )
-                    )
-                    is int
-                ):
-                    iterator.set_timestamp(
-                        tenant_dict_storage.get(f"disabled_{self.type}_pull", {}).get(
-                            f"disabled_{sub_type}_pull"
-                        )
-                    )
-                else:
-                    initial_pull = self.tenant.get("checkpoint")
-                    if not initial_pull:
-                        initial_pull = datetime.now()
+                initial_pull = self.tenant.get("checkpoint")
+                if not initial_pull:
+                    initial_pull = datetime.now()
 
-                    initial_pull = initial_pull.replace(
-                        minute=0, second=0, microsecond=0
-                    ).strftime("%s")
-                    iterator.set_timestamp(initial_pull)
+                initial_pull = initial_pull.replace(
+                    minute=0, second=0, microsecond=0
+                ).strftime("%s")
+                iterator.set_timestamp(initial_pull)
 
             self.should_exit.clear()
             back_pressure_thread = threading.Thread(
@@ -680,18 +666,6 @@ class NetskopeClient:
                     )
                     and plugin_provider_helper.is_module_enabled()
                 ):
-                    update_set_data = {
-                        f"first_{self.type}_pull.first_{sub_type}_pull": True,
-                    }
-                    if iterator.timestamp_hwm:
-                        update_set_data[
-                            f"disabled_{self.type}_pull.disabled_{sub_type}_pull"
-                        ] = iterator.timestamp_hwm
-
-                    plugin_provider_helper.update_tenant_storage(
-                        self.tenant.get("name"), update_set_data
-                    )
-
                     return {"success": True}
 
                 if iterator_name not in self.sub_types:
@@ -877,17 +851,7 @@ class NetskopeClient:
             should_apply_expo_backoff = False
             if iterator and iterator.should_apply_expo_backoff:
                 should_apply_expo_backoff = should_apply_expo_backoff or iterator.should_apply_expo_backoff
-            update_set_data = {
-                f"first_{self.type}_pull.first_{sub_type}_pull": True,
-            }
-            if iterator and iterator.timestamp_hwm:
-                update_set_data[
-                    f"disabled_{self.type}_pull.disabled_{sub_type}_pull"
-                ] = iterator.timestamp_hwm
 
-            plugin_provider_helper.update_tenant_storage(
-                self.tenant.get("name"), update_set_data
-            )
             self.should_exit.set()
             with self.lock:
                 self.running_thread -= 1

@@ -53,8 +53,7 @@ ENABLE_DEBUG = os.getenv("ENABLE_DEBUG", "false").lower() == "true"
 SOURCE = None
 BACK_PRESSURE_CHECK_INTERVAL = 60
 threads = []
-WEBTX_SUBSCRIPTION_KEY_REFRESH_INTERVAL = 24 # IN HOURS
-WEBTX_SUBSCRIPTION_KEY_REFRESH_HOUR = 3 # 3 AM UTC
+WEBTX_SUBSCRIPTION_KEY_REFRESH_INTERVAL = 300 # IN Seconds
 
 logging_formatter = logging.Formatter(
     "[%(asctime)s: %(levelname)s] %(filename)s:%(lineno)d "
@@ -132,7 +131,6 @@ class WebTxHelper:
         try:
             update_set = {}
             update_unset = {
-                "last_fetched_sub_at": "",
                 "subscription_key": "",
                 "subscription_endpoint": ""
             }
@@ -147,7 +145,7 @@ class WebTxHelper:
     def get_plugin_subscription_configuration(self, tenant_name, configuration_name):
         try:
             from netskope.common.utils import resolve_secret, add_user_agent
-            global WEBTX_SUBSCRIPTION_KEY_REFRESH_INTERVAL, WEBTX_SUBSCRIPTION_KEY_REFRESH_HOUR
+            global WEBTX_SUBSCRIPTION_KEY_REFRESH_INTERVAL
             tenant = plugin_provider_helper.get_tenant_details(
                 tenant_name
             )
@@ -163,11 +161,13 @@ class WebTxHelper:
             sub_key_response = None
             token_management_response = None
             is_subscription_details_not_in_db = not (
-                tenant["storage"].get("last_fetched_sub_at") and
                 tenant["storage"].get("subscription_key") and
                 tenant["storage"].get("subscription_endpoint")
             )
-            if is_subscription_details_not_in_db:
+            if is_subscription_details_not_in_db and (
+                tenant["storage"].get("last_fetched_sub_at") is None or
+                (time.time() - tenant["storage"].get("last_fetched_sub_at").timestamp()) > WEBTX_SUBSCRIPTION_KEY_REFRESH_INTERVAL
+            ):
                 # call the sdk
                 token_management = NetskopeTokenManagement(params)
                 token_management_response = token_management.get()
@@ -250,14 +250,21 @@ class WebTxHelper:
                             self.log_prefix, tenant_name, token_management_response.get("error_msg")
                         )
                     )
-                raise requests.HTTPError(f'Error occurred while subscription details for {tenant_name}. {token_management_response}')        
+                raise requests.HTTPError(f'Error occurred while subscription details for {tenant_name}. {token_management_response}')
             else:
                 tenant = plugin_provider_helper.get_tenant_details(
                     tenant_name
                 )
                 sub_key_response = tenant["storage"].get("subscription_key")
                 sub_path_response = tenant["storage"].get("subscription_endpoint")
-                return sub_key_response, sub_path_response
+                if sub_key_response and sub_path_response:
+                    return sub_key_response, sub_path_response
+                else:
+                    raise Exception(
+                        "subscription details might be regenerated with on the Netskope tenant and will be retrieved within "
+                        f"{WEBTX_SUBSCRIPTION_KEY_REFRESH_INTERVAL} seconds after triggering 'GENERATE AND DOWNLOAD KEY' from "
+                        "Netskope tenant UI > Settings > Tools > Event Streaming."
+                    )
         except Exception as e:
             raise e
 
@@ -316,11 +323,11 @@ class WebTxHelper:
             stdout_logger.debug("Exiting thread.")
         except TypeError:
             handle_interrupt()
-        except Unauthenticated or Unauthorized or PermissionDenied as ex:
+        except Unauthenticated or Unauthorized or PermissionDenied:
             self.unset_webtx_subscription_details(configuration.tenant)
             should_restart = True
             logger.error(
-                f"Error occurred while subscribing to WebTx path, credentials will be refreshed in next execution. If you have regenerated endpoint please 'GENERATE AND DOWNLOAD KEY' from Netskope tenant UI > Settings > Tools > Event Streaming. Error : {str(ex)}.",
+                "Error occurred while subscribing to WebTx path, credentials will be refreshed in next execution. If you have regenerated endpoint please 'GENERATE AND DOWNLOAD KEY' from Netskope tenant UI > Settings > Tools > Event Streaming.",
                 error_code="CLS_1030",
                 details=traceback.format_exc(),
             )
@@ -329,7 +336,7 @@ class WebTxHelper:
         except Exception as ex:
             stdout_logger.debug(f"{str(repr(ex))} {traceback.format_exc()}")
             logger.error(
-                f"Error occurred while subscribing to WebTx path, {str(ex)}",
+                "Error occurred while subscribing to WebTx path. Check details for more.",
                 error_code="CLS_1025",
                 details=traceback.format_exc(),
             )

@@ -10,7 +10,7 @@ import time
 import queue
 from functools import partial
 from typing import Any, Dict, Optional, Tuple, Union, overload, cast
-from .....typing_extensions import Literal
+from typing_extensions import Literal
 from ..... import certifi
 
 from ..outcomes import Accepted, Modified, Received, Rejected, Released

@@ -6,7 +6,7 @@
 
 # TODO: fix mypy errors for _code/_definition/__defaults__ (issue #26500)
 from typing import NamedTuple, Optional, Union, TYPE_CHECKING, Dict, Any, List
-from ....typing_extensions import TypedDict
+from typing_extensions import TypedDict
 from .types import AMQPTypes, FieldDefinition
 from .constants import FIELD, MessageDeliveryState
 from .performatives import _CAN_ADD_DOCSTRING

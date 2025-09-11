@@ -6,7 +6,7 @@
 from typing import Any, Union, Optional, TYPE_CHECKING
 import logging
 from weakref import WeakSet
-from ...typing_extensions import Literal
+from typing_extensions import Literal
 from ... import certifi
 
 from ._base_handler import (

@@ -36,7 +36,7 @@ from typing import (
     Iterable,
     Type,
 )
-from ....typing_extensions import AsyncContextManager
+from typing_extensions import AsyncContextManager
 
 from azure.core.pipeline import (
     PipelineRequest,

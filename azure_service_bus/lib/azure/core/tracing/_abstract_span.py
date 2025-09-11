@@ -19,7 +19,7 @@ from typing import (
     TypeVar,
 )
 from types import TracebackType
-from ....typing_extensions import Protocol, ContextManager, runtime_checkable
+from typing_extensions import Protocol, ContextManager, runtime_checkable
 from azure.core.pipeline.transport import (
     HttpRequest,
     HttpResponse,

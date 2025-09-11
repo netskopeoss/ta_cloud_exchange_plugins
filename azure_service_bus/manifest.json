@@ -1,25 +1,27 @@
 {
-  "name": "Microsoft Azure Service Bus",
-  "description": "This plugin is used to send messages in the Queues available on the Azure Service Bus platform. This plugin only supports adding(creating) messages in the Queues, the plugin does not support updating or syncing messages in Queues.",
-  "id": "azure_service_bus",
-  "version": "1.0.0",
-  "pulling_supported": false,
-  "receiving_supported": true,
-  "configuration": [
-    {
-      "label": "Configuration Parameters",
-      "name": "params",
-      "type": "step",
-      "fields": [
+    "name": "Microsoft Azure Service Bus",
+    "description": "This plugin is used to send messages in the Queues available on the Azure Service Bus platform. This plugin only supports adding(creating) messages in the Queues, the plugin does not support updating or syncing messages in Queues.",
+    "id": "azure_service_bus",
+    "version": "1.0.1",
+    "module": "CTO",
+    "minimum_version": "5.0.0",
+    "pulling_supported": false,
+    "receiving_supported": true,
+    "configuration": [
         {
-          "label": "Namespace Connection String",
-          "key": "namespace_conn_str",
-          "type": "text",
-          "default": "",
-          "mandatory": true,
-          "description": "The Namespace Connection String can be generated from Service Bus Namespace -> Shared access policies. Either Primary or Secondary Connection String can be used."
+            "label": "Configuration Parameters",
+            "name": "params",
+            "type": "step",
+            "fields": [
+                {
+                    "label": "Namespace Connection String",
+                    "key": "namespace_conn_str",
+                    "type": "text",
+                    "default": "",
+                    "mandatory": true,
+                    "description": "The Namespace Connection String can be generated from Service Bus Namespace -> Shared access policies. Either Primary or Secondary Connection String can be used."
+                }
+            ]
         }
-      ]
-    }
-  ]
+    ]
 }

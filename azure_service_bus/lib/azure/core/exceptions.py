@@ -43,7 +43,7 @@ from typing import (
     NoReturn,
     TYPE_CHECKING,
 )
-from ...typing_extensions import Protocol, runtime_checkable
+from typing_extensions import Protocol, runtime_checkable
 
 _LOGGER = logging.getLogger(__name__)
 

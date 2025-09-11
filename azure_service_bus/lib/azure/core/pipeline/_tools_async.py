@@ -24,7 +24,7 @@
 #
 # --------------------------------------------------------------------------
 from typing import TYPE_CHECKING, Callable, TypeVar, Awaitable, Union, overload
-from ....typing_extensions import ParamSpec
+from typing_extensions import ParamSpec
 
 if TYPE_CHECKING:
     from ..rest import AsyncHttpResponse as RestAsyncHttpResponse

@@ -16,7 +16,7 @@ from typing import (
     Dict,
     Union,
 )
-from ....typing_extensions import Protocol
+from typing_extensions import Protocol
 from ._encode import encode_payload
 from .utils import get_message_encoded_size
 from .error import AMQPError

@@ -17,7 +17,7 @@ import uuid
 from functools import partial
 from typing import Any, Dict, Optional, Tuple, Union, overload, cast
 from .... import certifi
-from ....typing_extensions import Literal
+from typing_extensions import Literal
 from ._connection import Connection
 from .message import _MessageDelivery
 from .error import (

@@ -25,7 +25,7 @@
 # --------------------------------------------------------------------------
 from __future__ import annotations
 from typing import TYPE_CHECKING, Union, Callable, TypeVar
-from ....typing_extensions import TypeGuard, ParamSpec
+from typing_extensions import TypeGuard, ParamSpec
 
 if TYPE_CHECKING:
     from azure.core.rest import HttpResponse, HttpRequest, AsyncHttpResponse

@@ -44,8 +44,8 @@ PAGE_SIZE = 9999
 MODULE_NAME = "CTE"
 PLUGIN_NAME = "CrowdStrike"
 PLATFORM_NAME = "CrowdStrike"
-PLUGIN_VERSION = "2.2.0"
-MAX_API_CALLS = 3
+PLUGIN_VERSION = "2.3.0"
+MAX_API_CALLS = 4
 DEFAULT_WAIT_TIME = 60
 DEFAULT_BATCH_SIZE = 200
 MAX_WAIT_TIME = 300
@@ -56,7 +56,6 @@ IOC_MANAGEMENT_INDICATORS_LIMIT = 1000000
 MAX_INDICATOR_THRESHOLD = 100000
 DATE_FORMAT = r"%Y-%m-%dT%H:%M:%S.%f%zZ"
 ENDPOINT_DETECTION_DETAILS_BATCH_SIZE = 1000
-DATE_FORMAT_FOR_IOCS = r"%Y-%m-%dT%H:%M:%SZ"
 ENDPOINT_DETECTION = "CrowdStrike Endpoint Detections"
 IOC_MANAGEMENT = "CrowdStrike Custom IOC Management"
 IOC_MANAGEMENT_PULL_PAGE_LIMIT = 2000
@@ -69,7 +68,6 @@ THREAT_MAPPING = {
     "ipv4": ["ipv4"],
     "ipv6": ["ipv6"],
 }
-DEFAULT_NETSKOPE_TAG = "netskope-ce"
 PREFIX_IOC_SOURCE_TAG = "Netskope - Cloud Threat Exchange"
 NON_CROWDSTRIKE_DISCOVERED = "non-CrowdStrike-discovered"
 INTEGER_THRESHOLD = 4611686018427387904
@@ -109,3 +107,11 @@ BIFURCATE_INDICATOR_TYPES = {
 }
 
 CASE_INSENSITIVE_IOC_TYPES = ["md5", "sha256", "ipv6"]
+
+API_ENDPOINTS = {
+    "pull_ioc_management": "{}/iocs/combined/indicator/v1",
+    "endpoint_detections": "{}/alerts/combined/alerts/v1",
+    "devices": "{}/indicators/queries/devices/v1",
+    "devices_actions": "{}/devices/entities/devices-actions/v2",
+    "update_ioc_management": "{}/iocs/entities/indicators/v1",
+}

@@ -33,7 +33,23 @@ CTO Jira Plugin constants.
 """
 MODULE_NAME = "CTO"
 PLATFORM_NAME = "Jira"
-PLUGIN_VERSION = "2.1.1"
+PLUGIN_VERSION = "2.3.0"
 DEFAULT_WAIT_TIME = 60
 MAX_API_CALLS = 4
 LIMIT = 50
+USERS_PER_PAGE = 1000
+JIRA_ENDPOINTS = {
+   "GET_ISSUE": "/rest/api/3/issue/{issue_id}",
+   "GET_PROJECTS": "/rest/api/3/project/search",
+   "SET_ISSUE_STATUS": "/rest/api/3/issue/{task_id}/transitions",
+   "GET_ISSUE_FIELDS": (
+      "/rest/api/3/issue/createmeta/{project_id}/issuetypes/{issue_type}"
+   ),
+   "GET_EDIT_ISSUE_FIELDS": "/rest/api/3/issue/{issue_id}/editmeta",
+   "CREATE_ISSUE": "/rest/api/3/issue",
+   "SEARCH_JQL": "/rest/api/3/search/jql",
+   "UPDATE_ISSUE": "/rest/api/3/issue/{task_id}",
+   "VALIDATE_CONNECTIVITY": "/rest/api/3/myself",
+   "GET_AVAILABLE_FIELDS": "/rest/api/3/field",
+   "GET_USERS": "/rest/api/3/users/search",
+}

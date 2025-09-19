@@ -1,3 +1,11 @@
+# 2.3.0
+## Added
+- Added support for mapping custom status fields.
+
+# 2.2.0
+## Added
+- Added support for mapping assignee with email.
+
 # 2.1.1
 ## Fixed
 - Bug fixes.

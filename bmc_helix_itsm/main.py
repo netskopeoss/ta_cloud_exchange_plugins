@@ -70,7 +70,9 @@ from netskope.integrations.itsm.models import (
     Task,
     TaskStatus,
     Alert,
-    UpdatedTaskValues
+    UpdatedTaskValues,
+    CustomFieldsSectionWithMappings,
+    CustomFieldMapping
 )
 
 
@@ -147,8 +149,6 @@ class BMCHelixPlugin(PluginBase):
         """
         if name == "auth":
             return self._validate_auth(configuration)
-        elif name == "mapping_config":
-            return self._validate_mapping_configs(configuration)
         else:
             return ValidationResult(
                 success=True, message="Validation successful."
@@ -230,53 +230,6 @@ class BMCHelixPlugin(PluginBase):
             )
 
         return self._validate_auth_params(configuration, validation_err_msg)
-
-    def _validate_mapping_configs(self, configuration):
-        """Validate the plugin mapping configurations.
-
-        Args:
-            configuration (Dict): Configuration dictionary.
-
-        Returns:
-            ValidationResult: Validation result.
-        """
-        mapping_configs = configuration.get("mapping_config", {})
-
-        validation_err_msg = f"{self.log_prefix}: Validation error occurred."
-
-        if (
-            "status_mapping" not in mapping_configs
-            or not isinstance(mapping_configs["status_mapping"], dict)
-        ):
-            err_msg = (
-                "Invalid status mapping found in the Mapping Configurations."
-            )
-            self.logger.error(
-                f"{validation_err_msg} {err_msg}",
-            )
-            return ValidationResult(
-                success=False, message=err_msg
-            )
-
-        if (
-            "severity_mapping" not in mapping_configs
-            or not isinstance(mapping_configs["severity_mapping"], dict)
-        ):
-            err_msg = (
-                "Invalid severity mapping found in the Mapping Configurations."
-            )
-            self.logger.error(
-                f"{validation_err_msg} {err_msg}",
-            )
-            return ValidationResult(
-                success=False, message=err_msg
-            )
-
-        self.logger.debug(
-            f"{self.log_prefix}: Successfully validated "
-            "Mapping Configurations."
-        )
-        return ValidationResult(success=True, message="Validation successful.")
 
     def _validate_auth_params(self, configuration, validation_err_msg):
         """Validate the plugin authentication parameters.
@@ -486,76 +439,6 @@ class BMCHelixPlugin(PluginBase):
             "dedup": [],
         }
 
-    def _ce_to_bmc_state_severity_mappings(
-        self,
-        mappings: dict,
-    ):
-        """Get state severity mappings.
-
-        Args:
-            mapping_config (Dict): Mapping config.
-            mappings (Dict): Mappings.
-            status_field (str): Status field based on table.
-            severity_field (str): Severity field based on table.
-
-        Returns:
-            dict: mappings with updated state severity mappings.
-        """
-        mapping_config = self.configuration.get("mapping_config", {})
-        ce_to_bmc_status = mapping_config.get("status_mapping", {})
-        ce_to_bmc_severity = mapping_config.get("severity_mapping", {})
-        for k, v in {
-            "Status": ce_to_bmc_status,
-            "Impact": ce_to_bmc_severity
-        }.items():
-            if k == "Status" and k in mappings.keys():
-                mapped_status = mappings.get(k)
-                if (
-                    mapped_status in
-                    INCIDENT_REQUIRED_FIELDS_VALUES.get("Status", [])
-                ):
-                    continue
-                mappings.update(
-                    {
-                        k: v.get(mapped_status, "New")
-                    }
-                )
-            elif k == "Impact" and k in mappings.keys():
-                mapped_impact = mappings.get(k)
-                if (
-                    mapped_impact in
-                    INCIDENT_REQUIRED_FIELDS_VALUES.get("Impact", [])
-                ):
-                    continue
-                mappings.update(
-                    {
-                        k: v.get(mapped_impact, "4-Minor/Localized")
-                    }
-                )
-        return mappings
-
-    def _get_severity_status_mapping(self):
-        """Get severity status mapping.
-
-        Returns:
-            dict: Severity status mapping.
-        """
-        mapping_config = self.configuration.get("mapping_config", {})
-        ns_to_ce_severity = {
-            value: key for key, value in mapping_config.get(
-                "severity_mapping", {}
-            ).items()
-        }
-        ns_to_ce_status = {
-            value: key for key, value in mapping_config.get(
-                "status_mapping", {}
-            ).items()
-        }
-        return {
-            "severity": ns_to_ce_severity,
-            "status": ns_to_ce_status
-        }
-
     def _update_task_details(
         self,
         task: Task,
@@ -570,64 +453,27 @@ class BMCHelixPlugin(PluginBase):
         Returns:
             Task: Updated task object.
         """
-        if task.dataItem and task.dataItem.rawData:
-            old_status = task.dataItem.rawData.get(
-                "status", TaskStatus.OTHER
+        if task.updatedValues:
+            task.updatedValues.oldAssignee = task.dataItem.rawData.get(
+                "assignee", None
             )
-            old_severity = task.dataItem.rawData.get(
-                "severity", Severity.OTHER
+        else:
+            task.updatedValues = UpdatedTaskValues(
+                assignee=None,
+                oldAssignee=task.dataItem.rawData.get("assignee", None),
             )
-            if task.updatedValues:
-                task.updatedValues.oldSeverity = (
-                    old_severity if old_severity.upper() in
-                    Severity.__members__ else Severity.OTHER
-                )
-                task.updatedValues.oldStatus = (
-                    old_status if old_status.upper() in
-                    TaskStatus.__members__ else TaskStatus.OTHER
-                )
-                task.updatedValues.oldAssignee = task.dataItem.rawData.get(
-                    "assignee", None
-                )
-            else:
-                task.updatedValues = UpdatedTaskValues(
-                    status=None,
-                    oldStatus=(
-                        old_status if old_status.upper() in
-                        TaskStatus.__members__ else TaskStatus.OTHER
-                    ),
-                    assignee=None,
-                    oldAssignee=task.dataItem.rawData.get("assignee", None),
-                    severity=None,
-                    oldSeverity=(
-                        old_severity if old_severity.upper() in
-                        Severity.__members__ else Severity.OTHER
-                    ),
-                )
-        mapping_config = self._get_severity_status_mapping()
-
-        SEVERITY_MAPPING = mapping_config.get("severity", {})
-        STATE_MAPPINGS = mapping_config.get("status", {})
 
         if task.updatedValues:
-            task.updatedValues.status = STATE_MAPPINGS.get(
-                bmc_helix_data.get("Status"), TaskStatus.OTHER
-            )
+            task.updatedValues.status = bmc_helix_data.get("Status"), TaskStatus.OTHER
 
         if bmc_helix_data["Impact"]:
-            task.updatedValues.severity = SEVERITY_MAPPING.get(
-                bmc_helix_data.get("Impact"), Severity.OTHER
-            )
+            task.updatedValues.severity = bmc_helix_data.get("Impact"), Severity.OTHER
 
         if bmc_helix_data["Assignee"]:
             task.updatedValues.assignee = bmc_helix_data["Assignee"]
 
-        task.status = STATE_MAPPINGS.get(
-            bmc_helix_data.get("Status"), TaskStatus.OTHER
-        )
-        task.severity = SEVERITY_MAPPING.get(
-            bmc_helix_data.get("Impact"), Severity.OTHER
-        )
+        task.status = bmc_helix_data.get("Status"), TaskStatus.OTHER
+        task.severity = bmc_helix_data.get("Impact"), Severity.OTHER
         return task
 
     def _validate_required_fields_and_values(self, mappings):
@@ -672,7 +518,6 @@ class BMCHelixPlugin(PluginBase):
         if "eventType" in alert.model_dump():
             event_type = "Event"
 
-        mappings = self._ce_to_bmc_state_severity_mappings(mappings)
         (
             missing_fields,
             invalid_value_fields
@@ -778,14 +623,8 @@ class BMCHelixPlugin(PluginBase):
                 incident_link = base_url.replace("restapi", "smartit")
             task = Task(
                 id=incident_number,
-                status=(
-                    status if status.upper() in TaskStatus.__members__ else
-                    TaskStatus.OTHER
-                ),
-                severity=(
-                    severity if severity.upper() in Severity.__members__ else
-                    Severity.OTHER
-                ),
+                status=(status if status else TaskStatus.OTHER),
+                severity=(severity if severity else Severity.OTHER),
                 link=(
                     f"{incident_link}/smartit/app/#/incident"
                     f"/displayid/{incident_number}"
@@ -1056,3 +895,91 @@ class BMCHelixPlugin(PluginBase):
                 message=f"{self.log_prefix}: {err_msg}",
             )
             raise BMCHelixPluginException(err_msg)
+
+    def get_default_custom_mappings(
+        self
+    ) -> list[CustomFieldsSectionWithMappings]:
+        """
+        Get default custom field mappings with values for
+        BMC Helix ITSM plugin.
+
+        Returns:
+            list[CustomFieldsSectionWithMappings]: List of sections
+                with field-to-value mappings
+        """
+        return [
+            CustomFieldsSectionWithMappings(
+                section="status",
+                event_field="status",
+                destination_label="BMC Helix Incident Status",
+                field_mappings=[
+                    CustomFieldMapping(
+                        name="New",
+                        mapped_value="New",
+                        is_default=True,
+                    ),
+                    CustomFieldMapping(
+                        name="In Progress",
+                        mapped_value="In Progress",
+                        is_default=True,
+                    ),
+                    CustomFieldMapping(
+                        name="On Hold",
+                        mapped_value="",
+                        is_default=True,
+                    ),
+                    CustomFieldMapping(
+                        name="Closed",
+                        mapped_value="Closed",
+                        is_default=True,
+                    ),
+                    CustomFieldMapping(
+                        name="Deleted",
+                        mapped_value="",
+                        is_default=True,
+                    ),
+                    CustomFieldMapping(
+                        name="Other",
+                        mapped_value="",
+                        is_default=True,
+                    ),
+                ],
+            ),
+            CustomFieldsSectionWithMappings(
+                section="severity",
+                event_field="severity",
+                destination_label="BMC Helix Incident Impact",
+                field_mappings=[
+                    CustomFieldMapping(
+                        name="Critical",
+                        mapped_value="1-Extensive/Widespread",
+                        is_default=True,
+                    ),
+                    CustomFieldMapping(
+                        name="High",
+                        mapped_value="2-Significant/Large",
+                        is_default=True,
+                    ),
+                    CustomFieldMapping(
+                        name="Medium",
+                        mapped_value="3-Moderate/Limited",
+                        is_default=True,
+                    ),
+                    CustomFieldMapping(
+                        name="Low",
+                        mapped_value="4-Minor/Localized",
+                        is_default=True,
+                    ),
+                    CustomFieldMapping(
+                        name="Informational",
+                        mapped_value="",
+                        is_default=True,
+                    ),
+                    CustomFieldMapping(
+                        name="Other",
+                        mapped_value="",
+                        is_default=True,
+                    ),
+                ],
+            ),
+        ]

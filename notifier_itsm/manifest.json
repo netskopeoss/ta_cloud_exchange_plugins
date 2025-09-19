@@ -1,10 +1,11 @@
 {
   "name": "Notifier",
-  "description": "Send notifications to various platforms.",
+  "description": "This plugin is used to send notifications to various platforms.",
   "id": "notifier_itsm",
   "pulling_supported": false,
   "receiving_supported": true,
-  "version": "1.1.0",
+  "minimum_version": "6.0.0",
+  "version": "1.2.0",
   "configuration": [
     {
       "label": "Platform",

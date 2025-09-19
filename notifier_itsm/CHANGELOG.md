@@ -1,3 +1,7 @@
+# 1.2.0
+## Added
+- Added sync alerts/events support for slack platform through CE Webhook.
+
 # 1.1.0
 ## Added
 - Added feature to dynamically add recipients.

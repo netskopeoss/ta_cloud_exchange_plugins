@@ -4,9 +4,9 @@
   "id": "jira_itsm",
   "pulling_supported": false,
   "receiving_supported": true,
-  "version": "2.1.1",
+  "version": "2.3.0",
   "module": "CTO",
-  "minimum_version": "5.1.0",
+  "minimum_version": "6.0.0",
   "configuration": [
     {
       "label": "Authentication",
@@ -51,65 +51,6 @@
           "default": "Task",
           "mandatory": true,
           "description": "Enter comma separated values of Jira issue types (values are case sensitive)."
-        }
-      ]
-    },
-    {
-      "label": "Mapping Configurations",
-      "name": "mapping_config",
-      "type": "step",
-      "fields": [
-        {
-          "label": "Status Mapping",
-          "key": "status_mapping",
-          "type": "mapping_table",
-          "value_type": "text",
-          "destination_label": "Jira Status",
-          "fields": [
-            {
-              "label": "New",
-              "value": "new",
-              "multi": false,
-              "mandatory": false
-            },
-            {
-              "label": "In Progress",
-              "value": "in_progress",
-              "multi": false,
-              "mandatory": false
-            },
-            {
-              "label": "On Hold",
-              "value": "on_hold",
-              "multi": false,
-              "mandatory": false
-            },
-            {
-              "label": "Closed",
-              "value": "closed",
-              "multi": false,
-              "mandatory": false
-            },
-            {
-              "label": "Deleted",
-              "value": "deleted",
-              "multi": false,
-              "mandatory": false
-            },
-            {
-              "label": "Other",
-              "value": "other",
-              "multi": false,
-              "mandatory": false
-            }
-          ],
-          "mandatory": false,
-          "default": {
-            "new": "New",
-            "in_progress": "In Progress",
-            "closed": "Closed"
-          },
-          "description": "Status Mapping will be used to map the ticket status from Cloud Exchange to the Jira ticket status. This mapping will also be used to transform the status while creating the ticket on Jira platform."
         }
       ]
     }

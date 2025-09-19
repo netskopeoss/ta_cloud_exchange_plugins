@@ -1,3 +1,9 @@
+# 4.0.0
+## Added
+- Added support for invoking mapping validation separately.
+## Changed
+- Enhanced the efficiency of database interactions.
+
 # 3.3.0
 ## Added
 - Added support for the content and device alert type. 

@@ -33,7 +33,9 @@ Syslog Plugin constants."""
 
 PLATFORM_NAME = "Syslog"
 MODULE_NAME = "CLS"
-PLUGIN_VERSION = "3.2.2"
+PLUGIN_VERSION = "4.0.0"
+
+MAXIMUM_CORE_VERSION = "5.1.2"
 
 SYSLOG_PROTOCOLS = ["UDP", "TCP", "TLS"]
 

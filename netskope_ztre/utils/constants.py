@@ -13,7 +13,7 @@ REGEX_HOST = (
 REGEX_EMAIL = r"[^@]+@[^@]+\.[^@]+"
 MODULE_NAME = "CRE"
 PLUGIN = "Netskope Risk Exchange"
-PLUGIN_VERSION = "1.4.0"
+PLUGIN_VERSION = "1.5.0"
 URLS = {
     "V2_PRIVATE_APP": "/api/v2/steering/apps/private",
     "V2_PRIVATE_APP_PATCH": "/api/v2/steering/apps/private/{}",
@@ -29,6 +29,7 @@ URLS = {
     "V2_CCI_TAGS": "/api/v2/services/cci/tags",
     "V2_UCI_IMPACT": "/api/v2/incidents/user/uciimpact",
     "V2_GET_UCI": "/api/v2/incidents/uba/getuci",
+    "V2_REVERT_UCI_IMPACT": "/api/v2/incidents/anomalies/{}/allow"
 }
 ERROR_TAG_EXISTS = (
     "Tag provided is already present. Hence use PATCH method to add "

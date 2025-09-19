@@ -1,3 +1,7 @@
+# 1.5.0
+## Added
+- Added the revert action for 'UCI Impact Update' to support Mark Anomaly as Allowed.
+
 # 1.4.0
 ## Added
 - Added support for pulling Devices from Client Status Events.

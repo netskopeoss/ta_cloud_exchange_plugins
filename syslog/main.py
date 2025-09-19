@@ -40,6 +40,8 @@ import traceback
 import time
 from typing import List
 from jsonpath import jsonpath
+from packaging import version
+from netskope.common.api import __version__ as CE_VERSION
 from netskope.common.utils import AlertsHelper
 from netskope.integrations.cls.plugin_base import (
     PluginBase,
@@ -47,13 +49,14 @@ from netskope.integrations.cls.plugin_base import (
     PushResult,
 )
 from .utils.syslog_constants import (
-    SYSLOG_PROTOCOLS,
-    PLATFORM_NAME,
+    MAXIMUM_CORE_VERSION,
     MODULE_NAME,
+    PLATFORM_NAME,
     PLUGIN_VERSION,
+    SYSLOG_PROTOCOLS,
 )
 from .utils.syslog_validator import SyslogValidator
-from .utils.syslog_helper import get_syslog_mappings
+from .utils.syslog_helper import get_syslog_mappings, validate_syslog_mappings
 from .utils.syslog_exceptions import (
     MappingValidationError,
     EmptyExtensionError,
@@ -164,9 +167,10 @@ class SyslogPlugin(PluginBase):
         headers = {}
         mapping_variables = {}
         if data_type != "webtx":
-            helper = AlertsHelper()
-            tenant = helper.get_tenant_cls(self.source)
-            mapping_variables = {"$tenant_name": tenant.name}
+            if not hasattr(self, "tenant"):
+                helper = AlertsHelper()
+                self.tenant = helper.get_tenant_cls(self.source)
+            mapping_variables = {"$tenant_name": self.tenant.name}
 
         missing_fields = []
         mapped_field_flag = False
@@ -281,7 +285,7 @@ class SyslogPlugin(PluginBase):
                 )
                 if value:
                     mapped_field = True
-                    return ",".join([str(val) for val in value]), mapped_field
+                    return ",".join(map(str, value)), mapped_field
                 else:
                     raise FieldNotFoundError(
                         extension_mapping["mapping_field"]
@@ -339,6 +343,76 @@ class SyslogPlugin(PluginBase):
 
         return mapped_dict
 
+    def validate_mappings(self):
+        """Validate the Syslog mappings for all data type.
+
+        Raises:
+            MappingValidationError: When validation fails for \
+                any of the configured data_type.
+        """
+        validation_err_msg = (
+            f"{self.log_prefix}: Mapping validation error occurred."
+        )
+        err_msg = "Invalid attribute mapping provided."
+        syslog_validator = SyslogValidator(self.logger, self.log_prefix)
+
+        def _validate_json_data(json_string):
+            """Validate that the jsonData should not be empty."""
+            try:
+                json_object = json.loads(json_string)
+                if not bool(json_object):
+                    raise ValueError("JSON data should not be empty.")
+            except json.decoder.JSONDecodeError as e:
+                raise ValueError(f"Invalid JSON: {e}")
+            except Exception as e:
+                raise ValueError(f"Error occurred while validating JSON: {e}.")
+            return json_object
+
+        try:
+            mappings = _validate_json_data(self.mappings.get("jsonData"))
+        except Exception as err:
+            return ValidationResult(
+                success=False,
+                message=str(err),
+            )
+
+        if (
+            not isinstance(mappings, dict)
+            or not syslog_validator.validate_syslog_map(mappings)
+        ):
+            self.logger.error(f"{validation_err_msg} {err_msg}")
+            return ValidationResult(
+                success=False,
+                message=err_msg,
+            )
+
+        for data_type in mappings.get("taxonomy", {}).keys():
+            try:
+                self.logger.info(
+                    message=(
+                        f"{self.log_prefix}: Validating the mappings for "
+                        f"syslog {data_type}."
+                    )
+                )
+                validate_syslog_mappings(mappings, data_type, self.name)
+            except MappingValidationError as mapping_validation_error:
+                self.logger.error(
+                    message=(
+                        f"{validation_err_msg} {err_msg} Error: "
+                        f"{mapping_validation_error}"
+                    ),
+                    details=str(traceback.format_exc()),
+                )
+                return ValidationResult(
+                    success=False,
+                    message=err_msg,
+                )
+
+        return ValidationResult(
+            success=True,
+            message="Mappings validation successful.",
+        )
+
     def transform(self, raw_data, data_type, subtype) -> List:
         """To Transform the raw netskope JSON data into target platform \
             supported data formats."""
@@ -346,10 +420,26 @@ class SyslogPlugin(PluginBase):
         log_source_identifier = self.configuration.get(
             "log_source_identifier", "netskopece"
         )
-        if not self.configuration.get("transformData", True):
+        transform_data_json = False
+        if version.parse(CE_VERSION) <= version.parse(MAXIMUM_CORE_VERSION):
+            if not self.configuration.get("transformData", True):
+                transform_data_json = True
+        else:
+            if self.configuration.get("transformData", "json") == "json":
+                transform_data_json = True
+        if transform_data_json:
             try:
+                if (
+                    version.parse(CE_VERSION) <=
+                    version.parse(MAXIMUM_CORE_VERSION)
+                ):
+                    validate_syslog_mappings(
+                        self.mappings,
+                        data_type,
+                        self.name,
+                    )
                 delimiter, cef_version, syslog_mappings = get_syslog_mappings(
-                    self.mappings, "json", self.name
+                    self.mappings
                 )
             except KeyError as err:
                 error_msg = (
@@ -444,8 +534,17 @@ class SyslogPlugin(PluginBase):
             return transformed_data
         else:
             try:
+                if (
+                    version.parse(CE_VERSION) <=
+                    version.parse(MAXIMUM_CORE_VERSION)
+                ):
+                    validate_syslog_mappings(
+                        self.mappings,
+                        data_type,
+                        self.name,
+                    )
                 delimiter, cef_version, syslog_mappings = get_syslog_mappings(
-                    self.mappings, data_type, self.name
+                    self.mappings
                 )
             except KeyError as err:
                 error_msg = (
@@ -840,18 +939,6 @@ class SyslogPlugin(PluginBase):
                 message=err_msg,
             )
 
-        mappings = self.mappings.get("jsonData", None)
-        mappings = json.loads(mappings)
-        if not isinstance(
-            mappings, dict
-        ) or not syslog_validator.validate_syslog_map(mappings):
-            err_msg = "Invalid attribute mapping provided."
-            self.logger.error(f"{validation_err_msg} {err_msg}")
-            return ValidationResult(
-                success=False,
-                message=err_msg,
-            )
-
         syslog_certificate = configuration.get(
             "syslog_certificate", ""
         ).strip()
@@ -919,6 +1006,10 @@ class SyslogPlugin(PluginBase):
                 success=False,
                 message=err_msg,
             )
+        mappings_validation_result = self.validate_mappings()
+
+        if not mappings_validation_result.success:
+            return mappings_validation_result
 
         return ValidationResult(success=True, message="Validation successful.")
 

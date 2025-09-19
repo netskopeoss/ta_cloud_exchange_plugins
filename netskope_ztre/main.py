@@ -1365,7 +1365,7 @@ class NetskopePlugin(PluginBase):
         }
         logger_msg = "updating the impact score"
         try:
-            self.netskope_helper._api_call_helper(
+            return self.netskope_helper._api_call_helper(
                 url=url,
                 method="post",
                 json=data,
@@ -3701,6 +3701,45 @@ class NetskopePlugin(PluginBase):
             tags=tags,
         )
 
+    def revert_uci_update_impact(self, anomaly_id: str):
+        """Revert the UCI update impact using the anomaly id."""
+        url = (
+            f"{self.tenant.parameters.get('tenantName', '').strip()}"
+            f"{URLS.get('V2_REVERT_UCI_IMPACT')}".format(anomaly_id)
+        )
+        headers = {
+            "Netskope-API-Token": resolve_secret(
+                self.tenant.parameters.get("v2token", "")
+            )
+        }
+        data = {
+            "reason": "Marking as Allowed from Netskope CE",
+        }
+        logger_msg = f"marking the anomaly ID {anomaly_id} as allowed"
+        try:
+            self.netskope_helper._api_call_helper(
+                url=url,
+                method="post",
+                json=data,
+                headers=headers,
+                proxies=self.proxy,
+                error_codes=["CRE_1028", "CRE_1029"],
+                message=f"Error occurred while {logger_msg}",
+                logger_msg=logger_msg
+            )
+        except NetskopeException:
+            raise
+        except Exception as err:
+            error_message = f"Error occurred while {logger_msg}."
+            self.logger.error(
+                message=(
+                    f"{self.log_prefix}: {error_message} "
+                    f"Error: {err}"
+                ),
+                details=str(traceback.format_exc()),
+            )
+            raise NetskopeException(error_message)
+
     def execute_action(self, action: Action):
         """Execute action on the user.
 
@@ -3724,15 +3763,33 @@ class NetskopePlugin(PluginBase):
             )
             return
         elif action.value == "impact":
+            if 'performRevert' in Action.model_fields and action.performRevert:
+                anomaly_id = action.parameters.get("anomaly_id", "")
+                if not anomaly_id:
+                    err_msg = (
+                        "Unable to find the Anomaly ID, hence "
+                        "Revert UCI Impact Action will be skipped."
+                    )
+                    self.logger.error(f"{self.log_prefix}: {err_msg}")
+                    raise NetskopeException(err_msg)
+                self.revert_uci_update_impact(anomaly_id)
+                self.logger.info(
+                    f"{self.log_prefix}: Successfully marked anomaly ID "
+                    f"{anomaly_id} as allowed."
+                )
+                return
+
             user, score, source, reason = (
                 self._process_params_for_impact_action(action.parameters)
             )
-            self._update_impact_score(
+            response = self._update_impact_score(
                 user,
                 score,
                 source,
                 reason,
             )
+            if response.get("anomalyId"):
+                action.parameters["anomaly_id"] = response.get("anomalyId")
             self.logger.info(
                 f"{self.log_prefix}: UCI score updated for user {user} "
                 "successfully."
@@ -4562,5 +4619,5 @@ class NetskopePlugin(PluginBase):
                 "tagged": tagged_count
             }
         return tags_apps_info
-
+    
     # TODO: Implement cleanup method to delete client status iterator

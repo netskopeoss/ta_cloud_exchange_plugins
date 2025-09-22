@@ -39,8 +39,9 @@ import os
 import traceback
 from typing import List, Dict
 from tempfile import NamedTemporaryFile
-from netskope.common.utils import add_user_agent
+from packaging import version
 
+from netskope.common.api import __version__ as CE_VERSION
 from netskope.integrations.cls.plugin_base import (
     PluginBase,
     ValidationResult,
@@ -62,6 +63,8 @@ from .utils.aws_s3_events_alerts_constants import (
     MODULE_NAME,
     PLUGIN_NAME,
     PLUGIN_VERSION,
+    USER_AGENT,
+    MAXIMUM_CORE_VERSION
 )
 
 
@@ -104,21 +107,6 @@ class AWSS3EventsAlertsPlugin(PluginBase):
             )
         return PLUGIN_NAME, PLUGIN_VERSION
 
-    def _add_user_agent(self, header=None) -> str:
-        """Add User-Agent to any request.
-
-        Args:
-            header: Headers needed to pass to the Third Party Platform.
-
-        Returns:
-            str: String containing user agent.
-        """
-        plugin_name, plugin_version = self._get_plugin_info()
-
-        header = add_user_agent(header)
-        user_agent = f"{header.get('User-Agent', 'netskope-ce')}-{MODULE_NAME.lower()}-{plugin_name.lower().replace(',','').replace(' ','_')}-v{plugin_version.lower()}"  # noqa
-        return user_agent
-
     @staticmethod
     def get_subtype_mapping(mappings: Dict, subtype: str) -> Dict:
         """Retrieve subtype mappings (mappings for subtypes of alerts/events)
@@ -138,6 +126,380 @@ class AWSS3EventsAlertsPlugin(PluginBase):
             return mappings[subtype.lower()]
         else:
             return mappings[subtype.upper()]
+
+    def get_dynamic_fields(self):
+        """Get the dynamic fields from plugin."""
+        authentication_method = self.configuration.get("authentication_method", None)
+        if authentication_method and authentication_method == "aws_iam_roles_anywhere":
+            return [
+                {
+                    "label": "Private Key",
+                    "key": "private_key_file",
+                    "type": "textarea",
+                    "default": "",
+                    "mandatory": True,
+                    "description": "Private Key for decrypting the AWS Private CA Certificate. Required for 'AWS IAM Roles Anywhere' authentication type."
+                },
+                {
+                    "label": "Certificate Body",
+                    "key": "public_certificate_file",
+                    "type": "textarea",
+                    "default": "",
+                    "mandatory": True,
+                    "description": "Certificate Body for AWS Public/Private CA Certificate. Required for 'AWS IAM Roles Anywhere' authentication type."
+                },
+                {
+                    "label": "Password Phrase",
+                    "key": "pass_phrase",
+                    "type": "password",
+                    "default": "",
+                    "mandatory": True,
+                    "description": "Password Phrase for decrypting the CA Certificate. Required for 'AWS IAM Roles Anywhere' authentication type."
+                },
+                {
+                    "label": "Profile ARN",
+                    "key": "profile_arn",
+                    "type": "text",
+                    "default": "",
+                    "mandatory": True,
+                    "description": "AWS Profile ARN for AWS client authentication. Required for 'AWS IAM Roles Anywhere' authentication type."
+                },
+                {
+                    "label": "Role ARN",
+                    "key": "role_arn",
+                    "type": "text",
+                    "default": "",
+                    "mandatory": True,
+                    "description": "AWS Role ARN for AWS client authentication. Required for 'AWS IAM Roles Anywhere' authentication type."
+                },
+                {
+                    "label": "Trust Anchor ARN",
+                    "key": "trust_anchor_arn",
+                    "type": "text",
+                    "default": "",
+                    "mandatory": True,
+                    "description": "AWS Trust Anchor ARN for AWS client authentication. Required for 'AWS IAM Roles Anywhere' authentication type."
+                },
+                {
+                    "label": "AWS S3 Bucket Region Name",
+                    "key": "region_name",
+                    "type": "choice",
+                    "choices": [
+                        {
+                            "key": "US East (N. Virginia) [us-east-1]",
+                            "value": "us-east-1"
+                        },
+                        {
+                            "key": "US East (Ohio) [us-east-2]",
+                            "value": "us-east-2"
+                        },
+                        {
+                            "key": "US West (N. California) [us-west-1]",
+                            "value": "us-west-1"
+                        },
+                        {
+                            "key": "US West (Oregon) [us-west-2]",
+                            "value": "us-west-2"
+                        },
+                        {
+                            "key": "Africa (Cape Town) [af-south-1]",
+                            "value": "af-south-1"
+                        },
+                        {
+                            "key": "Asia Pacific (Hong Kong) [ap-east-1]",
+                            "value": "ap-east-1"
+                        },
+                        {
+                            "key": "Asia Pacific (Mumbai) [ap-south-1]",
+                            "value": "ap-south-1"
+                        },
+                        {
+                            "key": "Asia Pacific (Tokyo) [ap-northeast-1]",
+                            "value": "ap-northeast-1"
+                        },
+                        {
+                            "key": "Asia Pacific (Seoul) [ap-northeast-2]",
+                            "value": "ap-northeast-2"
+                        },
+                        {
+                            "key": "Asia Pacific (Melbourne) [ap-southeast-4]",
+                            "value": "ap-southeast-4"
+                        },
+                        {
+                            "key": "Asia Pacific (Thailand) [ap-southeast-7]",
+                            "value": "ap-southeast-7"
+                        },
+                        {
+                            "key": "Canada (Calgary) [ca-west-1]",
+                            "value": "ca-west-1"
+                        },
+                        {
+                            "key": "Asia Pacific (Osaka) [ap-northeast-3]",
+                            "value": "ap-northeast-3"
+                        },
+                        {
+                            "key": "Asia Pacific (Singapore) [ap-southeast-1]",
+                            "value": "ap-southeast-1"
+                        },
+                        {
+                            "key": "Asia Pacific (Sydney) [ap-southeast-2]",
+                            "value": "ap-southeast-2"
+                        },
+                        {
+                            "key": "Canada (Central) [ca-central-1]",
+                            "value": "ca-central-1"
+                        },
+                        {
+                            "key": "Canada (Calgary) [ca-west1]",
+                            "value": "ca-west1"
+                        },
+                        {
+                            "key": "China (Beijing) [cn-north-1]",
+                            "value": "cn-north-1"
+                        },
+                        {
+                            "key": "China (Ningxia) [cn-northwest-1]",
+                            "value": "cn-northwest-1"
+                        },
+                        {
+                            "key": "Europe (Frankfurt) [eu-central-1]",
+                            "value": "eu-central-1"
+                        },
+                        {
+                            "key": "Europe (Ireland) [eu-west-1]",
+                            "value": "eu-west-1"
+                        },
+                        {
+                            "key": "Europe (London) [eu-west-2]",
+                            "value": "eu-west-2"
+                        },
+                        {
+                            "key": "Europe (Paris) [eu-west-3]",
+                            "value": "eu-west-3"
+                        },
+                        {
+                            "key": "Europe (Milan) [eu-south-1]",
+                            "value": "eu-south-1"
+                        },
+                        {
+                            "key": "Europe (Stockholm) [eu-north-1]",
+                            "value": "eu-north-1"
+                        },
+                        {
+                            "key": "Israel (Tel Aviv) [il-central-1]",
+                            "value": "il-central-1"
+                        },
+                        {
+                            "key": "Middle East (Bahrain) [me-south-1]",
+                            "value": "me-south-1"
+                        },
+                        {
+                            "key": "South America (São Paulo) [sa-east-1]",
+                            "value": "sa-east-1"
+                        },
+                        {
+                            "key": "Asia Pacific (Hyderabad) [ap-south-2]",
+                            "value": "ap-south-2"
+                        },
+                        {
+                            "key": "Asia Pacific (Jakarta) [ap-southeast-3]",
+                            "value": "ap-southeast-3"
+                        },
+                        {
+                            "key": "Asia Pacific (Malaysia) [ap-southeast-5]",
+                            "value": "ap-southeast-5"
+                        },
+                        {
+                            "key": "Europe (Spain) [eu-south-2]",
+                            "value": "eu-south-2"
+                        },
+                        {
+                            "key": "Europe (Zurich) [eu-central-2]",
+                            "value": "eu-central-2"
+                        },
+                        {
+                            "key": "Mexico (Central) mx-central-1",
+                            "value": "mx-central-1"
+                        },
+                        {
+                            "key": "Middle East (UAE) [me-central-1]",
+                            "value": "me-central-1"
+                        }
+                    ],
+                    "default": "us-east-1",
+                    "mandatory": True,
+                    "description": "AWS S3 Bucket Region Name from where to get the AWS S3 Bucket. Make sure that the region name matches the region in the Profile ARN and Trust Anchor ARN."
+                },
+                {
+                    "label": "AWS S3 Bucket Name",
+                    "key": "bucket_name",
+                    "type": "text",
+                    "default": "",
+                    "mandatory": True,
+                    "description": "AWS S3 Bucket Name in which the data object will be stored."
+                }
+            ]
+        else:
+            return [
+                {
+                    "label": "AWS S3 Bucket Region Name",
+                    "key": "region_name",
+                    "type": "choice",
+                    "choices": [
+                        {
+                            "key": "US East (N. Virginia) [us-east-1]",
+                            "value": "us-east-1"
+                        },
+                        {
+                            "key": "US East (Ohio) [us-east-2]",
+                            "value": "us-east-2"
+                        },
+                        {
+                            "key": "US West (N. California) [us-west-1]",
+                            "value": "us-west-1"
+                        },
+                        {
+                            "key": "US West (Oregon) [us-west-2]",
+                            "value": "us-west-2"
+                        },
+                        {
+                            "key": "Africa (Cape Town) [af-south-1]",
+                            "value": "af-south-1"
+                        },
+                        {
+                            "key": "Asia Pacific (Hong Kong) [ap-east-1]",
+                            "value": "ap-east-1"
+                        },
+                        {
+                            "key": "Asia Pacific (Mumbai) [ap-south-1]",
+                            "value": "ap-south-1"
+                        },
+                        {
+                            "key": "Asia Pacific (Tokyo) [ap-northeast-1]",
+                            "value": "ap-northeast-1"
+                        },
+                        {
+                            "key": "Asia Pacific (Seoul) [ap-northeast-2]",
+                            "value": "ap-northeast-2"
+                        },
+                        {
+                            "key": "Asia Pacific (Melbourne) [ap-southeast-4]",
+                            "value": "ap-southeast-4"
+                        },
+                        {
+                            "key": "Asia Pacific (Thailand) [ap-southeast-7]",
+                            "value": "ap-southeast-7"
+                        },
+                        {
+                            "key": "Canada (Calgary) [ca-west-1]",
+                            "value": "ca-west-1"
+                        },
+                        {
+                            "key": "Asia Pacific (Osaka) [ap-northeast-3]",
+                            "value": "ap-northeast-3"
+                        },
+                        {
+                            "key": "Asia Pacific (Singapore) [ap-southeast-1]",
+                            "value": "ap-southeast-1"
+                        },
+                        {
+                            "key": "Asia Pacific (Sydney) [ap-southeast-2]",
+                            "value": "ap-southeast-2"
+                        },
+                        {
+                            "key": "Canada (Central) [ca-central-1]",
+                            "value": "ca-central-1"
+                        },
+                        {
+                            "key": "Canada (Calgary) [ca-west1]",
+                            "value": "ca-west1"
+                        },
+                        {
+                            "key": "China (Beijing) [cn-north-1]",
+                            "value": "cn-north-1"
+                        },
+                        {
+                            "key": "China (Ningxia) [cn-northwest-1]",
+                            "value": "cn-northwest-1"
+                        },
+                        {
+                            "key": "Europe (Frankfurt) [eu-central-1]",
+                            "value": "eu-central-1"
+                        },
+                        {
+                            "key": "Europe (Ireland) [eu-west-1]",
+                            "value": "eu-west-1"
+                        },
+                        {
+                            "key": "Europe (London) [eu-west-2]",
+                            "value": "eu-west-2"
+                        },
+                        {
+                            "key": "Europe (Paris) [eu-west-3]",
+                            "value": "eu-west-3"
+                        },
+                        {
+                            "key": "Europe (Milan) [eu-south-1]",
+                            "value": "eu-south-1"
+                        },
+                        {
+                            "key": "Europe (Stockholm) [eu-north-1]",
+                            "value": "eu-north-1"
+                        },
+                        {
+                            "key": "Israel (Tel Aviv) [il-central-1]",
+                            "value": "il-central-1"
+                        },
+                        {
+                            "key": "Middle East (Bahrain) [me-south-1]",
+                            "value": "me-south-1"
+                        },
+                        {
+                            "key": "South America (São Paulo) [sa-east-1]",
+                            "value": "sa-east-1"
+                        },
+                        {
+                            "key": "Asia Pacific (Hyderabad) [ap-south-2]",
+                            "value": "ap-south-2"
+                        },
+                        {
+                            "key": "Asia Pacific (Jakarta) [ap-southeast-3]",
+                            "value": "ap-southeast-3"
+                        },
+                        {
+                            "key": "Asia Pacific (Malaysia) [ap-southeast-5]",
+                            "value": "ap-southeast-5"
+                        },
+                        {
+                            "key": "Europe (Spain) [eu-south-2]",
+                            "value": "eu-south-2"
+                        },
+                        {
+                            "key": "Europe (Zurich) [eu-central-2]",
+                            "value": "eu-central-2"
+                        },
+                        {
+                            "key": "Mexico (Central) mx-central-1",
+                            "value": "mx-central-1"
+                        },
+                        {
+                            "key": "Middle East (UAE) [me-central-1]",
+                            "value": "me-central-1"
+                        }
+                    ],
+                    "default": "us-east-1",
+                    "mandatory": True,
+                    "description": "AWS S3 Bucket Region Name from where to get the AWS S3 Bucket. Make sure that the region name matches the region in the Profile ARN and Trust Anchor ARN."
+                },
+                {
+                    "label": "AWS S3 Bucket Name",
+                    "key": "bucket_name",
+                    "type": "text",
+                    "default": "",
+                    "mandatory": True,
+                    "description": "AWS S3 Bucket Name in which the data object will be stored."
+                }
+            ]
 
     def transform(self, raw_data, data_type, subtype) -> List:
         """Transform the raw netskope JSON data into target platform supported
@@ -229,14 +591,13 @@ class AWSS3EventsAlertsPlugin(PluginBase):
         """
         try:
             bucket_name = self.configuration.get("bucket_name", "").strip()
-            user_agent = self._add_user_agent()
             aws_client = AWSS3EventsAlertsClient(
                 self.configuration,
                 self.logger,
                 self.proxy,
                 self.storage,
                 self.log_prefix,
-                user_agent,
+                USER_AGENT,
             )
             aws_client.set_credentials()
             filtered_list = list(filter(lambda d: bool(d), transformed_data))
@@ -299,11 +660,17 @@ class AWSS3EventsAlertsPlugin(PluginBase):
             self.storage,
             self.log_prefix,
         )
-
-        if configuration.get("transformData", False):
+        transform_data_json = False
+        if version.parse(CE_VERSION) <= version.parse(MAXIMUM_CORE_VERSION):
+            if not configuration.get("transformData", True):
+                transform_data_json = True
+        else:
+            if configuration.get("transformData", "json") == "json":
+                transform_data_json = True
+        if not transform_data_json:
             err_msg = (
-                "This Plugin is designed to send raw data to S3 Bucket "
-                "- Please disable the transformation toggle to continue."
+                "This Plugin is designed to send JSON data to S3 Bucket "
+                "- Please select the format as 'JSON' to continue."
             )
             self.logger.error(
                 f"{self.log_prefix}: Validation error occurred. "
@@ -597,14 +964,13 @@ class AWSS3EventsAlertsPlugin(PluginBase):
 
         # Validate Auth Credentials.
         try:
-            user_agent = self._add_user_agent()
             aws_client = AWSS3EventsAlertsClient(
                 configuration,
                 self.logger,
                 self.proxy,
                 self.storage,
                 self.log_prefix,
-                user_agent,
+                USER_AGENT,
             )
             aws_client.set_credentials()
             aws_validator.validate_credentials(aws_client)

@@ -1,3 +1,7 @@
+# 1.2.0
+## Added
+- Added support for dynamic field population based on selected Authentication Method. To use the dynamic field population feature update your CE version to 6.0.0.
+
 # 1.1.0
 ## Added
 - Added two new authentication methods.

@@ -1,0 +1,15 @@
+{
+    "name": "Netskope Exact Data Match",
+    "description": "This plugin is used to push EDM File Hashes on Netskope Tenant.",
+    "id": "netskope_edm",
+    "module": "EDM",
+    "version": "1.0.0",
+    "netskope": true,
+    "patch_supported": false,
+    "pull_supported": false,
+    "push_supported": true,
+    "minimum_version": "6.0.0",
+    "minimum_provider_version": "1.5.1",
+    "provider_id": "netskope_provider",
+    "configuration": []
+}

@@ -1,0 +1,81 @@
+{
+    "name": "Linux File Share EDM",
+    "id": "linux_file_share_edm",
+    "module": "EDM",
+    "version": "1.0.0",
+    "description": "Linux File Share EDM Plugin is used to fetch a CSV file from the remote Linux server via the SFTP protocol and to generate EDM hashes of the pulled CSV file.",
+    "patch_supported": false,
+    "push_supported": false,
+    "pull_supported": true,
+    "pull_sample_data_on_validate": true,
+    "minimum_version": "6.0.0",
+    "supported_edm_method": [
+        "edm_file_hashes"
+    ],
+    "configuration": [
+        {
+            "label": "Configuration Parameters",
+            "name": "configuration",
+            "type": "step",
+            "fields": [
+                {
+                    "label": "Server IP/Hostname",
+                    "key": "server_ip",
+                    "type": "text",
+                    "default": "",
+                    "mandatory": true,
+                    "placeholder": "e.g. 192.0.2.19",
+                    "description": "IP address or Hostname of the Linux machine from which the CSV file should be pulled."
+                },
+                {
+                    "label": "Username",
+                    "key": "username",
+                    "type": "text",
+                    "default": "",
+                    "mandatory": true,
+                    "placeholder": "Username",
+                    "description": "Username of the Linux machine that is configured to use OpenSSH service on the machine."
+                },
+                {
+                    "label": "Password",
+                    "key": "password",
+                    "type": "password",
+                    "default": "",
+                    "mandatory": true,
+                    "placeholder": "Password",
+                    "description": "Password for the provided Linux username."
+                },
+                {
+                    "label": "Port",
+                    "key": "port",
+                    "type": "number",
+                    "default": 22,
+                    "mandatory": true,
+                    "placeholder": "e.g. 22",
+                    "description": "TCP port number to connect to the OpenSSH service on the Linux machine."
+                },
+                {
+                    "label": "CSV File Path",
+                    "key": "filepath",
+                    "type": "text",
+                    "default": "",
+                    "mandatory": true,
+                    "placeholder": "e.g. /home/user/files-data/netskope-data/data.csv",
+                    "description": "Path of the CSV file to be pulled from the configured Linux machine.",
+                    "helperText": "Note: Only .csv file with a maximum of 25 columns are supported."
+                }
+            ]
+        },
+        {
+            "label": "Hash Generation and Sanitization Parameters",
+            "name": "sanity_inputs",
+            "type": "dynamic_step"
+        },
+        {
+            "label": "Preview Sanitization Results",
+            "labelInfo": "Preview the output of the first 20 records with sanitization applied to the data fetched from the remote Linux server. If the 'Proceed without sanitization' is unchecked, only the Good file will be used for EDM Hash generation. In this case, review the Bad file and update the sanitization parameters or data source to prevent important records from being excluded. If the 'Proceed without sanitization' is checked, all data without sanitization will be used for EDM Hash generation.",
+            "name": "sanity_results",
+            "type": "dynamic_step"
+        }
+    ]
+}

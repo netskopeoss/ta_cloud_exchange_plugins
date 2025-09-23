@@ -1,0 +1,90 @@
+{
+    "name": "MySQL EDM",
+    "id": "mysql_edm",
+    "version": "1.0.0",
+    "module": "EDM",
+    "description": "MySQL EDM Plugin is used to pull raw data from configured MySQL server to generate EDM hashes.",
+    "patch_supported": false,
+    "push_supported": false,
+    "pull_supported": true,
+    "pull_sample_data_on_validate": true,
+    "minimum_version": "6.0.0",
+    "supported_edm_method": [
+        "edm_file_hashes"
+    ],
+    "configuration": [
+        {
+            "label": "Configuration Parameters",
+            "name": "configuration",
+            "type": "step",
+            "fields": [
+                {
+                    "label": "Server IP/Hostname",
+                    "key": "host",
+                    "type": "text",
+                    "default": "",
+                    "mandatory": true,
+                    "placeholder": "e.g. 192.0.2.9",
+                    "description": "IP address or Hostname where the MySQL server is located. If required, specify the port value in the port field."
+                },
+                {
+                    "label": "Username",
+                    "key": "username",
+                    "type": "text",
+                    "default": "",
+                    "mandatory": true,
+                    "placeholder": "Username",
+                    "description": "MySQL database username to access the server. Ensure that it is a valid username with the read-only permission."
+                },
+                {
+                    "label": "Password",
+                    "key": "password",
+                    "type": "password",
+                    "default": "",
+                    "mandatory": true,
+                    "placeholder": "Password",
+                    "description": "Password associated with the provided database username."
+                },
+                {
+                    "label": "Database Name",
+                    "key": "dbname",
+                    "type": "text",
+                    "default": "",
+                    "mandatory": true,
+                    "placeholder": "e.g. db_name",
+                    "description": "MySQL database name from which the data is to be retrieved. Ensure that the database name is spelled correctly, as database names are case-sensitive."
+                },
+                {
+                    "label": "Port",
+                    "key": "port",
+                    "type": "number",
+                    "default": "",
+                    "mandatory": false,
+                    "placeholder": "e.g. 3306",
+                    "description": "Enter the TCP port number that the MySQL database is running on."
+                },
+                {
+                    "label": "Query",
+                    "key": "query",
+                    "type": "textarea",
+                    "default": "",
+                    "mandatory": true,
+                    "placeholder": "e.g. SELECT * FROM table_name",
+                    "description": "MySQL query for which the data is to be retrieved to generate the EDM hashes. Ensure that the query is validated and read-only.",
+                    "helperText": "Note: Maximum 25 columns can be present in the query result."
+                }
+            ]
+        },
+        {
+            "label": "Hash Generation and Sanitization Parameters",
+            "name": "sanity_inputs",
+            "type": "dynamic_step"
+        },
+        {
+            "label": "Preview Sanitization Results",
+            "labelInfo": "Preview the output of the first 20 records with sanitization performed on the data fetched from the MySQL database. If the 'Proceed without sanitization' is unchecked, only the Good file will be used for EDM Hash generation. In this case, review the Bad file and update the sanitization parameters or data source to prevent important records from being excluded. If the 'Proceed without sanitization' is checked, all data without sanitization will be used for EDM Hash generation.",
+            "name": "sanity_results",
+            "type": "dynamic_step"
+        }
+    ]
+}

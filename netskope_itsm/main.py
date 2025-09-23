@@ -6,7 +6,7 @@ import re
 import requests
 import time
 import traceback
-from typing import List, Union, Tuple, Generator
+from typing import List, Union, Tuple, Generator, Dict
 from datetime import datetime
 from jsonschema import validate, ValidationError
 
@@ -30,22 +30,26 @@ from netskope.integrations.itsm.models import (
     Event,
     DataType,
     Task,
+    UpdatedTaskValues,
     Severity,
-    TaskStatus
+    TaskStatus,
+    CustomFieldsSectionWithMappings,
+    CustomFieldMapping,
+    Queue
 )
 from netskope.integrations.itsm.utils import alert_event_query_schema
 from netskope.common.utils.plugin_provider_helper import PluginProviderHelper
 from .utils.netskope_itsm_constants import (
-    IGNORED_RAW_KEYS,
-    REQUEST_RATE_LIMIT_DELAY,
-    REQUEST_RATE_LIMIT_DELAY_ON_ERROR,
-    MAX_RETRIES_ON_RATE_LIMIT,
-    INCIDENT_UPDATE_API,
     MODULE_NAME,
     PLUGIN_NAME,
+    PLATFORM_NAME,
+    MAX_API_CALLS,
     PLUGIN_VERSION,
-    DEFAULT_STATUS_VALUE_MAP,
-    INCIDENT_BATCH_SIZE
+    IGNORED_RAW_KEYS,
+    INCIDENT_BATCH_SIZE,
+    INCIDENT_UPDATE_API,
+    INCIDENT_DETAILS_LINK,
+    REQUEST_RATE_LIMIT_DELAY,
 )
 
 helper = AlertsHelper()
@@ -186,7 +190,7 @@ class NetskopePlugin(PluginBase):
             # Validate incident_forensics
             incident_forensics = config.get("incident_forensics", "")
             if (
-                not isinstance(incident_forensics, str) 
+                not isinstance(incident_forensics, str)
                 or not incident_forensics
                 or incident_forensics not in ["yes", "no"]
             ):
@@ -217,16 +221,6 @@ class NetskopePlugin(PluginBase):
                     success=False,
                     message=str(error),
                 )
-
-            # If all validations are successful, update tenant storage with incident 
-            # enrichment option
-            provider.update_incident_enrichment_option_to_storage(
-                tenant_name=tenant_name,
-                module_name="cto",
-                plugin_name=self.name,
-                incident_enrichment_option=incident_forensics,
-                operation="set",
-            )
         elif name == "incident_update_config":
             config = configuration.get(name, {})
             if "user_email" not in config or not isinstance(config["user_email"], str):
@@ -252,40 +246,23 @@ class NetskopePlugin(PluginBase):
                         success=False,
                         message="User email should be valid email.",
                     )
-            if (
-                "status_mapping" not in config
-                or not isinstance(config["status_mapping"], dict)
-            ):
-                self.logger.error(
-                    "Netskope ITSM Plugin: Validation error occurred. Error: "
-                    "Invalid status mapping found in the configuration parameters.",
-                    error_code="CTO_1029",
-                )
-                return ValidationResult(
-                    success=False, message="Invalid status mapping provided."
-                )
-            if not config.get("status_mapping"):
-                return ValidationResult(
-                    success=False,
-                    message="Status Mapping can not be empty.",
-                )
-            if (
-                "severity_mapping" not in config
-                or not isinstance(config["severity_mapping"], dict)
-            ):
-                self.logger.error(
-                    "Netskope ITSM Plugin: Validation error occurred. Error: "
-                    "Invalid severity mapping found in the configuration parameters.",
-                    error_code="CTO_1029",
-                )
-                return ValidationResult(
-                    success=False, message="Invalid severity mapping provided."
-                )
-            if not config.get("severity_mapping"):
-                return ValidationResult(
-                    success=False,
-                    message="Severity Mapping can not be empty.",
-                )
+            # If all validations are successful, update tenant storage with incident
+            # enrichment option
+            tenant_name = configuration.get("tenant")
+            if not configuration.get("tenant"):
+                tenant_name = helper.get_tenant_itsm(self.name).name
+            incident_forensics = configuration.get(
+                "params", {}
+            ).get("incident_forensics", "")
+
+            provider = plugin_provider_helper.get_provider(tenant_name=tenant_name)
+            provider.update_incident_enrichment_option_to_storage(
+                tenant_name=tenant_name,
+                module_name="cto",
+                plugin_name=self.name,
+                incident_enrichment_option=incident_forensics,
+                operation="set",
+            )
         return ValidationResult(success=True, message="Validation successful.")
 
     def get_types_to_pull(self, data_type: str):
@@ -301,7 +278,7 @@ class NetskopePlugin(PluginBase):
 
     def _get_raw_dict(self, data):
         """Get raw dict."""
-        
+
         data_item = {
             k: (
                 str(v)
@@ -313,46 +290,11 @@ class NetskopePlugin(PluginBase):
             for k, v in data.items()
             if k not in IGNORED_RAW_KEYS
         }
-        for k, v in self.get_severity_status_mapping().items():
-            if k == "severity" and k in data_item.keys():
-                data_item.update(
-                    {
-                        k: v.get(data_item.get(k), Severity.OTHER)
-                        if data_item.get(k) != "informational" else Severity.INFO
-                    }
-                )
-            elif k == "status" and k in data_item.keys():
-                data_item.update(
-                    {
-                        k: v.get(data_item.get(k), TaskStatus.OTHER)
-                    }
-                )
         if "assignee" in data_item.keys() and (
             data_item.get("assignee", "") == "" or data_item.get("assignee", "none").lower() == "none"
         ):
             data_item.update({"assignee": None})
         return data_item
-
-    def get_severity_status_mapping(self):
-        """Get severity status mapping."""
-        ns_to_ce_severity = {}
-        for key, value in self.configuration[
-            "incident_update_config"
-        ].get("severity_mapping", {}).items():
-            if key == Severity.OTHER or key == Severity.INFO:
-                continue
-            ns_to_ce_severity[value] = key
-        ns_to_ce_status = {}
-        for key, value in self.configuration[
-            "incident_update_config"
-        ].get("status_mapping", {}).items():
-            if value in DEFAULT_STATUS_VALUE_MAP.keys():
-                value = DEFAULT_STATUS_VALUE_MAP[value]
-            ns_to_ce_status[value] = key
-        return {
-            "severity": ns_to_ce_severity,
-            "status": ns_to_ce_status
-        }
 
     def convert_raw_data_in_model(self, raw_data: dict):
         """Convert raw data in model."""
@@ -366,6 +308,8 @@ class NetskopePlugin(PluginBase):
                 timestamp=datetime.fromtimestamp(raw_data["timestamp"]),
                 rawData=raw_fields,
             )
+        if "severity" in raw_fields.keys() and raw_fields.get("severity"):
+            raw_fields["severity"] = raw_fields.get("severity", "").capitalize()
         return Alert(
             id=raw_data["_id"],
             alertName=raw_data.get("alert_name"),
@@ -415,7 +359,7 @@ class NetskopePlugin(PluginBase):
             )
             raise e
         if query != "":
-            from netskope.integrations.itsm.tasks.pull_data_items import (
+            from netskope.integrations.itsm.utils.tickets import (
                 _filter_data_items,
             )
 
@@ -424,45 +368,36 @@ class NetskopePlugin(PluginBase):
 
     def handle_update_incident_api_call(self, url, data, field, batch_no):
         """Call and Handle update incident API call."""
-        (
-            success,
-            response,
-        ) = handle_exception(
-            self.session.patch,
-            error_code="CTO_1030",
-            custom_message=f"Error occurred while updating the incidents' {field}"
-            f" of batch {batch_no} to Netskope Tenant",
-            plugin=self.log_prefix,
-            url=url,
-            json=data,
-        )
-        if response.status_code in [429, 409]:
-            count_of_tries = 1
-            while (
-                response.status_code in [429, 409]
-                and count_of_tries <= MAX_RETRIES_ON_RATE_LIMIT
-            ):
+        for attempt in range(MAX_API_CALLS):
+            (
+                success,
+                response,
+            ) = handle_exception(
+                self.session.patch,
+                error_code="CTO_1030",
+                custom_message=f"Error occurred while updating the incidents' {field}"
+                f" of batch {batch_no} to Netskope Tenant",
+                plugin=self.log_prefix,
+                url=url,
+                json=data,
+            )
+
+            is_retryable_error = (
+                hasattr(response, "status_code") and response.status_code in [429, 409]
+            )
+
+            if not is_retryable_error:
+                break
+
+            if attempt < MAX_API_CALLS - 1:
                 self.logger.error(
                     f"{self.log_prefix}: Retrying to update {field}"
                     f" of the incidents of batch {batch_no}."
-                    f"Performing retry for url {url}. "
+                    f" Performing retry for url {url}. "
                     f"Received exit code {response.status_code}."
                 )
                 time.sleep(REQUEST_RATE_LIMIT_DELAY)
-                count_of_tries += 1
-                (
-                    success,
-                    response,
-                ) = handle_exception(
-                    self.session.patch,
-                    error_code="CTO_1030",
-                    custom_message=f"Error occurred while updating the "
-                    f"incidents' {field} of batch {batch_no} "
-                    "to Netskope Tenant",
-                    plugin=self.log_prefix,
-                    url=url,
-                    json=data,
-                )
+
         return success, response
 
     def create_incident_update_payload(self, incidents_map):
@@ -476,28 +411,12 @@ class NetskopePlugin(PluginBase):
                     and incident.updatedValues
                     and incident.updatedValues.status != incident.updatedValues.oldStatus
                 ):
-                    status_mapping = self.configuration["incident_update_config"][
-                        "status_mapping"
-                    ]
-                    if not status_mapping.get(
-                        incident.updatedValues.status.value
-                    ):
+                    if not incident.updatedValues.status:
                         continue
-                    new_value = status_mapping[
-                        incident.updatedValues.status.value
-                    ]
-                    if new_value in DEFAULT_STATUS_VALUE_MAP:
-                        new_value = DEFAULT_STATUS_VALUE_MAP[new_value]
-                    old_value = (
-                            status_mapping.get(
-                                incident.updatedValues.oldStatus.value,
-                                incident.updatedValues.oldStatus.value
-                            )
-                            if incident.updatedValues.oldStatus
-                            else "Other"
-                    )
-                    if old_value in DEFAULT_STATUS_VALUE_MAP:
-                        old_value = DEFAULT_STATUS_VALUE_MAP[old_value]
+                    new_value = incident.updatedValues.status
+
+                    old_value = incident.updatedValues.oldStatus if incident.updatedValues.oldStatus else TaskStatus.OTHER
+
                     payload.append({
                         "field": "status",
                         "new_value": new_value,
@@ -531,24 +450,14 @@ class NetskopePlugin(PluginBase):
                     and incident.updatedValues
                     and incident.updatedValues.severity != incident.updatedValues.oldSeverity
                 ):
-                    severity_mapping = self.configuration["incident_update_config"][
-                        "severity_mapping"
-                    ]
+                    if not incident.updatedValues.severity:
+                        continue
                     payload.append({
                         "field": "severity",
-                        "new_value": severity_mapping.get(
-                            incident.updatedValues.severity.value,
-                            incident.updatedValues.severity.value
-                        ),
+                        "new_value":
+                            incident.updatedValues.severity if incident.updatedValues.severity else Severity.OTHER.value,
                         "object_id": object_id,
-                        "old_value": (
-                            severity_mapping.get(
-                                incident.updatedValues.oldSeverity,
-                                incident.updatedValues.oldSeverity
-                            )
-                            if incident.updatedValues.oldSeverity
-                            else "Other"
-                        ),
+                        "old_value": incident.updatedValues.oldSeverity if incident.updatedValues.oldSeverity else Severity.OTHER,
                         "user": (
                             self.configuration["incident_update_config"]
                             .get("user_email")
@@ -709,3 +618,47 @@ class NetskopePlugin(PluginBase):
             incident_enrichment_option="no",
             operation="unset",
         )
+
+    def get_default_custom_mappings(self) -> list[CustomFieldsSectionWithMappings]:
+        """
+        Get default custom field mappings with values for Netskope ITSM plugin.
+
+        Returns:
+            list[CustomFieldsSectionWithMappings]: List of sections with field-to-value mappings
+        """
+        return [
+            CustomFieldsSectionWithMappings(
+                section="status",
+                event_field="status",
+                destination_label="Netskope Tenant",
+                field_mappings=[
+                    CustomFieldMapping(name="New", mapped_value="new", is_default=True),
+                    CustomFieldMapping(name="In Progress", mapped_value="in_progress", is_default=True),
+                    CustomFieldMapping(name="On Hold", mapped_value="", is_default=True),
+                    CustomFieldMapping(name="Closed", mapped_value="closed", is_default=True),
+                    CustomFieldMapping(name="Deleted", mapped_value="closed", is_default=True),
+                    CustomFieldMapping(name="Other", mapped_value="", is_default=True),
+                ]
+            ),
+            CustomFieldsSectionWithMappings(
+                section="severity",
+                event_field="severity",
+                destination_label="Netskope Tenant",
+                field_mappings=[
+                    CustomFieldMapping(name="Critical", mapped_value="Critical", is_default=True),
+                    CustomFieldMapping(name="High", mapped_value="High", is_default=True),
+                    CustomFieldMapping(name="Medium", mapped_value="Medium", is_default=True),
+                    CustomFieldMapping(name="Low", mapped_value="Low", is_default=True),
+                    CustomFieldMapping(name="Informational", mapped_value="Low", is_default=True),
+                    CustomFieldMapping(name="Other", mapped_value="Low", is_default=True),
+                ]
+            )
+        ]
+
+    def get_queues(self) -> List[Queue]:
+        """Get list of ServiceNow groups as queues.
+
+        Returns:
+            List[Queue]: List of queues.
+        """
+        return [Queue(label="Resolve Incident", value="resolve_incident")]

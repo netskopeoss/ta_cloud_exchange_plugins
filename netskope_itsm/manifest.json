@@ -6,9 +6,9 @@
     "pulling_supported": true,
     "receiving_supported": false,
     "sharing_supported": true,
-    "version": "2.3.0",
+    "version": "2.4.0",
     "module": "CTO",
-    "minimum_version": "5.1.2",
+    "minimum_version": "6.0.0",
     "minimum_provider_version": "1.5.0",
     "provider_id": "netskope_provider",
     "supported_subtypes": {
@@ -187,7 +187,7 @@
             ]
         },
         {
-            "label": "Incident Update Configurations",
+            "label": "Mapping Configuration",
             "name": "incident_update_config",
             "type": "step",
             "fields": [
@@ -198,131 +198,6 @@
                     "mandatory": true,
                     "default": "",
                     "description": "User email will be used while updating the incidents back to the Netskope tenant. On the tenant, all update actions will be logged as having been performed by the specified user email."
-                },
-                {
-                    "label": "Incident Status Mapping",
-                    "key": "status_mapping",
-                    "type": "mapping_table",
-                    "value_type": "text",
-                    "destination_label": "Netskope Tenant Fields",
-                    "fields": [
-                        {
-                            "label": "New",
-                            "value": "new",
-                            "multi": false,
-                            "mandatory": false
-                        },
-                        {
-                            "label": "In Progress",
-                            "value": "in_progress",
-                            "multi": false,
-                            "mandatory": false
-                        },
-                        {
-                            "label": "On Hold",
-                            "value": "on_hold",
-                            "multi": false,
-                            "mandatory": false
-                        },
-                        {
-                            "label": "Closed",
-                            "value": "closed",
-                            "multi": false,
-                            "mandatory": false
-                        },
-                        {
-                            "label": "Deleted",
-                            "value": "deleted",
-                            "multi": false,
-                            "mandatory": false
-                        },
-                        {
-                            "label": "Other",
-                            "value": "other",
-                            "multi": false
-                        }
-                    ],
-                    "mandatory": true,
-                    "default": {
-                        "new": "New",
-                        "in_progress": "In Progress",
-                        "deleted": "Resolved",
-                        "closed": "Resolved"
-                    },
-                    "description": "Incident Status Mapping will be used to map the tickets status from Cloud Exchange to the Netskope Tenant for incident events based tickets. This mapping will also be used to transform the status from Netskope Tenant to Cloud exchange for all alerts/events. For an empty status mapping, update will not be performed. Failed tickets will not be considered as a valid ticket. New, In Progress and Resolved are predefined incident status on the Netskope Tenant and are case-sensitive."
-                },
-                {
-                    "label": "Incident Severity Mapping",
-                    "key": "severity_mapping",
-                    "type": "mapping_table",
-                    "value_type": "choice",
-                    "destination_label": "Netskope Tenant Fields",
-                    "fields": [
-                        {
-                            "label": "Critical",
-                            "value": "critical",
-                            "multi": false,
-                            "mandatory": true
-                        },
-                        {
-                            "label": "High",
-                            "value": "high",
-                            "multi": false,
-                            "mandatory": true
-                        },
-                        {
-                            "label": "Medium",
-                            "value": "medium",
-                            "multi": false,
-                            "mandatory": true
-                        },
-                        {
-                            "label": "Low",
-                            "value": "low",
-                            "multi": false,
-                            "mandatory": true
-                        },
-                        {
-                            "label": "Informational",
-                            "value": "informational",
-                            "multi": false,
-                            "mandatory": true
-                        },
-                        {
-                            "label": "Other",
-                            "value": "other",
-                            "multi": false,
-                            "mandatory": true
-                        }
-                    ],
-                    "value_choices": [
-                        {
-                            "key": "Low",
-                            "value": "Low"
-                        },
-                        {
-                            "key": "Medium",
-                            "value": "Medium"
-                        },
-                        {
-                            "key": "High",
-                            "value": "High"
-                        },
-                        {
-                            "key": "Critical",
-                            "value": "Critical"
-                        }
-                    ],
-                    "mandatory": true,
-                    "default": {
-                        "low": "Low",
-                        "medium": "Medium",
-                        "high": "High",
-                        "critical": "Critical",
-                        "other": "Low",
-                        "informational": "Low"
-                    },
-                    "description": "Incident Severity Mapping will be used to map the tickets severity from Cloud Exchange to the Netskope Tenant for incident events based tickets. This mapping will also be used to transform the severity from Netskope Tenant to Cloud exchange for all alerts/events."
                 }
             ]
         }

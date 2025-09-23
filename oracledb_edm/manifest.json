@@ -1,0 +1,90 @@
+{
+    "name": "OracleDB EDM",
+    "id": "oracledb_edm",
+    "version": "1.0.0",
+    "module": "EDM",
+    "description": "OracleDB EDM plugin is used to pull raw data from configured Oracle database server to generate EDM hashes.",
+    "patch_supported": false,
+    "push_supported": false,
+    "pull_supported": true,
+    "pull_sample_data_on_validate": true,
+    "minimum_version": "6.0.0",
+    "supported_edm_method": [
+        "edm_file_hashes"
+    ],
+    "configuration": [
+        {
+            "label": "Configuration Parameters",
+            "name": "configuration",
+            "type": "step",
+            "fields": [
+                {
+                    "label": "Server IP/Hostname",
+                    "key": "host",
+                    "type": "text",
+                    "default": "",
+                    "mandatory": true,
+                    "placeholder": "e.g. 192.0.2.0",
+                    "description": "The host address of the OracleDB server you want to connect. Please provide the IP address or domain name of OracleDB server."
+                },
+                {
+                    "label": "Username",
+                    "key": "username",
+                    "type": "text",
+                    "default": "",
+                    "mandatory": true,
+                    "placeholder": "OracleDB username",
+                    "description": "OracleDB database username to access the server. Ensure that it is a valid username with the read-only permission."
+                },
+                {
+                    "label": "Password",
+                    "key": "password",
+                    "type": "password",
+                    "default": "",
+                    "mandatory": true,
+                    "placeholder": "Password",
+                    "description": "Password associated with the provided database username."
+                },
+                {
+                    "label": "SID",
+                    "key": "dbname",
+                    "type": "text",
+                    "default": "",
+                    "mandatory": true,
+                    "placeholder": "SID",
+                    "description": "OracleDB SID you wish to pull data from."
+                },
+                {
+                    "label": "Port",
+                    "key": "port",
+                    "type": "number",
+                    "default": "",
+                    "mandatory": false,
+                    "placeholder": "e.g. 1521",
+                    "description": "TCP port number that the Oracle database uses for communication. If you have provided IP in the Server Host field, then port is required."
+                },
+                {
+                    "label": "Query",
+                    "key": "query",
+                    "type": "textarea",
+                    "default": "",
+                    "mandatory": true,
+                    "placeholder": "e.g. SELECT * FROM table_name",
+                    "description": "SQL Query for which the data is to be retrieved to generate the EDM hashes. Ensure that the query is validated and read-only.",
+                    "helperText": "Note: Maximum 25 columns can be present in the query result."
+                }
+            ]
+        },
+        {
+            "label": "Hash Generation and Sanitization Parameters",
+            "name": "sanity_inputs",
+            "type": "dynamic_step"
+        },
+        {
+            "label": "Preview Sanitization Results",
+            "labelInfo": "Preview the output of the first 20 records with sanitization performed on the data fetched from the Oracle database. If the 'Proceed without sanitization' is unchecked, only the Good file will be used for EDM Hash generation. In this case, review the Bad file and update the sanitization parameters or data source to prevent important records from being excluded. If the 'Proceed without sanitization' is checked, all data without sanitization will be used for EDM Hash generation.",
+            "name": "sanity_results",
+            "type": "dynamic_step"
+        }
+    ]
+}

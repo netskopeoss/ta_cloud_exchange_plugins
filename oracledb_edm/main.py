@@ -364,7 +364,7 @@ class OracleDBPlugin(PluginBase):
             )
             raise OracleDLPError(value=error, message=str(error)) from error
 
-    def store_data_to_csv(self, oracledb_data, csv_path):
+    def store_data_to_csv(self, oracledb_data, csv_path, replace=True):
         """
         Store fetched OracleDB data to csv file.
 
@@ -373,10 +373,10 @@ class OracleDBPlugin(PluginBase):
             csv_path (string): path where csv data file will be stored.
         """
         try:
-            if os.path.isfile(csv_path):
+            if replace and os.path.isfile(csv_path):
                 os.remove(csv_path)
             self.create_directory(dir_path=os.path.dirname(csv_path))
-            with open(csv_path, "w", encoding="UTF-8") as file_pointer:
+            with open(csv_path, "w" if replace else "a+", encoding="UTF-8") as file_pointer:
                 csv_pointer = csv.writer(file_pointer)
                 for row in oracledb_data:
                     csv_pointer.writerow(row)
@@ -450,11 +450,9 @@ class OracleDBPlugin(PluginBase):
                     rows = result.fetchmany(SAMPLE_CSV_ROW_COUNT)
                 else:
                     rows = result.yield_per(BATCH_SIZE)
-                self.store_data_to_csv(rows, csv_path)
-                data = [columns] + rows
-
+                self.store_data_to_csv(rows, csv_path, replace=False)
                 self.validate_csv_file_records(csv_path)
-                return data
+                return [columns]
         except InterfaceError as error:
             self.logger.error(
                 message=f"{self.log_prefix} InterfaceError occurred when "
@@ -830,6 +828,12 @@ class OracleDBPlugin(PluginBase):
             raise OracleDLPError(
                 value=error, message="Error occurred while pulling data."
             ) from error
+
+    def delete_old_csv(self):
+        """Delete old csv files at the start of pull method."""
+        csv_path = self.storage.get("csv_path")
+        if csv_path and os.path.exists(csv_path):
+            os.remove(csv_path)
 
     def pull(self):
         """Pull data from OracleDB server and convert it to csv.

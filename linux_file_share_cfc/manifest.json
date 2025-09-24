@@ -1,0 +1,100 @@
+{
+    "name": "Linux File Share CFC",
+    "id": "linux_file_share_cfc",
+    "module": "CFC",
+    "version": "1.0.0",
+    "description": "The Linux File Share CFC Plugin is used to fetch file data from a remote Linux server via the SFTP protocol and generate CFC hashes of the retrieved file data. It supports files with extensions related to Images or Zip formats.",
+    "patch_supported": false,
+    "push_supported": false,
+    "pull_supported": true,
+    "minimum_version": "6.0.0",
+    "supported_cfc_method": [
+        "cfc_image_hashes"
+    ],
+    "configuration": [
+        {
+            "label": "Configuration Parameters",
+            "name": "configuration_parameters",
+            "type": "step",
+            "fields": [
+                {
+                    "label": "Server IP/Hostname",
+                    "key": "server_ip",
+                    "type": "text",
+                    "default": "",
+                    "mandatory": true,
+                    "placeholder": "e.g. 192.0.2.19/www.example.com",
+                    "description": "IP address or Hostname of the Linux machine from which the files are to be pulled."
+                },
+                {
+                    "label": "Username",
+                    "key": "username",
+                    "type": "text",
+                    "default": "",
+                    "mandatory": true,
+                    "placeholder": "Username",
+                    "description": "Username of the Linux machine which has read access to shared directories."
+                },
+                {
+                    "label": "Password",
+                    "key": "password",
+                    "type": "password",
+                    "default": "",
+                    "mandatory": true,
+                    "placeholder": "Password",
+                    "description": "Password for the provided Linux username."
+                },
+                {
+                    "label": "Port",
+                    "key": "port",
+                    "type": "number",
+                    "default": 22,
+                    "mandatory": true,
+                    "placeholder": "e.g. 22",
+                    "description": "Port used to connect with SSH on remote Linux machine."
+                }
+            ]
+        },
+        {
+            "label": "Directory Configuration",
+            "name": "directory_configuration",
+            "type": "step",
+            "labelInfo": "Provide a valid Directory Path and Filename Filter to pull the files from the Linux server. Use regular expression in Filename Filter to filter the files, empty value will pull all files from the directory. Please note that files from sub-directories will not be pulled, therefore ensure to mention the full path to a directory where the file is present.",
+            "fields": [
+                {
+                    "label": "Directory Paths",
+                    "key": "directory_paths",
+                    "type": "directory_paths",
+                    "mandatory": true,
+                    "description": "Path of the Linux directories from which the files are to be pulled.",
+                    "fields": [
+                        {
+                            "label": "Directory Path",
+                            "key": "directory_path",
+                            "type": "text",
+                            "default": "",
+                            "mandatory": true,
+                            "placeholder": "e.g. /home/user/data",
+                            "description": "Path of the Linux directory from which the files are to be pulled."
+                        },
+                        {
+                            "label": "Filename Filter",
+                            "key": "filename_filter",
+                            "type": "text",
+                            "default": "",
+                            "mandatory": false,
+                            "placeholder": "e.g. xrays_.*.jpg",
+                            "description": "Regular expression that filters the files to be pulled based on their filenames. Ensure that the filter is a valid regular expression. If left empty, all files from the directory will be retrieved. Note that this filter is applied only to files directly stored in the specified directory and does not include files from sub-directories."
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "label": "Preview File Results",
+            "name": "file_results",
+            "type": "dynamic_step",
+            "labelInfo": "Preview the results of file scanning for Directory Configuration. Ensure that the count and size of files being pulled up by Netskope are correct and expected."
+        }
+    ]
+}

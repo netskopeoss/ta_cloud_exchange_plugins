@@ -1,3 +1,7 @@
+# 2.4.0
+## Added
+- Added support for mapping custom status and severity fields.
+
 # 2.3.0
 ## Added
 - Added support for pulling forensics fields for DLP Incidents, To pull and ingest these fields update your Netskope Tenant version to 1.5.0 and CE version to 5.1.2.

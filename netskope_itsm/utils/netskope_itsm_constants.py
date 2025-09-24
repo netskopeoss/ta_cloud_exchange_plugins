@@ -45,14 +45,19 @@ IGNORED_RAW_KEYS = [
 ]
 REQUEST_RATE_LIMIT_DELAY = 30
 REQUEST_RATE_LIMIT_DELAY_ON_ERROR = 2
-MAX_RETRIES_ON_RATE_LIMIT = 3
+MAX_API_CALLS = 4
 INCIDENT_UPDATE_API = "{}/api/v2/incidents/update"
+INCIDENT_DETAILS_LINK = "{tenant_url}/ns#/incmgmt?view=detail&incidentId={dlp_incident_id}"
 MODULE_NAME = "CTO"
 PLUGIN_NAME = "Netskope CTO"
-PLUGIN_VERSION = "2.3.0"
+PLATFORM_NAME = "Netskope"
+PLUGIN_VERSION = "2.4.0"
 DEFAULT_STATUS_VALUE_MAP = {
     "New": "new",
     "In Progress": "in_progress",
     "Resolved": "closed"
 }
+VALID_SEVERITY_VALUES = [
+    "Low", "Medium", "High", "Critical"
+]
 INCIDENT_BATCH_SIZE = 10

@@ -48,6 +48,7 @@ from .utils.netskope_itsm_constants import (
     IGNORED_RAW_KEYS,
     INCIDENT_BATCH_SIZE,
     INCIDENT_UPDATE_API,
+    VALID_SEVERITY_VALUES,
     INCIDENT_DETAILS_LINK,
     REQUEST_RATE_LIMIT_DELAY,
 )
@@ -246,6 +247,45 @@ class NetskopePlugin(PluginBase):
                         success=False,
                         message="User email should be valid email.",
                     )
+        elif name == "mapping_config":
+            config = configuration.get(name, {})
+            if (
+                "severity" not in config
+                or not isinstance(config.get("severity", {}).get("mappings"), list)
+                or not len(config.get("severity", {}).get("mappings", [])) > 0
+            ):
+                self.logger.error(
+                    f"{self.log_prefix}: Validation error occurred. Error: "
+                    "Severity mapping not found in the configuration parameters.",
+                    error_code="CTO_1029",
+                )
+                return ValidationResult(
+                    success=False, message="Invalid severity mapping provided."
+                )
+            # Validate each severity
+            severity_mappings = config.get("severity").get("mappings")
+            invalid_mapping = next(
+                (
+                    mapping for mapping in severity_mappings
+                    if (
+                        not isinstance(mapping, dict)
+                        or
+                        any(
+                            value not in VALID_SEVERITY_VALUES for _, value in mapping.items()
+                        )
+                    )
+                ),
+                None
+            )
+            if invalid_mapping:
+                self.logger.error(
+                    f"{self.log_prefix}: Validation error occurred. Error: "
+                    "Incorrect Severity mapping found in the configuration parameters.",
+                    error_code="CTO_1029",
+                )
+                return ValidationResult(
+                    success=False, message="Invalid severity mapping provided."
+                )
             # If all validations are successful, update tenant storage with incident
             # enrichment option
             tenant_name = configuration.get("tenant")
@@ -450,14 +490,33 @@ class NetskopePlugin(PluginBase):
                     and incident.updatedValues
                     and incident.updatedValues.severity != incident.updatedValues.oldSeverity
                 ):
-                    if not incident.updatedValues.severity:
+                    new_value = incident.updatedValues.severity
+                    old_value = incident.updatedValues.oldSeverity
+                    if not new_value or new_value not in VALID_SEVERITY_VALUES:
+                        self.logger.error(
+                            f"{self.log_prefix}: The severity update for "
+                            "the ticket has been skipped because "
+                            "the current severity level does "
+                            "not match the expected severity levels "
+                            "defined by the Netskope Tenant "
+                            "[Critical, High, Medium, Low]."
+                        )
+                        continue
+                    if not old_value or old_value not in VALID_SEVERITY_VALUES:
+                        self.logger.error(
+                            f"{self.log_prefix}: The severity update for "
+                            "the ticket has been skipped because "
+                            "the old severity level does "
+                            "not match the expected severity levels "
+                            "defined by the Netskope Tenant "
+                            "[Critical, High, Medium, Low]."
+                        )
                         continue
                     payload.append({
                         "field": "severity",
-                        "new_value":
-                            incident.updatedValues.severity if incident.updatedValues.severity else Severity.OTHER.value,
+                        "new_value": new_value,
                         "object_id": object_id,
-                        "old_value": incident.updatedValues.oldSeverity if incident.updatedValues.oldSeverity else Severity.OTHER,
+                        "old_value": old_value,
                         "user": (
                             self.configuration["incident_update_config"]
                             .get("user_email")

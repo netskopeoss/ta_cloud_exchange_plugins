@@ -57,4 +57,7 @@ DEFAULT_STATUS_VALUE_MAP = {
     "In Progress": "in_progress",
     "Resolved": "closed"
 }
+VALID_SEVERITY_VALUES = [
+    "Low", "Medium", "High", "Critical"
+]
 INCIDENT_BATCH_SIZE = 10

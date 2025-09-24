@@ -422,11 +422,11 @@ class LinuxFileShareEDMPlugin(PluginBase):
                     raise
                 except FileNotFoundError as error:
                     raise LinuxFileShareEDM(
-                        value=error, message=error_message
+                        value=error, message=str(error)
                     ) from error
                 except Exception as error:
                     raise LinuxFileShareEDM(
-                        value=error, message=error_message
+                        value=error, message=str(error)
                     ) from error
         except Exception as error:
             error_message = (

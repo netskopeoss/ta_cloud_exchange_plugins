@@ -1528,7 +1528,7 @@ class SFTPProtocolFileShareEDMPlugin:
                     ) from error
                 except Exception as error:
                     raise MicrosoftFileShareEDM(
-                        value=error, message=error_message
+                        value=error, message=str(error)
                     ) from error
         except Exception as error:
             error_message = (

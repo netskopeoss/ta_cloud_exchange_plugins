@@ -1,0 +1,59 @@
+{
+    "name": "Microsoft File Share CFC",
+    "id": "microsoft_file_share_cfc",
+    "module": "CFC",
+    "version": "1.0.0",
+    "description": "Microsoft File Share CFC plugin pulls the image or zip files from the directories present on the remote Windows Server.",
+    "patch_supported": false,
+    "push_supported": false,
+    "pull_supported": true,
+    "minimum_version": "6.0.0",
+    "supported_cfc_method": [
+        "cfc_image_hashes"
+    ],
+    "configuration": [
+        {
+            "label": "Protocol",
+            "name": "protocol",
+            "type": "step",
+            "labelInfo": "Select a protocol to use to pull the files from the Windows server directories. SMB protocol is natively designed for Microsoft-based systems. SFTP protocol is comparatively faster and requires OpenSSH service to be enabled on the Windows system.",
+            "fields": [
+                {
+                    "label": "Protocol Name",
+                    "key": "name",
+                    "type": "choice",
+                    "default": "SMB",
+                    "choices": [
+                        {
+                            "key": "SMB",
+                            "value": "SMB"
+                        },
+                        {
+                            "key": "SFTP",
+                            "value": "SFTP"
+                        }
+                    ],
+                    "mandatory": true,
+                    "description": "Protocol to use to pull the files from the Windows server directories."
+                }
+            ]
+        },
+        {
+            "label": "Configuration Parameters",
+            "name": "configuration_parameters",
+            "type": "dynamic_step"
+        },
+        {
+            "label": "Directory Configuration",
+            "name": "directory_configuration",
+            "type": "dynamic_step",
+            "labelInfo": "Provide a valid Directory Path and Filename Filter to pull the image or zip files from the Windows server. Use regular expression in Filename Filter to filter the files, empty value will pull all files from the directory. Please note that files from sub-directories will not be pulled, therefore ensure to mention the full path to a directory where the file is present."
+        },
+        {
+            "label": "Preview File Results",
+            "name": "file_results",
+            "type": "dynamic_step",
+            "labelInfo": "Preview the results of file scanning for Directory Configuration. Ensure that the count and size of files being pulled up by Netskope are correct and expected."
+        }
+    ]
+}

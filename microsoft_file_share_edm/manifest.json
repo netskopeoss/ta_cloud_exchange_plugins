@@ -1,0 +1,59 @@
+{
+    "name": "Microsoft File Share EDM",
+    "id": "microsoft_file_share_edm",
+    "version": "1.0.0",
+    "module": "EDM",
+    "description": "Microsoft File Share EDM Plugin is used to fetch a CSV file from the remote Windows server and to generate EDM hashes of the pulled CSV file.",
+    "patch_supported": false,
+    "push_supported": false,
+    "pull_supported": true,
+    "pull_sample_data_on_validate": true,
+    "minimum_version": "6.0.0",
+    "supported_edm_method": [
+        "edm_file_hashes"
+    ],
+    "configuration": [
+        {
+            "label": "Protocol",
+            "name": "protocol",
+            "type": "step",
+            "labelInfo": "Select protocol to use to pull the CSV file from the Windows server. SMB protocol is natively designed for Microsoft-based systems. Pulling the file using SFTP protocol is comparatively faster and it requires to have OpenSSH service enabled on Windows system.",
+            "fields": [
+                {
+                    "label": "Protocol name",
+                    "key": "name",
+                    "type": "choice",
+                    "default": "SMB",
+                    "choices": [
+                        {
+                            "key": "SMB",
+                            "value": "SMB"
+                        },
+                        {
+                            "key": "SFTP",
+                            "value": "SFTP"
+                        }
+                    ],
+                    "mandatory": true,
+                    "description": "Protocol to use to pull the CSV file from the Windows server."
+                }
+            ]
+        },
+        {
+            "label": "Configuration Parameters",
+            "name": "configuration",
+            "type": "dynamic_step"
+        },
+        {
+            "label": "Hash Generation and Sanitization Parameters",
+            "name": "sanity_inputs",
+            "type": "dynamic_step"
+        },
+        {
+            "label": "Preview Sanitization Results",
+            "labelInfo": "Preview the output of the first 20 records with sanitization performed on the data fetched from the Microsoft Windows server. If the 'Proceed without sanitization' is unchecked, only the Good file will be used for EDM Hash generation. In this case, review the Bad file and update the sanitization parameters or data source to prevent important records from being excluded. If the 'Proceed without sanitization' is checked, all data without sanitization will be used for EDM Hash generation.",
+            "name": "sanity_results",
+            "type": "dynamic_step"
+        }
+    ]
+}

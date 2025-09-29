@@ -120,6 +120,7 @@ class NetskopePlugin(PluginBase):
         )
         self.plugin_name, self.plugin_version = self._get_plugin_info()
         self.log_prefix = f"{MODULE_NAME} {self.plugin_name}"
+        self.config_name = name
         if name:
             self.log_prefix = f"{self.log_prefix} [{name}]"
 
@@ -367,12 +368,30 @@ class NetskopePlugin(PluginBase):
         # Check if the input string matches the domain or IP regex
         return bool(domain_or_ip_regex.match(indicator_value))
 
+    def _extract_indicator_values(self, items):
+        """Extract indicator values from mixed data types.
+
+        Args:
+            items: List that may contain Indicator objects or string values
+
+        Returns:
+            List[str]: List of indicator values as strings
+        """
+        result = []
+        for item in items:
+            if isinstance(item, Indicator):
+                result.append(item.value)
+            else:
+                # Assume it's already a string value
+                result.append(item)
+        return result
+
     def _create_indicator_batch(
         self,
         indicators: List[Indicator],
         indicator_types: List[IndicatorType],
         max_len: int = None,
-    ) -> (List[str], List[str], int):
+    ) -> (List[str], List[str], List[str], int, List[Indicator]):
         """
         Generate a batch of indicators from a list of indicators based on specified criteria.
 
@@ -390,18 +409,28 @@ class NetskopePlugin(PluginBase):
         Returns:
             List[str]: A list of strings representing the indicators included
             in the batch.
+            List[str]: A list of strings representing the tags included
+            in the batch.
+            List[str]: A list of strings representing the indicators skipped
+            due to being invalid.
+            List[str]: A list of strings representing the indicators skipped
+            due to being invalid.
+            int: The total count of indicators.
+            List[Indicator]: The list of indicators that were not shared.
         """
         out = []
         tags = []
         skip_invalid_host = []
+        skip_invalid_type = []
         skip_ipv6 = []
         total_count = 0
         for indicator in indicators:
             total_count += 1
             # skip indicators of other types
-            if indicator.type not in indicator_types:
-                continue
             indicator_value = indicator.value
+            if indicator.type not in indicator_types:
+                skip_invalid_type.append(indicator_value)
+                continue
             if not self._is_valid_domain_or_ip(indicator_value):
                 if self._is_valid_ipv6(indicator_value):
                     skip_ipv6.append(indicator_value)
@@ -412,8 +441,18 @@ class NetskopePlugin(PluginBase):
             tags.extend(indicator.tags)
             if max_len and len(out) >= max_len:
                 break
-        total_count += sum(1 for _ in indicators)
-        return out, tags, skip_invalid_host, skip_ipv6, total_count
+        remaining_indicators = list(indicators)
+        total_count = len(remaining_indicators) + total_count
+        unshared_indicators = remaining_indicators + skip_invalid_type
+
+        return (
+            out,
+            tags,
+            skip_invalid_host,
+            skip_ipv6,
+            total_count,
+            unshared_indicators,
+        )
 
     def make_batch(
         self,
@@ -421,9 +460,10 @@ class NetskopePlugin(PluginBase):
         indicator_types: List[IndicatorType],
         max_len: int = ...,
         max_size: int = ...,
-    ) -> (List[str], int, int, int):
+    ) -> (List[str], List[str], List[str], int, List[Indicator]):
         """
-        Generate a batch of indicators from a list of indicators based on specified criteria.
+        Generate a batch of indicators from a list of indicators \
+            based on specified criteria.
 
         Parameters:
             indicators (List[Indicator]): A list of Indicator objects
@@ -439,44 +479,51 @@ class NetskopePlugin(PluginBase):
         Returns:
             List[str]: A list of strings representing the indicators included
             in the batch.
-            int: The count of indicators of the specified types that were
+            List[str]: The list of indicators of the specified types that were
             skipped due to being invalid.
             int: The count of indicators of the specified types that were
             skipped due to exceeding the maximum size.
             int: The total count of indicators.
+            List[Indicator]: The list of indicators that were not shared.
         """
         out = []
         # Start with the size of the JSON structure that will wrap the URLs
         current_size = 0
-        skip_count_invalid = 0
-        total_count = 0
+        skip_count_invalid = []
         indicators = list(indicators)
         total_indicators = len(indicators)
+        remaining_valid_count = 0
+        unshared_indicators = []
 
         # Calculate the initial count of indicators of the specified types
         initial_type_count = sum(
             1 for indicator in indicators if indicator.type in indicator_types
         )
-        for indicator in indicators:
+        for i, indicator in enumerate(indicators):
             # skip indicators of other types
             if indicator.type not in indicator_types:
-                skip_count_invalid += 1
+                skip_count_invalid.append(indicator.value)
                 continue
 
             # Add 2 for quotes and 1 for comma if not the first item
-            url_size = len(json.dumps(indicator.value)) + (2 if out else 3)
+            url_size = len(json.dumps(indicator.value)) + (3 if out else 4)
 
             # Check if adding this URL would exceed our limits
             if (len(out) >= max_len) or (current_size + url_size > max_size):
+                remaining_valid_count = initial_type_count - len(out)
+                unshared_indicators = indicators[i:]
                 break
 
             out.append(indicator.value)
             current_size += url_size
-            total_count += 1
-        # Calculate the remaining count of URLs of the specified types
-        remaining_count = initial_type_count - total_count
 
-        return out, skip_count_invalid, remaining_count, total_indicators
+        return (
+            out,
+            skip_count_invalid,
+            remaining_valid_count,
+            total_indicators,
+            unshared_indicators,
+        )
 
     @staticmethod
     def _create_tags(utils, tag_name):
@@ -642,7 +689,10 @@ class NetskopePlugin(PluginBase):
         """
         threat_types = self.configuration.get("threat_data_type", [])
         sub_types = []
-        if data_type == "alerts":
+        if (
+            data_type == "alerts"
+            and self.configuration.get("is_pull_required") == "Yes"
+        ):
             if "SHA256" in threat_types or "MD5" in threat_types:
                 sub_types.append("Malware")
             if "URL" in threat_types:
@@ -678,17 +728,20 @@ class NetskopePlugin(PluginBase):
             if "SHA256" in threat_type or "MD5" in threat_type:
                 if self.sub_type.lower() == "malware":
                     malware = self.get_indicators_from_json(self.data)
-                    filtered_malware = self._filter_false_positive_hashes(
-                        indicators=malware,
-                        tenant_name=tenant_name,
-                        is_retraction=False
-                    )
-                    skipped = len(malware) - len(filtered_malware)
-                    self.logger.info(
-                        f"{self.log_prefix}: {skipped} indicator(s) "
-                        "skipped due to false positive."
-                    )
-                    alerts += filtered_malware
+                    if config["enable_retrohunt_and_fp"] == "yes":
+                        filtered_malware = self._filter_false_positive_hashes(
+                            indicators=malware,
+                            tenant_name=tenant_name,
+                            is_retraction=False
+                        )
+                        skipped = len(malware) - len(filtered_malware)
+                        self.logger.info(
+                            f"{self.log_prefix}: {skipped} indicator(s) "
+                            "skipped due to clean."
+                        )
+                        alerts += filtered_malware
+                    else:
+                        alerts += malware
             if "URL" in threat_type:
                 if self.sub_type.lower() == "malsite":
                     alerts += self.get_indicators_from_json(self.data)
@@ -758,6 +811,7 @@ class NetskopePlugin(PluginBase):
             skip_invalid_host,
             skip_ipv6,
             total_hosts,
+            unshared_indicators,
         ) = self._create_indicator_batch(
             indicators,
             [
@@ -786,7 +840,7 @@ class NetskopePlugin(PluginBase):
                 f"{self.log_prefix}: Out of {total_hosts}, attempting to push {len(indicators_to_push)} host(s)"
                 f" to Netskope. Skipping {len(skip_invalid_host)} indicators due to being invalid hosts,"
                 f" Skipping {len(skip_ipv6)} IPv6 indicators as IPv6 is not supported on Netskope"
-                f" and the remaining indicators due to exceeding the maximum size of {MAX_PUSH_HOSTS}."
+                f" and the remaining indicators due to exceeding the maximum size of {MAX_PUSH_HOSTS} or invalid types."
             )
             if existing_private_app_name == "create":
                 private_app_name = f"[{new_private_app_name}]"
@@ -971,19 +1025,32 @@ class NetskopePlugin(PluginBase):
                     indicators_to_push, remove_tag="Unshared"
                 )
                 count_skipped = self._add_and_remove_tags(
-                    indicators, add_tag="Unshared"
+                    unshared_indicators, add_tag="Unshared"
                 )
                 if count_skipped:
                     self.logger.debug(
-                        f"{self.log_prefix}: Skipped sharing of {count_skipped} indicator(s) due to size limit."
+                        f"{self.log_prefix}: Skipped sharing of "
+                        f"{count_skipped} indicator(s) due to "
+                        "size limit or invalid type."
                     )
 
             self.logger.info(
                 f"{self.log_prefix}: Successfully shared {len(indicators_to_push)} indicator(s)"
                 f" to configuration {self.plugin_name}."
             )
+            if "failed_iocs" in PushResult.model_fields:
+                failed_iocs = (
+                    skip_ipv6 + invalid_indicators +
+                    self._extract_indicator_values(unshared_indicators)
+                )
+                return PushResult(
+                    success=True,
+                    message="Successfully shared indicators.",
+                    failed_iocs=failed_iocs,
+                )
             return PushResult(
-                success=True, message="Successfully shared indicators."
+                success=True,
+                message="Successfully shared indicators.",
             )
         except Exception as e:
             self.notifier.error(
@@ -1029,20 +1096,24 @@ class NetskopePlugin(PluginBase):
             Exception: If an error occurs while pushing the data to Netskope.
         """
         tenant_name = self.tenant.parameters["tenantName"].strip()
-        indicators_to_push, skip_count_invalid_urls, remaining_count, total_indicators = (
-            self.make_batch(
-                indicators,
-                [
-                    IndicatorType.URL,
-                    IndicatorType.IPV4,
-                    IndicatorType.IPV6,
-                    IndicatorType.HOSTNAME,
-                    IndicatorType.DOMAIN,
-                    IndicatorType.FQDN,
-                ],
-                max_len=MAX_PUSH_INDICATORS,
-                max_size=max_size,
-            )
+        (
+            indicators_to_push,
+            skip_count_invalid_urls,
+            remaining_count,
+            total_indicators,
+            unshared_indicators,
+        ) = self.make_batch(
+            indicators,
+            [
+                IndicatorType.URL,
+                IndicatorType.IPV4,
+                IndicatorType.IPV6,
+                IndicatorType.HOSTNAME,
+                IndicatorType.DOMAIN,
+                IndicatorType.FQDN,
+            ],
+            max_len=MAX_PUSH_INDICATORS,
+            max_size=max_size,
         )
 
         try:
@@ -1056,7 +1127,7 @@ class NetskopePlugin(PluginBase):
             indicators_to_push_count = len(indicators_to_push)
             self.logger.info(
                 f"{self.log_prefix}: Out of {total_indicators}, attempting to push {indicators_to_push_count} URL(s)"
-                f" to Netskope. Skipping {skip_count_invalid_urls} indicators due to being invalid URL type,"
+                f" to Netskope. Skipping {len(skip_count_invalid_urls)} indicators due to being invalid URL type,"
                 f" Skipping {remaining_count} URL(s) due to exceeding the maximum size of"
                 f" {max_size // BYTES_TO_MB} MB or {MAX_PUSH_INDICATORS} indicators."
             )
@@ -1218,18 +1289,31 @@ class NetskopePlugin(PluginBase):
                 indicators_to_push, remove_tag="Invalid host"
             )
             if enable_tagging:
+                unshared_indicators = (
+                    unshared_indicators + skip_count_invalid_urls + ipv6_iocs
+                )
                 count_skipped = self._add_and_remove_tags(
-                    indicators, add_tag="Unshared"
+                    unshared_indicators, add_tag="Unshared"
                 )
                 if count_skipped:
                     self.logger.debug(
-                        f"{self.log_prefix}: Skipped sharing of {count_skipped} indicator(s) due to size limit."
+                        f"{self.log_prefix}: Skipped sharing of {count_skipped} indicator(s) due to size limit or invalid type."
                     )
             self.logger.info(
                 f"{self.log_prefix}: Successfully shared {len(indicators_to_push)} indicators"
                 f" (URL, IPv4, FQDN, hostname and domain) to configuration '{self.plugin_name}'."
                 f" Failed {len(invalid_indicators)} indicators due to being invalid value."
             )
+            if "failed_iocs" in PushResult.model_fields:
+                return PushResult(
+                    success=True,
+                    message="Successfully shared indicators.",
+                    should_run_cleanup=True,
+                    failed_iocs=(
+                        invalid_indicators +
+                        self._extract_indicator_values(unshared_indicators)
+                    ),
+                )
             return PushResult(
                 success=True,
                 message="Successfully shared indicators.",
@@ -1395,13 +1479,17 @@ class NetskopePlugin(PluginBase):
             Exception: If an error occurs while pushing the indicators.
         """
         tenant_name = self.tenant.parameters["tenantName"].strip()
-        indicators_to_push, skip_count_invalid_hashes, remaining_count, total_indicators = (
-            self.make_batch(
-                indicators,
-                [IndicatorType.MD5, IndicatorType.SHA256],
-                max_len=MAX_PUSH_INDICATORS,
-                max_size=max_size,
-            )
+        (
+            indicators_to_push,
+            skip_count_invalid_hashes,
+            remaining_count,
+            total_indicators,
+            unshared_indicators,
+        ) = self.make_batch(
+            indicators,
+            [IndicatorType.MD5, IndicatorType.SHA256],
+            max_len=MAX_PUSH_INDICATORS,
+            max_size=max_size,
         )
         try:
             if (
@@ -1417,7 +1505,7 @@ class NetskopePlugin(PluginBase):
 
             self.logger.info(
                 f"{self.log_prefix}: Out of {total_indicators}, attempting to push {len(indicators_to_push)} hash(es)"
-                f" to Netskope. Skipping {skip_count_invalid_hashes} indicators due to being invalid hash(es),"
+                f" to Netskope. Skipping {len(skip_count_invalid_hashes)} indicators due to being invalid hash(es),"
                 f" Skipping {remaining_count} hash(es) due to exceeding the maximum size of"
                 f" {max_size // BYTES_TO_MB} MB or {MAX_PUSH_INDICATORS} indicators."
             )
@@ -1463,19 +1551,31 @@ class NetskopePlugin(PluginBase):
                 self._add_and_remove_tags(
                     indicators_to_push, remove_tag="Unshared"
                 )
+                unshared_indicators = (
+                    unshared_indicators + skip_count_invalid_hashes
+                )
                 count_skipped = self._add_and_remove_tags(
-                    indicators, add_tag="Unshared"
+                    unshared_indicators, add_tag="Unshared"
                 )
                 if count_skipped:
                     self.logger.debug(
-                        f"{self.log_prefix}: Skipped sharing of {count_skipped} indicator(s) due to size limit."
+                        f"{self.log_prefix}: Skipped sharing of {count_skipped} indicator(s) due to size limit or invalid type."
                     )
             self.logger.info(
                 f"{self.log_prefix}: Successfully shared {len(indicators_to_push)} hash(es)"
                 f" to configuration {self.plugin_name}."
             )
+            if "failed_iocs" in PushResult.model_fields:
+                return PushResult(
+                    success=True,
+                    message="Successfully shared indicators.",
+                    failed_iocs=self._extract_indicator_values(
+                        unshared_indicators
+                    ),
+                )
             return PushResult(
-                success=True, message="Successfully shared indicators."
+                success=True,
+                message="Successfully shared indicators.",
             )
 
         except Exception as e:
@@ -1495,6 +1595,47 @@ class NetskopePlugin(PluginBase):
                 error_code="CTE_1021",
             )
             return PushResult(success=False, message=str(e))
+
+    def _validate_retrohunt_and_fp(self, tenant_name):
+        """Validate the Retrohunt and False Positive configuration."""
+        err_msg = (
+            "Error occurred while validating Retrohunt API. "
+            "Check if the configured tenant has 'Advanced Threat Protection' "
+            "license and 'Retrohunt API Query' flag is enabled"
+        )
+        data = {
+            "hash": ["ffffffffffffffffffffffffffffffff"]
+        }
+        success, response = handle_exception(
+            self.session.post,
+            error_code="CTE_1035",
+            custom_message=err_msg,
+            plugin=self.log_prefix,
+            url=URLS["V2_RETROHUNT_HASH_INFO"].format(tenant_name),
+            json=data,
+        )
+        if not success:
+            self.logger.error(
+                f"{self.log_prefix}: "
+                f"{err_msg}."
+            )
+            return False
+        response = handle_status_code(
+            response,
+            error_code="CTE_1036",
+            custom_message=err_msg,
+            plugin=self.log_prefix,
+            log=True,
+        )
+        status = response.get("status", "")
+        if status and status.lower() == "error":
+            self.logger.error(
+                f"{self.log_prefix}: "
+                f"{err_msg}. "
+                f"Error message: {response.get('error_message')}."
+            )
+            return False
+        return True
 
     def validate(self, configuration, tenant_name=None):
         """Validate the Plugin configuration parameters.
@@ -1550,6 +1691,26 @@ class NetskopePlugin(PluginBase):
                 message="Invalid value for 'Enable Polling' provided. Allowed values are 'Yes', or 'No'.",
             )
 
+        enable_retrohunt_and_fp = configuration.get(
+            "enable_retrohunt_and_fp", ""
+        )
+        if enable_retrohunt_and_fp not in [
+            "yes",
+            "no",
+        ]:
+            err_msg = (
+                "Invalid value for 'Enable Retrohunt' "
+                "provided. Allowed values are 'Yes', or 'No'."
+            )
+            self.logger.error(
+                f"{self.log_prefix}: {err_msg}",
+                error_code="CTE_1022",
+            )
+            return ValidationResult(
+                success=False,
+                message=err_msg,
+            )
+
         THREAT_DATA_TYPES = ["SHA256", "MD5", "URL"]
         if "threat_data_type" not in configuration or any(
             t not in THREAT_DATA_TYPES
@@ -1586,9 +1747,35 @@ class NetskopePlugin(PluginBase):
             configuration_name=self.name,
         )
 
+        if enable_retrohunt_and_fp == "yes":
+            tenant_name = provider.configuration["tenantName"].strip()
+            self.session = requests.Session()
+            self.session.headers.update(
+                add_installation_id(
+                    add_user_agent(
+                        {
+                            "Netskope-API-Token": resolve_secret(
+                                provider.configuration["v2token"]
+                            ),
+                        }
+                    )
+                )
+            )
+            validation = self._validate_retrohunt_and_fp(tenant_name)
+            if not validation:
+                return ValidationResult(
+                    success=False,
+                    message=(
+                        "Validation failed querying Retrohunt API "
+                        "for Clean Indicators. Check if the configured "
+                        "tenant has 'Advanced Threat Protection' "
+                        "license and 'Retrohunt API Query' flag is enabled."
+                    ),
+                )
+
         return ValidationResult(
             success=True,
-            message="Validation Successful for Netskope plugin",
+            message="Validation Successful for Netskope plugin.",
         )
 
     def get_actions(self):
@@ -2231,14 +2418,14 @@ class NetskopePlugin(PluginBase):
         ):
             self.logger.debug(
                 f"{self.log_prefix}: Indicator {ioc.value} "
-                "is considered as a false positive, "
+                "is considered as a clean, "
                 "will be marked retracted."
             )
             false_positives.append(ioc.value)
         else:
             self.logger.debug(
                 f"{self.log_prefix}: Indicator {ioc.value} "
-                "was not present in the false positive list "
+                "was not present in the clean list "
                 "or is still considered malicious."
             )
 
@@ -2290,11 +2477,15 @@ class NetskopePlugin(PluginBase):
         Raises:
             No exception, prints error if unable to contact Retrohunt API
         """
+        self.logger.debug(
+            f"{self.log_prefix}: Querying Retrohunt API for "
+            "checking clean hashes."
+        )
         err_msg = (
             "Error occurred while querying Retrohunt API "
-            "for false positive hashes in batch {batch_count}. "
+            "for clean hashes in batch {batch_count}. "
             "Hence, skipping this batch for "
-            "fetching false positive hashes"
+            "fetching clean hashes"
         )
         if not is_retraction:
             err_msg = (
@@ -2367,7 +2558,7 @@ class NetskopePlugin(PluginBase):
             self.logger.error(
                 message=(
                     f"{self.log_prefix}: Error occurred while filtering "
-                    f"false positive hashes. Error: {str(e)}"
+                    f"clean hashes. Error: {str(e)}"
                 ),
                 details=str(traceback.format_exc())
             )
@@ -2389,8 +2580,17 @@ class NetskopePlugin(PluginBase):
         """
         if RETRACTION not in self.log_prefix:
             self.log_prefix = self.log_prefix + f" [{RETRACTION}]"
+        if self.configuration["enable_retrohunt_and_fp"] == "no":
+            log_msg = (
+                "Retrohunt is disabled for the "
+                f'configuration "{self.config_name}". '
+                "Skipping retraction of IoC(s)."
+            )
+            self.logger.info(f"{self.log_prefix}: {log_msg}")
+            yield [], True
+
         self.logger.info(
-            f"{self.log_prefix}: Verifying False Positive status "
+            f"{self.log_prefix}: Verifying clean status "
             "of Indicators on the Netskope Tenant."
         )
         helper = AlertsHelper()
@@ -2423,7 +2623,7 @@ class NetskopePlugin(PluginBase):
                 yield retracted_hashes, False
             except Exception as e:
                 err_msg = (
-                    "Error while fetching false positive "
+                    "Error while fetching clean "
                     "hashes from the Netskope tenant."
                 )
                 self.logger.error(

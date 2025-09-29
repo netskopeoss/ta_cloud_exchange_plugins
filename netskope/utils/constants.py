@@ -59,7 +59,7 @@ URLS = {
 }
 MODULE_NAME = "CTE"
 PLUGIN_NAME = "Netskope CTE"
-PLUGIN_VERSION = "2.2.0"
+PLUGIN_VERSION = "2.3.0"
 RETROHUNT_FP_SEVERITY_MAPPING = {
     "1": SeverityType.LOW,
     "2": SeverityType.MEDIUM,

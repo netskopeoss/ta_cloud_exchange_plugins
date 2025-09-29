@@ -1,3 +1,9 @@
+# 2.3.0
+## Added
+- Added configuration option to enable/disable querying Retrohunt API.
+## Fixed
+- Fixed tagging of indicators while sharing.
+
 # 2.2.0
 ## Added
 - Added support for retraction of False Positive if IoC type is File Hash.

@@ -457,7 +457,7 @@ class NetskopePluginHelper(object):
             error_dict = {
                 400: (
                     "Received exit code 400, Bad Request, Verify the "
-                    "Tenant URL, V!, V2 API Token provided in the "
+                    "Tenant URL, V1, V2 API Token provided in the "
                     "configuration parameters."
                 ),
                 401: (

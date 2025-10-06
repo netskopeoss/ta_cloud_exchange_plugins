@@ -1,3 +1,7 @@
+# 1.5.2
+## Fixed
+- Updated iterator index with analytics type
+
 # 1.5.1
 ## Fixed
 - Updated WebTx creds retrieval interval on authentication error.

@@ -952,7 +952,7 @@ class NetskopeClient:
                         f"{self.log_prefix}: "
                         f"Pulled {len(filtered_data)} {sub_type} {self.type}(s) from historical "
                         f"{self.type}s in JSON format using {iterator_name} index{pull_message}"
-                        f"for SIEM Mapping {self.source_configuration} to {self.destination_configuration} "
+                        f"for Log Delivery from {self.source_configuration} to {self.destination_configuration} "
                         f"according to rule business rule {self.business_rule}."
                     )
                 else:
@@ -1012,7 +1012,6 @@ class NetskopeClient:
         """
         Enrich CSV incident data with forensics information.
         And return compressed json.
-
         Args:
             response_data: Raw CSV response data (bytes or string)
             sub_type: The sub type of data being processed

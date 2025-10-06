@@ -2,7 +2,7 @@
     "name": "Netskope Threat Exchange",
     "id": "netskope",
     "netskope": true,
-    "version": "2.2.0",
+    "version": "2.3.0",
     "module": "CTE",
     "minimum_version": "5.1.0",
     "minimum_provider_version": "1.0.0",
@@ -88,6 +88,24 @@
             "default": "yes",
             "mandatory": true,
             "description": "Enable/disable tagging of unshared indicators."
+        },
+        {
+            "label": "Enable Retrohunt",
+            "key": "enable_retrohunt_and_fp",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Yes",
+                    "value": "yes"
+                },
+                {
+                    "key": "No",
+                    "value": "no"
+                }
+            ],
+            "default": "no",
+            "mandatory": true,
+            "description": "Enable/disable querying the Retrohunt API for clean indicators. If set to Yes, the plugin will not pull clean indicators and if retraction is enabled, clean indicators will be marked as retracted. If set to No, the plugin will pull all indicators. The Retrohunt API requires an 'Advanced Threat Protection' license and the 'Retrohunt API Query' flag enabled on the Netskope tenant."
         }
     ]
 }

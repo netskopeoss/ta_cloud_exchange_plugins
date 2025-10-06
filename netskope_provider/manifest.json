@@ -8,9 +8,9 @@
         "webtx"
     ],
     "netskope": true,
-    "version": "1.5.1",
+    "version": "1.5.2",
     "module": "Tenant",
-    "minimum_version": "5.1.2",
+    "minimum_version": "6.0.0",
     "description": "This plugin is required to configure Netskope Tenant in Cloud Exchange. The Netskope Tenant will be used by the Netskope plugins to fetch the required data for each module.",
     "configuration": [
         {
@@ -36,7 +36,7 @@
             "type": "password",
             "default": "",
             "mandatory": true,
-            "description": "V2 API token to authenticate Netskope Tenant. V2 Token can be obtained from the Netskope Tenant Settings -> Tools -> REST API v2."
+            "description": "API token to authenticate Netskope Tenant. The Token can be obtained from the Netskope Tenant Settings -> Administration -> Administrators & Roles -> Service Account."
         }
     ]
 }

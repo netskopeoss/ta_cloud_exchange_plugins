@@ -315,7 +315,7 @@ class NetskopeProviderPlugin(PluginBase):
         """Remove tenant from banner."""
         new_message = (
             "Configure tenant(s) **{}** "
-            "with a V2 or RBAC V3 API Token. Navigate to Settings > Netskope Tenants to update tenants with a new Token. "
+            "with a V2/RBAC V3 API Token. Navigate to Settings > Netskope Tenants to update tenants with a new Token. "
         )
         self.remove_tenant_from_banner(
             banner_id="BANNER_ERROR_1000",
@@ -814,7 +814,6 @@ class NetskopeProviderPlugin(PluginBase):
     def is_incident_enrichment_enabled(self):
         """
         Check if incident enrichment is enabled for any module or plugin.
-
         Returns:
             bool: True if at least one module/plugin has enrichment set to "yes",
                 False if all are "no" or if no enrichment options are configured.
@@ -834,7 +833,6 @@ class NetskopeProviderPlugin(PluginBase):
                 # If any option is "yes", return True
                 if "yes" in enrichment_options:
                     return True
-
         # If we've checked everything and found no "yes", return False
         return False
 
@@ -1077,7 +1075,12 @@ class NetskopeProviderPlugin(PluginBase):
             else:
                 self.update_banner(tenant_name)
 
-    def share_analytics_in_user_agent(self, tenant_name, user_agent_analytics):
+    def share_analytics_in_user_agent(
+        self,
+        tenant_name: str,
+        user_agent_analytics: str,
+        analytics_type: str
+    ) -> bool:
         """Share analytics data in user agent."""
         try:
             from netskope.common.utils import resolve_secret
@@ -1107,7 +1110,7 @@ class NetskopeProviderPlugin(PluginBase):
                 .strip("/")
                 .removeprefix("https://"),
                 Const.NSKP_USER_AGENT: user_agent_analytics,
-                Const.NSKP_ITERATOR_NAME: f"analytics_{tenant.get('name')}_{ALERT}".replace(
+                Const.NSKP_ITERATOR_NAME: f"analytics_{analytics_type}_{tenant.get('name')}_{ALERT}".replace(
                     " ", ""
                 ),
                 Const.NSKP_EVENT_TYPE: Const.EVENT_TYPE_ALERT,
@@ -1117,7 +1120,7 @@ class NetskopeProviderPlugin(PluginBase):
             response = iterator.download(future_time)
             if response.status_code == 200:
                 self.logger.info(
-                    f"{self.log_prefix}: Analytics sent successfully for {tenant.get('name')} with User-Agent."
+                    f"{self.log_prefix}: {analytics_type.title()} analytics sent successfully for {tenant.get('name')} with User-Agent."
                 )
                 return True
             else:
@@ -1125,7 +1128,7 @@ class NetskopeProviderPlugin(PluginBase):
                     response,
                     error_code="CE_1054",
                     custom_message=(
-                        f"Error occurred while sharing analytics for {tenant.get('name')}"
+                        f"Error occurred while sharing {analytics_type} analytics for {tenant.get('name')}"
                         " in User-Agent with Netskope"
                     ),
                     plugin=self.log_prefix,
@@ -1134,7 +1137,7 @@ class NetskopeProviderPlugin(PluginBase):
                 return False
         except Exception:
             self.logger.error(
-                f"{self.log_prefix}: Error occurred while sharing analytics for {tenant.get('name')}"
+                f"{self.log_prefix}: Error occurred while sharing {analytics_type} analytics for {tenant.get('name')}"
                 " in User-Agent with Netskope",
                 error_code="CE_1055",
                 details=traceback.format_exc(),

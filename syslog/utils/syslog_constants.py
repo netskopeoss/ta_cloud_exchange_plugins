@@ -33,7 +33,7 @@ Syslog Plugin constants."""
 
 PLATFORM_NAME = "Syslog"
 MODULE_NAME = "CLS"
-PLUGIN_VERSION = "4.0.0"
+PLUGIN_VERSION = "4.0.1"
 
 MAXIMUM_CORE_VERSION = "5.1.2"
 

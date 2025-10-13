@@ -133,6 +133,40 @@ class SyslogPlugin(PluginBase):
             else ("null", False)
         )
 
+    def get_nested_field_value(self, data, field_path):
+        """Extract value from nested dictionary using dot notation.
+        
+        Args:
+            data: The data dictionary
+            field_path: Dot-separated field path (e.g., 'host_info.device_make')
+            
+        Returns:
+            tuple: (value, exists) where exists is True if field was found
+        """
+
+        try:
+            current_data = data
+            field_parts = field_path.split('.')
+            
+            for i, part in enumerate(field_parts):
+
+                if isinstance(current_data, dict) and part in current_data:
+                    current_data = current_data[part]
+                else:
+                    return None, False
+            
+            return current_data, True
+            
+        except Exception as exp:
+            self.logger.error(
+                message=(
+                    f"{self.log_prefix}: Error occurred while"
+                    f" getting nested field value. Error: {exp}"
+                ),
+                details=str(traceback.format_exc()),
+            )
+            return None, False
+
     def get_subtype_mapping(self, mappings, subtype):
         """To Retrieve subtype mappings (mappings for subtypes of \
             alerts/events) case insensitively.
@@ -218,6 +252,7 @@ class SyslogPlugin(PluginBase):
 
         # Iterate over mapped extensions
         for cef_extension, extension_mapping in extension_mappings.items():
+
             try:
                 (
                     extension[cef_extension],
@@ -229,7 +264,7 @@ class SyslogPlugin(PluginBase):
                     subtype,
                     is_json_path="is_json_path" in extension_mapping,
                 )
-
+                
                 if mapped_field:
                     mapped_field_flag = mapped_field
             except FieldNotFoundError as err:
@@ -293,32 +328,57 @@ class SyslogPlugin(PluginBase):
             else:
                 # If mapping is present in data, map that field, \
                 # else skip by raising exception
-                if (
-                    extension_mapping["mapping_field"] in data
-                ):  # case #1 and case #4
+                # First try direct field access
+                if extension_mapping["mapping_field"] in data:
+                    # Direct field access (case #1 and case #4)
                     if (
                         extension_mapping.get("transformation") == "Time Stamp"
                         and data[extension_mapping["mapping_field"]]
                     ):
                         try:
                             mapped_field = True
-                            return (
-                                int(data[extension_mapping["mapping_field"]]),
-                                mapped_field,
-                            )
-                        except Exception:
+                            timestamp_value = int(data[extension_mapping["mapping_field"]])
+                            return (timestamp_value, mapped_field)
+                        except Exception as e:
                             pass
-                    return self.get_mapping_value_from_field(
+                    
+                    field_result = self.get_mapping_value_from_field(
                         data, extension_mapping["mapping_field"]
                     )
-                elif "default_value" in extension_mapping:
-                    # If mapped value is not found in response and default is \
-                    # mapped, map the default value (case #2)
-                    return extension_mapping["default_value"], mapped_field
-                else:  # case #6
-                    raise FieldNotFoundError(
-                        extension_mapping["mapping_field"]
+                    return field_result
+                else:
+                    # Try nested field access using dot notation
+                    nested_value, field_exists = self.get_nested_field_value(
+                        data, extension_mapping["mapping_field"]
                     )
+                    
+                    if field_exists:
+                        if (
+                            extension_mapping.get("transformation") == "Time Stamp"
+                            and nested_value
+                        ):
+                            try:
+                                mapped_field = True
+                                timestamp_value = int(nested_value)
+                                return timestamp_value, mapped_field
+                            except Exception as e:
+                                pass
+                        
+                        mapped_field = True
+                        final_result = (
+                            (nested_value, True)
+                            if nested_value or isinstance(nested_value, int)
+                            else ("null", False)
+                        )
+                        return final_result
+                    elif "default_value" in extension_mapping:
+                        # If mapped value is not found in response and default is \
+                        # mapped, map the default value (case #2)
+                        return extension_mapping["default_value"], mapped_field
+                    else:  # case #6
+                        raise FieldNotFoundError(
+                            extension_mapping["mapping_field"]
+                        )
         else:
             # If mapping is not present, 'default_value' must be there\
             #  because of validation (case #3 and case #5)

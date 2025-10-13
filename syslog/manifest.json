@@ -1,7 +1,7 @@
 {
     "name": "Syslog",
     "id": "syslog",
-    "version": "4.0.0",
+    "version": "4.0.1",
     "module": "CLS",
     "mapping": "Syslog Default Mappings",
     "format_options": [
@@ -20,7 +20,7 @@
         "webtx",
         "logs"
     ],
-    "description": "This plugin supports ingestion of Alerts (Anomaly, DLP, Malware, Policy, Compromised Credential, Legal Hold, Malsite, Quarantine, Remediation, Security Assessment, Watchlist, UBA, CTEP, Device, Content), Events (Page, Application, Audit, Infrastructure, Network, Incident, Endpoint, Client Status), BWAN Events (Authentication, Audit, Client, Gateway, System), WebTx and Logs (Debug, Information, Error, Warning). The data will be ingested in SIEM platform. This plugin supports ingestion in CEF and JSON format.",
+    "description": "This plugin supports ingestion of Alerts (DLP, Malware, Policy, Compromised Credential, Malsite, Quarantine, Remediation, Security Assessment, Watchlist, UBA, CTEP, Device, Content), Events (Page, Application, Audit, Infrastructure, Network, Incident, Endpoint, Client Status), BWAN Events (Authentication, Audit, Client, Gateway, System), WebTx and Logs (Debug, Information, Error, Warning). The data will be ingested in SIEM platform. This plugin supports ingestion in CEF and JSON format.",
     "configuration": [
         {
             "label": "Syslog Server",

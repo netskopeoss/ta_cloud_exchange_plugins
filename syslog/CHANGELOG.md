@@ -1,3 +1,7 @@
+# 4.0.1
+## Fixed
+- Fixed CEF transformation for nested JSON fields in data.
+
 # 4.0.0
 ## Added
 - Added support for invoking mapping validation separately.

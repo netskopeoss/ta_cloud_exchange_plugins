@@ -13,7 +13,7 @@ REGEX_HOST = (
 REGEX_EMAIL = r"[^@]+@[^@]+\.[^@]+"
 MODULE_NAME = "CRE"
 PLUGIN = "Netskope Risk Exchange"
-PLUGIN_VERSION = "1.5.0"
+PLUGIN_VERSION = "1.5.1"
 URLS = {
     "V2_PRIVATE_APP": "/api/v2/steering/apps/private",
     "V2_PRIVATE_APP_PATCH": "/api/v2/steering/apps/private/{}",

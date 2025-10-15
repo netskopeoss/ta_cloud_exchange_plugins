@@ -1,3 +1,11 @@
+# 1.5.1
+## Added
+- Added support for partial failure in bulk action.
+- Added resolution for error logs.
+## Fixed
+- Fixed an issue while syncing empty value for records.
+- Fixed case sensitivity issue in email matching for 'Add user to group' and 'Remove user from group' actions.
+
 # 1.5.0
 ## Added
 - Added the revert action for 'UCI Impact Update' to support Mark Anomaly as Allowed.

@@ -22,6 +22,7 @@ from netskope.integrations.crev2.plugin_base import (
     EntityFieldType,
     PluginBase,
     ValidationResult,
+    ActionResult
 )
 from netskope.integrations.crev2.utils import get_latest_values
 from requests.exceptions import ConnectionError
@@ -83,6 +84,7 @@ class NetskopePlugin(PluginBase):
             logger=self.logger,
             log_prefix=self.log_prefix,
         )
+        self.provide_action_id = True
 
     def _get_plugin_info(self) -> tuple:
         """Get plugin name and version from manifest.
@@ -287,8 +289,8 @@ class NetskopePlugin(PluginBase):
         if isinstance(value, int) or isinstance(value, float):
             fields_dict[field_name] = value
             return
-        if value:
-            fields_dict[field_name] = value
+
+        fields_dict[field_name] = value
 
     def _extract_field_from_event(
         self,
@@ -872,8 +874,8 @@ class NetskopePlugin(PluginBase):
                     for record in records[i : i + USERS_BATCH_SIZE]:  # noqa
                         match = list(
                             filter(
-                                lambda user: user.get("userId", "") in
-                                record.get("email", ""),
+                                lambda user: user.get("userId", "").lower() in
+                                record.get("email", "").lower(),
                                 response.get("usersUci", []),
                             )
                         )
@@ -1163,7 +1165,7 @@ class NetskopePlugin(PluginBase):
         """
         for user in users:
             for e in user.get("emails", []):
-                if e.get("value", "") == email:
+                if e.get("value", "").lower() == email.lower():
                     return user
         return None
 
@@ -1582,7 +1584,12 @@ class NetskopePlugin(PluginBase):
                 "Initial Range for Events is a "
                 "required configuration parameter."
             )
-            self.logger.error(f"{self.log_prefix}: {err_msg}")
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg}",
+                resolution=(
+                    "Provide a non empty Initial Range for Events (in hours)."
+                )
+            )
             return ValidationResult(
                 success=False,
                 message=err_msg,
@@ -1592,7 +1599,13 @@ class NetskopePlugin(PluginBase):
                 "Invalid Initial Range for Events "
                 "provided in configuration parameter."
             )
-            self.logger.error(f"{self.log_prefix}: {err_msg}")
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg}",
+                resolution=(
+                    "Provide valid number in Initial Range for Events "
+                    "(in hours)."
+                )
+            )
             return ValidationResult(
                 success=False,
                 message=err_msg,
@@ -1602,7 +1615,13 @@ class NetskopePlugin(PluginBase):
                 "Invalid Initial Range for Events provided in configuration"
                 " parameters. Valid value should be in range 0 to 8760."
             )
-            self.logger.error(f"{self.log_prefix}: {err_msg}")
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg}",
+                resolution=(
+                    "Provide valid number in Initial Range for Events "
+                    "(in hours). Valid value should be in range 0 to 8760."
+                )
+            )
             return ValidationResult(
                 success=False,
                 message=err_msg,
@@ -1613,7 +1632,12 @@ class NetskopePlugin(PluginBase):
                 "Initial Range for Alerts is a required "
                 "configuration parameter."
             )
-            self.logger.error(f"{self.log_prefix}: {err_msg}")
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg}",
+                resolution=(
+                    "Provide a non empty Initial Range for Alerts (in days)."
+                )
+            )
             return ValidationResult(
                 success=False,
                 message=err_msg,
@@ -1623,7 +1647,13 @@ class NetskopePlugin(PluginBase):
                 "Invalid Initial Range for Alerts provided in "
                 "configuration parameter."
             )
-            self.logger.error(f"{self.log_prefix}: {err_msg}")
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg}",
+                resolution=(
+                    "Provide valid number in Initial Range for Alerts "
+                    "(in days)."
+                )
+            )
             return ValidationResult(
                 success=False,
                 message=err_msg,
@@ -1633,7 +1663,13 @@ class NetskopePlugin(PluginBase):
                 "Invalid Initial Range for Alerts provided in configuration"
                 " parameters. Valid value should be in range 0 to 365."
             )
-            self.logger.error(f"{self.log_prefix}: {err_msg}")
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg}",
+                resolution=(
+                    "Provide valid number in Initial Range for Alerts "
+                    "(in days). Valid value should be in range 0 to 365."
+                )
+            )
             return ValidationResult(
                 success=False,
                 message=err_msg,
@@ -1755,7 +1791,6 @@ class NetskopePlugin(PluginBase):
             return 0 <= port <= 65535
         except (ValueError, TypeError):
             return False
-
 
     def validate_action(self, action: Action):
         """Validate Netskope configuration.
@@ -2971,7 +3006,12 @@ class NetskopePlugin(PluginBase):
                                 f"Tag '{tag}' does not exists."
                             )
                             self.logger.error(
-                                f"{self.log_prefix}: {error_msg}"
+                                message=f"{self.log_prefix}: {error_msg}",
+                                resolution=(
+                                    "Make sure provided tag exists "
+                                    "on the Netskope Tenant for "
+                                    "adding the tag to the application(s)."
+                                )
                             )
                             raise NetskopeException(error_msg)
                         elif update_tags_response.get("status", "") != SUCCESS:
@@ -3036,7 +3076,12 @@ class NetskopePlugin(PluginBase):
                             f"Tag '{tag}' does not exists."
                         )
                         self.logger.error(
-                            f"{self.log_prefix}: {error_msg}"
+                            message=f"{self.log_prefix}: {error_msg}",
+                            resolution=(
+                                "Make sure provided tag exists "
+                                "on the Netskope Tenant for "
+                                "removing the tag from the application(s)."
+                            )
                         )
                         raise NetskopeException(error_msg)
                     elif update_tags_response.get("status", "") != SUCCESS:
@@ -3306,14 +3351,25 @@ class NetskopePlugin(PluginBase):
                     "Invalid value for User Email provided. "
                     "Multiple comma separated emails are not allowed."
                 )
-                self.logger.error(f"{self.log_prefix}: {err_msg}")
+                self.logger.error(
+                    message=f"{self.log_prefix}: {err_msg}",
+                    resolution=(
+                        "Provide a valid User Email. "
+                        "Multiple comma separated emails are not allowed."
+                    )
+                )
                 raise NetskopeException(err_msg)
             if not re.match(REGEX_EMAIL, user):
                 err_msg = (
                     "Invalid value for User Email provided. "
                     "It must be a valid email address."
                 )
-                self.logger.error(f"{self.log_prefix}: {err_msg}")
+                self.logger.error(
+                    message=f"{self.log_prefix}: {err_msg}",
+                    resolution=(
+                        "Provide a valid User Email."
+                    )
+                )
                 raise NetskopeException(err_msg)
 
         if not skip_score_validation:
@@ -3324,14 +3380,25 @@ class NetskopePlugin(PluginBase):
                     "Invalid value for Score (Reduction) provided. "
                     "It must be an integer."
                 )
-                self.logger.error(f"{self.log_prefix}: {err_msg}")
+                self.logger.error(
+                    message=f"{self.log_prefix}: {err_msg}",
+                    resolution=(
+                        "Provide a valid integer value for Score (Reduction)."
+                    )
+                )
                 raise NetskopeException(err_msg)
             if not 1 <= score <= 1000:
                 err_msg = (
                     "Invalid value for Score (Reduction) provided. "
                     "It must be between 1 and 1000."
                 )
-                self.logger.error(f"{self.log_prefix}: {err_msg}")
+                self.logger.error(
+                    message=f"{self.log_prefix}: {err_msg}",
+                    resolution=(
+                        "Provide a valid integer value for Score (Reduction) "
+                        "between 1 and 1000."
+                    )
+                )
                 raise NetskopeException(err_msg)
 
         if not skip_source_validation:
@@ -3340,7 +3407,13 @@ class NetskopePlugin(PluginBase):
                 err_msg = (
                     "Invalid value for Source provided. It must not be empty."
                 )
-                self.logger.error(f"{self.log_prefix}: {err_msg}")
+                self.logger.error(
+                    message=f"{self.log_prefix}: {err_msg}",
+                    resolution=(
+                        "Provide a valid Source for the "
+                        "Update UCI Score action."
+                    )
+                )
                 raise NetskopeException(err_msg)
 
         if not skip_reason_validation:
@@ -3349,7 +3422,13 @@ class NetskopePlugin(PluginBase):
                 err_msg = (
                     "Invalid value for Reason provided. It must not be empty."
                 )
-                self.logger.error(f"{self.log_prefix}: {err_msg}")
+                self.logger.error(
+                    message=f"{self.log_prefix}: {err_msg}",
+                    resolution=(
+                        "Provide a valid Reason for the "
+                        "Update UCI Score action."
+                    )
+                )
                 raise NetskopeException(err_msg)
 
         return (
@@ -3361,7 +3440,7 @@ class NetskopePlugin(PluginBase):
 
     def _process_params_for_reset_action(
         self, params: dict,
-        bulk_action: bool = False
+        bulk_action: bool = False,
     ) -> list[str]:
         """Process parameters for reset action.
 
@@ -3388,7 +3467,10 @@ class NetskopePlugin(PluginBase):
                         "It must be a valid email address."
                     )
                     self.logger.error(
-                        f"{self.log_prefix}: {err_msg}"
+                        message=f"{self.log_prefix}: {err_msg}",
+                        resolution=(
+                            "Provide a valid User Email."
+                        )
                     )
                     raise NetskopeException(err_msg)
                 valid_users.append(user)
@@ -3445,21 +3527,39 @@ class NetskopePlugin(PluginBase):
                 "Select Tag Action "
                 "from Static field dropdown only."
             )
-            self.logger.error(f"{self.log_prefix}: {err_msg}")
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg}",
+                resolution=(
+                    "Select Tag Action "
+                    "from Static field dropdown only."
+                )
+            )
             raise NetskopeException(err_msg)
         if tag_action not in ["append", "remove"]:
             err_msg = (
                 "Invalid value for Tag Action provided. "
                 "It must be either 'Add' or 'Remove'."
             )
-            self.logger.error(f"{self.log_prefix}: {err_msg}")
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg}",
+                resolution=(
+                    "Select 'Add' or 'Remove' for Tag Action "
+                    "from Static field dropdown."
+                )
+            )
             raise NetskopeException(err_msg)
 
         if not tags and not skip_tag_validation:
             err_msg = (
                 "Invalid value for tags provided. Tags can not be empty."
             )
-            self.logger.error(f"{self.log_prefix}: {err_msg}")
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg}",
+                resolution=(
+                    "Provide valid Tags for the action. "
+                    "Empty Tags are not allowed."
+                )
+            )
             raise NetskopeException(err_msg)
 
         if not skip_tag_validation and not is_execute:
@@ -3471,7 +3571,14 @@ class NetskopePlugin(PluginBase):
                         "Each tag length can not exceed "
                         f"{TAG_APP_TAG_LENGTH} characters."
                     )
-                    self.logger.error(f"{self.log_prefix}: {err_msg}")
+                    self.logger.error(
+                        message=f"{self.log_prefix}: {err_msg}",
+                        resolution=(
+                            "Provide each tag of length "
+                            "less than or equal to "
+                            f"{TAG_APP_TAG_LENGTH} characters."
+                        )
+                    )
                     raise NetskopeException(err_msg)
 
         if (not apps and not ids) and not (
@@ -3481,7 +3588,13 @@ class NetskopePlugin(PluginBase):
                 "Invalid value for Application Names/IDs provided. "
                 "Application Names and IDs can not be empty."
             )
-            self.logger.error(f"{self.log_prefix}: {err_msg}")
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg}",
+                resolution=(
+                    "Provide valid Application Names or IDs for the action. "
+                    "Empty Application Names and IDs are not allowed."
+                )
+            )
             raise NetskopeException(err_msg)
 
         if apps and ids:
@@ -3490,7 +3603,13 @@ class NetskopePlugin(PluginBase):
                 "Application Names and IDs both can not be "
                 "provided at the same time."
             )
-            self.logger.error(f"{self.log_prefix}: {err_msg}")
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg}",
+                resolution=(
+                    "Provide either of valid Application Names "
+                    "or IDs for the Tag/Untag Application action."
+                )
+            )
             raise NetskopeException(err_msg)
 
         try:
@@ -3501,7 +3620,12 @@ class NetskopePlugin(PluginBase):
                     "Invalid value for Application IDs provided. "
                     "One of the ID is not a valid integer."
                 )
-                self.logger.error(f"{self.log_prefix}: {err_msg}")
+                self.logger.error(
+                    message=f"{self.log_prefix}: {err_msg}",
+                    resolution=(
+                        "Provide valid Application IDs in integer format."
+                    )
+                )
                 raise NetskopeException(err_msg) from ex
 
         return tags, apps, ids, tag_action
@@ -3669,7 +3793,11 @@ class NetskopePlugin(PluginBase):
                 "Host can not be empty."
             )
             self.logger.error(
-                f"{self.log_prefix}: {err_msg}"
+                message=f"{self.log_prefix}: {err_msg}",
+                resolution=(
+                    "Make sure Host field in records "
+                    "is not empty."
+                )
             )
             raise NetskopeException(err_msg)
         tags = action_dict.get("tags", [])
@@ -3684,7 +3812,11 @@ class NetskopePlugin(PluginBase):
                     )
                     self.logger.error(
                         message=err_msg,
-                        details=str(tag)
+                        details=str(tag),
+                        resolution=(
+                            "Make sure tag length is less than or "
+                            "equal to 30 characters."
+                        )
                     )
                     raise NetskopeException(err_msg)
 
@@ -3810,7 +3942,13 @@ class NetskopePlugin(PluginBase):
                     "Invalid user email(s) provided in "
                     "configuration parameters."
                 )
-                self.logger.error(f"{self.log_prefix}: {err_msg}")
+                self.logger.error(
+                    message=f"{self.log_prefix}: {err_msg}",
+                    resolution=(
+                        "Provide valid user email(s) in "
+                        "UCI Reset action."
+                    )
+                )
                 raise NetskopeException(err_msg)
             self._reset_uci_score(
                 user_list
@@ -3830,7 +3968,11 @@ class NetskopePlugin(PluginBase):
                     "Tenant via SCIM."
                 )
                 self.logger.error(
-                    f"{self.log_prefix}: {err_message}"
+                    message=f"{self.log_prefix}: {err_message}",
+                    resolution=(
+                        f"Make sure user with email {user} is available "
+                        "on the Netskope Tenant via SCIM."
+                    )
                 )
                 raise NetskopeException(err_message)
             if action.value == "add":
@@ -3906,7 +4048,7 @@ class NetskopePlugin(PluginBase):
                 f"{instance_name} successfully."
             )
 
-    def execute_actions(self, actions: List[Action]):
+    def execute_actions(self, actions):
         """Execute actions in bulk.
 
         Args:
@@ -3914,40 +4056,59 @@ class NetskopePlugin(PluginBase):
         """
         helper = AlertsHelper()
         self.tenant = helper.get_tenant_crev2(self.name)
-        first_action = actions[0]
+        first_action = actions[0].get("params")
         action_label = first_action.label
         self.logger.info(
             f"{self.log_prefix}: Executing '{action_label}' action "
             f"for {len(actions)} records."
         )
+        failed_action_ids = []
         if first_action.value == "private_app":
             private_apps = {}
-            for action in actions:
-                private_apps.setdefault(
-                    (
-                        action.parameters.get("private_app_name", "")
-                        if action.parameters.get("private_app_name", "") != "create"
-                        else action.parameters.get("name", "")
-                    ),
-                    [],
-                ).append(action.parameters)
-            for _, batched_actions in private_apps.items():
-                first_action = batched_actions[0]
-                params = first_action.copy()
-                params["host"] = [
-                    host_item
-                    for action in batched_actions
-                    for host_item in (
-                        action["host"] if isinstance(action["host"], list)
-                        else [action["host"]]
-                    )
-                    if host_item
-                ]
-                params = get_latest_values(
-                    params,
-                    exclude_keys=["host", "tags", "protocol", "publishers"],
+            action_id_to_app_mapping = {}
+            for action_dict in actions:
+                id, action = action_dict.get("id"), action_dict.get("params")
+                app_name = (
+                    action.parameters.get("private_app_name", "")
+                    if action.parameters.get("private_app_name", "") != "create"
+                    else action.parameters.get("name", "")
                 )
-                self._execute_private_app_action(params)
+                private_apps.setdefault(app_name, []).append(action.parameters)
+                action_id_to_app_mapping[id] = app_name
+            for app_name, batched_actions in private_apps.items():
+                batch_action_ids = [
+                    action_id for action_id, mapped_app_name in action_id_to_app_mapping.items()
+                    if mapped_app_name == app_name
+                ]
+                try:
+                    first_action = batched_actions[0]
+                    params = first_action.copy()
+                    params["host"] = [
+                        host_item
+                        for action in batched_actions
+                        for host_item in (
+                            action["host"] if isinstance(action["host"], list)
+                            else [action["host"]]
+                        )
+                        if host_item
+                    ]
+                    params = get_latest_values(
+                        params,
+                        exclude_keys=["host", "tags", "protocol", "publishers"],
+                    )
+                    self._execute_private_app_action(params)
+                except Exception as e:
+                    failed_action_ids.extend(batch_action_ids)
+                    self.logger.error(
+                        f"{self.log_prefix}: Error occurred while adding "
+                        f"hosts to private apps. Error: {str(e)}"
+                    )
+
+            return ActionResult(
+                success=True,
+                message="Successfully added hosts to private apps.",
+                failed_action_ids=failed_action_ids
+            )
         elif first_action.value in ["add", "remove"]:
             skip_count = 0
             bulk_payload = []
@@ -3969,7 +4130,9 @@ class NetskopePlugin(PluginBase):
                         group_name = group_match.get("displayName", "")
                         group_id = group_match.get("id", "")
 
-                for action in actions:
+                batch_user_to_action_id = {}
+                for action_dict in actions:
+                    id, action = action_dict.get("id"), action_dict.get("params")
                     params = get_latest_values(action.parameters)
                     user = params.get("user", "")
                     match = self._find_user_by_email(all_users, user)
@@ -3981,11 +4144,14 @@ class NetskopePlugin(PluginBase):
                             f"'{action_label}' on '{user}'."
                         )
                         skip_count += 1
+                        failed_action_ids.append(id)
                         continue
 
+                    user_id = match.get("id", "")
                     bulk_payload.append(
-                        {"value": match.get("id", "")}
+                        {"value": user_id}
                     )
+                    batch_user_to_action_id[user_id] = id
 
                 total_users = 0
                 if bulk_payload:
@@ -3996,19 +4162,34 @@ class NetskopePlugin(PluginBase):
                         batch_users = bulk_payload[
                             index: index + ADD_REMOVE_USER_BATCH_SIZE
                         ]
-                        self._add_to_group(
-                            self.configuration,
-                            batch_users,
-                            group_id
-                        )
-                        total_users += len(batch_users)
-                        self.logger.info(
-                            f"{self.log_prefix}: Successfully added "
-                            f"{len(batch_users)} user(s) to the group "
-                            f"with ID '{group_id}' for batch {batch}. "
-                            f"Total users added: {total_users}."
-                        )
-                        batch += 1
+                        try:
+                            self._add_to_group(
+                                self.configuration,
+                                batch_users,
+                                group_id
+                            )
+                            total_users += len(batch_users)
+                            self.logger.info(
+                                f"{self.log_prefix}: Successfully added "
+                                f"{len(batch_users)} user(s) to the group "
+                                f"with ID '{group_id}' for batch {batch}. "
+                                f"Total users added: {total_users}."
+                            )
+                            batch += 1
+                        except Exception as e:
+                            for batch_user in batch_users:
+                                user_id = batch_user.get("value", "")
+                                if user_id in batch_user_to_action_id:
+                                    failed_action_ids.append(
+                                        batch_user_to_action_id[user_id]
+                                    )
+                            self.logger.error(
+                                f"{self.log_prefix}: Failed to add "
+                                f"{len(batch_users)} user(s) to the group "
+                                f"with ID '{group_id}' for batch {batch}. "
+                                f"Error: {e}. Continuing with next batch."
+                            )
+                            batch += 1
 
                 if skip_count > 0:
                     self.logger.info(
@@ -4021,9 +4202,16 @@ class NetskopePlugin(PluginBase):
                     f"{len(bulk_payload)} user(s) to the group with "
                     f"ID '{group_id}'."
                 )
+                return ActionResult(
+                    success=True,
+                    message="Successfully added users to group.",
+                    failed_action_ids=failed_action_ids
+                )
             elif first_action.value == "remove":
                 group_id = action_parameters.get("group", "")
-                for action in actions:
+                batch_user_to_action_id = {}
+                for action_dict in actions:
+                    id, action = action_dict.get("id"), action_dict.get("params")
                     params = get_latest_values(action.parameters)
                     user = params.get("user", "")
                     match = self._find_user_by_email(all_users, user)
@@ -4035,11 +4223,14 @@ class NetskopePlugin(PluginBase):
                             f"'{action_label}' on '{user}'."
                         )
                         skip_count += 1
+                        failed_action_ids.append(id)
                         continue
 
+                    user_id = match.get("id", "")
                     bulk_payload.append(
-                        {"value": match.get("id", "")}
+                        {"value": user_id}
                     )
+                    batch_user_to_action_id[user_id] = id
 
                 total_removed = 0
                 if bulk_payload:
@@ -4050,19 +4241,34 @@ class NetskopePlugin(PluginBase):
                         batch_users = bulk_payload[
                             index: index + ADD_REMOVE_USER_BATCH_SIZE
                         ]
-                        self._remove_from_group(
-                            self.configuration,
-                            batch_users,
-                            group_id
-                        )
-                        total_removed += len(batch_users)
-                        self.logger.info(
-                            f"{self.log_prefix}: Successfully removed "
-                            f"{len(batch_users)} user(s) from the group "
-                            f"with ID '{group_id}' for batch {batch}. "
-                            f"Total users removed: {total_removed}."
-                        )
-                        batch += 1
+                        try:
+                            self._remove_from_group(
+                                self.configuration,
+                                batch_users,
+                                group_id
+                            )
+                            total_removed += len(batch_users)
+                            self.logger.info(
+                                f"{self.log_prefix}: Successfully removed "
+                                f"{len(batch_users)} user(s) from the group "
+                                f"with ID '{group_id}' for batch {batch}. "
+                                f"Total users removed: {total_removed}."
+                            )
+                            batch += 1
+                        except Exception as e:
+                            for batch_user in batch_users:
+                                user_id = batch_user.get("value", "")
+                                if user_id in batch_user_to_action_id:
+                                    failed_action_ids.append(
+                                        batch_user_to_action_id[user_id]
+                                    )
+                            self.logger.error(
+                                f"{self.log_prefix}: Failed to remove "
+                                f"{len(batch_users)} user(s) from the group "
+                                f"with ID '{group_id}' for batch {batch}. "
+                                f"Error: {e}. Continuing with next batch."
+                            )
+                            batch += 1
 
                 if skip_count > 0:
                     self.logger.info(
@@ -4075,35 +4281,62 @@ class NetskopePlugin(PluginBase):
                     f"{len(bulk_payload)} user(s) from the group with ID "
                     f"'{group_id}'."
                 )
+                return ActionResult(
+                    success=True,
+                    message="Successfully removed users from the group.",
+                    failed_action_ids=failed_action_ids
+                )
         elif first_action.value == "tag_app":
             tags_ids_apps = {}
-            for action in actions:
-                (
-                    tags,
-                    apps,
-                    ids,
-                    cci_tag_action
-                ) = self._process_params_for_add_tag_action(
-                    action.parameters,
-                    True
-                )
+            item_to_action_map = {}
+            for action_dict in actions:
+                id, action = action_dict.get("id"), action_dict.get("params")
+                try:
+                    (
+                        tags,
+                        apps,
+                        ids,
+                        cci_tag_action
+                    ) = self._process_params_for_add_tag_action(
+                        action.parameters,
+                        True
+                    )
 
-                for tag in tags:
-                    if tag not in tags_ids_apps:
-                        tags_ids_apps[tag] = {"apps": [], "ids": []}
+                    for tag in tags:
+                        if tag not in tags_ids_apps:
+                            tags_ids_apps[tag] = {
+                                "apps": [],
+                                "ids": [],
+                            }
 
-                    if apps:
-                        tags_ids_apps[tag]["apps"] = (
-                            list(set(tags_ids_apps[tag]["apps"]) | set(apps))
-                        )
-                    if ids:
-                        tags_ids_apps[tag]["ids"] = (
-                            list(set(tags_ids_apps[tag]["ids"]) | set(ids))
-                        )
-            skipped_tags_info = self._bulk_tag_application(
+                        if apps:
+                            tags_ids_apps[tag]["apps"] = (
+                                list(set(tags_ids_apps[tag]["apps"]) | set(apps))
+                            )
+                        if ids:
+                            tags_ids_apps[tag]["ids"] = (
+                                list(set(tags_ids_apps[tag]["ids"]) | set(ids))
+                            )
+
+                        for app in apps:
+                            item_to_action_map[app] = id
+                        for item_id in ids:
+                            item_to_action_map[item_id] = id
+                except Exception as e:
+                    self.logger.error(
+                        f"{self.log_prefix}: Error occurred while processing "
+                        f"action '{action_label}' for record with ID '{id}'. "
+                        f"Error: {e}."
+                    )
+                    failed_action_ids.append(id)
+
+            skipped_tags_info, batch_failed_ids = self._bulk_tag_application(
                 tags_ids_apps,
-                cci_tag_action
+                cci_tag_action,
+                item_to_action_map
             )
+            failed_action_ids.extend(batch_failed_ids)
+
             log_msg_add_remove = (
                 "tagged" if cci_tag_action == "append" else "untagged"
             )
@@ -4113,6 +4346,11 @@ class NetskopePlugin(PluginBase):
                     f"{counts['tagged']} and skipped {counts['skipped']} "
                     f"application(s) with tag '{tag}'."
                 )
+            return ActionResult(
+                success=True,
+                message=f"Successfully {log_msg_add_remove} applications.",
+                failed_action_ids=failed_action_ids
+            )
         elif first_action.value == "app_instance":
             bulk_app_instance_payload = {
                 "update": [],
@@ -4124,8 +4362,9 @@ class NetskopePlugin(PluginBase):
             )
             token = resolve_secret(self.tenant.parameters.get("token", ""))
             logger_msg = "listing app instances"
-            try:
-                for action in actions:
+            for action_dict in actions:
+                id, action = action_dict.get("id"), action_dict.get("params")
+                try:
                     params = get_latest_values(action.parameters)
                     instance_id, instance_name, app, tags = (
                         self._process_params_for_app_instance_action(
@@ -4156,6 +4395,7 @@ class NetskopePlugin(PluginBase):
                         SUCCESS.lower()
                     ):
                         skip_count += 1
+                        failed_action_ids.append(id)
                         err_msg = (
                             f"Error occurred while {logger_msg} "
                             "from the Netskope Tenant."
@@ -4164,14 +4404,15 @@ class NetskopePlugin(PluginBase):
                             message=f"{self.log_prefix}: {err_msg} ",
                             details=json.dumps(list_instances_response),
                         )
-                        raise NetskopeException(err_msg)
+                        continue
                     if list_instances_response.get("data", []):
                         bulk_app_instance_payload.get("update", []).append(
                             {
                                 "instance_id": instance_id,
                                 "instance_name": instance_name,
                                 "app": app,
-                                "tags": tags
+                                "tags": tags,
+                                "action_id": id
                             }
                         )
                     else:
@@ -4180,56 +4421,68 @@ class NetskopePlugin(PluginBase):
                                 "instance_id": instance_id,
                                 "instance_name": instance_name,
                                 "app": app,
-                                "tags": tags
+                                "tags": tags,
+                                "action_id": id
                             }
                         )
-            except NetskopeException:
-                raise
-            except Exception as err:
-                error_message = f"Error occurred while {logger_msg}."
-                self.logger.error(
-                    message=(
-                        f"{self.log_prefix}: {error_message} "
-                        f"Error: {err}"
-                    ),
-                    details=str(traceback.format_exc()),
-                )
-                raise NetskopeException(error_message)
+                except Exception as err:
+                    error_message = f"Error occurred while {logger_msg}."
+                    self.logger.error(
+                        message=(
+                            f"{self.log_prefix}: {error_message} "
+                            f"Error: {err}"
+                        ),
+                        details=str(traceback.format_exc()),
+                    )
+                    skip_count += 1
+                    failed_action_ids.append(id)
+                    continue
 
-            success = self._create_update_app_instance_bulk(
-                bulk_app_instance_payload,
-                tenant_name,
-                token
-            )
-            if not success:
-                err_msg = (
-                    "Error occurred while creating/updating app instance(s)."
-                )
-                self.logger.error(
-                    message=f"{self.log_prefix}: {err_msg}",
-                )
-                raise NetskopeException(err_msg)
             if skip_count > 0:
                 self.logger.info(
                     f"{self.log_prefix}: Skipped creating/updating "
                     f"{skip_count} app instance(s) as some error occurred."
                 )
-            self.logger.info(
-                f"{self.log_prefix}: Successfully "
-                f"created {len(bulk_app_instance_payload.get('add', []))} and "
-                f"updated {len(bulk_app_instance_payload.get('update', []))} "
-                "app instance(s)."
+            _, bulk_failed_ids = self._create_update_app_instance_bulk(
+                bulk_app_instance_payload,
+                tenant_name,
+                token,
+            )
+            failed_action_ids.extend(bulk_failed_ids)
+            return ActionResult(
+                success=True,
+                message="Successfully created/updated app instance(s).",
+                failed_action_ids=failed_action_ids
             )
         elif first_action.value == "uci_reset":
             user_list = []
             total_skipped_users = 0
-            for action in actions:
+            for action_dict in actions:
+                id, action = action_dict.get("id"), action_dict.get("params")
                 params = get_latest_values(action.parameters)
-                users, skipped_users = self._process_params_for_reset_action(
-                    params, True
-                )
-                user_list.extend(users)
-                total_skipped_users += skipped_users
+                try:
+                    users, skipped_users = (
+                        self._process_params_for_reset_action(
+                            params, True,
+                        )
+                    )
+                    user_list.extend(users)
+                    total_skipped_users += skipped_users
+
+                    if skipped_users > 0:
+                        failed_action_ids.append(id)
+                except Exception as err:
+                    error_message = (
+                        "Error occurred while processing user email(s)."
+                    )
+                    self.logger.error(
+                        message=(
+                            f"{self.log_prefix}: {error_message} "
+                            f"Error: {err}"
+                        ),
+                        details=str(traceback.format_exc()),
+                    )
+                    failed_action_ids.append(id)
             if total_skipped_users > 0:
                 err_msg = (
                     f"Skipped {total_skipped_users} user email(s) "
@@ -4241,12 +4494,23 @@ class NetskopePlugin(PluginBase):
                     "Invalid user email(s) provided in "
                     "configuration parameters."
                 )
-                self.logger.error(f"{self.log_prefix}: {err_msg}")
+                self.logger.error(
+                    message=f"{self.log_prefix}: {err_msg}",
+                    resolution=(
+                        "Make sure provided email(s) are valid "
+                        "for the UCI Reset action."
+                    )
+                )
                 raise NetskopeException(err_msg)
             self._reset_uci_score(user_list)
             self.logger.info(
                 f"{self.log_prefix}: UCI score reset for {len(user_list)} "
                 "user(s) successfully."
+            )
+            return ActionResult(
+                success=True,
+                message="Successfully reset UCI score for users.",
+                failed_action_ids=failed_action_ids
             )
         elif first_action.value == "generate":
             self.logger.info(
@@ -4274,11 +4538,18 @@ class NetskopePlugin(PluginBase):
         """
         op_counter = 1
         success = True
+        batch_failed_action_ids = []
         for op, payload in bulk_payload.items():
             batch = 1
             create_update_msg = 'updating' if op == 'update' else 'adding'
             total_app_instances = 0
             for index in range(0, len(payload), APP_INSTANCE_BATCH_SIZE):
+                batch_app_instances = payload[
+                    index: index + APP_INSTANCE_BATCH_SIZE
+                ]
+                batch_action_ids = [
+                    item.pop("action_id") for item in batch_app_instances
+                ]
                 if op_counter > 1 or batch > 1:
                     self.logger.info(
                         f"{self.log_prefix}: Batch {batch} for "
@@ -4287,9 +4558,6 @@ class NetskopePlugin(PluginBase):
                         "request per minute."
                     )
                     time.sleep(60)
-                batch_app_instances = payload[
-                    index: index + APP_INSTANCE_BATCH_SIZE
-                ]
                 url = (
                     f"{tenant_name}{URLS.get('V1_APP_INSTANCE')}"
                 )
@@ -4313,6 +4581,7 @@ class NetskopePlugin(PluginBase):
                     )
                     if create_instance_response.get("errors", []):
                         if len(create_instance_response.get("errors", [])) > 0:
+                            batch_failed_action_ids.extend(batch_action_ids)
                             errs = ", ".join(
                                 create_instance_response.get("errors", [])
                             )
@@ -4331,6 +4600,7 @@ class NetskopePlugin(PluginBase):
                         create_instance_response.get("status", "").lower() !=
                         SUCCESS.lower()
                     ):
+                        batch_failed_action_ids.extend(batch_action_ids)
                         err_msg = (
                             f"Error occurred while {create_update_msg} "
                             "app instance on the Netskope Tenant "
@@ -4343,9 +4613,8 @@ class NetskopePlugin(PluginBase):
                         success = False
                         continue
                     success = True
-                except NetskopeException:
-                    raise
                 except Exception as err:
+                    batch_failed_action_ids.extend(batch_action_ids)
                     error_message = f"Error occurred while {logger_msg}."
                     self.logger.error(
                         message=(
@@ -4354,29 +4623,35 @@ class NetskopePlugin(PluginBase):
                         ),
                         details=str(traceback.format_exc()),
                     )
-                    raise NetskopeException(error_message)
-                total_app_instances += len(batch_app_instances)
-                added_msg = 'updated' if op == 'update' else 'added'
-                self.logger.info(
-                    f"{self.log_prefix}: Successfully "
-                    f"{added_msg} {len(batch_app_instances)} "
-                    f"app instance(s) for batch {batch}. "
-                    f"Total {added_msg} app instances: "
-                    f"{total_app_instances}."
-                )
+                    success = False
+                    continue
+                if success:
+                    total_app_instances += len(batch_app_instances)
+                    added_msg = 'updated' if op == 'update' else 'added'
+                    self.logger.info(
+                        f"{self.log_prefix}: Successfully "
+                        f"{added_msg} {len(batch_app_instances)} "
+                        f"app instance(s) for batch {batch}. "
+                        f"Total {added_msg} app instances: "
+                        f"{total_app_instances}."
+                    )
                 batch += 1
             if op_counter and payload:
                 op_counter += 1
-        return success
+        return success, batch_failed_action_ids
 
     def _bulk_tag_application(
-        self, tags_ids_apps: dict, cci_tag_action: str
+        self,
+        tags_ids_apps: dict,
+        cci_tag_action: str,
+        item_to_action_map: dict
     ):
         """Bulk tag application.
 
         Args:
             tags_ids_apps (dict): Dictionary of tags and ids/apps.
             cci_tag_action (str): Action to perform.
+            item_to_action_map (dict): Dictionary of items and action ids.
         """
         tenant_name = self.tenant.parameters.get("tenantName", "").strip()
         headers = {
@@ -4385,6 +4660,7 @@ class NetskopePlugin(PluginBase):
             )
         }
         tags_apps_info = {}
+        batch_failed_action_ids = []
         for tag, values in tags_ids_apps.items():
             apps = values.get("apps", [])
             ids = values.get("ids", [])
@@ -4404,10 +4680,28 @@ class NetskopePlugin(PluginBase):
                     "skipped": len(total),
                     "tagged": 0,
                 }
+                tag_action_ids = list(
+                    set([
+                        item_to_action_map.get(item)
+                        for item in total
+                        if item_to_action_map.get(item)
+                    ])
+                )
+                batch_failed_action_ids.extend(tag_action_ids)
                 continue
+
             for i in range(0, len(total), TAG_APP_BATCH_SIZE):
                 batch_count += 1
                 batch = total[i: i + TAG_APP_BATCH_SIZE]
+
+                batch_action_ids = list(
+                    set([
+                        item_to_action_map.get(item)
+                        for item in batch
+                        if item_to_action_map.get(item)
+                    ])
+                )
+
                 data = (
                     {"tag": tag}
                     | ({"apps": batch} if apps else {})
@@ -4452,6 +4746,7 @@ class NetskopePlugin(PluginBase):
                             )
                             self.logger.error(f"{self.log_prefix}: {err_msg}")
                             skip_tag_count += len(batch)
+                            batch_failed_action_ids.extend(batch_action_ids)
                             continue
                         elif (
                             add_tags_response.get("status_code") == 400 and
@@ -4489,6 +4784,9 @@ class NetskopePlugin(PluginBase):
                                     f"{self.log_prefix}: {error_msg}"
                                 )
                                 skip_tag_count += len(batch)
+                                batch_failed_action_ids.extend(
+                                    batch_action_ids
+                                )
                                 continue
                             elif (
                                 TAG_NOT_FOUND in update_tags_response.get(
@@ -4501,9 +4799,17 @@ class NetskopePlugin(PluginBase):
                                     f"Tag '{tag}' does not exists."
                                 )
                                 self.logger.error(
-                                    f"{self.log_prefix}: {error_msg}"
+                                    message=f"{self.log_prefix}: {error_msg}",
+                                    resolution=(
+                                        "Make sure provided tag exists "
+                                        "on the Netskope Tenant for "
+                                        "adding the tag to the application(s)."
+                                    )
                                 )
                                 skip_tag_count += len(batch)
+                                batch_failed_action_ids.extend(
+                                    batch_action_ids
+                                )
                                 continue
                             elif update_tags_response.get("status", "") != SUCCESS:
                                 error_msg = (
@@ -4517,6 +4823,9 @@ class NetskopePlugin(PluginBase):
                                     details=json.dumps(update_tags_response),
                                 )
                                 skip_tag_count += len(batch)
+                                batch_failed_action_ids.extend(
+                                    batch_action_ids
+                                )
                                 continue
                         elif add_tags_response.get("status", "") != SUCCESS:
                             err_msg = (
@@ -4527,6 +4836,7 @@ class NetskopePlugin(PluginBase):
                                 details=json.dumps(add_tags_response),
                             )
                             skip_tag_count += len(batch)
+                            batch_failed_action_ids.extend(batch_action_ids)
                             continue
                     else:
                         url = (
@@ -4556,6 +4866,7 @@ class NetskopePlugin(PluginBase):
                                 f"{self.log_prefix}: {error_msg}"
                             )
                             skip_tag_count += len(batch)
+                            batch_failed_action_ids.extend(batch_action_ids)
                             continue
                         elif (
                             TAG_NOT_FOUND in update_tags_response.get(
@@ -4568,9 +4879,15 @@ class NetskopePlugin(PluginBase):
                                 f"Tag '{tag}' does not exists."
                             )
                             self.logger.error(
-                                f"{self.log_prefix}: {error_msg}"
+                                message=f"{self.log_prefix}: {error_msg}",
+                                resolution=(
+                                    "Make sure provided tag exists "
+                                    "on the Netskope Tenant for "
+                                    "removing the tag from the application(s)."
+                                )
                             )
                             skip_tag_count += len(batch)
+                            batch_failed_action_ids.extend(batch_action_ids)
                             continue
                         elif update_tags_response.get("status", "") != SUCCESS:
                             error_msg = (
@@ -4584,8 +4901,10 @@ class NetskopePlugin(PluginBase):
                                 details=json.dumps(update_tags_response),
                             )
                             skip_tag_count += len(batch)
+                            batch_failed_action_ids.extend(batch_action_ids)
                             continue
                 except Exception as err:
+                    batch_failed_action_ids.extend(batch_action_ids)
                     error_message = f"Error occurred while {logger_msg}."
                     self.logger.error(
                         message=(
@@ -4618,6 +4937,6 @@ class NetskopePlugin(PluginBase):
                 "skipped": skip_tag_count,
                 "tagged": tagged_count
             }
-        return tags_apps_info
-    
+        return tags_apps_info, batch_failed_action_ids
+
     # TODO: Implement cleanup method to delete client status iterator

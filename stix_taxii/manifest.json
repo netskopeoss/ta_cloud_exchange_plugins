@@ -1,8 +1,9 @@
 {
-  "name": "STIX/TAXII Plugin",
+  "name": "STIX/TAXII",
   "id": "stix_taxii",
-  "version": "3.0.0",
-  "description": "The STIX/TAXII plugin polls TAXII feeds and extracts observables from them. This plugin does not support sharing of indicators to TAXII feeds.",
+  "version": "3.1.0",
+  "module": "CTE",
+  "description": "This plugin is used to fetch the indicators of type Domain, IPv4, IPv6, URL and Hash (MD5 and SHA256) from the TAXII feeds and extracts observables from them. This plugin does not support sharing of indicators to TAXII feeds.",
   "patch_supported": false,
   "push_supported": false,
   "configuration": [
@@ -29,12 +30,12 @@
       "default": "1"
     },
     {
-      "label": "Discovery URL / API Root URL",
+      "label": "Discovery URL/API Root URL",
       "key": "discovery_url",
       "type": "text",
       "default": "",
       "mandatory": true,
-      "description": "Discovery/Feed URL of TAXII server for version 1 and API Root URL for version 2."
+      "description": "Discovery/Feed URL of TAXII server for version 1.x and API Root URL for version 2.x. Contact your STIX/TAXII support to get the appropriate URL."
     },
     {
       "label": "Username",
@@ -56,7 +57,7 @@
       "type": "text",
       "default": "",
       "mandatory": false,
-      "description": "Collections (CSV) from which data needs to be fetched. Leave empty to fetch data from all of the collections."
+      "description": "Comma separated collection names from which data needs to be fetched. Leave empty to fetch data from all of the collections."
     },
     {
       "label": "Pagination Method",
@@ -94,24 +95,36 @@
     {
       "label": "Type of Threat data to pull",
       "key": "type",
-      "type": "choice",
+      "type": "multichoice",
       "choices": [
         {
-          "key": "Both",
-          "value": "both"
+          "key": "SHA-256",
+          "value": "sha256"
         },
         {
-          "key": "Malware",
-          "value": "malware"
+          "key": "MD5",
+          "value": "md5"
         },
         {
           "key": "URL",
           "value": "url"
+        },
+        {
+          "key": "IPv4",
+          "value": "ipv4"
+        },
+        {
+          "key": "IPv6",
+          "value": "ipv6"
+        },
+        {
+          "key": "Domain",
+          "value": "domain"
         }
       ],
-      "default": "both",
+      "default": ["sha256", "md5", "url", "ipv4", "ipv6", "domain"],
       "mandatory": true,
-      "description": "Type of Threat data to pull. Allowed values are Both, Malware and URL(For Malsite data)."
+      "description": "Type of Threat data to pull. Note: IPv4/IPv6 is supported for STIX/TAXII version 2.x."
     },
     {
       "label": "Severity",
@@ -147,7 +160,7 @@
         "unknown"
       ],
       "mandatory": false,
-      "description": "Only indicators with matching severity will be saved. For STIX/TAXII version 2.0 and 2.1, Unknown should be selected because for all the indicators fetched from these versions would have Unknown severity."
+      "description": "Only indicators with matching severity will be fetched. For STIX/TAXII version 2.x, Unknown should be selected because for all the indicators fetched from these versions would have Unknown severity."
     },
     {
       "label": "Reputation",

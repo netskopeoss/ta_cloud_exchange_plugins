@@ -1,7 +1,7 @@
 {
     "name": "OracleDB EDM",
     "id": "oracledb_edm",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "module": "EDM",
     "description": "OracleDB EDM plugin is used to pull raw data from configured Oracle database server to generate EDM hashes.",
     "patch_supported": false,

@@ -34,9 +34,9 @@ from .utils.constants import (
     PLUGIN_NAME,
     PLUGIN_VERSION,
     SAMPLE_CSV_ROW_COUNT,
-    SAMPLE_DATA_RECORD_COUNT,
     SQL_KEYWORDS_TO_CHECK,
     BATCH_SIZE,
+    SAMPLE_CSV_FILE_NAME,
 )
 
 """
@@ -1036,46 +1036,13 @@ class OracleDBPlugin(PluginBase):
                 )
 
             try:
-                connection_string = self.create_connection_string(db_config)
-                eng = create_engine(connection_string)
-                with eng.connect() as connection:
-                    # Execute the query to validate column count
-                    query = text(db_config["query"].strip(";"))
-                    result = connection.execute(query)
-                    columns = list(result.keys())
-
-                    # Validate column count
-                    is_valid_columns, column_error_message = self.validate_column_count(
-                        columns
-                    )
-                    if not is_valid_columns:
-                        self.logger.error(
-                            f"{self.log_prefix} Validation error occurred for OracleDB EDM plugin. "
-                            f"Error: {column_error_message}"
-                        )
-                        return ValidationResult(
-                            success=False,
-                            message=column_error_message,
-                        )
-            except InterfaceError as error:
-                error_message = f"Connection error: {str(error)}"
-                self.logger.error(
-                    f"{self.log_prefix} {error_message}",
-                    details=traceback.format_exc(),
-                )
+                input_path = f"{FILE_PATH}/{self.name}/{SAMPLE_CSV_FILE_NAME}"
+                self.storage.update({"csv_path": input_path})
+                self.pull_sample_data()
+            except Exception as error:
                 return ValidationResult(
                     success=False,
-                    message=error_message,
-                )
-            except ProgrammingError as error:
-                error_message = f"SQL query error: {str(error)}"
-                self.logger.error(
-                    f"{self.log_prefix} {error_message}",
-                    details=traceback.format_exc(),
-                )
-                return ValidationResult(
-                    success=False,
-                    message=error_message,
+                    message=str(error),
                 )
 
             self.logger.debug(
@@ -1147,6 +1114,26 @@ class OracleDBPlugin(PluginBase):
                 success=True,
                 message="Step validated successfully.",
             )
+            input_path = f"{FILE_PATH}/{self.name}/{SAMPLE_CSV_FILE_NAME}"
+            output_path = f"{FILE_PATH}/{self.name}"
+            try:
+                self.storage.update({
+                    "csv_path": input_path,
+                    "sanitization_data_path": output_path
+                })
+                self.sanitize(file_name="sample", sample_data=True)
+            except Exception:
+                error_message = (
+                    f"Error occurred while sanitizing the sample data for configuration '{self.name}'."
+                )
+                self.logger.error(
+                    message=f"{self.log_prefix} {error_message}",
+                    details=traceback.format_exc(),
+                )
+                result = ValidationResult(
+                    success=False,
+                    message=error_message,
+                )
         elif step == "sanity_results":
             result = ValidationResult(
                 success=True,
@@ -1173,7 +1160,7 @@ class OracleDBPlugin(PluginBase):
             if name == "sanity_inputs":
                 for field in fields:
                     if field["type"] == "sanitization_input":
-                        input_path = f"{FILE_PATH}/{self.name}/sample.csv"
+                        input_path = f"{FILE_PATH}/{self.name}/{SAMPLE_CSV_FILE_NAME}"
                         self.storage.update({
                             "csv_path": input_path
                         })
@@ -1181,13 +1168,6 @@ class OracleDBPlugin(PluginBase):
             elif name == "sanity_results":
                 for field in fields:
                     if field["type"] == "sanitization_preview":
-                        input_path = f"{FILE_PATH}/{self.name}/sample.csv"
-                        output_path = f"{FILE_PATH}/{self.name}"
-                        self.storage.update({
-                            "csv_path": input_path,
-                            "sanitization_data_path": output_path
-                        })
-                        self.sanitize(file_name="sample", sample_data=True)
                         field["default"] = {
                             "sanitizationStatus": True,
                             "message": "Sanitization Done Successfully",

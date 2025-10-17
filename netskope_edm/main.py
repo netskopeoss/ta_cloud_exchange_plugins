@@ -9,6 +9,7 @@ from netskope.common.utils import (
     AlertsHelper,
     resolve_secret,
 )
+from netskope.common.utils.exceptions import ForbiddenError
 from netskope.integrations.edm.models import ActionWithoutParams, Action
 from netskope.integrations.edm.plugin_base import PluginBase, ValidationResult, PushResult
 from netskope.integrations.edm.utils.exceptions import (
@@ -20,7 +21,7 @@ from netskope.integrations.edm.utils.edm.edm_uploader import (
 from netskope.integrations.edm.utils.edm.edm_uploader import EDMHashUploader
 
 PLUGIN_NAME = "Netskope Exact Data Match"
-PLUGIN_VERSION = "1.0.0"
+PLUGIN_VERSION = "1.0.1"
 MODULE_NAME = "EDM"
 plugin_provider_helper = PluginProviderHelper()
 
@@ -142,23 +143,63 @@ class NetskopeEDMPlugin(PluginBase):
             file_id = context.get("file_id")
             upload_id = context.get("upload_id")
             apply_status = context.get("apply_status", False)
-            apply_message = context.get("apply_message")
+            message = msg
 
             if upload_status is True:
                 self.storage[source_config_name]["status"] = True
                 # upload hashes on netskope tenant
                 self.logger.info(
+                    f"{self.log_prefix} Successfully uploaded "
+                    f"edm hashes of configuration {source_name} "
+                    f"to the configuration {self.name}."
+                )
+                self.logger.info(
                     f"{self.log_prefix} Successfully Executed plugin push "
                     f"method for configuration {self.name}."
                 )
             else:
-                self.logger.error(
-                    f"{self.log_prefix} Error occurred while uploading "
+                error_message = (
+                    "Error occurred while uploading "
                     f"edm hashes of configuration {source_config_name} "
-                    f"to the configuration {self.name}.",
-                    details=msg
+                    f"to the configuration {self.name}."
                 )
-            message = msg if not upload_status else apply_message
+                status_code = context.get("status_code")
+                if status_code == 403:
+                    self.logger.error(
+                        f"{self.log_prefix} Received exit code 403, Forbidden Error. {error_message}",
+                        details=msg
+                    )
+                    raise ForbiddenError(
+                        f"Received exit code 403, Forbidden Error. {error_message}"
+                    )
+                elif status_code == 429:
+                    self.logger.error(
+                        f"{self.log_prefix} Received exit code 429, Too many requests. {error_message}",
+                        details=msg
+                    )
+                    message = "Received exit code 429, Too many requests."
+                elif status_code == 401:
+                    self.logger.error(
+                        f"{self.log_prefix} Received exit code 401, Unauthorized Error. {error_message}",
+                        details=msg
+                    )
+                    message = "Received exit code 401, Unauthorized Error."
+                elif status_code:
+                    self.logger.error(
+                        f"{self.log_prefix} Received exit code {status_code}, {error_message}",
+                        details=msg
+                    )
+                else:
+                    self.logger.error(
+                        f"{self.log_prefix} {error_message}",
+                        details=msg
+                    )
+            if apply_status is True:
+                self.logger.info(
+                    f"{self.log_prefix} Netskope Tenant has started "
+                    "applying uploaded edm hashes of "
+                    f"configuration {source_name}."
+                )
             return PushResult(
                 success=upload_status,
                 apply_success=apply_status,

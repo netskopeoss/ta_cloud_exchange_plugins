@@ -1,7 +1,7 @@
 {
     "name": "Microsoft File Share EDM",
     "id": "microsoft_file_share_edm",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "module": "EDM",
     "description": "Microsoft File Share EDM Plugin is used to fetch a CSV file from the remote Windows server and to generate EDM hashes of the pulled CSV file.",
     "patch_supported": false,

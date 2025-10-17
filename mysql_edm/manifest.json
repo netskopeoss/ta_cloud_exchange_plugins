@@ -1,7 +1,7 @@
 {
     "name": "MySQL EDM",
     "id": "mysql_edm",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "module": "EDM",
     "description": "MySQL EDM Plugin is used to pull raw data from configured MySQL server to generate EDM hashes.",
     "patch_supported": false,

@@ -29,7 +29,8 @@ SQL_MODIFICATION_KEYWORDS = [
 ]
 PLUGIN_NAME = "Microsoft SQL EDM"
 MODULE_NAME = "EDM"
-PLUGIN_VERSION = "1.0.0"
+PLUGIN_VERSION = "1.0.1"
+SAMPLE_CSV_FILE_NAME = "sample.csv"
 MICROSOFT_SQL_EDM_FIELDS = {
     "sanity_inputs": [
         {

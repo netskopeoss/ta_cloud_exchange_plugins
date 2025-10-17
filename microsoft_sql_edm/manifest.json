@@ -2,7 +2,7 @@
     "name": "Microsoft SQL EDM",
     "id": "microsoft_sql_edm",
     "module": "EDM",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "description": "Microsoft SQL EDM Plugin is used to pull raw data from configured Microsoft SQL server to generate EDM hashes.",
     "patch_supported": false,
     "push_supported": false,

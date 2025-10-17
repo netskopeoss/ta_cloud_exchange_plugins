@@ -19,7 +19,7 @@ from .lib.paramiko.ssh_exception import AuthenticationException, SSHException
 from netskope.integrations.cfc.models import (
     DirectoryConfigurationMetadataOut
 )
-from netskope.integrations.cfc.plugin_base import PluginBase, ValidationResult
+from netskope.integrations.cfc.plugin_base import PluginBase, ValidationResult, PullResult
 from netskope.integrations.cfc.utils import (
     FILE_PATH,
     CustomException as LinuxFileShareCFCError,
@@ -525,9 +525,79 @@ class LinuxFileShareCFCPlugin(PluginBase):
             )
         return result
 
+    def validate_directory_path(self, sftp_session, directory_path):
+        """Validate directory path.
+
+        Args:
+            sftp_session: SFTP session object.
+            directory_path (str): directory path.
+
+        Raises:
+            LinuxFileShareCFCError: If the directory path is invalid or inaccessible.
+        """
+        try:
+            # Check if path exists by attempting to get attributes
+            file_attributes = sftp_session.stat(directory_path)
+            # Check if it's a directory
+            if not stat.S_ISDIR(file_attributes.st_mode):
+                error_message = f"Path '{directory_path}' exists but is not a directory on the remote server."
+                raise LinuxFileShareCFCError(message=error_message)
+        except FileNotFoundError as error:
+            error_message = (
+                f"Path '{directory_path}' does not exist on the remote server."
+            )
+            raise LinuxFileShareCFCError(message=error_message, value=error)
+        except Exception as error:
+            error_message = (
+                f"Could not access path '{directory_path}' on the remote server."
+            )
+            raise LinuxFileShareCFCError(message=error_message, value=error)
+
+    def validate_file_path(self, sftp_session, file_path):
+        """Validate file path.
+
+        Args:
+            sftp_session: SFTP session object.
+            file_path (str): File path.
+
+        Raises:
+            LinuxFileShareCFCError: If the file path is invalid or inaccessible or not a regular file.
+        """
+        try:
+            # Check if file exists by attempting to get attributes
+            file_attributes = sftp_session.stat(file_path)
+            # Check if it's a regular file using stat.S_ISREG
+            if not stat.S_ISREG(file_attributes.st_mode):
+                error_message = f"Path '{file_path}' exists but is not a regular file on the remote server."
+                raise LinuxFileShareCFCError(message=error_message)
+        except FileNotFoundError as error:
+            error_message = f"Path '{file_path}' does not exist on the remote server."
+            raise LinuxFileShareCFCError(message=error_message, value=error)
+        except LinuxFileShareCFCError:
+            # Re-raise the custom exception
+            raise
+        except Exception as error:
+            error_message = f"Could not access path '{file_path}' on the remote server."
+            raise LinuxFileShareCFCError(message=error_message, value=error)
+
     def pull_metadata(self, server_configuration, directory_config, directory_storage):
+        """Pull metadata from server for provided directory configuration.
+
+        Args:
+            server_configuration (dict): server configuration.
+            directory_config (dict): directory configuration.
+            directory_storage (dict): directory storage.
+
+        Raises:
+            LinuxFileShareCFCError: If an error occurred while pulling images metadata.
+
+        Returns:
+            tuple: Tuple containing list of images metadata and success status.
+        """
         last_fetched_time = datetime.now()
         directory_paths = directory_config.get("directory_paths", [])
+        success = True
+
         try:
             ssh_connection = self.get_ssh_connection_object(server_configuration)
             images_metadata = []
@@ -536,6 +606,19 @@ class LinuxFileShareCFCPlugin(PluginBase):
                 for directory in directory_paths:
                     directory_path = directory["directory_path"].strip()
                     filename_filter = directory["filename_filter"]
+                    try:
+                        # Validate directory path before processing
+                        self.validate_directory_path(
+                            sftp_session,
+                            directory_path
+                        )
+                    except LinuxFileShareCFCError as error:
+                        self.logger.error(
+                            f"{self.log_prefix} Invalid directory path: {str(error)}",
+                            details=traceback.format_exc(),
+                        )
+                        success = False
+                        continue
 
                     files = sftp_session.listdir(directory_path)
 
@@ -565,7 +648,7 @@ class LinuxFileShareCFCPlugin(PluginBase):
                             file_metadata["fileSize"] = file_attributes.st_size
                             images_metadata.append(file_metadata)
             ssh_connection.close()
-            return images_metadata
+            return images_metadata, success
         except Exception as error:
             error_message = "Failed fetching metadata."
             raise LinuxFileShareCFCError(value=error, message=error_message) from error
@@ -576,17 +659,35 @@ class LinuxFileShareCFCPlugin(PluginBase):
         Args:
             server_configuration (dict): server configuration
             metadata (list): list of metadata fetched.
+
+        Returns:
+            bool: Success status of the operation.
         """
-        ssh_connection = self.get_ssh_connection_object(server_configuration)
-        for data in metadata:
-            with ssh_connection.open_sftp() as sftp_session:
-                file_path = f"{FILE_PATH}/{self.name}/{data['dirUuid']}"
-                if not os.path.exists(file_path):
-                    os.makedirs(file_path)
-                sftp_session.get(
-                    data["path"],
-                    os.path.join(file_path, data["file"]),
-                )
+        success = True
+        try:
+            ssh_connection = self.get_ssh_connection_object(server_configuration)
+            for data in metadata:
+                with ssh_connection.open_sftp() as sftp_session:
+                    file_path = f"{FILE_PATH}/{self.name}/{data['dirUuid']}"
+                    if not os.path.exists(file_path):
+                        os.makedirs(file_path)
+                    try:
+                        self.validate_file_path(sftp_session, data["path"])
+                    except LinuxFileShareCFCError as error:
+                        self.logger.error(
+                            f"{self.log_prefix} Invalid file path {str(error)}",
+                            details=traceback.format_exc(),
+                        )
+                        success = False
+                        continue
+                    sftp_session.get(
+                        data["path"],
+                        os.path.join(file_path, data["file"]),
+                    )
+        except Exception as error:
+            error_message = f"Error occurred while fetching images for '{self.name}' plugin."
+            raise LinuxFileShareCFCError(value=error, message=error_message) from error
+        return success
 
     def pull(self, pull_files=False) -> list:
         """Pull images metadata from remote Linux machine.
@@ -608,33 +709,40 @@ class LinuxFileShareCFCPlugin(PluginBase):
 
             self.logger.info(
                 (
-                    f"{self.log_prefix} Fetching the images metadata from the Linux server for "
-                    f"configuration '{self.name}'."
+                    f"{self.log_prefix} Fetching the images{' and their' if pull_files else ''} "
+                    f"metadata from the Linux server for configuration '{self.name}'."
                 )
             )
             self.generate_dir_path_uuid()
             directory_storage = self.storage.get("directory_paths", {})
 
-            metadata = self.pull_metadata(
+            success = True
+            metadata, success = self.pull_metadata(
                 server_configuration, directory_config, directory_storage
             )
 
             if pull_files:
-                self.pull_files(server_configuration, metadata)
+                status = self.pull_files(server_configuration, metadata)
+                # if pull_files fails, set success to False
+                if not status:
+                    success = status
 
-            # metadata = self.pull_files_and_metadata(
-            #     server_configuration, directory_config, pull_files=pull_files
-            # )
             self.logger.info(
                 (
-                    f"{self.log_prefix} Images{' and their' if pull_files else ''} metadata fetched successfully from "
-                    f"the Linux server for configuration '{self.name}'."
+                    f"{self.log_prefix} Images{' and their' if pull_files else ''} metadata "
+                    f"fetched successfully from the Linux server for configuration '{self.name}'."
                 )
             )
 
-            return metadata
+            return PullResult(
+                metadata=metadata,
+                success=success,
+            )
         except Exception as error:
-            error_message = f"Error: '{error}' occurred while running pull method for configuration '{self.name}'"
+            error_message = (
+                f"Error: '{error}' occurred while pulling the"
+                f"{' images and their' if pull_files else ''} metadata"
+            )
             self.logger.error(
                 message=f"{self.log_prefix} {error_message} for configuration '{self.name}'.",
                 details=traceback.format_exc(),

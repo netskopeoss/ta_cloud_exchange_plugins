@@ -2,7 +2,7 @@
     "name": "Linux File Share CFC",
     "id": "linux_file_share_cfc",
     "module": "CFC",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "description": "The Linux File Share CFC Plugin is used to fetch file data from a remote Linux server via the SFTP protocol and generate CFC hashes of the retrieved file data. It supports files with extensions related to Images or Zip formats.",
     "patch_supported": false,
     "push_supported": false,

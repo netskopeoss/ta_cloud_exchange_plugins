@@ -35,6 +35,7 @@ from .utils.constants import (
     PLUGIN_NAME,
     PLUGIN_VERSION,
     SAMPLE_DATA_RECORD_COUNT,
+    SAMPLE_CSV_FILE_NAME,
 )
 
 """
@@ -320,9 +321,10 @@ class LinuxFileShareEDMPlugin(PluginBase):
             verification_result = self.verify_connection(server_configuration)
 
             # Validate that the file exists and is accessible on the remote server
-            ssh_connection = self.get_ssh_connection_object(server_configuration)
             try:
-                self.validate_remote_file(ssh_connection, server_configuration)
+                input_path = f"{FILE_PATH}/{self.name}/{SAMPLE_CSV_FILE_NAME}"
+                self.storage.update({"csv_path": input_path})
+                self.pull_sample_data()
             except Exception as error:
                 return ValidationResult(
                     success=False,
@@ -412,6 +414,13 @@ class LinuxFileShareEDMPlugin(PluginBase):
                                 )
                                 raise LinuxFileShareEDM(message=error_message)
                             return column_names
+                    except UnicodeDecodeError as error:
+                        error_message = (
+                            "Only CSV file is supported. Please provide a valid CSV file."
+                        )
+                        raise LinuxFileShareEDM(
+                            value=error, message=error_message
+                        ) from error
                     except PermissionError as error:
                         error_message = f"File '{remote_file_path}' exists but is not readable on the remote server."
                         raise LinuxFileShareEDM(
@@ -421,8 +430,9 @@ class LinuxFileShareEDMPlugin(PluginBase):
                 except LinuxFileShareEDM:
                     raise
                 except FileNotFoundError as error:
+                    error_message = f"File '{remote_file_path}' does not exist on the remote server."
                     raise LinuxFileShareEDM(
-                        value=error, message=str(error)
+                        value=error, message=error_message
                     ) from error
                 except Exception as error:
                     raise LinuxFileShareEDM(
@@ -570,6 +580,28 @@ class LinuxFileShareEDMPlugin(PluginBase):
                 success=True,
                 message="Step validated successfully.",
             )
+            input_path = f"{FILE_PATH}/{self.name}/{SAMPLE_CSV_FILE_NAME}"
+            output_path = f"{FILE_PATH}/{self.name}"
+            try:
+                self.storage.update(
+                    {
+                        "csv_path": input_path,
+                        "sanitization_data_path": output_path,
+                    }
+                )
+                self.sanitize(file_name="sample", sample_data=True)
+            except Exception:
+                error_message = (
+                    f"Error occurred while sanitizing the sample data for configuration '{self.name}'."
+                )
+                self.logger.error(
+                    message=f"{self.log_prefix} {error_message}",
+                    details=traceback.format_exc(),
+                )
+                result = ValidationResult(
+                    success=False,
+                    message=error_message,
+                )
         elif step == "sanity_results":
             result = ValidationResult(
                 success=True,
@@ -1073,21 +1105,12 @@ class LinuxFileShareEDMPlugin(PluginBase):
             if name == "sanity_inputs":
                 for field in fields:
                     if field["type"] == "sanitization_input":
-                        input_path = f"{FILE_PATH}/{self.name}/sample.csv"
+                        input_path = f"{FILE_PATH}/{self.name}/{SAMPLE_CSV_FILE_NAME}"
                         self.storage.update({"csv_path": input_path})
                         field["default"] = self.pull_sample_data()
             elif name == "sanity_results":
                 for field in fields:
                     if field["type"] == "sanitization_preview":
-                        input_path = f"{FILE_PATH}/{self.name}/sample.csv"
-                        output_path = f"{FILE_PATH}/{self.name}"
-                        self.storage.update(
-                            {
-                                "csv_path": input_path,
-                                "sanitization_data_path": output_path,
-                            }
-                        )
-                        self.sanitize(file_name="sample", sample_data=True)
                         field["default"] = {
                             "sanitizationStatus": True,
                             "message": "Sanitization Done Successfully",

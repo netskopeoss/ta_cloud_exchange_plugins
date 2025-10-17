@@ -1,9 +1,10 @@
 """Linux File Share EDM plugin constants file."""
 
 PLUGIN_NAME = "Linux File Share EDM"
-PLUGIN_VERSION = "1.0.0"
+PLUGIN_VERSION = "1.0.1"
 MODULE_NAME = "EDM"
 SAMPLE_DATA_RECORD_COUNT = 20
+SAMPLE_CSV_FILE_NAME = "sample.csv"
 LINUX_FILE_SHARE_FIELDS = {
     "sanity_inputs": [
         {

@@ -2,7 +2,7 @@
     "name": "Linux File Share EDM",
     "id": "linux_file_share_edm",
     "module": "EDM",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "description": "Linux File Share EDM Plugin is used to fetch a CSV file from the remote Linux server via the SFTP protocol and to generate EDM hashes of the pulled CSV file.",
     "patch_supported": false,
     "push_supported": false,

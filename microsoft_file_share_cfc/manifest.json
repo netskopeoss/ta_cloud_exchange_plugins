@@ -2,7 +2,7 @@
     "name": "Microsoft File Share CFC",
     "id": "microsoft_file_share_cfc",
     "module": "CFC",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "description": "Microsoft File Share CFC plugin pulls the image or zip files from the directories present on the remote Windows Server.",
     "patch_supported": false,
     "push_supported": false,

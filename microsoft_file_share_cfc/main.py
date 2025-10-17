@@ -26,7 +26,7 @@ from .utils.constants import (
 from netskope.common.utils import Logger
 from netskope.integrations.cfc.models import (
     DirectoryConfigurationMetadataOut)
-from netskope.integrations.cfc.plugin_base import PluginBase, ValidationResult
+from netskope.integrations.cfc.plugin_base import PluginBase, ValidationResult, PullResult
 from netskope.integrations.cfc.utils import \
     CustomException as MicrosoftFileShareError, FILE_PATH
 
@@ -178,7 +178,7 @@ class MicrosoftFileSharePlugin(PluginBase):
             ValidationResult: Validation result.
         """
         self.logger.debug(
-            f"{self.log_prefix} Validating configuration parameters for '{self.name}' plugin."
+            f"{self.log_prefix}: Validating configuration parameters for '{self.name}' plugin."
         )
 
         try:
@@ -211,7 +211,7 @@ class MicrosoftFileSharePlugin(PluginBase):
             )
 
             self.logger.debug(
-                f"{self.log_prefix} Configuration parameter validated for '{self.name}' plugin."
+                f"{self.log_prefix}: Configuration parameter validated for '{self.name}' plugin."
             )
 
             return verification_result
@@ -219,7 +219,7 @@ class MicrosoftFileSharePlugin(PluginBase):
         except Exception:
             error_message = f"Could not verify the connection with the provided parameters for '{self.name}' plugin."
             self.logger.error(
-                message=f"{self.log_prefix} {error_message}",
+                message=f"{self.log_prefix}: {error_message}",
                 details=traceback.format_exc(),
             )
             return ValidationResult(
@@ -237,7 +237,7 @@ class MicrosoftFileSharePlugin(PluginBase):
             DirectoryConfigurationOut: Directory configuration with verification result.
         """
         self.logger.debug(
-            f"{self.log_prefix} Validating directory configuration for '{self.name}' plugin."
+            f"{self.log_prefix}: Validating directory configuration for '{self.name}' plugin."
         )
 
         try:
@@ -271,7 +271,7 @@ class MicrosoftFileSharePlugin(PluginBase):
             )
             verification_result.data = {"directory_configuration": verification_result.data}
             self.logger.debug(
-                f"{self.log_prefix} Directory configuration validated for '{self.name}' plugin."
+                f"{self.log_prefix}: Directory configuration validated for '{self.name}' plugin."
             )
             return verification_result
         except ValueError as error:
@@ -281,7 +281,7 @@ class MicrosoftFileSharePlugin(PluginBase):
         except Exception as error:
             error_message = f"Error occurred while verifying directory configuration for '{self.name}' plugin."
             self.logger.error(
-                message=f"{self.log_prefix} {error_message}",
+                message=f"{self.log_prefix}: {error_message}",
                 details=traceback.format_exc(),
             )
             raise MicrosoftFileShareError(
@@ -298,7 +298,7 @@ class MicrosoftFileSharePlugin(PluginBase):
             DirectoryConfigurationMetadataOut: Images metadata for the plugin directory configuration.
         """
         self.logger.debug(
-            f"{self.log_prefix} Fetching images metadata for '{self.name}' plugin."
+            f"{self.log_prefix}: Fetching images metadata for '{self.name}' plugin."
         )
 
         try:
@@ -319,7 +319,7 @@ class MicrosoftFileSharePlugin(PluginBase):
                 )
             )
             self.logger.debug(
-                f"{self.log_prefix} Images metadata fetched for '{self.name}' plugin."
+                f"{self.log_prefix}: Images metadata fetched for '{self.name}' plugin."
             )
 
             return images_metadata
@@ -327,7 +327,7 @@ class MicrosoftFileSharePlugin(PluginBase):
         except Exception as error:
             error_message = f"Error occurred while fetching images metadata for '{self.name}' plugin."
             self.logger.error(
-                message=f"{self.log_prefix} {error_message}",
+                message=f"{self.log_prefix}: {error_message}",
                 details=traceback.format_exc(),
             )
             raise MicrosoftFileShareError(
@@ -425,7 +425,7 @@ class MicrosoftFileSharePlugin(PluginBase):
 
             self.logger.info(
                 (
-                    f"{self.log_prefix} Fetching the images{' and their' if pull_files else ''} metadata from the Windows server for "
+                    f"{self.log_prefix}: Fetching the images{' and their' if pull_files else ''} metadata from the Windows server for "
                     f"configuration '{self.name}'."
                 )
             )
@@ -433,28 +433,35 @@ class MicrosoftFileSharePlugin(PluginBase):
                 self.configuration, self.storage
             )
             directory_storage = self.storage.get("directory_paths", {})
-            metadata = protocol_object.pull_metadata(
+            success = True
+            metadata, success = protocol_object.pull_metadata(
                 server_configuration, directory_config, directory_storage
             )
 
             if pull_files:
-                protocol_object.pull_files(server_configuration, metadata)
+                status = protocol_object.pull_files(server_configuration, metadata)
+                # if pull_files fails, set success to False
+                if not status:
+                    success = status
 
             self.logger.info(
                 (
-                    f"{self.log_prefix} Images{' and their' if pull_files else ''} metadata fetched successfully from "
+                    f"{self.log_prefix}: Images{' and their' if pull_files else ''} metadata fetched successfully from "
                     f"the Windows server for configuration '{self.name}'."
                 )
             )
 
-            return metadata
+            return PullResult(
+                metadata=metadata,
+                success=success,
+            )
         except Exception as error:
             error_message = (
                 f"Error: '{error}' occurred while pulling the"
                 f"{' images and their' if pull_files else ''} metadata"
             )
             self.logger.error(
-                message=f"{self.log_prefix} {error_message} for configuration '{self.name}'.",
+                message=f"{self.log_prefix}: {error_message} for configuration '{self.name}'.",
                 details=traceback.format_exc(),
             )
             raise MicrosoftFileShareError(
@@ -592,7 +599,7 @@ class SMBProtocolFileSharePlugin:
             error_message = ("Authentication failed while connecting with the "
                              f"Windows server '{configuration['smb_server_ip']}'.")
             self.logger.error(
-                message=f"{self.log_prefix} {error_message}",
+                message=f"{self.log_prefix}: {error_message}",
                 details=traceback.format_exc(),
             )
             raise MicrosoftFileShareError(
@@ -601,12 +608,12 @@ class SMBProtocolFileSharePlugin:
         except NotConnectedError as error:
             error_message = f"Couldn't connect with the Windows server '{configuration['smb_server_ip']}'."
             self.logger.error(
-                message=f"{self.log_prefix} {error_message}",
+                message=f"{self.log_prefix}: {error_message}",
                 details=traceback.format_exc(),
             )
             if retry:
                 self.logger.warn(
-                    message=(f"{self.log_prefix} Reconnecting with the Windows server "
+                    message=(f"{self.log_prefix}: Reconnecting with the Windows server "
                              f"'{configuration['smb_server_ip']}'.")
                 )
                 return self.get_smb_connection_object(
@@ -619,7 +626,7 @@ class SMBProtocolFileSharePlugin:
             error_message = ("Connection request to the Windows server "
                              f"'{configuration['smb_server_ip']}' got timed out.")
             self.logger.error(
-                message=f"{self.log_prefix} {error_message}",
+                message=f"{self.log_prefix}: {error_message}",
                 details=traceback.format_exc(),
             )
             raise MicrosoftFileShareError(
@@ -1051,6 +1058,27 @@ class SMBProtocolFileSharePlugin:
         }
         return stored_paths
 
+    def validate_directory_path(self, connection, shared_directory_name, directory_path):
+        """Validate directory path.
+
+        Args:
+            connection (SMBConnection): SMB connection.
+            shared_directory_name (str): Shared directory name.
+            directory_path (str): Directory path.
+
+        Raises:
+            MicrosoftFileShareError: If an error occurred while validating directory path.
+        """
+        # Check if path exists by attempting to retrieve attributes and check it is a valid directory
+        try:
+            directory_attributes = connection.getAttributes(shared_directory_name, directory_path)
+            if not directory_attributes.isDirectory:
+                error_message = f"Path '{directory_path}' exists but is not a directory on the remote server."
+                raise MicrosoftFileShareError(message=error_message)
+        except Exception as error:
+            error_message = f"Path '{directory_path}' does not exist on the remote server."
+            raise MicrosoftFileShareError(message=error_message, value=error)
+
     def pull_metadata(self, server_configuration, directory_config, directory_storage):
         """Pull metadata from server for provided directory configuration.
 
@@ -1067,6 +1095,7 @@ class SMBProtocolFileSharePlugin:
         """
         last_fetched_time = datetime.now()
         directory_inputs = directory_config.get("directory_inputs", [])
+        success = True
 
         try:
             connection, connection_result = self.get_smb_connection_object(
@@ -1083,7 +1112,18 @@ class SMBProtocolFileSharePlugin:
                     for directory in directory_list:
                         directory_path = directory["directory_path"].strip().strip("\\")
                         filename_filter = directory["filename_filter"]
-
+                        try:
+                            self.validate_directory_path(
+                                connection,
+                                shared_directory_name,
+                                directory_path,
+                            )
+                        except MicrosoftFileShareError as error:
+                            self.logger.error(
+                                f"{self.log_prefix}: Invalid directory path {str(error)}"
+                            )
+                            success = False
+                            continue
                         files_list = connection.listPath(shared_directory_name, directory_path)
 
                         for file in files_list:
@@ -1126,7 +1166,7 @@ class SMBProtocolFileSharePlugin:
 
                                 images_metadata.append(file_metadata)
                 connection.close()
-                return images_metadata
+                return images_metadata, success
             else:
                 raise MicrosoftFileShareError(
                     f"Could not connect with the Windows server '{server_configuration['smb_server_ip']}'."
@@ -1137,6 +1177,52 @@ class SMBProtocolFileSharePlugin:
             error_message = f"Error occurred while fetching images metadata for '{self.name}' plugin."
             raise MicrosoftFileShareError(value=error, message=error_message) from error
 
+    def validate_file_path(self, connection, shared_directory_name, file_path):
+        """Validate file path.
+
+        Args:
+            connection (SMBConnection): SMB connection.
+            shared_directory_name (str): Shared directory name.
+            file_path (str): File path.
+
+        Raises:
+            MicrosoftFileShareError: If the file path is invalid or inaccessible or not a regular file.
+        """
+        try:
+            # Check if file exists by attempting to get attributes
+            file_attributes = connection.getAttributes(shared_directory_name, file_path)
+
+            # Check if it's a regular file by examining file attributes
+            # First check it's not a directory
+            if file_attributes.isDirectory:
+                error_message = (
+                    f"Path '{file_path}' exists but is not a file on the remote server."
+                )
+                raise MicrosoftFileShareError(message=error_message)
+
+            # Check if it's a regular file by examining the file mode
+            # In SMB, we can check file attributes to determine if it's a regular file
+            # Regular files should not have special attributes like device, symlink, etc.
+            file_mode = file_attributes.file_attributes
+            is_regular_file = not (
+                file_mode & stat.S_IFDIR
+                or file_mode & stat.S_IFLNK
+                or file_mode & stat.S_IFCHR
+                or file_mode & stat.S_IFBLK
+                or file_mode & stat.S_IFIFO
+                or file_mode & stat.S_IFSOCK
+            )
+
+            if not is_regular_file:
+                error_message = f"Path '{file_path}' exists but is not a regular file on the remote server."
+                raise MicrosoftFileShareError(message=error_message)
+        except MicrosoftFileShareError:
+            # Re-raise the custom exception
+            raise
+        except Exception as error:
+            error_message = f"Could not access path '{file_path}' on the remote server."
+            raise MicrosoftFileShareError(message=error_message, value=error)
+
     def pull_files(self, server_configuration, metadata):
         """Pull files from server when sharing is configured for this plugin.
 
@@ -1144,6 +1230,7 @@ class SMBProtocolFileSharePlugin:
             server_configuration (dict): server configuration
             metadata (list): list of metadata fetched.
         """
+        success = True
         try:
             connection, connection_result = self.get_smb_connection_object(
                 server_configuration
@@ -1155,6 +1242,15 @@ class SMBProtocolFileSharePlugin:
                     )
                     if not os.path.exists(os.path.dirname(image_file_path)):
                         os.makedirs(os.path.dirname(image_file_path))
+                    try:
+                        self.validate_file_path(connection, data["shared_directory"], data["remote_path"])
+                    except MicrosoftFileShareError as error:
+                        self.logger.error(
+                            f"{self.log_prefix}: Invalid file path {str(error)}",
+                            details=traceback.format_exc(),
+                        )
+                        success = False
+                        continue
                     with open(image_file_path, "wb") as file_object:
                         connection.retrieveFile(
                             data["shared_directory"],
@@ -1164,7 +1260,7 @@ class SMBProtocolFileSharePlugin:
         except Exception as error:
             error_message = f"Error occurred while fetching images  for '{self.name}' plugin."
             raise MicrosoftFileShareError(value=error, message=error_message) from error
-
+        return success
 
 class SFTPProtocolFileSharePlugin:
     """Microsoft File Share plugin helper class for SFTP protocol.
@@ -1291,7 +1387,7 @@ class SFTPProtocolFileSharePlugin:
             error_message = ("Authentication failed while connecting to the "
                              f"Windows server'{configuration['sftp_server_ip']}'.")
             self.logger.error(
-                message=f"{self.log_prefix} {error_message}",
+                message=f"{self.log_prefix}: {error_message}",
                 details=traceback.format_exc(),
             )
             raise MicrosoftFileShareError(
@@ -1301,7 +1397,7 @@ class SFTPProtocolFileSharePlugin:
             error_message = ("Couldn't establish SSH session with the "
                              f"Windows server'{configuration['sftp_server_ip']}'.")
             self.logger.error(
-                message=f"{self.log_prefix} {error_message}",
+                message=f"{self.log_prefix}: {error_message}",
                 details=traceback.format_exc(),
             )
             raise MicrosoftFileShareError(
@@ -1601,6 +1697,30 @@ class SFTPProtocolFileSharePlugin:
         }
         return stored_paths
 
+    def validate_directory_path(self, sftp_session, directory_path):
+        """Validate directory path.
+
+        Args:
+            sftp_session: SFTP session object.
+            directory_path (str): directory path.
+
+        Raises:
+            MicrosoftFileShareError: If the directory path is invalid or inaccessible.
+        """
+        try:
+            # Check if path exists by attempting to get attributes
+            file_attributes = sftp_session.stat(directory_path)
+            # Check if it's a directory
+            if not stat.S_ISDIR(file_attributes.st_mode):
+                error_message = f"Path '{directory_path}' exists but is not a directory on the remote server."
+                raise MicrosoftFileShareError(message=error_message)
+        except FileNotFoundError as error:
+            error_message = f"Path '{directory_path}' does not exist on the remote server."
+            raise MicrosoftFileShareError(message=error_message, value=error)
+        except Exception as error:
+            error_message = f"Could not access path '{directory_path}' on the remote server."
+            raise MicrosoftFileShareError(message=error_message, value=error)
+
     def pull_metadata(self, server_configuration, directory_config, directory_storage):
         """Pull metadata from server for provided directory configuration.
 
@@ -1617,6 +1737,7 @@ class SFTPProtocolFileSharePlugin:
         """
         last_fetched_time = datetime.now()
         directory_paths = directory_config.get("directory_paths", [])
+        success = True
 
         try:
             ssh_connection = self.get_ssh_connection_object(server_configuration)
@@ -1627,6 +1748,20 @@ class SFTPProtocolFileSharePlugin:
                 filename_filter = directory["filename_filter"]
 
                 with ssh_connection.open_sftp() as sftp_session:
+                    try:
+                        # Validate directory path before processing
+                        self.validate_directory_path(
+                            sftp_session,
+                            directory_path
+                        )
+                    except MicrosoftFileShareError as error:
+                        self.logger.error(
+                            f"{self.log_prefix}: Invalid directory path: {error}",
+                            details=traceback.format_exc(),
+                        )
+                        success = False
+                        continue
+
                     files = sftp_session.listdir(directory_path)
 
                     for file in files:
@@ -1657,12 +1792,39 @@ class SFTPProtocolFileSharePlugin:
                             file_metadata["fileSize"] = file_attributes.st_size
                             images_metadata.append(file_metadata)
             ssh_connection.close()
-            return images_metadata
+            return images_metadata, success
         except Exception as error:
             error_message = "Failed fetching metadata."
             raise MicrosoftFileShareError(
                 value=error, message=error_message
             ) from error
+
+    def validate_file_path(self, sftp_session, file_path):
+        """Validate file path.
+
+        Args:
+            sftp_session: SFTP session object.
+            file_path (str): File path.
+
+        Raises:
+            MicrosoftFileShareError: If the file path is invalid or inaccessible or not a regular file.
+        """
+        try:
+            # Check if file exists by attempting to get attributes
+            file_attributes = sftp_session.stat(file_path)
+            # Check if it's a regular file using stat.S_ISREG
+            if not stat.S_ISREG(file_attributes.st_mode):
+                error_message = f"Path '{file_path}' exists but is not a regular file on the remote server."
+                raise MicrosoftFileShareError(message=error_message)
+        except FileNotFoundError as error:
+            error_message = f"Path '{file_path}' does not exist on the remote server."
+            raise MicrosoftFileShareError(message=error_message, value=error)
+        except MicrosoftFileShareError:
+            # Re-raise the custom exception
+            raise
+        except Exception as error:
+            error_message = f"Could not access path '{file_path}' on the remote server."
+            raise MicrosoftFileShareError(message=error_message, value=error)
 
     def pull_files(self, server_configuration, metadata):
         """Pull files from server when sharing is configured for this plugin.
@@ -1671,6 +1833,7 @@ class SFTPProtocolFileSharePlugin:
             server_configuration (dict): server configuration
             metadata (list): list of metadata fetched.
         """
+        success = True
         try:
             ssh_connection = self.get_ssh_connection_object(server_configuration)
             for data in metadata:
@@ -1678,6 +1841,15 @@ class SFTPProtocolFileSharePlugin:
                     file_path = f"{FILE_PATH}/{self.name}/{data['dirUuid']}"
                     if not os.path.exists(file_path):
                         os.makedirs(file_path)
+                    try:
+                        self.validate_file_path(sftp_session, data["path"])
+                    except MicrosoftFileShareError as error:
+                        self.logger.error(
+                            f"{self.log_prefix}: Invalid file path {str(error)}",
+                            details=traceback.format_exc(),
+                        )
+                        success = False
+                        continue
                     sftp_session.get(
                         data["path"],
                         os.path.join(file_path, data["file"]),
@@ -1685,3 +1857,4 @@ class SFTPProtocolFileSharePlugin:
         except Exception as error:
             error_message = f"Error occurred while fetching images  for '{self.name}' plugin."
             raise MicrosoftFileShareError(value=error, message=error_message) from error
+        return success

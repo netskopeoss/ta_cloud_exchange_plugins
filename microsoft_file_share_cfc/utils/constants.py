@@ -2,7 +2,7 @@
 
 PLUGIN_NAME = "Microsoft File Share CFC"
 MODULE_NAME = "CFC"
-PLUGIN_VERSION = "1.0.0"
+PLUGIN_VERSION = "1.0.1"
 SUPPORTED_IMAGE_FILE_EXTENSIONS = [".bmp", ".dib", ".jpeg", ".jpg", ".jpe", ".jp2", ".png", ".webp", ".avif", ".pbm",
                                    ".pgm", ".ppm", ".pxm", ".pnm", ".pfm", ".sr", ".ras",  ".tiff", ".tif", ".exr",
                                    ".hdr", ".pic", ".zip", ".tgz"]

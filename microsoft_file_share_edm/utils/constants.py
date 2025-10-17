@@ -2,8 +2,9 @@
 
 MODULE_NAME = "EDM"
 PLUGIN_NAME = "Microsoft File Share EDM"
-PLUGIN_VERSION = "1.0.0"
+PLUGIN_VERSION = "1.0.1"
 SAMPLE_DATA_RECORD_COUNT = 20
+SAMPLE_CSV_FILE_NAME = "sample.csv"
 MICROSOFT_FILE_SHARE_EDM_FIELDS = {
     "SMB": {
         "configuration": [

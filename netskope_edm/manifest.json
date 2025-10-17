@@ -3,7 +3,7 @@
     "description": "This plugin is used to push EDM File Hashes on Netskope Tenant.",
     "id": "netskope_edm",
     "module": "EDM",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "netskope": true,
     "patch_supported": false,
     "pull_supported": false,

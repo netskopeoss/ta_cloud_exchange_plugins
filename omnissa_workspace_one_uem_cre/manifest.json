@@ -1,0 +1,78 @@
+{
+    "name": "Omnissa Workspace One UEM",
+    "id": "omnissa_workspace_one_uem_cre",
+    "version": "1.0.0",
+    "module": "CRE",
+    "minimum_version": "5.1.2",
+    "description": "This plugin fetches Devices data from 'Devices > Devices' page on the Omnissa Workspace One UEM platform. This plugin supports Tagging and Un-tagging devices action on the Omnissa Workspace One UEM platform.",
+    "configuration": [
+        {
+            "label": "API Base URL",
+            "key": "api_base_url",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "API Base URL of the Omnissa Workspace One UEM tenant. To get the API base URL navigate to 'Groups & Settings > All Settings > System > Advanced > API > REST API' page and copy the REST API URL. Note: Make sure to remove the '/api' prefix from the URL if present."
+        },
+        {
+            "label": "OAuth URL",
+            "key": "oauth_url",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "https://uat.uemauth.workspaceone.com (All UAT environment)",
+                    "value": "https://uat.uemauth.workspaceone.com"
+                },
+                {
+                    "key": "https://na.uemauth.workspaceone.com (United States, Canada)",
+                    "value": "https://na.uemauth.workspaceone.com"
+                },
+                {
+                    "key": "https://emea.uemauth.workspaceone.com (United Kingdom, Germany)",
+                    "value": "https://emea.uemauth.workspaceone.com"
+                },
+                {
+                    "key": "https://apac.uemauth.workspaceone.com (India, Japan, Singapore, Australia, Hong Kong)",
+                    "value": "https://apac.uemauth.workspaceone.com"
+                }
+            ],
+            "default": "https://uat.uemauth.workspaceone.com",
+            "mandatory": true,
+            "description": "OAuth URL of the Omnissa Workspace One UEM tenant."
+        },
+        {
+            "label": "Client ID",
+            "key": "client_id",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "Client ID for the Omnissa workspace One UEM tenant. Can be generated from 'Groups & Settings > Configurations > OAuth Client Management' page on the Omnissa Workspace One UEM platform."
+        },
+        {
+            "label": "Client Secret",
+            "key": "client_secret",
+            "type": "password",
+            "default": "",
+            "mandatory": true,
+            "description": "Client Secret for the Omnissa workspace One UEM tenant. Can be generated from 'Groups & Settings > Configurations > OAuth Client Management' page on the Omnissa Workspace One UEM platform."
+        },
+        {
+            "label": "Pull Device Tags",
+            "key": "pull_device_tags",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Yes",
+                    "value": "yes"
+                },
+                {
+                    "key": "No",
+                    "value": "no"
+                }
+            ],
+            "default": "no",
+            "mandatory": false,
+            "description": "Pull Device Tags from the Omnissa Workspace One UEM tenant."
+        }
+    ]
+}

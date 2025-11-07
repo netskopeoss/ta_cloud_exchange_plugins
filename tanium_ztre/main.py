@@ -149,9 +149,16 @@ class TaniumPlugin(PluginBase):
         """
         action_value = action.value
         if action_value not in ["generate"]:
+            resolution = (
+                "Ensure that the action(s) is selected from the "
+                "supported action(s). Supported action(s): 'No action'."
+            )
             self.logger.error(
-                f'{self.log_prefix}: Unsupported action "{action_value}" '
-                "provided in the action configuration."
+                message=(
+                    f'{self.log_prefix}: Unsupported action "{action_value}" '
+                    "provided in the action configuration."
+                ),
+                resolution=resolution,
             )
             return ValidationResult(
                 success=False, message="Unsupported action provided."
@@ -178,6 +185,24 @@ class TaniumPlugin(PluginBase):
             self.logger.info(
                 f"{self.log_prefix}: Successfully executed '{action_label}' "
                 "action. Note: No processing will be done from plugin for "
+                f"the '{action_label}' action."
+            )
+            return
+
+    def execute_actions(self, actions: List[Action]):
+        """Execute actions on the record.
+
+        Args:
+            record (Record): Record object containing record id and score
+            action (Action): Actions object containing action label and value.
+        """
+        first_action = actions[0]
+        action_label = first_action.label
+        if first_action.value == "generate":
+            self.logger.info(
+                f"{self.log_prefix}: Successfully performed action "
+                f"'{action_label}' on {len(actions)} records."
+                "Note: No processing will be done from plugin for "
                 f"the '{action_label}' action."
             )
             return
@@ -342,11 +367,22 @@ class TaniumPlugin(PluginBase):
                         f"fetching {logger_msg}"
                     ),
                 )
-                page_devices_list = (
-                    resp_json.get("data", {})
-                    .get("endpoints", {})
-                    .get("edges", [])
-                )
+                # If response is empty then break the loop
+                if not resp_json or not isinstance(resp_json, dict):
+                    break
+                
+                data = resp_json.get("data", {})
+                if not data or not isinstance(data, dict):
+                    break
+                endpoints = data.get("endpoints", {})
+                if not endpoints or not isinstance(endpoints, dict):
+                    break
+                page_devices_list = endpoints.get("edges", [])
+                if (
+                    not page_devices_list or
+                    not isinstance(page_devices_list, list)
+                ):
+                    break
                 curr_devices_count = len(page_devices_list)
                 page_devices_count = 0
                 page_devices_skip_count = 0
@@ -393,14 +429,19 @@ class TaniumPlugin(PluginBase):
                 # If current page has less than DEVICE_PAGE_COUNT(5000)
                 # records or hasNextPage value in pageInfo is False then
                 # break the loop
-                page_info = (
-                    resp_json.get("data", {})
-                    .get("endpoints", {})
-                    .get("pageInfo", {})
-                )
+                data = resp_json.get("data", {})
+                if not data or not isinstance(data, dict):
+                    break
+                endpoints = data.get("endpoints", {})
+                if not endpoints or not isinstance(endpoints, dict):
+                    break
+                page_info = endpoints.get("pageInfo", {})
+                if not page_info or not isinstance(page_info, dict):
+                    break
+                hasNextPage = page_info.get("hasNextPage", False)
                 if (
-                    not page_info.get("hasNextPage", False) or
-                    (curr_devices_count < DEVICE_PAGE_COUNT)
+                    not hasNextPage or not isinstance(hasNextPage, bool)
+                    or (curr_devices_count < DEVICE_PAGE_COUNT)
                 ):
                     break
 
@@ -466,7 +507,13 @@ class TaniumPlugin(PluginBase):
                     f"Invalid entity found. {PLATFORM_NAME} plugin "
                     "only supports 'Devices' Entity."
                 )
-                self.logger.error(f"{self.log_prefix}: {err_msg}")
+                resolution = (
+                    "Ensure that the entity is 'Devices'."
+                )
+                self.logger.error(
+                    message=f"{self.log_prefix}: {err_msg}",
+                    resolution=resolution,
+                )
                 raise TaniumPluginException(err_msg)
         except TaniumPluginException:
             raise
@@ -540,6 +587,12 @@ class TaniumPlugin(PluginBase):
                                 self._normalize_risk_scores(risk_score)
                             )
                         else:
+                            resolution = (
+                                "Ensure that the 'Risk Score' field "
+                                "is a number between 0 and 1000 on "
+                                f"{PLATFORM_NAME} platform for "
+                                f"Device ID: {current_id}."
+                            )
                             self.logger.error(
                                 message=(
                                     f"{self.log_prefix}: Invalid "
@@ -549,6 +602,7 @@ class TaniumPlugin(PluginBase):
                                     "calculated for this device. "
                                     "Valid Risk Score range is 0 to 1000."
                                 ),
+                                resolution=resolution,
                                 details=f"Risk Score: '{risk_score}'",
                             )
                             norm_score_skip_count += 1
@@ -562,7 +616,13 @@ class TaniumPlugin(PluginBase):
                     f"Invalid entity found. {PLATFORM_NAME} plugin "
                     "only supports 'Devices' Entity."
                 )
-                self.logger.error(f"{self.log_prefix}: {err_msg}")
+                resolution = (
+                    "Ensure that the entity is 'Devices'."
+                )
+                self.logger.error(
+                    message=f"{self.log_prefix}: {err_msg}",
+                    resolution=resolution,
+                )
                 raise TaniumPluginException(err_msg)
         except TaniumPluginException:
             raise
@@ -625,8 +685,13 @@ class TaniumPlugin(PluginBase):
         api_base_url = configuration.get("api_base_url", "").strip().strip("/")
         if not api_base_url:
             err_msg = "API Base URL is a required configuration parameter."
+            resolution = (
+                "Ensure that the API Base URL is provided in "
+                "the plugin configuration parameters."
+            )
             self.logger.error(
-                f"{self.log_prefix}: {validation_msg} {err_msg}"
+                message=f"{self.log_prefix}: {validation_msg} {err_msg}",
+                resolution=resolution,
             )
             return ValidationResult(success=False, message=err_msg)
 
@@ -637,8 +702,14 @@ class TaniumPlugin(PluginBase):
                 "Invalid API Base URL provided in "
                 "the configuration parameters."
             )
+            resolution = (
+                "Ensure that the API Base URL is provided in "
+                "the plugin configuration parameters. "
+                "API Base URL should be an non-empty string."
+            )
             self.logger.error(
-                f"{self.log_prefix}: {validation_msg} {err_msg}"
+                message=f"{self.log_prefix}: {validation_msg} {err_msg}",
+                resolution=resolution,
             )
             return ValidationResult(success=False, message=err_msg)
 
@@ -646,8 +717,13 @@ class TaniumPlugin(PluginBase):
         api_token = configuration.get("api_token")
         if not api_token:
             err_msg = "API Token is a required configuration parameter."
+            resolution = (
+                "Ensure that the API Token is provided in "
+                "the plugin configuration parameters."
+            )
             self.logger.error(
-                f"{self.log_prefix}: {validation_msg} {err_msg}"
+                message=f"{self.log_prefix}: {validation_msg} {err_msg}",
+                resolution=resolution,
             )
             return ValidationResult(success=False, message=err_msg)
         elif not (isinstance(api_token, str)):
@@ -655,8 +731,14 @@ class TaniumPlugin(PluginBase):
                 "Invalid API Token provided in the "
                 "configuration parameters."
             )
+            resolution = (
+                "Ensure that the API Token is provided in "
+                "the plugin configuration parameters. "
+                "API Token should be an non-empty string."
+            )
             self.logger.error(
-                f"{self.log_prefix}: {validation_msg} {err_msg}"
+                message=f"{self.log_prefix}: {validation_msg} {err_msg}",
+                resolution=resolution,
             )
             return ValidationResult(success=False, message=err_msg)
 

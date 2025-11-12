@@ -902,7 +902,11 @@ class NetskopeProviderPlugin(PluginBase):
                 "Tenant must have a Tenant URL. Please provide a Tenant URL."
             )
             self.logger.error(
-                f"{self.log_prefix}: {validation_err_msg} {err_msg}"
+                message=f"{self.log_prefix}: {validation_err_msg} {err_msg}",
+                resolution=(
+                    "Please provide a non null value for "
+                    "Tenant URL as it is a required parameter."
+                ),
             )
             return ValidationResult(
                 success=False, message=err_msg, checkpoint=checkpoint
@@ -910,7 +914,11 @@ class NetskopeProviderPlugin(PluginBase):
         elif not isinstance(tenant_name, str):
             err_msg = "Invalid Tenant URL provided."
             self.logger.error(
-                f"{self.log_prefix}: {validation_err_msg} {err_msg}"
+                message=f"{self.log_prefix}: {validation_err_msg} {err_msg}",
+                resolution=(
+                    "Please provide a string value for "
+                    "Tenant URL."
+                ),
             )
             return ValidationResult(
                 success=False, message=err_msg, checkpoint=checkpoint
@@ -925,7 +933,12 @@ class NetskopeProviderPlugin(PluginBase):
         ):
             err_msg = "Invalid Tenant URL provided. It should follow the format: https://demo.goskope.com."
             self.logger.error(
-                f"{self.log_prefix}: {validation_err_msg} {err_msg}"
+                message=f"{self.log_prefix}: {validation_err_msg} {err_msg}",
+                resolution=(
+                    "Please verify that the required format of "
+                    "https://demo.goskope.com is followed for "
+                    "Tenant URL."
+                ),
             )
             return ValidationResult(
                 success=False, message=err_msg, checkpoint=checkpoint
@@ -936,10 +949,14 @@ class NetskopeProviderPlugin(PluginBase):
             success, message = self.validate_token(token, tenant_name)
             if not success:
                 self.logger.error(
-                    re.sub(
+                    message=re.sub(
                         r"(token=)[^&]+",
                         r"\1***************",
                         f"{self.log_prefix}: {validation_err_msg} {message}",
+                    ),
+                    resolution=(
+                        "Please verify the API token provided is not expired "
+                        "and has all the required roles and permissions."
                     ),
                     error_code="CE_1126",
                 )
@@ -955,7 +972,11 @@ class NetskopeProviderPlugin(PluginBase):
         if not v2_token:
             err_msg = "Tenant must have V2 API Token. Please provide V2 API Token."
             self.logger.error(
-                f"{self.log_prefix}: {validation_err_msg} {err_msg}"
+                message=f"{self.log_prefix}: {validation_err_msg} {err_msg}",
+                resolution=(
+                    "Please provide a non null value for "
+                    "V2 API Token as it is a required parameter."
+                )
             )
             return ValidationResult(
                 success=False, message=err_msg, checkpoint=checkpoint
@@ -963,7 +984,11 @@ class NetskopeProviderPlugin(PluginBase):
         elif not isinstance(tenant_name, str):
             err_msg = "Invalid V2 API Token provided."
             self.logger.error(
-                f"{self.log_prefix}: {validation_err_msg} {err_msg}"
+                message=f"{self.log_prefix}: {validation_err_msg} {err_msg}",
+                resolution=(
+                    "Please provide a string value for "
+                    "Tenant URL."
+                ),
             )
             return ValidationResult(
                 success=False, message=err_msg, checkpoint=checkpoint
@@ -976,7 +1001,11 @@ class NetskopeProviderPlugin(PluginBase):
         ):
             message = "Error occurred while validating V2 API Token"
             self.logger.error(
-                f"{self.log_prefix}: {validation_err_msg} {message}",
+                message=f"{self.log_prefix}: {validation_err_msg} {message}",
+                resolution=(
+                    "Please verify the V2 API token provided is not expired "
+                    "and has all the required roles and permissions."
+                ),
                 error_code="CE_1127",
             )
             return ValidationResult(

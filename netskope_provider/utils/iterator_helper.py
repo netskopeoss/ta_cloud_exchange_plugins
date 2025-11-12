@@ -1126,7 +1126,7 @@ class NetskopeClient:
             Dictionary containing parsed forensics data or empty dict if failed
         """
         logger.info(
-            "Enriching incident data with forensics"
+            "Enriching incident data with forensics "
             f"data for incident id: {incident_id}."
         )
         logger_msg = (
@@ -1167,6 +1167,40 @@ class NetskopeClient:
             return result
 
         except NetskopeProviderPluginException as err:
+            error_message = str(err)
+            if "403" in error_message and "forbidden" in error_message.lower():
+                logger.error(
+                    message=(
+                        f"{self.log_prefix}: Received 403 while accessing the "
+                        "forensics API. Please verify the configured token has "
+                        "required permissions for Forensics API endpoint."
+                    ),
+                    details=(
+                        f"Incident ID: {incident_id}. Original error: {error_message}"
+                    ),
+                    resolution=(
+                        "If using V2 API token, please verify that you have "
+                        "configured Read access for the "
+                        "/api/v2/incidents/dlpincidents endpoint."
+                    ),
+                )
+                raise ForbiddenError(error_message) from err
+            if "400" in error_message and "http client error" in error_message.lower():
+                logger.error(
+                    message=(
+                        f"{self.log_prefix}: Received 400 while accessing the "
+                        "forensics API. Please verify the service is enabled in "
+                        "your tenant."
+                    ),
+                    details=(
+                        f"Incident ID: {incident_id}. Original error: {error_message}"
+                    ),
+                    resolution=(
+                        "Please verify the Forensics service is enabled "
+                        "on your Netskope Tenant."
+                    ),
+                )
+                raise ForbiddenError(error_message) from err
             logger.error(
                 message=(
                     f"{self.log_prefix}: Error occurred while {logger_msg}."
@@ -1207,9 +1241,16 @@ class NetskopeClient:
 
         # Fetch forensics data and update incidents
         for incident_id, incidents in incident_ids_dict.items():
-            forensics_data = self._fetch_forensics_data(incident_id)
-
-            # Update each incident with the forensics data
+            try:
+                forensics_data = self._fetch_forensics_data(incident_id)
+            except ForbiddenError:
+                logger.info(
+                    f"{self.log_prefix}: Skipping incident enrichment due to "
+                    "error received from the forensics API."
+                )
+                return incident_data
+            if not forensics_data:
+                continue
             for incident in incidents:
                 # Add each field from the forensics data to the incident
                 for key, value in forensics_data.items():

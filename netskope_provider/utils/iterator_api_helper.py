@@ -38,6 +38,8 @@ import traceback
 import time
 from typing import Dict, Union
 from requests.exceptions import ReadTimeout
+from netskope.common.api import __version__ as CE_VERSION
+from packaging import version
 
 import requests
 from netskope.common.utils import add_user_agent
@@ -45,6 +47,7 @@ from .constants import (
     PLATFORM_NAME,
     MODULE_NAME,
     MAX_API_CALLS,
+    MAXIMUM_CE_VERSION,
     DEFAULT_WAIT_TIME,
     RATELIMIT_RESET,
     RATELIMIT_REMAINING,
@@ -93,6 +96,33 @@ class NetskopePluginHelper(object):
         self.logger = logger
         self.plugin_name = plugin_name
         self.plugin_version = plugin_version
+        self.resolution_support = version.parse(CE_VERSION) > version.parse(
+            MAXIMUM_CE_VERSION
+        )
+        self.is_ce_version_greater_than_512 = self.resolution_support
+        # Patch logger methods to handle resolution parameter compatibility
+        self._patch_logger_methods()
+
+    def _patch_logger_methods(self):
+        """patch logger methods to handle resolution parameter
+        compatibility."""
+        # Store original methods
+        original_error = self.logger.error
+
+        def patched_error(
+            message=None, details=None, resolution=None, **kwargs
+        ):
+            """Patched error method that handles resolution compatibility."""
+            log_kwargs = {"message": message}
+            if details:
+                log_kwargs["details"] = details
+            if resolution and self.resolution_support:
+                log_kwargs["resolution"] = resolution
+            log_kwargs.update(kwargs)
+            return original_error(**log_kwargs)
+
+        # Replace logger methods with patched versions
+        self.logger.error = patched_error
 
     def _add_user_agent(self, headers: Union[Dict, None] = None) -> Dict:
         """Add User-Agent in the headers for third-party requests.

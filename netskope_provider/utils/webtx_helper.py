@@ -327,9 +327,10 @@ class WebTxHelper:
             self.unset_webtx_subscription_details(configuration.tenant)
             should_restart = True
             logger.error(
-                "Error occurred while subscribing to WebTx path, credentials will be refreshed in next execution. If you have regenerated endpoint please 'GENERATE AND DOWNLOAD KEY' from Netskope tenant UI > Settings > Tools > Event Streaming.",
+                message="Error occurred while subscribing to WebTx path, credentials will be refreshed in next execution.",
                 error_code="CLS_1030",
                 details=traceback.format_exc(),
+                resolution="If you have regenerated endpoint please 'GENERATE AND DOWNLOAD KEY' from Netskope tenant UI > Settings > Tools > Event Streaming."
             )
             handle_interrupt()
 

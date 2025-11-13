@@ -1,3 +1,9 @@
+# 1.5.3
+## Changed
+- Improved exception handling when forensics service is not enabled on Netskope Tenant.
+- Updated tooltip for V1 API token.
+- Added resolutions for common errors.
+
 # 1.5.2
 ## Fixed
 - Updated iterator index with analytics type

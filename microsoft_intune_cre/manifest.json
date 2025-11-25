@@ -1,0 +1,34 @@
+{
+    "name": "Microsoft Intune",
+    "id": "microsoft_intune_cre",
+    "version": "1.0.0",
+    "module": "CRE",
+    "minimum_version": "5.1.2",
+    "description": "This plugin fetches Devices data from the 'Devices > All Devices' page on Microsoft Intune platform. This plugin supports 'Reboot Device', 'Sync Device', 'Run Windows Defender Scan' and 'Update Windows Defender Signatures' actions on the Microsoft Intune platform.",
+    "configuration": [
+        {
+            "label": "Client ID",
+            "key": "client_id",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "Client ID for the Microsoft Azure Application. On your Microsoft Azure portal navigate to 'Azure Entra ID > App registrations > Your Application > Overview' page and get the Client ID."
+        },
+        {
+            "label": "Client Secret",
+            "key": "client_secret",
+            "type": "password",
+            "default": "",
+            "mandatory": true,
+            "description": "Client Secret for Microsoft Azure Application. On your Microsoft Azure portal navigate to 'Azure Entra ID > App registrations > Your Application > Certificates & Secrets' page and get the Client Secret. Note: Make sure to copy the client secret value and not the Secret ID."
+        },
+        {
+            "label": "Tenant ID",
+            "key": "tenant_id",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "Tenant ID for the Microsoft Azure Application. On your Microsoft Azure portal navigate to 'Azure Entra ID > App registrations > Your Application > Overview' page and get the Tenant ID."
+        }
+    ]
+}

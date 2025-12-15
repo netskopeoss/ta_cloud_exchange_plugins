@@ -1,9 +1,9 @@
 {
     "name": "CrowdStrike Falcon Cloud Security",
-    "description": "The CrowdStrike Falcon Cloud Security plugin fetches users from the **Cloud Indicators of attack (IOAs)** page and cloud workloads (applications) from the **Indicators of misconfiguration (IOMs)** page. Both pages are available under **Cloud Security > Cloud Posture** in the CrowdStrike tenant. This plugin does not support any actions on users or applications in CrowdStrike Falcon Cloud Security.\n\nNetskope normalization score calculation for users => (100 - CrowdStrike's IOA score) x 10",
+    "description": "The CrowdStrike Falcon Cloud Security plugin fetches Users from the Cloud Security > Detections > Indicators of Attack (IOA) page and Cloud Workloads (Applications) from the Cloud Security > Posture and Compliance > Cloud Security Posture > Indicators of Misconfiguration (IOM) page. This plugin does not support any actions on Users or Cloud Workloads (Applications) in CrowdStrike Falcon Cloud Security.\n\nNetskope normalization score calculation for Users => (100 - Score) x 10",
     "minimum_version": "5.1.0",
     "id": "crowdstrike_cloud_security_ztre",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "module": "CRE",
     "configuration": [
         {
@@ -67,7 +67,7 @@
                 }
             ],
             "mandatory": true,
-            "description": "Users from the specified IOA Cloud Provider will be pulled from the Cloud Indicators of attack (IOAs) events."
+            "description": "Users from the specified IOA Cloud Provider will be pulled from the Cloud Indicators of Attack (IOAs) events."
         },
         {
             "label": "IOA Cloud Service",
@@ -293,7 +293,7 @@
                 }
             ],
             "mandatory": false,
-            "description": "Users from the specified IOA Cloud Service will be pulled from the Cloud Indicators of attack (IOAs). Keep empty to fetch users from all Cloud Services."
+            "description": "Users from the specified IOA Cloud Service will be pulled from the Cloud Indicators of Attack (IOAs). Keep empty to fetch users from all Cloud Services."
         },
         {
             "label": "IOM Cloud Provider",
@@ -319,7 +319,7 @@
                 }
             ],
             "mandatory": false,
-            "description": "Applications (Cloud Workloads) from the specified IOM Cloud Provider will be pulled from Indicators of misconfiguration (IOMs) events. Keep empty to pull Applications (Cloud Workloads) from all Cloud Providers."
+            "description": "Cloud Workloads (Applications) from the specified IOM Cloud Provider will be pulled from Indicators of Misconfiguration (IOMs) events. Keep empty to pull Cloud Workloads (Applications) from all Cloud Providers."
         },
         {
             "label": "IOM Cloud Service",
@@ -545,7 +545,7 @@
                 }
             ],
             "mandatory": false,
-            "description": "Applications (Cloud Workloads) from the specified IOM Cloud Service will be pulled from Indicators of misconfiguration (IOMs) events. Keep empty to pull Applications (Cloud Workloads) from all Cloud Services."
+            "description": "Cloud Workloads (Applications) from the specified IOM Cloud Service will be pulled from Indicators of Misconfiguration (IOMs) events. Keep empty to pull Cloud Workloads (Applications) from all Cloud Services."
         },
         {
             "label": "Initial Range (in days)",
@@ -553,7 +553,7 @@
             "type": "number",
             "mandatory": true,
             "default": 7,
-            "description": "Number of days to pull the data for the initial run."
+            "description": "Number of days to pull the data for the initial run. Value must be between 0 and 2^62."
         }
     ]
 }

@@ -37,8 +37,9 @@ IOM_PAGE_SIZE = 500
 IOA_RESOURCES_PAGE_SIZE = 1000
 PLUGIN_NAME = "CrowdStrike Falcon Cloud Security"
 PLATFORM_NAME = "CrowdStrike Falcon Cloud Security"
-PLUGIN_VERSION = "1.0.0"
+PLUGIN_VERSION = "1.0.1"
 MODULE_NAME = "CRE"
+IOM_ENTITY_NAME = "Cloud Workloads (Applications)"
 MAX_API_CALLS = 4
 NORMALIZATION_MULTIPLIER = 10
 DEFAULT_WAIT_TIME = 60
@@ -181,3 +182,23 @@ IOA_FIELD_MAPPING = {
     "Vertex ID": {"key": "vertex_id"},
     "Vertex Type": {"key": "vertex_type"},
 }
+
+# The maximum CE version that does not support resolution message
+MAXIMUM_CE_VERSION = "5.1.2"
+
+CONFIGURATION = "configuration"
+ACTION = "action"
+
+EMPTY_ERROR_MESSAGE = "{field_name} is a required configuration parameter."
+TYPE_ERROR_MESSAGE = (
+    "Invalid value provided for the configuration parameter '{field_name}'."
+)
+VALIDATION_ERROR_MESSAGE = "Validation error occurred. "
+ALLOWED_VALUE_MESSAGE = "Allowed values are '{allowed_values}'"
+VALUE_OUT_OF_RANGE_ERROR_MESSAGE = (
+    " Value should be between 0 and {max_value}."
+)
+
+PULL_IOA_EVENTS_ENDPOINT = "{base_url}/detects/entities/ioa/v1"
+PULL_IOM_EVENT_IDS_ENDPOINT = "{base_url}/detects/queries/iom/v2"
+PULL_IOM_EVENT_DETAILS_ENDPOINT = "{base_url}/detects/entities/iom/v2"

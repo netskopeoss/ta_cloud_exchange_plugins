@@ -324,6 +324,10 @@ class CrowdstrikePluginHelper(object):
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {error}",
                 details=traceback.format_exc(),
+                resolution=(
+                    "Please check if the proxy configuration provided is"
+                    " correct and the proxy server is reachable."
+                ),
             )
             raise CrowdstrikeCloudSecurityPluginException(err_msg)
         except requests.exceptions.ConnectionError as error:
@@ -342,6 +346,10 @@ class CrowdstrikePluginHelper(object):
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {error}",
                 details=traceback.format_exc(),
+                resolution=(
+                    "Please check if the API Base URL/OAuth URL provided is"
+                    " correct and the server is reachable."
+                ),
             )
             raise CrowdstrikeCloudSecurityPluginException(err_msg)
         except requests.HTTPError as err:
@@ -354,6 +362,9 @@ class CrowdstrikePluginHelper(object):
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {err}",
                 details=traceback.format_exc(),
+                resolution=(
+                    "Please verify the configuration parameters provided."
+                ),
             )
             raise CrowdstrikeCloudSecurityPluginException(err_msg)
         except Exception as exp:
@@ -366,6 +377,9 @@ class CrowdstrikePluginHelper(object):
                 self.logger.error(
                     message=f"{self.log_prefix}: {err_msg} Error: {exp}",
                     details=traceback.format_exc(),
+                    resolution=(
+                        "Please verify the configuration parameters provided."
+                    ),
                 )
                 raise CrowdstrikeCloudSecurityPluginException(
                     f"{err_msg} Check logs for more details."
@@ -373,6 +387,9 @@ class CrowdstrikePluginHelper(object):
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {exp}",
                 details=traceback.format_exc(),
+                resolution=(
+                    "Please verify the configuration parameters provided."
+                ),
             )
             raise CrowdstrikeCloudSecurityPluginException(err_msg)
 
@@ -447,6 +464,25 @@ class CrowdstrikePluginHelper(object):
             401: "Received exit code 401, Unauthorized access",
             404: "Received exit code 404, Resource not found",
         }
+        resolution_dict = {
+            400: (
+                "Verify the Base URL, Client ID and Client Secret provided"
+                " in the configuration parameters."
+            ),
+            401: (
+                "Verify the Base URL, Client ID and Client Secret provided"
+                " in the configuration parameters."
+            ),
+            403: (
+                "Verify the Client ID and Client Secret provided in the"
+                " configuration parameters. Also verify the API scopes"
+                " provided to Client ID and Client Secret."
+            ),
+            404: (
+                "Verify the Base URL provided in the configuration"
+                " parameters."
+            ),
+        }
         if is_validation:
             error_dict = {
                 400: (
@@ -477,11 +513,13 @@ class CrowdstrikePluginHelper(object):
             return {}
         elif status_code in error_dict:
             err_msg = error_dict[status_code]
+            resolution_msg = resolution_dict[status_code]
             if is_validation:
                 log_err_msg = validation_msg + err_msg
                 self.logger.error(
                     message=f"{self.log_prefix}: {log_err_msg}",
                     details=f"API response: {resp.text}",
+                    resolution=resolution_msg,
                 )
                 raise CrowdstrikeCloudSecurityPluginException(err_msg)
             else:

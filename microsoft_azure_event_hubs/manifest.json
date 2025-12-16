@@ -1,21 +1,31 @@
 {
     "name": "Microsoft Azure Event Hubs",
     "id": "microsoft_azure_event_hubs",
-    "version": "1.1.0",
+    "version": "2.0.0",
     "mapping": "Microsoft Azure Event Hubs Default Mappings",
     "module": "CLS",
+    "format_options": [
+        {
+            "label": "CEF",
+            "value": "cef"
+        },
+        {
+            "label": "JSON",
+            "value": "json"
+        }
+    ],
     "types": [
         "alerts",
         "events",
         "webtx"
     ],
-    "description": "This plugin supports ingestion of Alerts (DLP, Malware, Policy, Compromised Credential, Malsite, Quarantine, Remediation, Security Assessment, Watchlist, UBA, CTEP), Events (Page, Application, Audit, Infrastructure, Network, Incident, Endpoint) and WebTx data. The data will be sent to the Microsoft Azure Event Hubs. This plugin supports ingestion in both CEF and JSON format.",
+    "description": "This plugin supports ingestion of Alerts (DLP, Malware, Policy, Compromised Credential, Malsite, Quarantine, Remediation, Security Assessment, Watchlist, UBA, CTEP, Device, Content), Events (Page, Application, Audit, Infrastructure, Network, Incident, Endpoint, Client Status) and WebTx data. The data will be sent to the Microsoft Azure Event Hubs. This plugin supports ingestion in both CEF and JSON format.",
     "configuration": [
         {
-            "label": "Namespace Name",
+            "label": "Event Hubs Namespace Name",
             "key": "namespace_name",
             "type": "text",
-            "default": "namespace",
+            "default": "",
             "mandatory": true,
             "description": "Microsoft Azure Event Hubs Namespace Name."
         },
@@ -24,7 +34,7 @@
             "key": "port",
             "type": "number",
             "default": 9093,
-            "mandatory": false,
+            "mandatory": true,
             "description": "Microsoft Azure Event Hubs Port. The default port is 9093 for Event hubs TLS handshake, provide the custom port based on your configuration"
         },
         {
@@ -84,6 +94,54 @@
             "default": "no",
             "mandatory": false,
             "description": "Select 'Yes' to ingest the data without the Log Source Identifier field. This option is only applicable to JSON-formatted data."
+        },
+        {
+            "label": "Producer Batch Size (in KB)",
+            "key": "batch_size",
+            "type": "number",
+            "default": 16,
+            "mandatory": false,
+            "description": "Maximum size (in KB) of a batch of messages that the producer will attempt to send to Event Hubs in a single request. Larger batch sizes can improve throughput but may increase memory usage. Allowed range: 16–1024 KB."
+        },
+        {
+            "label": "Buffer Memory (in MB)",
+            "key": "buffer_memory",
+            "type": "number",
+            "default": 64,
+            "mandatory": false,
+            "description": "Total memory (in MB) allocated for buffering unsent messages. If the buffer fills up, further send requests may be blocked or fail until space becomes available. Increasing this value can help handle bursts of log data. Allowed range: 32–128 MB."
+        },
+        {
+            "label": "Max Block Time (in seconds)",
+            "key": "max_block_time",
+            "type": "number",
+            "default": 10,
+            "mandatory": false,
+            "description": "Maximum time (in seconds) a send operation will block if the buffer is full before raising an exception. This prevents indefinite blocking and helps control application responsiveness under heavy load. Allowed range: 10–60 seconds."
+        },
+        {
+            "label": "Batch Linger Time (in milliseconds)",
+            "key": "linger_time",
+            "type": "number",
+            "default": 1000,
+            "mandatory": false,
+            "description": "Time (in milliseconds) the producer will wait for additional messages before sending a batch if the batch size is not reached. Higher values can increase batching efficiency but may add latency. Allowed range: 50–1000 ms."
+        },
+        {
+            "label": "Data Chunk Size",
+            "key": "chunk_size",
+            "type": "number",
+            "default": 5000,
+            "mandatory": false,
+            "description": "Number of logs to group together into a single data chunk before sending to Event Hubs. Adjust this to control the granularity of data transmission and optimize performance for your workload. Allowed range: 1000–10000."
+        },
+        {
+            "label": "Flush Timeout (in seconds)",
+            "key": "flush_timeout",
+            "type": "number",
+            "default": 60,
+            "mandatory": false,
+            "description": "Maximum time (in seconds) allowed for flushing all buffered records to Event Hubs before timing out. Ensures that data is not delayed indefinitely in the buffer during shutdown or manual flush operations. Allowed range: 10–300 seconds."
         }
     ]
 }

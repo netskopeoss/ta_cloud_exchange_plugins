@@ -38,9 +38,17 @@ from .event_hub_exceptions import (
     MappingValidationError,
 )
 from .event_hub_constants import (
-    LOG_SOURCE_IDENTIFIER
+    LOG_SOURCE_IDENTIFIER,
+    DEFAULT_BATCH_SIZE,
+    DEFAULT_BUFFER_MEMORY,
+    DEFAULT_MAX_BLOCK_TIME,
+    DEFAULT_LINGER_TIME,
+    DEFAULT_CHUNK_SIZE,
+    DEFAULT_PORT,
+    FLUSH_TIMEOUT
 )
 from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
+from typing import List
 
 
 def validate_extension(instance):
@@ -55,7 +63,7 @@ def validate_extension(instance):
     validate(instance=instance, schema=schema)
 
 
-def validate_header_extension_subdict(instance, log_prefix):
+def validate_header_extension_subdict(instance):
     """Validate sub dict of header and extension having fields
     "mapping" and "default".
 
@@ -93,7 +101,7 @@ def validate_header_extension_subdict(instance, log_prefix):
         )
 
 
-def validate_header(instance, log_prefix):
+def validate_header(instance):
     """Define JSON schema for validating mapped Microsoft Azure Event Hubs\
           header fields.
 
@@ -148,10 +156,10 @@ def validate_header(instance, log_prefix):
     # After validating schema, validate the "mapping" and "default" fields
     # for each header fields
     for field in instance:
-        validate_header_extension_subdict(instance[field], log_prefix)
+        validate_header_extension_subdict(instance[field])
 
 
-def validate_extension_field(instance, log_prefix):
+def validate_extension_field(instance):
     """Define JSON schema for validating each extension fields.
 
     Args:
@@ -185,68 +193,7 @@ def validate_extension_field(instance, log_prefix):
     }
 
     validate(instance=instance, schema=schema)
-    validate_header_extension_subdict(instance, log_prefix)
-
-
-def get_azure_event_hubs_mappings(mappings, data_type, log_prefix):
-    """Read mapping json and return the dict of mappings to be applied
-    to raw_data.
-
-    Args:
-        data_type (str): Data type (alert/event) for which the mappings are t
-        o be fetched
-        mappings: Attribute mapping json string
-
-    Returns:
-        mapping delimiter, cef_version, azure_event_hubs_mappings
-    """
-    data_type_specific_mapping = mappings["taxonomy"][data_type]
-
-    if data_type == "json":
-        return (
-            mappings["delimiter"],
-            mappings["cef_version"],
-            mappings["taxonomy"],
-        )
-
-    # Validate the headers of each mapped subtype
-    for subtype, subtype_map in data_type_specific_mapping.items():
-        subtype_header = subtype_map["header"]
-        try:
-            validate_header(subtype_header, log_prefix)
-        except JsonSchemaValidationError as err:
-            raise MappingValidationError(
-                "Error occurred while validating"
-                " Microsoft Azure Event Hubs header for "
-                'type "{}" Error: {}'.format(subtype, err)
-            )
-
-    # Validate the extension for each mapped subtype
-    for subtype, subtype_map in data_type_specific_mapping.items():
-        subtype_extension = subtype_map["extension"]
-        try:
-            validate_extension(subtype_extension)
-        except JsonSchemaValidationError as err:
-            raise MappingValidationError(
-                "Error occurred while validating Microsoft Azure "
-                "Event Hubs extension for type "
-                '"{}". Error: {}'.format(subtype, err)
-            )
-
-        # Validate each extension
-        for cef_field, ext_dict in subtype_extension.items():
-            try:
-                validate_extension_field(ext_dict, log_prefix)
-            except JsonSchemaValidationError as err:
-                raise MappingValidationError(
-                    "Error occurred while validating Microsoft Azure"
-                    " Event Hubs extension field"
-                    ' "{}" for type "{}". Error: {}'.format(
-                        cef_field, subtype, err
-                    )
-                )
-
-    return mappings["delimiter"], mappings["cef_version"], mappings["taxonomy"]
+    validate_header_extension_subdict(instance)
 
 
 def extract_subtypes(mappings, data_type):
@@ -265,27 +212,124 @@ def extract_subtypes(mappings, data_type):
     return [subtype for subtype in taxonomy]
 
 
-def get_config_params(configurations):
+def validate_event_hubs_mappings(mappings, data_type):
+    """Read mapping json and validate the dict of mappings.
+
+    Args:
+        data_type (str): Data type (alert/event) for which
+        the mappings are to be fetched
+        mappings: Attribute mapping json string
+
+    Raises:
+        MappingValidationError: For in-valid mapping \
+            json for any of the data_type.
+    """
+    data_type_specific_mapping = mappings["taxonomy"][data_type]
+
+    if data_type == "json":
+        return
+
+    # Validate the headers of each mapped subtype
+    for subtype, subtype_map in data_type_specific_mapping.items():
+        subtype_header = subtype_map["header"]
+        try:
+            validate_header(subtype_header)
+        except JsonSchemaValidationError as err:
+            raise MappingValidationError(
+                'Error occurred while validating Microsoft Azure Event Hubs '
+                'header for type "{}". '
+                "Error: {}".format(subtype, err)
+            )
+
+    # Validate the extension for each mapped subtype
+    for subtype, subtype_map in data_type_specific_mapping.items():
+        subtype_extension = subtype_map["extension"]
+        try:
+            validate_extension(subtype_extension)
+        except JsonSchemaValidationError as err:
+            raise MappingValidationError(
+                'Error occurred while validating Microsoft Azure Event Hubs '
+                'extension for type "{}". '
+                "Error: {}".format(subtype, err)
+            )
+
+        # Validate each extension
+        for cef_field, ext_dict in subtype_extension.items():
+            try:
+                validate_extension_field(ext_dict)
+            except JsonSchemaValidationError as err:
+                raise MappingValidationError(
+                    'Error occurred while validating Microsoft Azure Event'
+                    ' Hubs extension field "{}" for '
+                    'type "{}". Error: {}'.format(cef_field, subtype, err)
+                )
+
+
+def get_event_hubs_mappings(mappings):
+    """Read mapping json and return the dict of mappings
+    to be applied to raw_data.
+
+    Args:
+        mappings (dict): Attribute mapping json file.
+
+    Returns:
+        mapping delimiter, cef_version, syslog_mappings
+    """
+    return (
+        mappings.get("delimiter", ""),
+        mappings.get("cef_version", ""),
+        mappings.get("taxonomy", {}),
+    )
+
+
+def get_config_params(configurations, params_to_get: List[str] = None):
     """get the reequired configuration parameters
 
     Args:
         configurations (dict): configuration parameters
+        params_to_get (List[str]): list of parameters to get
 
     Returns:
         configuration parameters
     """
-    namespace_name = configurations.get("namespace_name", "").strip()
-    port = configurations.get("port", 9093)
-    bootstrap_server = f"{namespace_name}.servicebus.windows.net:{port}"
-    connection_string = configurations.get("connection_string", "").strip()
-    event_hub_name = configurations.get("event_hub_name", "").strip()
-    log_source_identifier = configurations.get(
-        "log_source_identifier", LOG_SOURCE_IDENTIFIER
-    )
+    all_params = {
+        "namespace_name": configurations.get("namespace_name", "").strip(),
+        "port": configurations.get("port", DEFAULT_PORT),
+        "connection_string": (
+            configurations.get("connection_string", "").strip()
+        ),
+        "event_hub_name": configurations.get("event_hub_name", "").strip(),
+        "log_source_identifier": configurations.get(
+            "log_source_identifier", LOG_SOURCE_IDENTIFIER
+        ),
+        "skip_timestamp_field": configurations.get(
+            "skip_timestamp_field", "no"
+        ),
+        "skip_log_source_identifier_field": configurations.get(
+            "skip_log_source_identifier_field", "no"
+        ),
+        "batch_size": configurations.get(
+            "batch_size", DEFAULT_BATCH_SIZE
+        ),
+        "buffer_memory": configurations.get(
+            "buffer_memory", DEFAULT_BUFFER_MEMORY
+        ),
+        "max_block_time": configurations.get(
+            "max_block_time", DEFAULT_MAX_BLOCK_TIME
+        ),
+        "linger_time": configurations.get(
+            "linger_time", DEFAULT_LINGER_TIME
+        ),
+        "chunk_size": configurations.get("chunk_size", DEFAULT_CHUNK_SIZE),
+        "flush_timeout": configurations.get("flush_timeout", FLUSH_TIMEOUT),
+        "bootstrap_server": "{}.servicebus.windows.net:{}".format(
+            configurations.get("namespace_name", "").strip(),
+            configurations.get("port", DEFAULT_PORT),
+        ),
+    }
 
-    return (
-        bootstrap_server,
-        connection_string,
-        event_hub_name,
-        log_source_identifier,
-    )
+    if not params_to_get:
+        return tuple(all_params.values())
+    result = [all_params.get(param) for param in params_to_get]
+
+    return result[0] if len(result) == 1 else tuple(result)

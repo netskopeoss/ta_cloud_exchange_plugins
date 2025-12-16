@@ -33,15 +33,20 @@ Microsoft Azure Event Hubs Plugin constants.
 """
 
 PLATFORM_NAME = "Microsoft Azure Event Hubs"
+PLUGIN_VERSION = "2.0.0"
+MODULE_NAME = "CLS"
+MAXIMUM_CE_VERSION = "5.1.2"
 EVENT_HUBS_FORMATS = ["CEF"]
+
 EVENT_HUBS_SECURITY_PROTOCOL = "SASL_SSL"
 SASL_PLAIN_USERNAME = "$ConnectionString"
 SASL_MECHANISM = "PLAIN"
-MODULE_NAME = "CLS"
-PLUGIN_VERSION = "1.1.0"
-BATCH_SIZE = 1048576
+DEFAULT_BATCH_SIZE = 16  # 16KB (16*1024) (reduced from 1MB to prevent memory allocation issues) # NOQA
+DEFAULT_BUFFER_MEMORY = 64  # 64MB (64*1024*1024) (double default for better memory management) # NOQA
+DEFAULT_MAX_BLOCK_TIME = 10  # 10 seconds (10*1000 ms) (reduce from 60 seconds to prevent long blocking) # NOQA
+FLUSH_TIMEOUT = 60
 TIMEOUT = 300
-LINGER_MS = 50
+DEFAULT_LINGER_TIME = 1000  # 1 second (1*1000 ms) (increase for better batching) # NOQA
 TIMEOUT_MS = 60000
 ACKS = "all"
 COMPRESSION_TYPE = "gzip"
@@ -50,7 +55,8 @@ SSL_CERTFILE = "/etc/ssl/certs/ca-certificates.crt"
 CLIENT_ID = "netskope-ce"
 LOG_SOURCE_IDENTIFIER = "netskopece"
 VALIDATION_RETRIES = 0
-
+DEFAULT_CHUNK_SIZE = 5000  # Process messages in chunks to prevent memory exhaustion # NOQA
+DEFAULT_PORT = 9093
 SEVERITY_LOW = "Low"
 SEVERITY_MEDIUM = "Medium"
 SEVERITY_HIGH = "High"

@@ -195,7 +195,7 @@ class CEFGenerator(object):
         """
         for configured_header in list(headers.keys()):
             if configured_header not in possible_headers:
-                self.logger.warn(
+                self.logger.debug(
                     f"{self.log_prefix}: [{data_type}][{subtype}] "
                     "Found invalid header configured in Microsoft Azure"
                     f' Event Hubs mapping file: "{configured_header}". Header '
@@ -239,7 +239,7 @@ class CEFGenerator(object):
                     value, name
                 )
             except KeyError:
-                self.logger.warn(
+                self.logger.debug(
                     message=(
                         "{}: [{}][{}] An error occurred while generating CEF "
                         'data for field: "{}". Could not find the field in the'
@@ -251,7 +251,7 @@ class CEFGenerator(object):
                 )
                 continue
             except Exception as err:
-                self.logger.warn(
+                self.logger.debug(
                     message=(
                         "{}: [{}][{}] An error occurred while generating CEF"
                         ' data for field: "{}". Error: {}. Field will be '
@@ -276,7 +276,7 @@ class CEFGenerator(object):
                     sanitized_value
                 )
             except KeyError:
-                self.logger.warn(
+                self.logger.debug(
                     message=(
                         "{}: [{}][{}] An error occurred while generating CEF "
                         'data for field: "{}". Could not find the field in the'
@@ -287,7 +287,7 @@ class CEFGenerator(object):
                     details=str(traceback.format_exc()),
                 )
             except Exception as err:
-                self.logger.warn(
+                self.logger.debug(
                     message=(
                         "{}: [{}][{}] An error occurred while generating CEF "
                         'data for field: "{}". Error: {}. Field will be '
@@ -339,7 +339,7 @@ class CEFGenerator(object):
                     )
 
                 except Exception as err:
-                    self.logger.warn(
+                    self.logger.debug(
                         message=(
                             "{}: [{}][{}] An error occurred while generating "
                             'CEF data for header field: "{}". Error: {}. '

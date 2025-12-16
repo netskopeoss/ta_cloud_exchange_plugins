@@ -34,6 +34,6 @@ CRE Microsoft Defender for Endpoint Plugin constants.
 DEFAULT_BASE_URL = "https://api.securitycenter.microsoft.com"
 PLATFORM_NAME = "Microsoft Defender for Endpoint"
 MODULE_NAME = "CRE"
-PLUGIN_VERSION = "1.0.0"
+PLUGIN_VERSION = "1.0.1"
 PAGE_RECORD_SCORE = "10000"
 MAX_API_CALLS = 4

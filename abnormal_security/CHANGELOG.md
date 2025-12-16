@@ -1,3 +1,11 @@
+# 1.1.0
+## Added
+- Added support for fetching IoCs of type IPv6.
+- Added API URL for FedRAMP GovCloud instances.
+## Fixed
+- Fixed sub_checkpoint logic.
+- Fixed IoC fetched and skipped count error in log messages.
+
 # 1.0.0
 ## Added
 - Initial release.

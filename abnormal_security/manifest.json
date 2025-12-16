@@ -1,8 +1,9 @@
 {
     "name": "Abnormal Security",
     "id": "abnormal_security",
-    "version": "1.0.0",
-    "description": "This plugin is used to fetch the indicators of type SHA256, MD5, URL, Domain and IPv4 from the Abnormal Security platform. This plugin does not support sharing of indicators to Abnormal Security platform.",
+    "version": "1.1.0",
+    "description": "This plugin is used to pull IOCs of type SHA256, MD5, URL, Domain, IPv4 and IPv6 from Threat Log page of Abnormal Security platform. This plugin supports retraction of IOCs pulled from Abnormal Security platform. This plugin does not support sharing of indicators to Abnormal Security platform.",
+    "minimum_version": "5.1.0",
     "patch_supported": false,
     "push_supported": false,
     "fetch_retraction_info": true,
@@ -20,6 +21,10 @@
                 {
                     "key": "EU Production Server (eu.rest.abnormalsecurity.com)",
                     "value": "https://eu.rest.abnormalsecurity.com/v1"
+                },
+                {
+                    "key": "FedRAMP GovCloud (rest.abnormalsecurity.us )",
+                    "value": "https://rest.abnormalsecurity.us"
                 }
             ],
             "mandatory": true,
@@ -58,6 +63,10 @@
                 {
                     "key": "IPv4",
                     "value": "ipv4"
+                },
+                {
+                    "key": "IPv6",
+                    "value": "ipv6"
                 }
             ],
             "default": [
@@ -65,17 +74,18 @@
                 "md5",
                 "url",
                 "domain",
-                "ipv4"
+                "ipv4",
+                "ipv6"
             ],
             "mandatory": true,
-            "description": "Type of Threat data to pull. Allowed values are SHA256, MD5, URL, Domain and IPv4."
+            "description": "Type of Threat data to pull. Allowed values are SHA256, MD5, URL, Domain, IPv4 and IPv6."
         },
         {
             "label": "Retraction Interval (in days)",
             "key": "retraction_interval",
             "type": "number",
             "mandatory": false,
-            "description": "Specify the number of days for which IoC retraction should be run for Abnormal Security indicators. Note: This parameter is applicable only for Netskope CE version 5.1.0 or later, and if \"IoC(s) Retraction\" is enabled in Threat Exchange Settings."
+            "description": "Specify the number of days for which IoC retraction should be run for Abnormal Security indicators. Note: This parameter is applicable only for Netskope CE version 5.1.0 or later, and if \"IoC(s) Retraction\" is enabled in Threat Exchange Settings. Value must be between 1 and 2^62."
         },
         {
             "label": "Enable Tagging",
@@ -101,7 +111,7 @@
             "type": "number",
             "mandatory": true,
             "default": 7,
-            "description": "Number of days to pull the data for the initial run."
+            "description": "Number of days to pull the data for the initial run. Value must be between 0 and 2^62."
         }
     ]
 }

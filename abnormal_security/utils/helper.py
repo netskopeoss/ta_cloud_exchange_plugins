@@ -33,19 +33,18 @@ CTE Abnormal Security Plugin helper module.
 """
 
 import json
-import json.tool
 import time
 import traceback
-from typing import Dict, Tuple, Union
+from typing import Dict, List, Tuple, Union
 
 import requests
 from netskope.common.utils import add_user_agent
 
 from .constants import (
-    MODULE_NAME,
-    PLATFORM_NAME,
     DEFAULT_SLEEP_TIME,
     MAX_API_CALLS,
+    MODULE_NAME,
+    PLATFORM_NAME,
     RETRACTION,
 )
 
@@ -138,6 +137,8 @@ class AbnormalSecurityPluginHelper(object):
             Response JSON: Returns response json.
         """
         try:
+            if is_retraction and RETRACTION not in self.log_prefix:
+                self.log_prefix = self.log_prefix + f" [{RETRACTION}]"
             headers = self._add_user_agent(headers)
 
             debug_log_msg = (
@@ -148,8 +149,6 @@ class AbnormalSecurityPluginHelper(object):
                 debug_log_msg += f", params: {params}."
             self.logger.debug(debug_log_msg)
 
-            if is_retraction and RETRACTION not in self.log_prefix:
-                self.log_prefix = self.log_prefix + f" [{RETRACTION}]"
             for retry_counter in range(MAX_API_CALLS):
                 response = requests.request(
                     url=url,
@@ -322,6 +321,25 @@ class AbnormalSecurityPluginHelper(object):
             401: "Received exit code 401 (Unauthorized access)",
             404: "Received exit code 404 (Resource not found)",
         }
+        resolution_dict = {
+            400: (
+                "Verify the Base URL provided in the configuration"
+                " parameters."
+            ),
+            401: (
+                "Verify API Token provided in the configuration parameters."
+            ),
+            403: (
+                "Verify Base URL and API Token provided in the configuration "
+                "parameters and make sure your Cloud Exchange's public IP "
+                "address is added to the IP Safelist in Abnormal Security's"
+                " Rest API Integration."
+            ),
+            404: (
+                "Verify the Base URL provided in the configuration"
+                " parameters."
+            ),
+        }
         if is_validation:
             error_dict = {
                 400: (
@@ -331,12 +349,11 @@ class AbnormalSecurityPluginHelper(object):
                 ),
                 401: (
                     "Received exit code 401 (Unauthorized), Verify "
-                    "API Token provided in the "
-                    "configuration parameters."
+                    "API Token provided in the configuration parameters."
                 ),
                 403: (
-                    "Received exit code 403 (Forbidden), Verify API Token "
-                    "provided in the configuration parameters."
+                    "Received exit code 403 (Forbidden), Verify Base URL and"
+                    " API Token provided in the configuration parameters."
                 ),
                 404: (
                     "Received exit code 404 (Resource not found), Verify "
@@ -344,17 +361,18 @@ class AbnormalSecurityPluginHelper(object):
                     "parameters."
                 ),
             }
-        if response.status_code in [200, 201, 202]:
+        if status_code in [200, 201, 202]:
             return self._parse_response(response, logger_msg, is_validation)
-        if response.status_code == 204:
+        if status_code == 204:
             return {}
 
-        if error_msg := error_dict.get(response.status_code):
+        if error_msg := error_dict.get(status_code):
             if is_validation:
                 log_error_msg = validation_error_msg + error_msg
                 self.logger.error(
                     message=f"{self.log_prefix}: {log_error_msg}",
                     details=f"API response: {response.text}",
+                    resolution=resolution_dict.get(status_code),
                 )
                 raise AbnormalSecurityPluginException(log_error_msg)
             else:
@@ -431,20 +449,29 @@ class AbnormalSecurityPluginHelper(object):
                 )
             raise AbnormalSecurityPluginException(err_msg)
 
-    def get_configuration_data(self, configuration: Dict) -> Tuple:
-        """Get Abnormal Security API Base URL and API Key from the
+    def get_configuration_data(
+        self, configuration: Dict
+    ) -> Tuple[str, str, List[str], str, int, int]:
+        """Get Abnormal Security API Base URL, API Key, IoC Types,
+        Enable Tagging, Retraction Interval, Initial Pull Range from the
         configuration.
 
         Args:
             configuration (Dict): Configuration dictionary.
 
         Returns:
-            Tuple: Tuple containing Base URL and API Key.
+            Tuple[str, str, List[str], str, int, int]: Tuple of Base URL,
+                API Key, IoC Types, Enable Tagging, Retraction Interval,
+                Initial Pull Range.
         """
 
         return (
             configuration.get("base_url", "").strip().strip("/"),
             configuration.get("api_key", ""),
+            configuration.get("type", ""),
+            configuration.get("enable_tagging", ""),
+            configuration.get("retraction_interval", ""),
+            configuration.get("initial_pull_range", ""),
         )
 
     def get_auth_headers(self, api_key: str) -> Dict:

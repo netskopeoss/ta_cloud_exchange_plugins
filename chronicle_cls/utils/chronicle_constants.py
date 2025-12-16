@@ -34,7 +34,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 MODULE_NAME = "CLS"
 PLUGIN_NAME = "Google Chronicle"
-PLUGIN_VERSION = "2.2.0"
+PLUGIN_VERSION = "3.0.0"
+MAXIMUM_CORE_VERSION = "5.1.2"
 
 DEFAULT_URL = {
     "usa": "https://malachiteingestion-pa.googleapis.com",
@@ -94,8 +95,12 @@ DUMMY_DATA = [
 LOG_TYPE = "NETSKOPE_ALERT_V2"
 DUMMY_DATA_JSON = [
     {
-        "log_text": "26-Feb-2019 13:35:02.187 client 10.120.20.32#4238: query: altostrat.com IN A + (203.0.113.102)",
+        "log_text": (
+            "26-Feb-2019 13:35:02.187 client 10.120.20.32#4238: "
+            "query: altostrat.com IN A + (203.0.113.102)"
+        ),
         "ts_epoch_microseconds": 1551188102187000,
     }
 ]
 LOG_SOURCE_IDENTIFIER = "netskopece"
+BATCH_SIZE = 800000

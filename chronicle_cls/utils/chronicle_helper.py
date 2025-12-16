@@ -39,6 +39,7 @@ from jsonschema import validate
 from .chronicle_exceptions import (
     MappingValidationError,
 )
+from .chronicle_constants import BATCH_SIZE
 from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
 
 
@@ -54,7 +55,8 @@ def validate_extension(instance):
 
 
 def validate_header_extension_subdict(instance):
-    """Validate sub dict of header and extension having fields "mapping" and "default".
+    """Validate sub dict of header and extension \
+        having fields "mapping" and "default".
 
     Args:
         instance: JSON instance to be validated
@@ -103,7 +105,7 @@ def validate_header(instance):
     }
 
     one_of_sub_schema = [
-        # both empty are not allowed. So schema will be: one of (one of (both), both)
+        # both empty are not allowed. So schema will be: one of (one of (both), both)  # noqa
         {
             "oneOf": [
                 {"required": ["mapping_field"]},
@@ -138,7 +140,7 @@ def validate_header(instance):
 
     validate(instance=instance, schema=schema)
 
-    # After validating schema, validate the "mapping" and "default" fields for each header fields
+    # After validating schema, validate the "mapping" and "default" fields for each header fields  # noqa
     for field in instance:
         validate_header_extension_subdict(instance[field])
 
@@ -159,7 +161,7 @@ def validate_extension_field(instance):
         },
         "minProperties": 0,
         "maxProperties": 4,
-        "oneOf": [  # both empty are not allowed. So schema will be: one of (one of (both), both)
+        "oneOf": [  # both empty are not allowed. So schema will be: one of (one of (both), both)  # noqa
             {
                 "oneOf": [
                     {"required": ["mapping_field"]},
@@ -179,20 +181,22 @@ def validate_extension_field(instance):
     validate_header_extension_subdict(instance)
 
 
-def get_chronicle_mappings(mappings, data_type):
-    """Read mapping json and return the dict of mappings to be applied to raw_data.
+def validate_chronicle_mappings(mappings, data_type):
+    """Read mapping json and validate the dict of mappings.
 
     Args:
-        data_type (str): Data type (alert/event) for which the mappings are to be fetched
+        data_type (str): Data type (alert/event) for which
+        the mappings are to be fetched
         mappings: Attribute mapping json string
 
-    Returns:
-        mapping delimiter, cef_version, chronicle_mappings
+    Raises:
+        MappingValidationError: For in-valid mapping \
+            json for any of the data_type.
     """
     data_type_specific_mapping = mappings["taxonomy"][data_type]
 
     if data_type == "json":
-        return mappings["udm_version"], mappings["taxonomy"]
+        return
 
     # Validate the headers of each mapped subtype
     for subtype, subtype_map in data_type_specific_mapping.items():
@@ -201,7 +205,8 @@ def get_chronicle_mappings(mappings, data_type):
             validate_header(subtype_header)
         except JsonSchemaValidationError as err:
             raise MappingValidationError(
-                'Error occurred while validating chronicle header for type "{}". '
+                'Error occurred while validating chronicle '
+                'header for type "{}". '
                 "Error: {}".format(subtype, err)
             )
 
@@ -212,7 +217,8 @@ def get_chronicle_mappings(mappings, data_type):
             validate_extension(subtype_extension)
         except JsonSchemaValidationError as err:
             raise MappingValidationError(
-                'Error occurred while validating chronicle extension for type "{}". '
+                'Error occurred while validating '
+                'chronicle extension for type "{}". '
                 "Error: {}".format(subtype, err)
             )
 
@@ -222,18 +228,35 @@ def get_chronicle_mappings(mappings, data_type):
                 validate_extension_field(ext_dict)
             except JsonSchemaValidationError as err:
                 raise MappingValidationError(
-                    'Error occurred while validating chronicle extension field "{}" for '
+                    'Error occurred while validating chronicle '
+                    'extension field "{}" for '
                     'type "{}". Error: {}'.format(cef_field, subtype, err)
                 )
 
-    return mappings["udm_version"], mappings["taxonomy"]
+
+def get_chronicle_mappings(mappings):
+    """Read mapping json and return the dict of mappings
+    to be applied to raw_data.
+
+    Args:
+        mappings (dict): Attribute mapping json file.
+
+    Returns:
+        cef_version, chronicle_mappings
+    """
+    return (
+        mappings.get("udm_version", ""),
+        mappings.get("taxonomy", {})
+    )
 
 
 def extract_subtypes(mappings, data_type):
-    """Extract subtypes of given data types. e.g: for data type "alert", possible subtypes are "dlp", "policy" etc.
+    """Extract subtypes of given data types. \
+        e.g: for data type "alert", possible subtypes are "dlp", "policy" etc.
 
     Args:
-        data_type (str): Data type (alert/event) for which the mappings are to be fetched
+        data_type (str): Data type (alert/event) for which \
+            the mappings are to be fetched
         mappings: Attribute mapping json string
 
     Returns:
@@ -251,7 +274,8 @@ def split_into_size(data_list):
     - data_list: The list of data to be split.
 
     Returns:
-    A list of parts, each with a total size approximately equal to the target size.
+    A list of parts, each with a total size \
+        approximately equal to the target size.
     """
     result = []
     current_part = []
@@ -259,10 +283,10 @@ def split_into_size(data_list):
 
     for item in data_list:
         item_size_b = sys.getsizeof(f"{item}")
-        if current_size_b + item_size_b <= 800000:
+        if current_size_b + item_size_b <= BATCH_SIZE:
             current_part.append(item)
             current_size_b += item_size_b
-        else:   
+        else:
             result.append(current_part)
             current_part = [item]
             current_size_b = item_size_b
@@ -271,3 +295,31 @@ def split_into_size(data_list):
         result.append(current_part)
 
     return result
+
+
+def patch_logger_methods(logger, resolution_support):
+    """Monkey patch logger methods to handle \
+        resolution parameter compatibility.
+
+    Args:
+        logger: Logger object to be patched.
+        resolution_support: Boolean indicating whether \
+            resolution parameter is supported.
+    """
+    # Store original methods
+    original_error = logger.error
+
+    def patched_error(
+        message=None, details=None, resolution=None, **kwargs
+    ):
+        """Patched error method that handles resolution compatibility."""
+        log_kwargs = {"message": message}
+        if details:
+            log_kwargs["details"] = details
+        if resolution and resolution_support:
+            log_kwargs["resolution"] = resolution
+        log_kwargs.update(kwargs)
+        return original_error(**log_kwargs)
+
+    # Replace logger methods with patched versions
+    return patched_error

@@ -144,7 +144,8 @@ class ChronicleValidator(object):
                     except JsonSchemaValidationError as err:
                         err_msg = (
                             "Validation error occurred. Error: "
-                            'while validating JSON schema for type "{}" and subtype "{}": '
+                            'while validating JSON schema for type "{}" '
+                            'and subtype "{}": '
                             "{}".format(data_type, subtype, err)
                         )
                         self.logger.error(
@@ -154,14 +155,15 @@ class ChronicleValidator(object):
                         return False
             return True
 
-    def validate_chronicle_map(self, mappings):
+    def validate_chronicle_mapping_format(self, mappings):
         """Validate field JSON mappings.
 
         Args:
             mappings: the JSON string to be validated
 
         Returns:
-            Whether the provided value is valid or not. True in case of valid value, False otherwise
+            Whether the provided value is valid or not. \
+                True in case of valid value, False otherwise
         """
         if mappings is None:
             return False
@@ -186,7 +188,8 @@ class ChronicleValidator(object):
             valid_extensions: the CSV string to be validated
 
         Returns:
-            Whether the provided value is valid or not. True in case of valid value, False otherwise
+            Whether the provided value is valid or not. \
+                True in case of valid value, False otherwise
         """
         try:
             csviter = csv.DictReader(

@@ -1,3 +1,11 @@
+# 3.0.0
+## Added
+- Added support for invoking mapping validation separately.
+- Added resolution for error logs starting from CE v6.0.0.
+## Changed
+- Enhanced the efficiency of database interactions.
+- Changed error logs to debug in UDM generator to prevent log pileup in CE.
+
 # 2.2.0
 ## Added
 - Added support for raw JSON data.

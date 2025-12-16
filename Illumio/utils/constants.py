@@ -34,6 +34,6 @@ CTE Illumio plugin constants.
 
 MODULE_NAME = "CTE"
 PLUGIN_NAME = "Illumio"
-PLUGIN_VERSION = "1.1.0"
+PLUGIN_VERSION = "1.1.1"
 ILO_ORANGE_HEX_CODE = "#f96425"
 RETRACTION_IOC_TAG = "IoC(s) Retraction"

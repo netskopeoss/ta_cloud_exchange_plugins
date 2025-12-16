@@ -36,7 +36,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 import traceback
 import requests
 import json
-
+from packaging import version
 from google.oauth2 import service_account
 from google.auth.transport import requests as gRequest
 
@@ -46,8 +46,9 @@ from .chronicle_constants import (
     DEFAULT_URL,
     LOG_SOURCE_IDENTIFIER,
     LOG_TYPE,
+    MAXIMUM_CORE_VERSION
 )
-
+from netskope.common.api import __version__ as CE_VERSION
 from .chronicle_exceptions import GoogleChroniclePluginException
 
 
@@ -85,7 +86,15 @@ class ChronicleClient:
                 BASE_URL = self.configuration.get("custom_region", "")
             else:
                 BASE_URL = DEFAULT_URL[self.configuration.get("region", "usa")]
-            if not self.configuration.get("transformData", True):
+
+            transform_data_json = False
+            if version.parse(CE_VERSION) <= version.parse(MAXIMUM_CORE_VERSION):
+                if not self.configuration.get("transformData", True):
+                    transform_data_json = True
+            else:
+                if self.configuration.get("transformData", "json") == "json":
+                    transform_data_json = True
+            if transform_data_json:
                 url = f"{BASE_URL}/v2/unstructuredlogentries:batchCreate"
                 payload = {
                     "customer_id": self.configuration["customer_id"].strip(),
@@ -125,7 +134,8 @@ class ChronicleClient:
             if status in ["INVALID_ARGUMENT"]:
                 raise Exception(f"Invalid UDM event provided. {message}")
             raise Exception(
-                f"status_code: {status_code}, message: {message}, status: {status}"
+                f"status_code: {status_code}, message: {message}, "
+                f"status: {status}"
             )
 
         except requests.exceptions.HTTPError as err:
@@ -139,7 +149,8 @@ class ChronicleClient:
             err_msg = (
                 f"Unable to establish connection with {self.plugin_name} "
                 "while ingesting data. "
-                "Check Region or Custom URL provided in configuration parameter."
+                "Check Region or Custom URL provided "
+                "in configuration parameter."
             )
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {err}.",

@@ -1,9 +1,19 @@
 {
   "name": "Google Chronicle",
   "id": "chronicle",
-  "version": "2.2.0",
+  "version": "3.0.0",
   "mapping": "Chronicle Default Mappings",
   "module": "CLS",
+  "format_options": [
+    {
+        "label": "UDM",
+        "value": "udm"
+    },
+    {
+        "label": "JSON",
+        "value": "json"
+    }
+  ],
   "description": "This plugin is used to deliver alerts (DLP, Malware, Policy, Compromised Credential, Malsite, Quarantine, Remediation, Security Assessment, Watchlist, UBA, CTEP, Anomaly, Legal Hold) and events (Page, Application, Audit, Infrastructure, Network, Incident) data to Google Chronicle platform. The plugin supports sharing of UDM and JSON formatted data. The required API keys are linked to customers and are provided by your Google Chronicle representative.",
   "types": [
     "events",

@@ -101,7 +101,12 @@ class BitsightPluginHelper(object):
             self.plugin_name.lower().replace(" ", "-"),
             self.plugin_version,
         )
-        headers.update({"User-Agent": user_agent})
+        headers.update(
+            {
+                "X-Bitsight-CALLING-PLATFORM-VERSION": user_agent,
+                "User-Agent": user_agent,
+            }
+        )
         return headers
 
     def api_helper(

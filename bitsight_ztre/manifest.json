@@ -1,7 +1,7 @@
 {
   "name": "Bitsight",
   "id": "bitsight_ztre",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "module": "CRE",
   "minimum_version": "5.1.0",
   "netskope": false,

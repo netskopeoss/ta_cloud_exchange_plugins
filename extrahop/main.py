@@ -609,6 +609,8 @@ class ExtraHopPlugin(PluginBase):
         total_ioc_fetched = 0
         retraction_interval = int(retraction_interval)
         min_risk_score = self.configuration.get("min_risk_score", 0)
+        if not min_risk_score:
+            min_risk_score = 0
         pull_start_time = datetime.now() - timedelta(days=retraction_interval)
         epoch_timestamp_milliseconds = int(pull_start_time.timestamp() * 1000)
         pulled_indicators = set()
@@ -639,8 +641,8 @@ class ExtraHopPlugin(PluginBase):
                 raise ExtraHopPluginException(err_msg)
             headers = {"Authorization": f"Bearer {auth_token}"}
             self.logger.info(
-                f"{self.log_prefix}: Pulling modified indicators from {PLATFORM_NAME}"
-                f"since {pull_start_time}"
+                f"{self.log_prefix}: Pulling modified indicators from"
+                f" {PLATFORM_NAME} since {pull_start_time}"
             )
             while True:
                 retraction_pull_resp = self.extrahop_helper.api_helper(

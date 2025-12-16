@@ -27,7 +27,7 @@ DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
 SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
 CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-OF THIS SOFTWARE, EVEN IF IDVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 CRE Microsoft Defender for Endpoint Plugin.
 """
@@ -38,7 +38,7 @@ import jwt
 import traceback
 import requests
 from typing import List
-
+from netskope.integrations.crev2.utils import get_latest_values
 from netskope.integrations.crev2.models import (
     Action,
     ActionWithoutParams
@@ -167,7 +167,7 @@ class MicrosoftDefenderEndpointPlugin(PluginBase):
             self.logger.error(
                 f"{self.log_prefix}: {raise_msg}"
             )
-            return
+            raise MicrosoftDefenderEndpointPluginException(raise_msg)
 
         self.defender_endpoint_helper.handle_error(
             response, logger_msg
@@ -429,27 +429,37 @@ class MicrosoftDefenderEndpointPlugin(PluginBase):
             None
         """
         action_label = action.label
-        action_parameters = action.parameters
+        action_parameters = get_latest_values(action.parameters)
         if action.value == "generate":
             return
 
-        machine_id = action_parameters.get("machine_id", "").strip()
+        machine_id = action_parameters.get("machine_id", "")
+        if not isinstance(machine_id, str):
+            err_msg = (
+                "Invalid Device ID/Computer DNS Name found in the action parameters. "
+                f"Hence, skipping execution of '{action_label}' action."
+            )
+            self.logger.error(f"{self.log_prefix}: {err_msg}")
+            raise MicrosoftDefenderEndpointPluginException(err_msg)
+        machine_id = machine_id.strip()
         if not machine_id:
             err_msg = (
                 "Device ID/Computer DNS Name not found in the action parameters. "
                 f"Hence, skipping execution of '{action_label}' action."
             )
             self.logger.error(f"{self.log_prefix}: {err_msg}")
-            return
-        elif not isinstance(machine_id, str):
+            raise MicrosoftDefenderEndpointPluginException(err_msg)
+
+        comment = action_parameters.get("comment", "")
+        if not isinstance(comment, str):
             err_msg = (
-                "Invalid Device ID/Computer DNS Name found in the action parameters. "
-                f"Hence, skipping execution of '{action_label}' action."
+                "Invalid comment found in the action parameters. "
+                f"Hence, skipping execution of '{action_label}' "
+                f"for device '{machine_id}'. Comment should be a string."
             )
             self.logger.error(f"{self.log_prefix}: {err_msg}")
-            return
-
-        comment = action_parameters.get("comment", "").strip()
+            raise MicrosoftDefenderEndpointPluginException(err_msg)
+        comment = comment.strip()
         if not comment:
             err_msg = (
                 "Comment not found in the action parameters. "
@@ -457,15 +467,7 @@ class MicrosoftDefenderEndpointPlugin(PluginBase):
                 f"for device '{machine_id}'."
             )
             self.logger.error(f"{self.log_prefix}: {err_msg}")
-            return
-        elif not isinstance(comment, str):
-            err_msg = (
-                "Invalid comment found in the action parameters. "
-                f"Hence, skipping execution of '{action_label}' "
-                f"for device '{machine_id}'."
-            )
-            self.logger.error(f"{self.log_prefix}: {err_msg}")
-            return
+            raise MicrosoftDefenderEndpointPluginException(err_msg)
         elif len(comment) > 4000:
             err_msg = (
                 "Comment is too long. "
@@ -474,13 +476,12 @@ class MicrosoftDefenderEndpointPlugin(PluginBase):
                 "Comment length should be less than 4000 characters."
             )
             self.logger.error(f"{self.log_prefix}: {err_msg}")
-            return
+            raise MicrosoftDefenderEndpointPluginException(err_msg)
 
         self.logger.debug(
             f"{self.log_prefix}: Executing '{action_label}' action "
             f"for device '{machine_id}'."
         )
-
 
         logger_msg = f"executing '{action_label}' action"
         headers = self.defender_endpoint_helper.get_auth_json(
@@ -682,7 +683,7 @@ class MicrosoftDefenderEndpointPlugin(PluginBase):
             if action_value == "isolate_machine":
                 if "$" in action_params.get("isolation_type", ""):
                     err_msg = (
-                        "Isolation Type contains the Business Rule Record Field."
+                        "Isolation Type contains the Source Field."
                         " Please select Isolation Type from Static Field dropdown only."
                     )
                     self.logger.error(f"{self.log_prefix}: {err_msg}")
@@ -705,7 +706,7 @@ class MicrosoftDefenderEndpointPlugin(PluginBase):
             if action_value == "run_antivirus_scan":
                 if "$" in action_params.get("scan_type", ""):
                     err_msg = (
-                        "Scan Type contains the Business Rule Record Field."
+                        "Scan Type contains the Source Field."
                         " Please select Scan Type from Static Field dropdown only."
                     )
                     self.logger.error(f"{self.log_prefix}: {err_msg}")
@@ -1042,6 +1043,7 @@ class MicrosoftDefenderEndpointPlugin(PluginBase):
         total_records = []
         page_count = 1
         skip_count = 0
+        skip_records_count = 0
         entity_name = entity.lower()
 
         headers = self.defender_endpoint_helper.get_auth_json(
@@ -1086,16 +1088,32 @@ class MicrosoftDefenderEndpointPlugin(PluginBase):
                             }
                             total_records.append(currRecord)
                         elif entity == "Users":
-                            device_id = each_user.get("computerDnsName", "")
-                            currRecord = self._fetch_users(device_id, base_url, headers)
-                            total_records.extend(currRecord)
+                            device_id = (
+                                each_user.get("computerDnsName", "") or
+                                each_user.get("id", "")
+                            )
+                            if device_id:
+                                currRecord = self._fetch_users(
+                                    device_id,
+                                    base_url,
+                                    headers
+                                )
+                                total_records.extend(currRecord)
+                            else:
+                                skip_records_count += 1
                     except Exception as err:
+                        device_id = each_user.get("id", "Device ID Not Found.")
+                        error_msg = (
+                            f"{self.log_prefix}: Skip fetching device with "
+                            f"id {device_id}."
+                        )
+                        if entity == "Users":
+                            error_msg = (
+                                f"{self.log_prefix}: Skip fetching user(s) "
+                                f"from device with id {device_id}."
+                            )
                         self.logger.error(
-                            message="{}: Skipping {} with id {}.".format(
-                                self.log_prefix,
-                                entity[:-1],
-                                each_user.get("id", "Device ID Not Found."),
-                            ),
+                            message=error_msg,
                             details="Error Details: {}. \nRecord Data: {}".format(
                                 err, each_user
                             ),
@@ -1128,6 +1146,12 @@ class MicrosoftDefenderEndpointPlugin(PluginBase):
                     details=str(traceback.format_exc()),
                 )
                 raise MicrosoftDefenderEndpointPluginException(err_msg)
+        if skip_records_count > 0:
+            self.logger.info(
+                f"{self.log_prefix}: Skipped fetching {entity_name} "
+                f"from {skip_records_count} device(s) as Computer Name "
+                f"or Device ID is not available."
+            )
         self.logger.info(
             f"{self.log_prefix}: Successfully fetched {len(total_records)}"
             f" {entity_name} from {PLATFORM_NAME} platform."
@@ -1256,10 +1280,10 @@ class MicrosoftDefenderEndpointPlugin(PluginBase):
                         record.pop(k)
             except Exception as error:
                 self.logger.error(
-                    message={
-                        "{}: Error occurred while updating record"
-                        " for device {}.".format(self.log_prefix, record["computerDnsName"])
-                    },
+                    message=(
+                        f"{self.log_prefix}: Error occurred while updating record"
+                        f" for device {str(record['Computer Name'])}."
+                    ),
                     details=f"Error details: {error}",
                 )
         self.logger.info(

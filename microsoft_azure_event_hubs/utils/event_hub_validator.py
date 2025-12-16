@@ -37,6 +37,9 @@ import csv
 import traceback
 from jsonschema import validate
 from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
+from netskope.common.api import __version__ as CE_VERSION
+from packaging import version
+from .event_hub_constants import MAXIMUM_CE_VERSION
 
 
 class MicrosoftAzureEventHubsValidator(object):
@@ -44,35 +47,35 @@ class MicrosoftAzureEventHubsValidator(object):
 
     def __init__(self, logger, log_prefix):
         """Initialize."""
-        super().__init__()
         self.logger = logger
         self.log_prefix = log_prefix
+        self.resolution_support = version.parse(CE_VERSION) > version.parse(
+            MAXIMUM_CE_VERSION
+        )
+        self.is_ce_version_greater_than_512 = self.resolution_support
+        # Patch logger methods to handle resolution parameter compatibility
+        self._patch_logger_methods()
 
-    def validate_event_hubs_port(self, event_hubs_port):
-        """Validate event hubs port.
+    def _patch_logger_methods(self):
+        """patch logger methods to handle resolution parameter
+        compatibility."""
+        # Store original methods
+        original_error = self.logger.error
 
-        Args:
-            event_hubs_port: The event hubs port to be validated
+        def patched_error(
+            message=None, details=None, resolution=None, **kwargs
+        ):
+            """Patched error method that handles resolution compatibility."""
+            log_kwargs = {"message": message}
+            if details:
+                log_kwargs["details"] = details
+            if resolution and self.resolution_support:
+                log_kwargs["resolution"] = resolution
+            log_kwargs.update(kwargs)
+            return original_error(**log_kwargs)
 
-        Returns:
-            Whether the provided value is valid or not.
-            True in case of valid value, False otherwise
-        """
-        if event_hubs_port or event_hubs_port == 0:
-            try:
-                event_hubs_port = int(event_hubs_port)
-                if not (1 <= event_hubs_port <= 65535):
-                    return False
-                return True
-            except ValueError:
-                err_msg = "Validation error occurred."
-                self.logger.error(
-                    message=f"{self.log_prefix}: {err_msg}",
-                    details=str(traceback.format_exc()),
-                )
-                return False
-        else:
-            return False
+        # Replace logger methods with patched versions
+        self.logger.error = patched_error
 
     def validate_taxonomy(self, instance):
         """Validate the schema of given taxonomy JSON.
@@ -182,7 +185,7 @@ class MicrosoftAzureEventHubsValidator(object):
                         return False
         return True
 
-    def validate_event_hubs_map(self, mappings):
+    def validate_event_hubs_mapping_format(self, mappings):
         """Validate field JSON mappings.
 
         Args:

@@ -32,16 +32,16 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 Microsoft Azure Event Hubs Plugin.
 """
 
+import os
+import sys
 import json
 import traceback
 import time
-from typing import Dict, List
-
+from typing import List, Dict, Union, Callable, Tuple
 from jsonpath import jsonpath
+from packaging import version
 
-import os
-import sys
-kafka_path = os.path.join(os.path.dirname(__file__), 'lib')
+kafka_path = os.path.join(os.path.dirname(__file__), "lib")
 if kafka_path not in sys.path:
     sys.path.insert(0, kafka_path)
 
@@ -73,14 +73,12 @@ from .utils.event_hub_constants import (
     TIMEOUT,
     PLATFORM_NAME,
     PLUGIN_VERSION,
-    BATCH_SIZE,
     RETRIES,
     TIMEOUT_MS,
     SASL_MECHANISM,
     SASL_PLAIN_USERNAME,
-    LINGER_MS,
     VALIDATION_RETRIES,
-    LOG_SOURCE_IDENTIFIER,
+    FLUSH_TIMEOUT,
 )
 from .utils.event_hub_exceptions import (
     MappingValidationError,
@@ -89,8 +87,9 @@ from .utils.event_hub_exceptions import (
     MicrosoftAzureEventHubsPluginError,
 )
 from .utils.event_hub_helper import (
-    get_azure_event_hubs_mappings,
     get_config_params,
+    validate_event_hubs_mappings,
+    get_event_hubs_mappings,
 )
 from .utils.event_hub_validator import MicrosoftAzureEventHubsValidator
 
@@ -111,7 +110,15 @@ class MicrosoftAzureEventHubsPlugin(PluginBase):
             **kwargs,
         )
         self.plugin_name, self.plugin_version = self._get_plugin_info()
-        self.log_prefix = f"{MODULE_NAME} {self.plugin_name} [{name}]"
+        self.log_prefix = f"{MODULE_NAME} {self.plugin_name}"
+        if name:
+            self.log_prefix = f"{self.log_prefix} [{name}]"
+        self.microsoft_azure_event_hubs_validator = (
+            MicrosoftAzureEventHubsValidator(self.logger, self.log_prefix)
+        )
+        self.is_ce_version_greater_than_512 = (
+            self.microsoft_azure_event_hubs_validator.is_ce_version_greater_than_512  # noqa: E501
+        )
 
     def _get_plugin_info(self) -> tuple:
         """Get plugin name and version from manifest.
@@ -133,7 +140,7 @@ class MicrosoftAzureEventHubsPlugin(PluginBase):
             )
         return (PLATFORM_NAME, PLUGIN_VERSION)
 
-    def _add_user_agent(self) -> Dict:
+    def _add_user_agent(self) -> str:
         """Add user agent to the the to each request.
 
         Returns:
@@ -281,6 +288,41 @@ class MicrosoftAzureEventHubsPlugin(PluginBase):
 
         return extension, mapped_field_flag
 
+    def get_nested_field_value(self, data, field_path):
+        """Extract value from nested dictionary using dot notation.
+
+        Args:
+            data: The data dictionary
+            field_path: Dot-separated field path
+                (e.g., 'host_info.device_make')
+
+        Returns:
+            tuple: (value, exists) where exists is True if field was found
+        """
+
+        try:
+            current_data = data
+            field_parts = field_path.split(".")
+
+            for i, part in enumerate(field_parts):
+
+                if isinstance(current_data, dict) and part in current_data:
+                    current_data = current_data[part]
+                else:
+                    return None, False
+
+            return current_data, True
+
+        except Exception as exp:
+            self.logger.error(
+                message=(
+                    f"{self.log_prefix}: Error occurred while"
+                    f" getting nested field value. Error: {exp}"
+                ),
+                details=str(traceback.format_exc()),
+            )
+            return None, False
+
     def get_field_value_from_data(
         self, extension_mapping, data, data_type, subtype, is_json_path=False
     ):
@@ -329,7 +371,7 @@ class MicrosoftAzureEventHubsPlugin(PluginBase):
                 )
                 if value:
                     mapped_field = True
-                    return ",".join([str(val) for val in value]), mapped_field
+                    return ",".join(map(str, value)), mapped_field
                 else:
                     raise FieldNotFoundError(
                         extension_mapping["mapping_field"]
@@ -337,32 +379,60 @@ class MicrosoftAzureEventHubsPlugin(PluginBase):
             else:
                 # If mapping is present in data, map that field, \
                 # else skip by raising exception
-                if (
-                    extension_mapping["mapping_field"] in data
-                ):  # case #1 and case #4
+                # First try direct field access
+                if extension_mapping["mapping_field"] in data:
+                    # Direct field access (case #1 and case #4)
                     if (
                         extension_mapping.get("transformation") == "Time Stamp"
                         and data[extension_mapping["mapping_field"]]
                     ):
                         try:
                             mapped_field = True
-                            return (
-                                int(data[extension_mapping["mapping_field"]]),
-                                mapped_field,
+                            timestamp_value = int(
+                                data[extension_mapping["mapping_field"]]
                             )
+                            return (timestamp_value, mapped_field)
                         except Exception:
                             pass
-                    return self.get_mapping_value_from_field(
+
+                    field_result = self.get_mapping_value_from_field(
                         data, extension_mapping["mapping_field"]
                     )
-                elif "default_value" in extension_mapping:
-                    # If mapped value is not found in response and default is \
-                    # mapped, map the default value (case #2)
-                    return extension_mapping["default_value"], mapped_field
-                else:  # case #6
-                    raise FieldNotFoundError(
-                        extension_mapping["mapping_field"]
+                    return field_result
+                else:
+                    # Try nested field access using dot notation
+                    nested_value, field_exists = self.get_nested_field_value(
+                        data, extension_mapping["mapping_field"]
                     )
+
+                    if field_exists:
+                        if (
+                            extension_mapping.get("transformation")
+                            == "Time Stamp"
+                            and nested_value
+                        ):
+                            try:
+                                mapped_field = True
+                                timestamp_value = int(nested_value)
+                                return timestamp_value, mapped_field
+                            except Exception:
+                                pass
+
+                        mapped_field = True
+                        final_result = (
+                            (nested_value, True)
+                            if nested_value or isinstance(nested_value, int)
+                            else ("null", False)
+                        )
+                        return final_result
+                    elif "default_value" in extension_mapping:
+                        # If mapped value is not found in response and
+                        # default is mapped, map the default value (case #2)
+                        return extension_mapping["default_value"], mapped_field
+                    else:  # case #6
+                        raise FieldNotFoundError(
+                            extension_mapping["mapping_field"]
+                        )
         else:
             # If mapping is not present, 'default_value' must be there\
             #  because of validation (case #3 and case #5)
@@ -389,6 +459,66 @@ class MicrosoftAzureEventHubsPlugin(PluginBase):
 
         return mapped_dict
 
+    def _validate_event_hubs_mappings_helper(
+        self, data_type_sub_type: str, data_type: str
+    ):
+        """Helper function to validate event hubs mappings.
+        Args:
+            data_type_sub_type (str):
+                Data type and subtype for which the mappings are to be fetched
+            data_type (str):
+                Data type (alert/event) for which the mappings are to be
+                fetched
+        """
+        delimiter = None
+        cef_version = None
+        azure_event_hubs_mappings = None
+        try:
+            if not self.is_ce_version_greater_than_512:
+                validate_event_hubs_mappings(
+                    self.mappings,
+                    data_type,
+                )
+            (
+                delimiter,
+                cef_version,
+                azure_event_hubs_mappings,
+            ) = get_event_hubs_mappings(self.mappings)
+
+        except KeyError as err:
+            error_msg = (
+                f"{data_type_sub_type}"
+                "An error occurred while fetching the mappings."
+            )
+            self.logger.error(
+                message=(f"{self.log_prefix}: {error_msg} Error: {err}"),
+                details=str(traceback.format_exc()),
+            )
+            raise MicrosoftAzureEventHubsPluginError(error_msg)
+        except MappingValidationError as err:
+            error_msg = (
+                f"{data_type_sub_type}"
+                "An error occurred while validating the mapping file."
+            )
+            self.logger.error(
+                message=(f"{self.log_prefix}: {error_msg} {err}"),
+                details=str(traceback.format_exc()),
+            )
+            raise MicrosoftAzureEventHubsPluginError(error_msg)
+        except Exception as err:
+            error_msg = (
+                f"{data_type_sub_type}"
+                "An error occurred while mapping "
+                "data using given json mappings."
+            )
+            self.logger.error(
+                message=(f"{self.log_prefix}: {error_msg} Error: {err}"),
+                details=str(traceback.format_exc()),
+            )
+            raise MicrosoftAzureEventHubsPluginError(error_msg)
+
+        return delimiter, cef_version, azure_event_hubs_mappings
+
     def transform(self, raw_data, data_type, subtype) -> List:
         """To Transform the raw netskope JSON data into target platform
         supported data formats.
@@ -403,54 +533,30 @@ class MicrosoftAzureEventHubsPlugin(PluginBase):
         """
         skipped_logs = 0
         data_type_sub_type = f"[{data_type}][{subtype}] - "
-        log_source_identifier = self.configuration.get(
-            "log_source_identifier", LOG_SOURCE_IDENTIFIER
+        (
+            log_source_identifier,
+            skip_timestamp,
+            skip_log_source,
+        ) = get_config_params(
+            self.configuration,
+            [
+                "log_source_identifier",
+                "skip_timestamp_field",
+                "skip_log_source_identifier_field",
+            ],
         )
-        skip_timestamp = self.configuration.get("skip_timestamp_field", "no")
-        skip_log_source = self.configuration.get(
-            "skip_log_source_identifier_field", "no"
+        transform_data_json = self._transformation_compatibility_check(
+            self.configuration
         )
-        if not self.configuration.get("transformData", True):
-            try:
-                (
-                    delimiter,
-                    cef_version,
-                    azure_event_hubs_mappings,
-                ) = get_azure_event_hubs_mappings(
-                    self.mappings, "json", self.log_prefix
-                )
-            except KeyError as err:
-                error_msg = (
-                    f"{data_type_sub_type}"
-                    "An error occurred while fetching the mappings."
-                )
-                self.logger.error(
-                    message=(f"{self.log_prefix}: {error_msg} Error: {err}"),
-                    details=str(traceback.format_exc()),
-                )
-                raise MicrosoftAzureEventHubsPluginError(error_msg)
-            except MappingValidationError as err:
-                error_msg = (
-                    f"{data_type_sub_type}"
-                    "An error occurred while validating the mapping file."
-                )
-                self.logger.error(
-                    message=(f"{self.log_prefix}: {error_msg} {err}"),
-                    details=str(traceback.format_exc()),
-                )
-                raise MicrosoftAzureEventHubsPluginError(error_msg)
-            except Exception as err:
-                error_msg = (
-                    f"{data_type_sub_type}"
-                    "An error occurred while mapping "
-                    "data using given json mappings."
-                )
-                self.logger.error(
-                    message=(f"{self.log_prefix}: {error_msg} Error: {err}"),
-                    details=str(traceback.format_exc()),
-                )
-                raise MicrosoftAzureEventHubsPluginError(error_msg)
-
+        (
+            delimiter,
+            cef_version,
+            azure_event_hubs_mappings,
+        ) = self._validate_event_hubs_mappings_helper(
+            data_type_sub_type,
+            data_type,
+        )
+        if transform_data_json:
             try:
                 subtype_mapping = self.get_subtype_mapping(
                     azure_event_hubs_mappings["json"][data_type], subtype
@@ -549,45 +655,6 @@ class MicrosoftAzureEventHubsPlugin(PluginBase):
                 )
             return transformed_data
         else:
-            try:
-                delimiter, cef_version, azure_event_hubs_mappings = (
-                    get_azure_event_hubs_mappings(
-                        self.mappings, data_type, self.log_prefix
-                    )
-                )
-            except KeyError as err:
-                error_msg = (
-                    f"{data_type_sub_type}"
-                    "An error occurred while "
-                    "fetching the mappings."
-                )
-                self.logger.error(
-                    message=(f"{self.log_prefix}: {error_msg} Error: {err}"),
-                    details=str(traceback.format_exc()),
-                )
-                raise MicrosoftAzureEventHubsPluginError(error_msg)
-            except MappingValidationError as err:
-                error_msg = (
-                    f"{data_type_sub_type}"
-                    "An error occurred while validating the mapping file."
-                )
-                self.logger.error(
-                    message=(f"{self.log_prefix}: {error_msg} {err}"),
-                    details=str(traceback.format_exc()),
-                )
-                raise MicrosoftAzureEventHubsPluginError(error_msg)
-            except Exception as err:
-                error_msg = (
-                    f"{data_type_sub_type}"
-                    "An error occurred while mapping "
-                    "data using given json mappings."
-                )
-                self.logger.error(
-                    message=(f"{self.log_prefix}: {error_msg} Error: {err}"),
-                    details=str(traceback.format_exc()),
-                )
-                raise MicrosoftAzureEventHubsPluginError(error_msg)
-
             cef_generator = CEFGenerator(
                 self.mappings,
                 delimiter,
@@ -600,7 +667,6 @@ class MicrosoftAzureEventHubsPlugin(PluginBase):
                 subtype_mapping = self.get_subtype_mapping(
                     azure_event_hubs_mappings[data_type], subtype
                 )
-
             except KeyError as err:
                 error_msg = (
                     f"{data_type_sub_type}Unable to find the "
@@ -746,11 +812,12 @@ class MicrosoftAzureEventHubsPlugin(PluginBase):
             f"to the {PLATFORM_NAME} server."
         )
 
-        event_hub_name = self.configuration.get("event_hub_name", "").strip()
+        event_hub_name, flush_timeout = get_config_params(
+            self.configuration, ["event_hub_name", "flush_timeout"]
+        )
         successful_log_push_counter, skipped_logs = 0, 0
         try:
             producer = self._get_producer(self.configuration)
-
         except MicrosoftAzureEventHubsPluginError as exp:
             err_msg = (
                 "Error occurred while creating producer "
@@ -779,65 +846,117 @@ class MicrosoftAzureEventHubsPlugin(PluginBase):
             )
             raise MicrosoftAzureEventHubsPluginError(err_msg)
 
-        # Log the transformed data to given Microsoft Azure Event Hubs server
-        for data in transformed_data:
-            try:
-                if data:
-                    producer.send(
-                        topic=event_hub_name,
-                        value=(
-                            data
-                            if not isinstance(data, dict)
-                            else json.dumps(data)
+        # Process in smaller chunks to prevent memory exhaustion
+        chunk_size = get_config_params(self.configuration, ["chunk_size"])
+
+        # Process messages in chunks
+        total_chunks = (len(transformed_data) + chunk_size - 1) // chunk_size
+
+        self.logger.info(
+            f"{self.log_prefix}: {data_type_sub_type}Processing"
+            f" {len(transformed_data)} logs in {total_chunks} "
+            f"chunks of {chunk_size} messages each."
+        )
+
+        for i in range(0, len(transformed_data), chunk_size):
+            chunk = transformed_data[i : i + chunk_size]
+            chunk_number = (i // chunk_size) + 1
+
+            self.logger.debug(
+                f"{self.log_prefix}: {data_type_sub_type}Processing chunk"
+                f" {chunk_number}/{total_chunks} ({len(chunk)} messages)"
+            )
+
+            for data in chunk:
+                try:
+                    if data:
+                        producer.send(
+                            topic=event_hub_name,
+                            value=(
+                                data
+                                if not isinstance(data, dict)
+                                else json.dumps(data)
+                            ),
+                        )
+                        successful_log_push_counter += 1
+                    else:
+                        skipped_logs += 1
+                except MessageSizeTooLargeError as error:
+                    err_msg = (
+                        "Message too large error occurred while sending "
+                        "logs to Microsoft Azure Event Hubs."
+                    )
+                    self.logger.error(
+                        message=(
+                            f"{self.log_prefix}: {data_type_sub_type}"
+                            f"{err_msg} Error: {error}"
                         ),
+                        details=traceback.format_exc(),
                     )
-                    successful_log_push_counter += 1
-                else:
-                    skipped_logs += 1
-            except MessageSizeTooLargeError as error:
-                err_msg = (
-                    "Message too large error occurred while sending "
-                    "logs to Microsoft Azure Event Hubs."
-                )
-                self.logger.error(
-                    message=(
-                        f"{self.log_prefix}: {data_type_sub_type}"
-                        f"{err_msg} Error: {error}"
-                    ),
-                    details=traceback.format_exc(),
-                )
-                raise MicrosoftAzureEventHubsPluginError(err_msg)
-            except KafkaTimeoutError as error:
-                err_msg = (
-                    "Maximum timeout exceeded while sending logs"
-                    " to {}.".format(PLATFORM_NAME)
-                )
-                self.logger.error(
-                    message=(
-                        f"{self.log_prefix}: {data_type_sub_type}"
-                        f"{err_msg} Error: {error}"
-                    ),
-                    details=traceback.format_exc(),
-                )
-                raise MicrosoftAzureEventHubsPluginError(err_msg)
-            except Exception as e:
-                err_msg = (
-                    "Error occurred while sending data to {}"
-                    " {} event hub. Record will be skipped.".format(
-                        PLATFORM_NAME, event_hub_name
+                    raise MicrosoftAzureEventHubsPluginError(err_msg)
+                except KafkaTimeoutError as error:
+                    err_msg = (
+                        "Maximum timeout exceeded while sending logs"
+                        " to {}.".format(PLATFORM_NAME)
                     )
+                    self.logger.error(
+                        message=(
+                            f"{self.log_prefix}: {data_type_sub_type}"
+                            f"{err_msg} Error: {error}"
+                        ),
+                        details=traceback.format_exc(),
+                    )
+                    raise MicrosoftAzureEventHubsPluginError(err_msg)
+                except Exception as e:
+                    err_msg = (
+                        "Error occurred while sending data to {}"
+                        " {} event hub. Record will be skipped.".format(
+                            PLATFORM_NAME, event_hub_name
+                        )
+                    )
+                    self.logger.error(
+                        message=(
+                            f"{self.log_prefix}: {data_type_sub_type}"
+                            f"{err_msg} Error: {e}"
+                        ),
+                        details=traceback.format_exc(),
+                    )
+                    raise MicrosoftAzureEventHubsPluginError(err_msg)
+
+            try:
+                self.logger.debug(
+                    f"{self.log_prefix}: {data_type_sub_type}Flushing chunk "
+                    f"{chunk_number}/{total_chunks} ({len(chunk)} messages) "
+                    f"with timeout={flush_timeout}s"
+                )
+                producer.flush(timeout=flush_timeout)
+                self.logger.debug(
+                    f"{self.log_prefix}: {data_type_sub_type}Successfully "
+                    f"flushed chunk {chunk_number}/{total_chunks}"
+                )
+            except Exception as exp:
+                err_msg = (
+                    f"Error occurred while flushing chunk {chunk_number} "
+                    f"to {PLATFORM_NAME}."
                 )
                 self.logger.error(
                     message=(
                         f"{self.log_prefix}: {data_type_sub_type}"
-                        f"{err_msg} Error: {e}"
+                        f"{err_msg} Error: {exp}"
                     ),
                     details=traceback.format_exc(),
                 )
                 raise MicrosoftAzureEventHubsPluginError(err_msg)
 
+            if chunk_number < total_chunks:
+                time.sleep(0.1)
+
+        # Final flush is redundant since each chunk is already flushed,
+        # but keeping it as a safety net with shorter timeout
         try:
-            producer.flush(timeout=TIMEOUT)
+            producer.flush(
+                timeout=flush_timeout
+            )  # Shorter timeout since chunks are already flushed
             if skipped_logs > 0:
                 self.logger.debug(
                     "{}: {}Received empty transformed data for {} log(s)"
@@ -916,8 +1035,25 @@ class MicrosoftAzureEventHubsPlugin(PluginBase):
             " Port and Event Hubs Namespace connection string provided"
             " in configuration parameters."
         )
-        bootstrap_server, connection_string, event_hub_name, _ = (
-            get_config_params(configuration)
+        (
+            bootstrap_server,
+            connection_string,
+            event_hub_name,
+            batch_size,
+            buffer_memory,
+            max_block_time,
+            linger_time,
+        ) = get_config_params(
+            configuration,
+            params_to_get=[
+                "bootstrap_server",
+                "connection_string",
+                "event_hub_name",
+                "batch_size",
+                "buffer_memory",
+                "max_block_time",
+                "linger_time",
+            ],
         )
         try:
             consumer = KafkaConsumer(
@@ -953,16 +1089,17 @@ class MicrosoftAzureEventHubsPlugin(PluginBase):
                 sasl_mechanism=SASL_MECHANISM,
                 sasl_plain_username=SASL_PLAIN_USERNAME,
                 sasl_plain_password=connection_string,
-                batch_size=BATCH_SIZE,
+                batch_size=batch_size * 1024,  # Reduced size
+                buffer_memory=buffer_memory * 1024 * 1024,  # Increased buffer
+                max_block_ms=max_block_time * 1000,  # Reduced blocking time
                 acks=ACKS,
                 retries=retries,
-                linger_ms=LINGER_MS,
+                linger_ms=linger_time,  # Increased linger
                 request_timeout_ms=TIMEOUT_MS,
                 reconnect_backoff_ms=TIMEOUT_MS,
                 value_serializer=lambda x: x.encode("utf-8"),
                 client_id=self._add_user_agent(),
             )
-
             return producer
         except InvalidTopicError as error:
             err_msg = (
@@ -1054,6 +1191,159 @@ class MicrosoftAzureEventHubsPlugin(PluginBase):
 
             self._get_custom_logger(err_msg, is_validation, exp)
 
+    def _validate_configuration_parameters(
+        self,
+        field_name: str,
+        field_value: Union[str, List, bool, int],
+        field_type: type,
+        allowed_values: List = None,
+        custom_validation_func: Callable = None,
+        is_required: bool = False,
+        validation_err_msg: str = "Validation error occurred. ",
+        range_validation: bool = False,
+        range_values: Tuple[int, int] = None,
+    ) -> Union[ValidationResult, None]:
+        """
+        Validate the given configuration field value.
+
+        Args:
+            field_name (str): Name of the configuration field.
+            field_value (str, List, bool, int): Value of the configuration
+                field.
+            field_type (type): Expected type of the configuration field.
+            allowed_values (Dict, optional): Dictionary of allowed values for
+                the configuration field. Defaults to None.
+            custom_validation_func (Callable, optional): Custom validation
+                function to be applied. Defaults to None.
+            is_required (bool, optional): Whether the field is required.
+                Defaults to True.
+            validation_err_msg (str, optional): Error message to be logged in
+                case of validation failure. Defaults to "Validation error
+                occurred. ".
+
+        Returns:
+            ValidationResult: ValidationResult object indicating whether the
+                validation was successful or not.
+        """
+        if field_type is str:
+            field_value = field_value.strip()
+        if (
+            is_required
+            and not isinstance(field_value, int)
+            and not field_value
+        ):
+            err_msg = f"{field_name} is a required configuration parameter."
+            self.logger.error(
+                message=f"{self.log_prefix}: {validation_err_msg}{err_msg}",
+                resolution=(
+                    f"Ensure that {field_name} value is provided in the "
+                    "configuration parameters."
+                ),
+            )
+            return ValidationResult(
+                success=False,
+                message=err_msg,
+            )
+        if not isinstance(field_value, field_type):
+            err_msg = (
+                "Invalid value provided for the configuration"
+                f" parameter '{field_name}'."
+            )
+            self.logger.error(
+                message=f"{self.log_prefix}: {validation_err_msg}{err_msg}",
+                resolution=(
+                    f"Ensure that valid value for {field_name} is "
+                    "provided in the configuration parameters."
+                ),
+            )
+            return ValidationResult(
+                success=False,
+                message=err_msg,
+            )
+        if custom_validation_func and not custom_validation_func(field_value):
+            err_msg = (
+                "Invalid value provided for the configuration"
+                f" parameter '{field_name}'."
+            )
+            self.logger.error(
+                message=f"{self.log_prefix}: {validation_err_msg}{err_msg}",
+                resolution=(
+                    f"Ensure that valid value for {field_name} is "
+                    "provided in the configuration parameters."
+                ),
+            )
+            return ValidationResult(
+                success=False,
+                message=err_msg,
+            )
+        if range_validation and not (
+            range_values[0] <= field_value <= range_values[1]
+        ):
+            err_msg = (
+                f"Invalid value provided for the configuration"
+                f" parameter '{field_name}'. It should be in range"
+                f" {str(range_values[0])} to {str(range_values[1])}."
+            )
+            self.logger.error(
+                message=f"{self.log_prefix}: {validation_err_msg}{err_msg}",
+                resolution=(
+                    f"Ensure that valid value for {field_name} is "
+                    "provided in the configuration parameters "
+                    "and it should be in range "
+                    f"{str(range_values[0])} to {str(range_values[1])}."
+                ),
+            )
+            return ValidationResult(
+                success=False,
+                message=err_msg,
+            )
+        if allowed_values:
+            if len(allowed_values) <= 5:
+                err_msg = (
+                    f"Invalid value provided for the configuration"
+                    f" parameter '{field_name}'. Allowed values are"
+                    f" {', '.join(value for value in allowed_values)}."
+                )
+            else:
+                err_msg = (
+                    f"Invalid value for '{field_name}' provided "
+                    f"in the configuration parameters."
+                )
+            if field_type is str and field_value not in allowed_values:
+                self.logger.error(
+                    message=(
+                        f"{self.log_prefix}: {validation_err_msg}{err_msg}"
+                    ),
+                    resolution=(
+                        f"Ensure that valid value for {field_name} is "
+                        "provided in the configuration parameters "
+                        "and it should be one of "
+                        f"{', '.join(value for value in allowed_values)}."
+                    ),
+                )
+                return ValidationResult(
+                    success=False,
+                    message=err_msg,
+                )
+
+    def _transformation_compatibility_check(self, configuration: dict):
+        """Check the transformation compatibility.
+
+        Args:
+            configuration (dict): Configuration dictionary.
+
+        Returns:
+            bool: True if transformation is enabled, False otherwise.
+        """
+        transform_data_json = False
+        if not self.is_ce_version_greater_than_512:
+            if not configuration.get("transformData", True):
+                transform_data_json = True
+        else:
+            if configuration.get("transformData", "json") == "json":
+                transform_data_json = True
+        return transform_data_json
+
     def validate(self, configuration: dict) -> ValidationResult:
         """Validate the configuration parameters dict.
 
@@ -1064,168 +1354,201 @@ class MicrosoftAzureEventHubsPlugin(PluginBase):
             ValidationResult: Validation result with validation flag and
             message.
         """
-        validation_err_msg = f"{self.log_prefix}: Validation error occurred,"
-        transform_data = configuration.get("transformData", True)
-        microsoft_azure_event_hubs_validator = (
-            MicrosoftAzureEventHubsValidator(self.logger, self.log_prefix)
+        validation_err_msg = "Validation error occurred. "
+        transform_data_json = self._transformation_compatibility_check(
+            configuration
         )
-
-        namespace_name = configuration.get("namespace_name", "").strip()
-        if not namespace_name:
-            err_msg = (
-                "Event Hubs Namespace Name is a required"
-                " configuration parameter."
-            )
-            self.logger.error(f"{validation_err_msg} {err_msg}")
-            return ValidationResult(
-                success=False,
-                message=err_msg,
-            )
-        elif not isinstance(namespace_name, str):
-            err_msg = (
-                "Invalid Event Hubs Namespace Name provided in configuration"
-                " parameters."
-            )
-            self.logger.error(f"{validation_err_msg} {err_msg}")
-            return ValidationResult(success=False, message=err_msg)
-
-        port = configuration.get("port")
-        if not port:
-            err_msg = "Port is a required configuration parameter."
-            self.logger.error(f"{validation_err_msg} {err_msg}")
-            return ValidationResult(
-                success=False,
-                message=err_msg,
-            )
-        elif not isinstance(port, int):
-            err_msg = "Invalid Port provided in configuration parameters."
-            self.logger.error(f"{validation_err_msg} {err_msg}")
-            return ValidationResult(
-                success=False,
-                message=err_msg,
-            )
-        elif not microsoft_azure_event_hubs_validator.validate_event_hubs_port(
-            port
+        (
+            namespace_name,
+            port,
+            connection_string,
+            event_hub_name,
+            log_source_identifier,
+            skip_timestamp_field,
+            skip_log_source_identifier_field,
+            batch_size,
+            buffer_memory,
+            max_block_time,
+            linger_time,
+            chunk_size,
+            flush_timeout,
+            _,
+        ) = get_config_params(configuration)
+        if namespace_name := self._validate_configuration_parameters(
+            field_name="Namespace Name",
+            field_value=namespace_name,
+            field_type=str,
+            is_required=True,
+            validation_err_msg=validation_err_msg,
         ):
-            err_msg = (
-                "Invalid Port provided in configuration "
-                "parameters. it should be in range 0-65535."
+            return namespace_name
+
+        if port := self._validate_configuration_parameters(
+            field_name="Port",
+            field_value=port,
+            field_type=int,
+            is_required=True,
+            range_validation=True,
+            range_values=(1, 65535),
+            validation_err_msg=validation_err_msg,
+        ):
+            return port
+
+        if connection_string := self._validate_configuration_parameters(
+            field_name="Event Hubs Namespace Connection String",
+            field_value=connection_string,
+            field_type=str,
+            is_required=True,
+            validation_err_msg=validation_err_msg,
+        ):
+            return connection_string
+
+        if event_hub_name := self._validate_configuration_parameters(
+            field_name="Event Hub Name",
+            field_value=event_hub_name,
+            field_type=str,
+            is_required=True,
+            validation_err_msg=validation_err_msg,
+        ):
+            return event_hub_name
+
+        if log_source := self._validate_configuration_parameters(  # noqa: E501
+            field_name="Log Source Identifier",
+            field_value=log_source_identifier,
+            field_type=str,
+            validation_err_msg=validation_err_msg,
+        ):
+            return log_source
+
+        if timestamp_field := self._validate_configuration_parameters(
+            field_name="Exclude Timestamp Field",
+            field_value=skip_timestamp_field,
+            field_type=str,
+            allowed_values=["yes", "no"],
+            validation_err_msg=validation_err_msg,
+        ):
+            return timestamp_field
+
+        if log_source_identifier_field := self._validate_configuration_parameters(  # noqa: E501
+            field_name="Exclude Log Source Identifier Field",
+            field_value=skip_log_source_identifier_field,
+            field_type=str,
+            allowed_values=["yes", "no"],
+            validation_err_msg=validation_err_msg,
+        ):
+            return log_source_identifier_field
+
+        if batch_size := self._validate_configuration_parameters(
+            field_name="Producer Batch Size (in KB)",
+            field_value=batch_size,
+            field_type=int,
+            range_validation=True,
+            range_values=(16, 1024),
+            validation_err_msg=validation_err_msg,
+        ):
+            return batch_size
+
+        if buffer_memory := self._validate_configuration_parameters(
+            field_name="Buffer Memory (in MB)",
+            field_value=buffer_memory,
+            field_type=int,
+            range_validation=True,
+            range_values=(32, 128),
+            validation_err_msg=validation_err_msg,
+        ):
+            return buffer_memory
+
+        if max_block_time := self._validate_configuration_parameters(
+            field_name="Max Block Time (in seconds)",
+            field_value=max_block_time,
+            field_type=int,
+            range_validation=True,
+            range_values=(10, 60),
+            validation_err_msg=validation_err_msg,
+        ):
+            return max_block_time
+
+        if linger_time := self._validate_configuration_parameters(
+            field_name="Batch Linger Time (in milliseconds)",
+            field_value=linger_time,
+            field_type=int,
+            range_validation=True,
+            range_values=(50, 1000),
+            validation_err_msg=validation_err_msg,
+        ):
+            return linger_time
+
+        if chunk_size := self._validate_configuration_parameters(
+            field_name="Data Chunk Size",
+            field_value=chunk_size,
+            field_type=int,
+            range_validation=True,
+            range_values=(1000, 10000),
+            validation_err_msg=validation_err_msg,
+        ):
+            return chunk_size
+        
+        if flush_timeout := self._validate_configuration_parameters(
+            field_name="Flush Timeout (in seconds)",
+            field_value=flush_timeout,
+            field_type=int,
+            range_validation=True,
+            range_values=(10, 300),
+            validation_err_msg=validation_err_msg,
+        ):
+            return flush_timeout
+
+        log_suffix = ""
+        if not self.is_ce_version_greater_than_512:
+            log_suffix += (
+                " if transformed data is not enabled in 'Basic Information'."
             )
-            self.logger.error(f"{validation_err_msg} {err_msg}")
-            return ValidationResult(
-                success=False,
-                message=err_msg,
+        else:
+            log_suffix += (
+                " if format options is selected as JSON in "
+                "'Basic Information'."
             )
 
-        connection_string = configuration.get("connection_string", "").strip()
-        if not connection_string:
-            err_msg = (
-                "Event Hubs Namespace Connection String is a "
-                "required configuration parameter."
-            )
-            self.logger.error(f"{validation_err_msg} {err_msg}")
-            return ValidationResult(
-                success=False,
-                message=err_msg,
-            )
-        elif not isinstance(connection_string, str):
-            err_msg = (
-                "Invalid Event Hubs Namespace Connection String "
-                "provided in configuration parameters."
-            )
-            self.logger.error(f"{validation_err_msg} {err_msg}")
-            return ValidationResult(success=False, message=err_msg)
-
-        event_hub_name = configuration.get("event_hub_name", "").strip()
-        if not event_hub_name:
-            err_msg = "Event Hub Name is a required configuration parameter."
-            self.logger.error(f"{validation_err_msg} {err_msg}")
-            return ValidationResult(
-                success=False,
-                message=err_msg,
-            )
-        elif not isinstance(event_hub_name, str):
-            err_msg = (
-                "Invalid Event Hub Name provided in configuration"
-                " parameters."
-            )
-            self.logger.error(f"{validation_err_msg} {err_msg}")
-            return ValidationResult(success=False, message=err_msg)
-
-        log_source_identifier = configuration.get(
-            "log_source_identifier", ""
-        ).strip()
-
-        skip_timestamp_field = configuration.get(
-            "skip_timestamp_field", ""
-        ).strip()
-        skip_log_source_identifier_field = configuration.get(
-            "skip_log_source_identifier_field", ""
-        ).strip()
-        if not transform_data:
+        if transform_data_json:
             if not skip_timestamp_field:
                 err_msg = (
-                    "Exclude Timestamp Field is a required configuration parameter,"
-                    " if transformed data is not enabled in 'Basic Information'."
+                    "Exclude Timestamp Field is a required "
+                    "configuration parameter,"
                 )
-                self.logger.error(f"{validation_err_msg} {err_msg}")
+                err_msg += log_suffix
+                self.logger.error(
+                    message=f"{validation_err_msg} {err_msg}",
+                    details=str(traceback.format_exc()),
+                )
                 return ValidationResult(
                     success=False,
                     message=err_msg,
                 )
 
-            elif skip_timestamp_field not in ["yes", "no"]:
-                err_msg = (
-                    "Invalid value provided in Exclude Timestamp Field"
-                    " configuration parameter. Allowed values are Yes or No."
-                )
-                self.logger.error(
-                    f"{validation_err_msg} {err_msg}",
-                )
-                return ValidationResult(
-                    success=False,
-                    message=err_msg,
-                )
             if not skip_log_source_identifier_field:
                 err_msg = (
                     "Exclude Log Source Identifier Field is a required"
-                    " configuration parameter, if transformed data is not enabled"
-                    " in 'Basic Information'."
+                    " configuration parameter,"
                 )
-                self.logger.error(f"{validation_err_msg} {err_msg}")
+                err_msg += log_suffix
+                self.logger.error(
+                    message=f"{validation_err_msg} {err_msg}",
+                    details=str(traceback.format_exc()),
+                )
                 return ValidationResult(
                     success=False,
                     message=err_msg,
                 )
 
-            elif skip_log_source_identifier_field not in ["yes", "no"]:
-                err_msg = (
-                    "Invalid value provided in Exclude Log Source Identifier"
-                    " Field configuration parameter. Allowed values are Yes or No."
-                )
-                self.logger.error(
-                    f"{validation_err_msg} {err_msg}",
-                )
-                return ValidationResult(success=False, message=err_msg)
-        if transform_data:
-            if not log_source_identifier:
-                err_msg = (
-                    "Log Source Identifier is a required configuration"
-                    " parameter if transformed data is enabled in 'Basic"
-                    " Information'."
-                )
-                self.logger.error(f"{validation_err_msg} {err_msg}")
-                return ValidationResult(
-                    success=False,
-                    message=err_msg,
-                )
-            elif not isinstance(log_source_identifier, str):
-                err_msg = (
-                    "Invalid Log Source Identifier provided in configuration"
-                    " parameters."
-                )
-                self.logger.error(f"{validation_err_msg} {err_msg}")
-                return ValidationResult(success=False, message=err_msg)
+        if not transform_data_json:
+            if log_source_field := self._validate_configuration_parameters(  # noqa: E501
+                field_name="Log Source Identifier",
+                field_value=log_source_identifier,
+                field_type=str,
+                is_required=True,
+                validation_err_msg=validation_err_msg,
+            ):
+                return log_source_field
 
         if skip_log_source_identifier_field == "no":
             if not log_source_identifier:
@@ -1234,38 +1557,91 @@ class MicrosoftAzureEventHubsPlugin(PluginBase):
                     " parameter, if 'Exclude Log Source Identifier Field'"
                     " is set to No."
                 )
-                self.logger.error(f"{validation_err_msg} {err_msg}")
+                self.logger.error(
+                    message=f"{validation_err_msg} {err_msg}",
+                    details=str(traceback.format_exc()),
+                )
                 return ValidationResult(
                     success=False,
                     message=err_msg,
                 )
-            elif not isinstance(log_source_identifier, str):
-                err_msg = (
-                    "Invalid Log Source Identifier provided in configuration"
-                    " parameters."
-                )
-                self.logger.error(f"{validation_err_msg} {err_msg}")
-                return ValidationResult(success=False, message=err_msg)
 
-        mappings = self.mappings.get("jsonData", None)
-        mappings = json.loads(mappings)
-        if not (
-            isinstance(mappings, dict)
-            and microsoft_azure_event_hubs_validator.validate_event_hubs_map(
-                mappings
+        mappings_validation_result = self.validate_mappings()
+
+        if not mappings_validation_result.success:
+            return mappings_validation_result
+
+        return self._validate_auth_params(configuration, validation_err_msg)
+
+    def validate_mappings(self):
+        """Validate the Microsoft Azure Event Hubs mappings for all data type.
+
+        Raises:
+            MappingValidationError: When validation fails for \
+                any of the configured data_type.
+        """
+        validation_err_msg = (
+            f"{self.log_prefix}: Mapping validation error occurred."
+        )
+        err_msg = "Invalid attribute mapping provided."
+
+        def _validate_json_data(json_string):
+            """Validate that the jsonData should not be empty."""
+            try:
+                json_object = json.loads(json_string)
+                if not bool(json_object):
+                    raise ValueError("JSON data should not be empty.")
+            except json.decoder.JSONDecodeError as e:
+                raise ValueError(f"Invalid JSON: {e}")
+            except Exception as e:
+                raise ValueError(f"Error occurred while validating JSON: {e}.")
+            return json_object
+
+        try:
+            mappings = _validate_json_data(self.mappings.get("jsonData"))
+        except Exception as err:
+            return ValidationResult(
+                success=False,
+                message=str(err),
             )
+
+        if not isinstance(
+            mappings, dict
+        ) or not self.microsoft_azure_event_hubs_validator.validate_event_hubs_mapping_format(  # noqa: E501
+            mappings
         ):
-            err_msg = (
-                "Invalid {} attribute mapping found in "
-                "the configuration parameters.".format(PLATFORM_NAME)
-            )
-            self.logger.error(f"{validation_err_msg} Error: {err_msg}")
+            self.logger.error(f"{validation_err_msg} {err_msg}")
             return ValidationResult(
                 success=False,
                 message=err_msg,
             )
 
-        return self._validate_auth_params(configuration, validation_err_msg)
+        for data_type in mappings.get("taxonomy", {}).keys():
+            try:
+                self.logger.info(
+                    message=(
+                        f"{self.log_prefix}: Validating the mappings for "
+                        f"{PLATFORM_NAME} {data_type}."
+                    )
+                )
+                validate_event_hubs_mappings(mappings, data_type)
+            except MappingValidationError as mapping_validation_error:
+                self.logger.error(
+                    message=(
+                        f"{validation_err_msg} {err_msg} Error: "
+                        f"{mapping_validation_error}"
+                    ),
+                    details=str(traceback.format_exc()),
+                )
+                return ValidationResult(
+                    success=False,
+                    message=err_msg,
+                )
+
+        return ValidationResult(
+            success=True,
+            message="Mappings validation successful.",
+        )
 
     def _validate_auth_params(
         self, configuration: dict, validation_err_msg: str
@@ -1298,14 +1674,17 @@ class MicrosoftAzureEventHubsPlugin(PluginBase):
                     " Hub. Verify the authentication credentials provided in "
                     "configuration parameters."
                 )
-                self.logger.error(f"{validation_err_msg} {err_msg}")
+                self.logger.error(
+                    message=f"{validation_err_msg} {err_msg}",
+                    details=str(traceback.format_exc()),
+                )
                 return ValidationResult(message=err_msg, success=False)
         except MicrosoftAzureEventHubsPluginError as exp:
             return ValidationResult(success=False, message=str(exp))
         except Exception as exp:
             self.logger.error(
                 message=f"{validation_err_msg} Error: {exp}",
-                details=traceback.format_exc(),
+                details=str(traceback.format_exc()),
             )
             return ValidationResult(
                 success=False,

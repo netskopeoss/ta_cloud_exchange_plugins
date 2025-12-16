@@ -34,6 +34,7 @@ Implementation of MISP CTE plugin.
 
 import ipaddress
 import re
+import json
 import traceback
 from datetime import datetime, timedelta
 from typing import Dict, List, Union
@@ -367,13 +368,22 @@ class MISPPlugin(PluginBase):
 
             if pulling_mechanism == "look_back":
                 look_back = self.configuration.get("look_back", 24)
+                resolution = (
+                    "Please provide a valid look back time for "
+                    "Pulling mechanism to work as expected for "
+                    f"{PLATFORM_NAME}. Current value '{look_back}' "
+                    "is invalid."
+                )
                 if look_back is None:
                     err_msg = (
                         "Look Back is a required configuration "
                         'parameter when "Look Back" is selected as '
                         "Pulling Mechanism."
                     )
-                    self.logger.error(f"{self.log_prefix}: {err_msg}")
+                    self.logger.error(
+                        message=f"{self.log_prefix}: {err_msg}",
+                        resolution=resolution,
+                    )
                     raise MISPPluginException(err_msg)
                 elif (
                     not isinstance(look_back, int)
@@ -385,7 +395,10 @@ class MISPPlugin(PluginBase):
                         " configuration parameters. Valid value should be "
                         "an integer in range 1-8760 i.e. 1 year."
                     )
-                    self.logger.error(f"{self.log_prefix}: {err_msg}")
+                    self.logger.error(
+                        message=f"{self.log_prefix}: {err_msg}",
+                        resolution=resolution,
+                    )
                     raise MISPPluginException(err_msg)
                 else:
                     start_time = end_time - timedelta(hours=int(look_back))
@@ -461,7 +474,7 @@ class MISPPlugin(PluginBase):
                 .strip()
                 .split(",")
             )
-            if score_threshold is not None:
+            if score_threshold:
                 model_ids = [
                     int(model_id) for model_id in decaying_models if model_id
                 ]
@@ -608,13 +621,22 @@ class MISPPlugin(PluginBase):
         start_time = None
         if pulling_mechanism == "look_back":
             look_back = self.configuration.get("look_back", 24)
+            resolution = (
+                "Please provide a valid look back time for "
+                "Pulling mechanism to work as expected for "
+                f"{PLATFORM_NAME}. Current value '{look_back}' "
+                "is invalid."
+            )
             if look_back is None:
                 err_msg = (
                     "Look Back is a required configuration "
                     'parameter when "Look Back" is selected as '
                     "Pulling Mechanism."
                 )
-                self.logger.error(f"{self.log_prefix}: {err_msg}")
+                self.logger.error(
+                    message=f"{self.log_prefix}: {err_msg}",
+                    resolution=resolution,
+                )
                 raise MISPPluginException(err_msg)
             elif (
                 not isinstance(look_back, int)
@@ -735,7 +757,7 @@ class MISPPlugin(PluginBase):
             self.configuration.get("decaying_models", "").strip().split(",")
         )
         enable_tagging = self.configuration.get("enable_tagging", "yes")
-        if score_threshold is not None:
+        if score_threshold:
             model_ids = [
                 int(model_id) for model_id in decaying_models if model_id
             ]
@@ -1368,9 +1390,13 @@ class MISPPlugin(PluginBase):
                 else:
                     err_msg = (
                         f"Unable to create '{tag_name}' "
-                        f"tag on {PLATFORM_NAME}."
+                        f"tag on {PLATFORM_NAME}. "
+                        f"Check details for more info."
                     )
-                    self.logger.error(f"{self.log_prefix}: {err_msg}")
+                    self.logger.error(
+                        message=f"{self.log_prefix}: {err_msg}",
+                        details=json.dumps(resp_json),
+                    )
                     raise MISPPluginException(err_msg)
         tags_payload = [
             {"name": tag_name} for tag_name in default_tags_to_send
@@ -1945,9 +1971,14 @@ class MISPPlugin(PluginBase):
             err_msg = (
                 "Unexpected validation error occurred while authenticating."
             )
+            resolution = (
+                "Please verify if the provided configuration parameters "
+                "are valid."
+            )
             self.logger.error(
-                f"{self.log_prefix}: {err_msg} Error: {exp}",
+                message=f"{self.log_prefix}: {err_msg} Error: {exp}",
                 details=traceback.format_exc(),
+                resolution=resolution,
             )
         return ValidationResult(
             success=False,

@@ -1,7 +1,7 @@
 {
     "name": "MISP",
     "id": "misp",
-    "version": "1.5.0",
+    "version": "1.5.1",
     "description": "This plugin is used to fetch event attributes from MISP (Malware Information Sharing Platform) and extract indicators of type SHA256, MD5, URL, Domain, IP (IPv4 and IPv6) and Hostname from them. It can also share the indicators of type SHA256, MD5, URL, Domain (Domain and FQDN), Hostname, IP (IPv4 and IPv6) as attributes to MISP Custom Events. To get required details for creating a new configuration, navigate to https://<misp-url>/events/automation.\n\nNote: The Source IP (ip-src) and Destination IP (ip-dst) will be stored as either IPv4 or IPv6 in Cloud Exchange. Source IP|Port (ip-src|port), Destination IP|Port (ip-dst|port), and Hostname|Port (hostname|port) will be stored as URLs in Cloud Exchange. For Domain|IP, the domain and IP (either IPv4 or IPv6) will be split and stored as separate IoCs in Cloud Exchange.",
     "patch_supported": true,
     "push_supported": true,
@@ -173,7 +173,7 @@
             "label": "Exclude IoCs from Events",
             "key": "event_name",
             "type": "text",
-            "mandatory": true,
+            "mandatory": false,
             "default": "",
             "description": "Indicators attached to the provided comma-separated events will be ignored while pulling data from MISP. Expected value is comma-separated event names or event IDs."
         },

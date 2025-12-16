@@ -1,3 +1,7 @@
+# 1.5.1
+## Fixed
+- Fixed an issue where excludeDecayed=1 was being sent even when the 'Decaying Score Threshold' parameter value was not provided in the configuration parameters.
+
 # 1.5.0
 ## Added
 - Added support for IoC(s) Retraction.

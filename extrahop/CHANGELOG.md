@@ -1,3 +1,9 @@
+# 1.1.1
+## Changed
+- Updated plugin logo.
+## Fixed
+- Fixed bug in pull retraction workflow.
+
 # 1.1.0
 ## Added
 - Added IoC type IPv4 and Hostname for CE v5.1.0 and above.

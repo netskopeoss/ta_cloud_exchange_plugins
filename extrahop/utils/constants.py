@@ -34,7 +34,7 @@ CTE ExtraHop Reveal(x) 360 plugin constants.
 
 MODULE_NAME = "CTE"
 PLUGIN_NAME = "ExtraHop Reveal(x) 360"
-PLUGIN_VERSION = "1.0.0"
+PLUGIN_VERSION = "1.1.1"
 PLATFORM_NAME = "ExtraHop Reveal(x) 360"
 DEFAULT_WAIT_TIME = 60
 MAX_API_CALLS = 4

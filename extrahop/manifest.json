@@ -1,7 +1,8 @@
 {
     "name": "ExtraHop Reveal(x) 360",
     "id": "extrahop",
-    "version": "1.1.0",
+    "version": "1.1.1",
+    "module": "CTE",
     "description": "The ExtraHop Reveal(x) 360 plugin fetches Offender's IP Address(ipv4) and Hostname from the Detections page of Extrahop platform. The Plugin does not support sharing indicators to ExtraHop Reveal(x) 360 platform.",
     "patch_supported": false,
     "push_supported": false,

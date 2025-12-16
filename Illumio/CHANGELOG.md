@@ -1,3 +1,7 @@
+# 1.1.1
+## Changed
+- Updated plugin logo.
+
 # 1.1.0
 ## Added
 - Added support for IoC(s) Retraction.

@@ -35,7 +35,8 @@ from netskope.integrations.itsm.models import (
     TaskStatus,
     CustomFieldsSectionWithMappings,
     CustomFieldMapping,
-    Queue
+    Queue,
+    Filters,
 )
 from netskope.integrations.itsm.utils import alert_event_query_schema
 from netskope.common.utils.plugin_provider_helper import PluginProviderHelper
@@ -205,6 +206,11 @@ class NetskopePlugin(PluginBase):
                     message=err_msg,
                 )
 
+            filters_payload = config.get("filters", {})
+            filters_validation_result = self.validate_filters(filters_payload)
+            if not filters_validation_result.success:
+                return filters_validation_result
+
             tenant_name = configuration.get("tenant")
             if not configuration.get("tenant"):
                 tenant_name = helper.get_tenant_itsm(self.name).name
@@ -305,6 +311,88 @@ class NetskopePlugin(PluginBase):
             )
         return ValidationResult(success=True, message="Validation successful.")
 
+    def validate_filters(self, filters: dict) -> ValidationResult:
+        """Validate Alert/Event filters configured for the plugin."""
+
+        # Validate that filters is a dictionary
+        if not isinstance(filters, dict):
+            err_msg = "Please provide a valid alert/event query."
+            self.logger.error(
+                f"{self.log_prefix}: {err_msg}",
+                error_code="CTO_1022",
+            )
+            return ValidationResult(success=False, message=err_msg)
+
+        try:
+            mongo_value = filters.get("mongo", "{}")
+            if isinstance(mongo_value, dict):
+                mongo_value = json.dumps(mongo_value)
+            elif not isinstance(mongo_value, str):
+                raise ValueError("Alert/Event mongo query must be a dictionary or JSON string.")
+
+            query_value = filters.get("query", "")
+            if isinstance(query_value, dict):
+                query_value = json.dumps(query_value)
+
+            filters_model = Filters(
+                query=query_value or "",
+                mongo=mongo_value or "{}",
+            )
+        except (TypeError, ValueError, json.JSONDecodeError):
+            err_msg = "Invalid Alert/Event query provided in filters."
+            self.logger.error(
+                f"{self.log_prefix}: {err_msg}",
+                error_code="CTO_1022",
+            )
+            return ValidationResult(success=False, message=err_msg)
+
+        if filters_model.isValid is False:
+            err_msg = (
+                "Alert/Event filters are invalid. Reconfigure the Alert/Event query "
+                "using the Edit button in the CTO Module -> Plugins page."
+            )
+            self.logger.error(
+                f"{self.log_prefix}: {err_msg}",
+                error_code="CTO_1022",
+            )
+            return ValidationResult(success=False, message=err_msg)
+
+        mongo_query = filters_model.mongo
+        try:
+            mongo_query = json.loads(mongo_query or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            err_msg = "Invalid Alert/Event query provided in filters."
+            self.logger.error(
+                f"{self.log_prefix}: {err_msg}",
+                error_code="CTO_1022",
+            )
+            return ValidationResult(success=False, message=err_msg)
+
+        try:
+            [*_, query_schema] = alert_event_query_schema()
+            validate(mongo_query, query_schema)
+        except ValidationError as error:
+            err_msg = (
+                "Invalid Alert/Event query provided in filters. "
+                f"{error.message}."
+            )
+            self.logger.error(
+                f"{self.log_prefix}: {err_msg}",
+                error_code="CTO_1022",
+            )
+            return ValidationResult(success=False, message=err_msg)
+        except Exception:
+            err_msg = "Error occurred while validating Alert/Event query."
+            self.logger.error(
+                f"{self.log_prefix}: {err_msg}",
+                details=traceback.format_exc(),
+                error_code="CTO_1022",
+            )
+            return ValidationResult(success=False, message=err_msg)
+
+        return ValidationResult(success=True, message="Validation successful.")
+
+
     def get_types_to_pull(self, data_type: str):
         """Get the types of data to pull.
 
@@ -323,7 +411,7 @@ class NetskopePlugin(PluginBase):
             k: (
                 str(v)
                 if not (
-                    isinstance(v, int) or isinstance(v, float) or isinstance(v, bool)
+                    v is None or isinstance(v, int) or isinstance(v, float) or isinstance(v, bool)
                 )
                 else v
             )
@@ -382,7 +470,7 @@ class NetskopePlugin(PluginBase):
         query = filters.get("mongo", "{}")
         try:
             [*_, QUERY_SCHEMA] = alert_event_query_schema()
-            validate(json.loads(str(query).replace("'", '"')), QUERY_SCHEMA)
+            validate(json.loads(json.dumps(query)), QUERY_SCHEMA)
         except ValidationError:
             self.logger.error(
                 f"{self.log_prefix}: Storing of {len(all_data)} alert(s)/event(s)"
@@ -403,7 +491,12 @@ class NetskopePlugin(PluginBase):
                 _filter_data_items,
             )
 
-            results = _filter_data_items(results, str(query).replace("'", '"'))
+            results = _filter_data_items(results, json.dumps(query))
+            self.logger.info(
+                f"{self.log_prefix}: Storing {len(results)} alert(s)/event(s) "
+                f"out of {len(all_data)} alert(s)/event(s) "
+                f"based on Alert/Event query for configuration {self.name}."
+            )
         return results
 
     def handle_update_incident_api_call(self, url, data, field, batch_no):

@@ -51,7 +51,7 @@ INCIDENT_DETAILS_LINK = "{tenant_url}/ns#/incmgmt?view=detail&incidentId={dlp_in
 MODULE_NAME = "CTO"
 PLUGIN_NAME = "Netskope CTO"
 PLATFORM_NAME = "Netskope"
-PLUGIN_VERSION = "2.4.0"
+PLUGIN_VERSION = "2.4.1"
 DEFAULT_STATUS_VALUE_MAP = {
     "New": "new",
     "In Progress": "in_progress",

@@ -1,3 +1,7 @@
+# 2.4.1
+## Fixed
+- Fixed handling of "Is empty" filters in alert/event queries.
+
 # 2.4.0
 ## Added
 - Added support for mapping custom status and severity fields.

@@ -36,7 +36,7 @@ from netskope_api.iterator.const import Const
 import os
 
 MODULE_NAME = "TENANT"
-PLUGIN_VERSION = "1.5.3"
+PLUGIN_VERSION = "1.6.0"
 MAXIMUM_CE_VERSION = "5.1.2"
 PLATFORM_NAME = "Netskope"
 MAX_API_CALLS = 4

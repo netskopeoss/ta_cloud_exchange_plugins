@@ -564,7 +564,7 @@ class NetskopeClient:
                 f"{self.log_prefix}: "
                 f"Completed pull task for {datetime.fromtimestamp(start_time)} "
                 f"to {datetime.fromtimestamp(end_time)} time interval, "
-                f"Pulled {self.type} from {self.tenant_name} tenant."
+                f"pulled {self.type} from {self.tenant_name} tenant."
             )
         except SoftTimeLimitExceeded as ex:
             raise ex
@@ -606,13 +606,15 @@ class NetskopeClient:
             iterator = self.get_iterator(sub_type, iterator_name)
 
             tenant_dict_storage = self.tenant.get("storage", {})
-            if tenant_dict_storage.get(f"first_{self.type}_pull", {}).get(
-                f"first_{sub_type}_pull", True
+            first_pull_state = tenant_dict_storage.get(
+                f"first_{self.type}_pull", {}
+            )
+            first_subtype_pull = f"first_{sub_type}_pull"
+            if (
+                isinstance(first_pull_state, dict) and
+                first_subtype_pull not in first_pull_state
             ):
-                initial_pull = self.tenant.get("checkpoint")
-                if not initial_pull:
-                    initial_pull = datetime.now()
-
+                initial_pull = datetime.now()
                 initial_pull = initial_pull.replace(
                     minute=0, second=0, microsecond=0
                 ).strftime("%s")
@@ -857,18 +859,42 @@ class NetskopeClient:
                 self.running_thread -= 1
                 self.message_queue.put(([], sub_type, should_apply_expo_backoff, True))
 
-    def filter_data(self, data: List) -> List:
-        """Return filtered data."""
+    def filter_data(self, data: List, sub_type: str) -> List:
+        """Return filtered data within the time range [start_time, end_time]."""
         filtered = []
-        for i in range(len(data)):
-            timestamp = data[i].get("timestamp", 0)
+        filtered_out_after = 0
+
+        for record in data:
+            timestamp = record.get("timestamp", 0)
+            if timestamp <= self.end_time:
+                filtered.append(record)
             if timestamp > self.end_time:
-                return filtered
-            filtered.append(data[i])
+                filtered_out_after += 1
+        # Log only if records were filtered out (helps debugging without noise)
+        if filtered_out_after > 0:
+            logger.info(
+                f"{self.log_prefix}: Filtered out {filtered_out_after} {sub_type} {self.type}(s)"
+                f" as they were outside the historical pull time range."
+            )
+
         return filtered
 
     def load_historical(self, sub_type: str, iterator_name: str):
         """Pull historical data from Netskope."""
+        start_details = (
+            f"Historical Pull Configuration:\n"
+            f"  - Sub Type: {sub_type}\n"
+            f"  - Data Type: {self.type}\n"
+            f"  - Iterator Name: {iterator_name}\n"
+            f"  - Start Time: {self.start_time} ({datetime.fromtimestamp(self.start_time)})\n"
+            f"  - End Time: {self.end_time} ({datetime.fromtimestamp(self.end_time)})\n"
+        )
+        logger.debug(
+            message=(
+                f"{self.log_prefix}: Starting historical pull for {sub_type} {self.type}(s)."
+            ),
+            details=start_details
+        )
         iterator = self.get_iterator(sub_type, iterator_name, is_historical=True)
         # registered = connector.collection(Collections.ITERATOR).find_one(
         #     {"name": self.iterator_name % sub_type}
@@ -876,6 +902,8 @@ class NetskopeClient:
 
         # if not registered:
         iterator.set_timestamp(self.start_time)
+
+        # Track total records for summary
 
         pull_time = None
         try:
@@ -926,10 +954,28 @@ class NetskopeClient:
                     )
                     return {"success": False}
 
-                if response.get(CONST.TIMESTAMP_HWM, 0) > self.end_time or (
-                    pull_time == response.get(CONST.TIMESTAMP_HWM, 0)
-                    and not len(response.get(CONST.RESULT, []))
-                ):
+                current_hwm = response.get(CONST.TIMESTAMP_HWM, 0)
+                current_result = response.get(CONST.RESULT, [])
+
+                # Check if we should terminate AFTER processing this batch
+                should_terminate = current_hwm > self.end_time or (
+                    pull_time == current_hwm
+                    and not len(current_result)
+                )
+
+                # FIX: Even if HWM > end_time, we should still process the current batch
+                # because it may contain records that are within the time range
+                if should_terminate and current_result:
+                    # Process the final batch before terminating
+                    filtered_data = self.filter_data(current_result, sub_type)
+                    if filtered_data:
+                        # If sub type is incident and forensics enabled, enrich
+                        if sub_type == CONST.EVENTS.get("incident") and self.incident_enrichment:
+                            filtered_data = self.enrich_incident_data(filtered_data)
+                        if self.compress_historical_data:
+                            filtered_data = gzip.compress(json.dumps({CONST.RESULT: filtered_data}).encode('utf-8'), compresslevel=3)
+                        self.message_queue.put((filtered_data, sub_type, False, True))
+
                     logger.info(
                         f"{self.log_prefix}: "
                         f"Historical pulling of {sub_type} {self.type}(s) for tenant {self.tenant.get('name')} "
@@ -938,7 +984,17 @@ class NetskopeClient:
                     )
                     return {"success": True}
 
-                filtered_data = self.filter_data(response.get(CONST.RESULT, []))
+                # If we should terminate but no data in current batch, just return
+                if should_terminate:
+                    logger.info(
+                        f"{self.log_prefix}: "
+                        f"Historical pulling of {sub_type} {self.type}(s) for tenant {self.tenant.get('name')} "
+                        f"is done for time window {datetime.fromtimestamp(self.start_time)} "
+                        f"to {datetime.fromtimestamp(self.end_time)}."
+                    )
+                    return {"success": True}
+
+                filtered_data = self.filter_data(current_result, sub_type)
                 pull_time = response.get(CONST.TIMESTAMP_HWM, 0)
                 pull_message = (
                     f" until {datetime.fromtimestamp(pull_time)} " if pull_time else " "

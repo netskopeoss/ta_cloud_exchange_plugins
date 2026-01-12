@@ -1,3 +1,8 @@
+# 1.6.0
+## Fixed
+- Updated the historical pull logic to ensure that valid events within the requested time range from the last batch are processed.
+- Updated handling for pulling alerts/events from stored checkpoint.
+
 # 1.5.3
 ## Changed
 - Improved exception handling when forensics service is not enabled on Netskope Tenant.

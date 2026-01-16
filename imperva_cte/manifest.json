@@ -1,0 +1,70 @@
+{
+    "name": "Imperva",
+    "id": "imperva_cte",
+    "version": "1.0.0",
+    "description": "This plugin is used to fetch the IoCs of type IPv4 from the Application > Attack Analytics > Incidents page on the Imperva platform. This plugin does not support sharing of IoCs to the Imperva platform. This plugin supports retraction of IoCs pulled from the Imperva platform.",
+    "module": "CTE",
+    "minimum_version": "5.1.0",
+    "patch_supported": true,
+    "push_supported": false,
+    "fetch_retraction_info": true,
+    "configuration": [
+        {
+            "label": "Account ID",
+            "key": "account_id",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "Unique identifier of the account. Get Account ID from 'Account > Current Account > ID from bracket'."
+        },
+        {
+            "label": "API ID",
+            "key": "api_id",
+            "type": "password",
+            "default": "",
+            "mandatory": true,
+            "description": "API ID generated from the Imperva instance. API ID can be generated from 'Account Management > User Management > My profile > API keys' page."
+        },
+        {
+            "label": "API Key",
+            "key": "api_key",
+            "type": "password",
+            "default": "",
+            "mandatory": true,
+            "description": "API Key generated from the Imperva instance. API Key can be generated from 'Account Management > User Management > My profile > API keys' page."
+        },
+        {
+            "label": "Enable Tagging",
+            "key": "enable_tagging",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Yes",
+                    "value": "yes"
+                },
+                {
+                    "key": "No",
+                    "value": "no"
+                }
+            ],
+            "default": "yes",
+            "mandatory": true,
+            "description": "Enable/Disable tagging functionality."
+        },
+        {
+            "label": "Retraction Interval (in days)",
+            "key": "retraction_interval",
+            "type": "number",
+            "mandatory": false,
+            "description": "Specify the number of days for which IoC retraction should be run for Imperva IoCs. Note: This parameter is applicable only for Netskope CE version 5.1.0 or later, and if \"IoC(s) Retraction\" is enabled in Threat Exchange Settings. Value must be between 1 and 1800."
+        },
+        {
+            "label": "Initial Range (in days)",
+            "key": "initial_pull_range",
+            "type": "number",
+            "mandatory": true,
+            "default": 7,
+            "description": "Number of days to pull the data for the initial run. Value must be between 1 and 1800."
+        }
+    ]
+}

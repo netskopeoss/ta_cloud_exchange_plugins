@@ -32,10 +32,11 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 CRE Wiz Plugin helper module.
 """
 
+import hashlib
 import json
 import time
 import traceback
-from typing import Dict, Tuple, Union
+from typing import Any, Dict, Tuple, Union
 
 import requests
 from netskope.common.utils import add_user_agent
@@ -44,7 +45,8 @@ from .wiz_constants import (
     DEFAULT_WAIT_TIME,
     MAX_API_CALLS,
     MODULE_NAME,
-    PLATFORM_NAME
+    PLATFORM_NAME,
+    AUTH_ENDPOINT,
 )
 
 
@@ -114,6 +116,7 @@ class WizPluginHelper(object):
         files=None,
         headers: Dict = {},
         json=None,
+        storage: Dict = {},
         verify=True,
         proxies=None,
         is_handle_error_required=True,
@@ -132,6 +135,7 @@ class WizPluginHelper(object):
             data (Any,optional): Data to be sent to API. Defaults to None.
             headers (Dict, optional): Headers for the request. Defaults to {}.
             json (optional): Json payload for request. Defaults to None.
+            storage (Dict, optional): Storage for the request. Defaults to {}.
             is_handle_error_required (bool, optional): Does the API helper
             should handle the status codes. Defaults to True.
             is_validation (bool, optional): Does this request coming from
@@ -176,13 +180,24 @@ class WizPluginHelper(object):
                 if (
                     status_code == 401
                     and regenerate_auth_token
-                    and not is_validation
                 ):
-                    _, token_url, client_id, client_secret = self.get_config_params(
-                        configuration=configuration
+                    _, token_url, client_id, client_secret, *_ = (
+                        self.get_config_params(
+                            configuration=configuration
+                        )
                     )
                     auth_header = self.get_auth_header(
-                        client_id, client_secret, token_url
+                        client_id=client_id,
+                        client_secret=client_secret,
+                        token_url=token_url,
+                        verify=verify,
+                        proxies=proxies,
+                        is_validation=is_validation,
+                    )
+                    storage.update(
+                        {
+                            "auth_header": auth_header,
+                        }
                     )
                     headers.update(auth_header)
                     return self.api_helper(
@@ -195,6 +210,8 @@ class WizPluginHelper(object):
                         data=data,
                         verify=verify,
                         proxies=proxies,
+                        storage=storage,
+                        configuration=configuration,
                         is_handle_error_required=is_handle_error_required,
                         is_validation=is_validation,
                         logger_msg=logger_msg,
@@ -263,6 +280,19 @@ class WizPluginHelper(object):
                     )
         except WizPluginException:
             raise
+        except requests.exceptions.ReadTimeout as error:
+            err_msg = f"Read Timeout error occurred while {logger_msg}."
+            if is_validation:
+                err_msg = "Read Timeout error occurred."
+
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg} Error: {error}",
+                details=traceback.format_exc(),
+                resolution=(
+                    "Ensure that the API endpoint URL and Token URL are valid."
+                ),
+            )
+            raise WizPluginException(err_msg)
         except requests.exceptions.ProxyError as error:
             err_msg = (
                 f"Proxy error occurred while {logger_msg}. Verify the"
@@ -277,6 +307,9 @@ class WizPluginHelper(object):
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {error}",
                 details=traceback.format_exc(),
+                resolution=(
+                    "Ensure that the proxy configuration provided is valid."
+                ),
             )
             raise WizPluginException(err_msg)
         except requests.exceptions.ConnectionError as error:
@@ -295,6 +328,9 @@ class WizPluginHelper(object):
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {error}",
                 details=traceback.format_exc(),
+                resolution=(
+                    "Ensure that the API endpoint URL and Token URL are valid."
+                ),
             )
             raise WizPluginException(err_msg)
         except requests.HTTPError as err:
@@ -307,6 +343,9 @@ class WizPluginHelper(object):
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {err}",
                 details=traceback.format_exc(),
+                resolution=(
+                    "Ensure that the configuration parameters provided are valid."
+                ),
             )
             raise WizPluginException(err_msg)
         except Exception as exp:
@@ -316,19 +355,20 @@ class WizPluginHelper(object):
                     "Unexpected error while performing "
                     f"API call to {PLATFORM_NAME}."
                 )
-                self.logger.error(
-                    message=f"{self.log_prefix}: {err_msg} Error: {exp}",
-                    details=traceback.format_exc(),
-                )
-                raise WizPluginException(err_msg)
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {exp}",
                 details=traceback.format_exc(),
+                resolution=(
+                    "Ensure that the configuration parameters provided are valid."
+                ),
             )
             raise WizPluginException(err_msg)
 
     def parse_response(
-        self, response: requests.models.Response, logger_msg, is_validation: bool = False
+        self,
+        response: requests.models.Response,
+        logger_msg: str,
+        is_validation: bool = False,
     ):
         """Parse Response will return JSON from response object.
 
@@ -344,7 +384,8 @@ class WizPluginHelper(object):
             return response.json()
         except json.JSONDecodeError as err:
             err_msg = (
-                f"Invalid JSON response received from API while {logger_msg}. Error: {str(err)}"
+                f"Invalid JSON response received from API while {logger_msg}. "
+                f"Error: {str(err)}"
             )
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg}",
@@ -352,14 +393,14 @@ class WizPluginHelper(object):
             )
             if is_validation:
                 err_msg = (
-                    "Verify Base URL provided in the "
+                    "Verify API Endpoint URL provided in the "
                     "configuration parameters. Check logs for more details."
                 )
             raise WizPluginException(err_msg)
         except Exception as exp:
             err_msg = (
-                "Unexpected error occurred while parsing"
-                f" json response while {logger_msg}. Error: {exp}"
+                "Unexpected error occurred while parsing "
+                f"json response while {logger_msg}. Error: {exp}"
             )
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg}",
@@ -368,7 +409,7 @@ class WizPluginHelper(object):
             if is_validation:
                 err_msg = (
                     "Unexpected validation error occurred, "
-                    "Verify Base URL provided in the "
+                    "Verify API Endpoint URL provided in the "
                     "configuration parameters. Check logs for more details."
                 )
             raise WizPluginException(err_msg)
@@ -400,17 +441,35 @@ class WizPluginHelper(object):
             401: "Received exit code 401, Unauthorized access",
             404: "Received exit code 404, Resource not found",
         }
+        resolution_dict = {
+            400: (
+                "Verify the API Endpoint URL, Token URL, Client ID and "
+                "Client Secret provided in the configuration parameters."
+            ),
+            401: (
+                "Verify Token URL, Client ID and Client Secret "
+                "provided in the configuration parameters."
+            ),
+            403: (
+                "Verify API scopes/permissions for Client ID and "
+                "Client Secret provided in the configuration parameters."
+            ),
+            404: (
+                "Verify the API Endpoint URL or Token URL provided in the "
+                "configuration parameters."
+            ),
+        }
         if is_validation:
             error_dict = {
                 400: (
-                    "Received exit code 400, Bad Request, Verify the"
-                    " Base URL, Token URL, Client ID and Client Secret provided in the"
-                    " configuration parameters."
+                    "Received exit code 400, Bad Request, Verify the "
+                    "API Endpoint URL, Token URL, Client ID and Client Secret "
+                    "provided in the configuration parameters."
                 ),
                 401: (
                     "Received exit code 401, Unauthorized, Either "
                     "Client ID and Client Secret are invalid or "
-                    "Token URL might not be compatible with Base URL."
+                    "Token URL might not be compatible with API Endpoint URL."
                 ),
                 403: (
                     "Received exit code 403, Forbidden, Verify API scopes "
@@ -418,11 +477,31 @@ class WizPluginHelper(object):
                 ),
                 404: (
                     "Received exit code 404, Resource not found, Verify "
-                    "Base URL or Token URL provided in the configuration parameters."
+                    "API Endpoint URL or Token URL provided in the "
+                    "configuration parameters."
                 ),
             }
 
-        if status_code in [200, 201]:
+        def _log_error_message(resolution: str = None):
+            nonlocal err_msg
+            if is_validation:
+                log_err_msg = validation_msg + err_msg
+                self.logger.error(
+                    message=f"{self.log_prefix}: {log_err_msg}",
+                    details=f"API response: {resp.text}",
+                    resolution=resolution,
+                )
+                raise WizPluginException(err_msg)
+            else:
+                err_msg = err_msg + " while " + logger_msg + "."
+                self.logger.error(
+                    message=f"{self.log_prefix}: {err_msg}",
+                    details=f"API response: {resp.text}",
+                    resolution=resolution,
+                )
+                raise WizPluginException(err_msg)
+
+        if status_code in [200, 201, 202]:
             return self.parse_response(
                 response=resp,
                 logger_msg=logger_msg,
@@ -432,42 +511,24 @@ class WizPluginHelper(object):
             return {}
         elif status_code in error_dict:
             err_msg = error_dict[status_code]
-            if is_validation:
-                log_err_msg = validation_msg + err_msg
-                self.logger.error(
-                    message=f"{self.log_prefix}: {log_err_msg}",
-                    details=f"API response: {resp.text}",
-                )
-                raise WizPluginException(err_msg)
-            else:
-                err_msg = err_msg + " while " + logger_msg + "."
-                self.logger.error(
-                    message=f"{self.log_prefix}: {err_msg}",
-                    details=f"API response: {resp.text}",
-                )
-                raise WizPluginException(err_msg)
-
+            resolution = resolution_dict.get(status_code)
+            _log_error_message(resolution=resolution)
         else:
             err_msg = (
                 "HTTP Server Error"
                 if (status_code >= 500 and status_code <= 600)
                 else "HTTP Error"
             )
-            self.logger.error(
-                message=(
-                    f"{self.log_prefix}: Received exit code {status_code}, "
-                    f"{validation_msg+err_msg} while {logger_msg}."
-                ),
-                details=f"API response: {resp.text}",
-            )
-            raise WizPluginException(err_msg)
+            _log_error_message()
 
     def get_auth_header(
         self,
-        client_id,
-        client_secret,
-        token_url,
-        is_validation=False,
+        client_id: str,
+        client_secret: str,
+        token_url: str,
+        verify: Any,
+        proxies: Any,
+        is_validation: bool = False,
     ):
         """Get the OAUTH2 Json object with access token from Wiz \
         platform.
@@ -476,7 +537,11 @@ class WizPluginHelper(object):
             client_id (str): Client ID required to generate OAUTH2 token.
             client_secret (str): Client Secret required to generate OAUTH2
             token.
-            token_url (str): Authentication URL required to generate OAUTH2 token
+            token_url (str): Authentication URL required to generate \
+                OAUTH2 token
+            verify (Any): Verify the API Endpoint URL provided in the
+            configuration parameters.
+            proxies (Any): Proxies required to generate OAUTH2 token
             is_validation (bool): Is this a validation call?
         Returns:
             json: JSON response data in case of Success.
@@ -491,39 +556,47 @@ class WizPluginHelper(object):
             "accept": "application/json",
             "content-type": "application/x-www-form-urlencoded",
         }
-        logger_msg = f"getting auth token from {PLATFORM_NAME}"
-        auth_endpoint = f"{token_url}/oauth/token"
+        logger_msg = "generating access token"
+        auth_endpoint = AUTH_ENDPOINT.format(token_url=token_url)
         try:
             response = self.api_helper(
                 method="POST",
                 url=auth_endpoint,
                 headers=headers,
                 data=auth_payload,
+                verify=verify,
+                proxies=proxies,
                 logger_msg=logger_msg,
                 is_validation=is_validation,
                 regenerate_auth_token=False,
                 is_handle_error_required=False
             )
             if response.status_code in [200, 201]:
-                resp_json = self.parse_response(response, logger_msg, is_validation)
+                resp_json = self.parse_response(
+                    response, logger_msg, is_validation
+                )
                 # Check if auth JSON is valid or not.
                 return self.check_auth_json(resp_json)
             else:
-                return self.handle_error(response, "getting auth token", is_validation)
+                return self.handle_error(
+                    response, "getting auth token", is_validation
+                )
         except WizPluginException:
             raise
         except Exception as exp:
             if is_validation:
                 err_msg = (
                     "Unexpected validation error occurred "
-                    "while authenticating."
+                    "while generating access token."
                 )
                 self.logger.error(
                     message=f"{self.log_prefix}: {err_msg} Error: {exp}",
                     details=traceback.format_exc(),
                 )
                 raise WizPluginException(err_msg)
-            err_msg = "Unexpected error occurred while getting auth token."
+            err_msg = (
+                "Unexpected error occurred while generating access token."
+            )
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {exp}",
                 details=traceback.format_exc(),
@@ -537,13 +610,16 @@ class WizPluginHelper(object):
             configuration (Dict): Configuration dictionary.
 
         Returns:
-            Tuple: Tuple containing Base URL, Client ID and Client Secret.
+            Tuple: Tuple containing API Endpoint URL, \
+                Client ID and Client Secret.
         """
         return (
             configuration.get("base_url", "").strip().strip("/"),
             configuration.get("token_url", "").strip().strip("/"),
             configuration.get("client_id", "").strip(),
             configuration.get("client_secret"),
+            configuration.get("wiz_tables", []),
+            configuration.get("initial_range")
         )
 
     def check_auth_json(self, auth_json: Dict) -> str:
@@ -571,3 +647,7 @@ class WizPluginHelper(object):
             "Authorization": f"Bearer {auth_token}",
             "Accept": "application/json",
         }
+
+    def hash_string(self, string: str) -> str:
+        """Hash the string."""
+        return hashlib.sha256(string.encode()).hexdigest()

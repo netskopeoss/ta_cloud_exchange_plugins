@@ -34,18 +34,87 @@ CRE Wiz Plugin constants.
 PAGE_SIZE = 500
 PLATFORM_NAME = "Wiz"
 MODULE_NAME = "CRE"
-PLUGIN_VERSION = "1.0.0"
+PLUGIN_VERSION = "2.0.0"
 MAX_API_CALLS = 4
 DEFAULT_WAIT_TIME = 60
 MAX_RETRY_AFTER_IN_MIN = 5
+INTEGER_THRESHOLD = 4611686018427387904
+MAXIMUM_CE_VERSION = "5.1.2"
+DATE_TIME_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
+
+GRAPHQL_ENDPOINT = "{api_endpoint_url}/graphql"
+AUTH_ENDPOINT = "{token_url}/oauth/token"
+
+# Application
+APPLICATION_ENTITY_NAME = "Applications"
 GRAPHQL_QUERY = {
-   "query": "query CloudResourceSearch(     $filterBy: CloudResourceFilters     \
-   $first: Int     $after: String   )\
-   {     cloudResources(       filterBy: $filterBy       first: $first       after: $after     ) \
-   {       nodes {         ...CloudResourceFragment       }       \
-   pageInfo {         hasNextPage         endCursor       }     }   }   \
-   fragment CloudResourceFragment on CloudResource \
-   {     id     name     type     subscriptionId     subscriptionExternalId     \
-   graphEntity{       id       providerUniqueId       name       type       \
-   projects {         id       }       properties       firstSeen       lastSeen     }   }"
+   "query": "query Table($first: Int, $after: String, \
+   $filterBy: CloudResourceV2Filters) {    cloudResourcesV2(      \
+   first: $first      after: $after      filterBy: $filterBy    ) \
+   {      nodes {        id        name             type         \
+   cloudAccount {            externalId            id        }    \
+   graphEntity {            properties            firstSeen        \
+   lastSeen        }      }      pageInfo {        hasNextPage      \
+   endCursor      }    }  }"
+}
+APPLICATION_FIELDS = {
+   "Application ID": {"key": "id"},
+   "Subscription External ID": {"key": "cloudAccount.externalId"},
+   "Subscription ID": {"key": "cloudAccount.id"},
+   "Application Name": {"key": "name"},
+   "Cloud Platform": {"key": "graphEntity.properties.cloudPlatform"},
+   "Cloud Provider URL": {"key": "graphEntity.properties.cloudProviderURL"},
+   "Creation Date": {"key": "graphEntity.properties.creationDate"},
+   "First Seen": {"key": "graphEntity.firstSeen"},
+   "Last Seen": {"key": "graphEntity.lastSeen"},
+}
+
+# Workloads
+WORKLOADS_ENTITY_NAME = "Workloads"
+WORKLOADS_QUERY = {
+   "query": "query VulnerabilityFindingsPage($filterBy: VulnerabilityFindingFilters, \
+   $first: Int, $after: String) \
+   {    vulnerabilityFindings(        filterBy: $filterBy      \
+   first: $first        after: $after    ) \
+   {        nodes {            id            name           score            \
+   exploitabilityScore            severity            impactScore            \
+   status            cnaScore                \
+   epssSeverity            epssPercentile            epssProbability         \
+   CVSSSeverity            vulnerableAsset \
+   {                ... on VulnerableAssetBase {                    \
+   id                    type                    name                    \
+   region                    cloudProviderURL                    \
+   cloudPlatform                    status                    \
+   subscriptionName           subscriptionExternalId           \
+   subscriptionId                  tags                }                \
+   ... on VulnerableAssetVirtualMachine {                    \
+   operatingSystem                    \
+   ipAddresses                }            }        }        \
+   pageInfo {            hasNextPage            endCursor        }    }}"
+}
+WORKLOADS_FIELDS = {
+   "Workload ID": {"key": "vulnerableAsset.id"},
+   "IP Addresses": {"key": "vulnerableAsset.ipAddresses"},
+   "Type": {"key": "vulnerableAsset.type"},
+   "Name": {"key": "vulnerableAsset.name"},
+   "Region": {"key": "vulnerableAsset.region"},
+   "Cloud Platform": {"key": "vulnerableAsset.cloudPlatform"},
+   "Cloud Provider URL": {"key": "vulnerableAsset.cloudProviderURL"},
+   "Status": {"key": "vulnerableAsset.status"},
+   "Subscription Name": {"key": "vulnerableAsset.subscriptionName"},
+   "Subscription External ID": {"key": "vulnerableAsset.subscriptionExternalId"},
+   "Subscription ID": {"key": "vulnerableAsset.subscriptionId"},
+   "OS": {"key": "vulnerableAsset.operatingSystem"},
+   "Tags": {"key": "vulnerableAsset.tags"},
+   "Vulnerability Name": {"key": "name"},
+   "CVSS Severity": {"key": "CVSSSeverity"},
+   "Vulnerability Score": {"key": "score"},
+   "Exploitability Score": {"key": "exploitabilityScore"},
+   "Severity": {"key": "severity"},
+   "Impact Score": {"key": "impactScore"},
+   "Vulnerability Status": {"key": "status"},
+   "EPSS Severity": {"key": "epssSeverity"},
+   "EPSS Percentile": {"key": "epssPercentile"},
+   "EPSS Probability": {"key": "epssProbability"},
+   "CNA Score": {"key": "cnaScore"},
 }

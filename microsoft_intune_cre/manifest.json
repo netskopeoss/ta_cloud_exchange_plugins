@@ -1,10 +1,10 @@
 {
     "name": "Microsoft Intune",
     "id": "microsoft_intune_cre",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "module": "CRE",
     "minimum_version": "5.1.2",
-    "description": "This plugin fetches Devices data from the 'Devices > All Devices' page on Microsoft Intune platform. This plugin supports 'Reboot Device', 'Sync Device', 'Run Windows Defender Scan' and 'Update Windows Defender Signatures' actions on the Microsoft Intune platform.",
+    "description": "This plugin is used to fetch Devices data from the 'Devices > All Devices' page, Device Health Scores from 'Reports > Analytics > Endpoint Analytics' page and Group Tag from 'Devices > Device Onboarding > Enrollment > Windows Autopilot > Devices' page on Microsoft Intune platform. This plugin supports 'Reboot Device', 'Sync Device', 'Run Windows Defender Scan' and 'Update Windows Defender Signatures' actions on the Microsoft Intune platform.",
     "configuration": [
         {
             "label": "Client ID",

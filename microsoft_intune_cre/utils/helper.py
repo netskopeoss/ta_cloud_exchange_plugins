@@ -608,3 +608,32 @@ class MicrosoftIntuneHelper:
                 "$filter"
             ] = f"lastSyncDateTime ge {formatted_datetime_str}"
         return query_params
+
+    def _update_query_param_with_next_link(
+        self, query_params: Dict, next_link: str
+    ) -> Dict:
+        """
+        Update query parameters with skip token extracted from next link URL.
+
+        This method extracts the skip token from a pagination next link URL and
+        adds it to the query parameters dictionary to enable fetching the next
+        page of results from the Microsoft Intune API.
+
+        Args:
+            query_params (Dict): Dictionary of existing query parameters to
+                update.
+            next_link (str): The next page URL containing the skip token for
+                pagination.
+
+        Returns:
+            Dict: Updated query parameters dictionary with the $skiptoken
+                parameter added.
+        """
+        query_params.update(
+            {
+                "$skiptoken": self.parser.extract_next_token(
+                    next_page_url=next_link,
+                )
+            }
+        )
+        return query_params

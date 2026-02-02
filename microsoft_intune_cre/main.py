@@ -33,6 +33,7 @@ CRE Microsoft Intune Plugin
 """
 
 import traceback
+from copy import deepcopy
 from typing import Any, Callable, Dict, List, Literal, Tuple, Type, Union
 
 from netskope.common.api import __version__ as CE_VERSION
@@ -48,14 +49,15 @@ from packaging import version
 
 from .utils.constants import (
     ACTION,
-    ACTION_BATCH_SIZE,
     ACTION_API_ENDPOINT_MAPPING,
+    ACTION_BATCH_SIZE,
     BATCHED_API_ENDPOINT,
     CONFIGURATION,
-    CUSTOM_SEPARATOR,
     DEVICE_ENTITY_MAPPING,
     DEVICE_HEALTH_SCORE_MAPPING,
     EMPTY_ERROR_MESSAGE,
+    GET_DEVICE_HEALTH_SCORE_API_ENDPOINT,
+    GET_GROUP_TAGS,
     INVALID_VALUE_ERROR_MESSAGE,
     MAXIMUM_CE_VERSION,
     MODULE_NAME,
@@ -65,7 +67,6 @@ from .utils.constants import (
     PULL_DEVICES_API_ENDPOINT,
     TYPE_ERROR_MESSAGE,
     VALIDATION_ERROR_MESSAGE,
-    GET_DEVICE_HEALTH_SCORE_API_ENDPOINT,
 )
 from .utils.exceptions import MicrosoftIntunePluginException, exception_handler
 from .utils.helper import MicrosoftIntuneHelper
@@ -412,6 +413,10 @@ class MicrosoftIntunePlugin(PluginBase):
                         type=EntityFieldType.STRING,
                     ),
                     EntityField(
+                        name="Group Tag",
+                        type=EntityFieldType.STRING,
+                    ),
+                    EntityField(
                         name="Ethernet MAC Address",
                         type=EntityFieldType.STRING,
                     ),
@@ -562,9 +567,18 @@ class MicrosoftIntunePlugin(PluginBase):
                 f"{self.log_prefix}: Updating {len(records)}"
                 f" Devices records from {PLATFORM_NAME} platform."
             )
-            updated_devices = self._update_devices_with_health_score(
+            updated_devices = []
+            devices_with_group_tags = self._update_devices_with_group_tag(
                 devices=records,
-                context={},
+                context={}
+            )
+            devices_with_health_scores = self._update_devices_with_health_score(
+                devices=records,
+                context={}
+            )
+            updated_devices = self._update_records(
+                devices_with_group_tags=devices_with_group_tags,
+                devices_with_health_scores=devices_with_health_scores
             )
             return updated_devices
         else:
@@ -645,20 +659,22 @@ class MicrosoftIntunePlugin(PluginBase):
                     skip += 1
             total_success += success
             total_skip += skip
+            fetch_msg = f"Successfully fetched {success} device record(s)"
+            if skip > 0:
+                fetch_msg += (
+                    f" , Skipped {skip} device record(s)"
+                )
             self.logger.info(
-                f"{self.log_prefix}: Successfully fetched {success}"
-                f" device record(s), Skipped {skip} device record(s)"
-                f" for page {page_number}. Total devices fetched"
-                f": {total_success}."
+                f"{self.log_prefix}: {fetch_msg} for page {page_number}."
+                f" Total devices fetched: {total_success}."
             )
             next_link = response.get("@odata.nextLink")
             if next_link:
-                query_params = {
-                    "$top": PAGE_SIZE,
-                    "$skiptoken": self.parser.extract_next_token(
-                        next_page_url=next_link
-                    ),
-                }
+                query_params = (
+                    self.microsoftintunehelper._update_query_param_with_next_link(
+                        query_params=query_params, next_link=next_link
+                    )
+                )
                 page_number += 1
             else:
                 break
@@ -672,6 +688,214 @@ class MicrosoftIntunePlugin(PluginBase):
                 f"device record(s) from {PLATFORM_NAME} platform."
             )
         return device_records
+
+    def _fetch_device_group_tags(self, context: Dict = {}) -> Dict:
+        """
+        Fetch device group tags from Microsoft Intune Windows Autopilot.
+
+        This method retrieves group tags for Windows Autopilot devices from
+        the Microsoft Intune platform. It handles pagination to fetch all
+        available devices and includes error handling for API failures.
+        The method fetches devices seen after the last run time.
+
+        Args:
+            context (Dict, optional): Context dictionary for logging and
+                tracking purposes. Defaults to empty dict.
+
+        Returns:
+            Dict: Dictionary mapping managed device IDs to device information
+                containing Device ID, Group Tag, and Serial Number.
+
+        Raises:
+            MicrosoftIntunePluginException: When API errors occur during
+                data retrieval.
+            Exception: For unexpected errors during the fetch operation.
+        """
+        access_token, storage = self.get_access_token_and_storage(
+            configuration=self.configuration,
+            is_validation=False,
+        )
+        headers = self.microsoftintunehelper.get_headers(
+            access_token=access_token
+        )
+        self.logger.info(
+            f"{self.log_prefix}: Fetching group tags for Devices"
+            f" from {PLATFORM_NAME} platform.",
+        )
+        query_params = {
+            "$top": PAGE_SIZE
+        }
+        page_number = 1
+        windows_autopilot_devices = {}
+        total_success_count = 0
+        total_skip_count = 0
+        while True:
+            page_success_count = 0
+            page_skip_count = 0
+            try:
+                logger_msg = (
+                    "fetching group tags from windows autopilot"
+                    f" for page {page_number}"
+                )
+                context["logger_msg"] = logger_msg
+                response = self.microsoftintunehelper.api_helper(
+                    logger_msg=logger_msg,
+                    url=GET_GROUP_TAGS,
+                    method="GET",
+                    headers=headers,
+                    params=query_params,
+                    verify=self.ssl_validation,
+                    proxies=self.proxy,
+                    configuration=self.configuration,
+                    storage=storage,
+                    is_validation=False,
+                    is_handle_error_required=True,
+                    regenerate_access_token=True,
+                )
+                devices_data = response.get("value", [])
+                if not devices_data:
+                    break
+                for device in devices_data:
+                    managed_device_id = device.get("managedDeviceId")
+                    if not managed_device_id:
+                        page_skip_count += 1
+                    windows_autopilot_devices[managed_device_id] = {
+                        "Device ID": managed_device_id,
+                        "Group Tag": device.get("groupTag", ""),
+                        "Serial Number": device.get("serialNumber"),
+                    }
+                    page_success_count += 1
+                fetch_msg = (
+                    f"Successfully fetched group tags for {page_success_count}"
+                    f" device(s)"
+                )
+                if page_skip_count > 0:
+                    fetch_msg += (
+                        f" and skipped fetching group tags for"
+                        f" {page_skip_count} device(s)"
+                    )
+                self.logger.info(
+                    f"{self.log_prefix}: {fetch_msg} for page {page_number}."
+                )
+                total_success_count += page_success_count
+                total_skip_count += page_skip_count
+                next_link = response.get("@odata.nextLink")
+                if next_link:
+                    query_params = self.microsoftintunehelper._update_query_param_with_next_link(
+                        query_params=query_params,
+                        next_link=next_link,
+                    )
+                    page_number += 1
+                else:
+                    break
+            except MicrosoftIntunePluginException as err:
+                self.logger.error(
+                    f"{self.log_prefix}: Error occurred while fetching device"
+                    f" group tags, hence skipping records for page"
+                    f" {page_number}. Error: {err}"
+                )
+                # This condition checks if the error occurred was during
+                # processing of the API response or during the API response
+                # If the error occurred during API response there will be no
+                # nextLink in the response
+                # If the error occurred during processing of the API response
+                # there might be nextLink in the response and if there is no
+                # nextLink it indicates last page
+                if isinstance(response, Dict):
+                    next_link = response.get("@odata.nextLink")
+                    if next_link:
+                        query_params = self.microsoftintunehelper._update_query_param_with_next_link(
+                            query_params=query_params,
+                            next_link=next_link,
+                        )
+                        page_number += 1
+                        continue
+                    else:
+                        break
+                else:
+                    break
+            except Exception as err:
+                self.logger.error(
+                    f"{self.log_prefix}: Unexpected error occurred while"
+                    " fetching device group tags, hence skipping records"
+                    f" for page {page_number}. Error: {err}"
+                )
+                # Same as above
+                if isinstance(response, Dict):
+                    next_link = response.get("@odata.nextLink")
+                    if next_link:
+                        query_params = self.microsoftintunehelper._update_query_param_with_next_link(
+                            query_params=query_params,
+                            next_link=next_link,
+                        )
+                        page_number += 1
+                        continue
+                    else:
+                        break
+                else:
+                    break
+        self.logger.info(
+            f"{self.log_prefix}: Successfully fetched group tags for"
+            f" {total_success_count} device(s) from {PLATFORM_NAME}"
+            f" platform."
+        )
+        if total_skip_count > 0:
+            self.logger.info(
+                f"{self.log_prefix}: Failed to fetch group tags for"
+                f" {total_skip_count} device(s) as ID field was empty."
+            )
+        return windows_autopilot_devices
+
+    @exception_handler
+    def _update_devices_with_group_tag(
+        self, devices: Dict, context: Dict = {}
+    ) -> Dict[str, Dict]:
+        """
+        Update device records with group tags from Windows Autopilot.
+
+        This method enriches device records by fetching and matching group
+        tags from Windows Autopilot devices. It matches devices by their
+        Device ID and creates a dictionary of updated device records that
+        include group tag information.
+
+        Args:
+            devices (Dict): Collection of device records to be updated with
+                group tags.
+            context (Dict, optional): Context dictionary for logging and
+                tracking purposes. Defaults to empty dict.
+
+        Returns:
+            Dict[str, Dict]: Dictionary mapping device IDs to updated device
+                records containing Device ID, Group Tag, and Serial Number
+                for devices that were successfully matched with Windows
+                Autopilot data.
+
+        Note:
+            Only devices that exist in both the input devices collection and
+            the Windows Autopilot devices will be included in the result.
+            Devices not found in Windows Autopilot are logged as skipped.
+        """
+        context["logger_msg"] = "updating devices with group tags"
+        updated_devices = {}
+        success = 0
+        skip = 0
+        windows_autopilot_devices = self._fetch_device_group_tags()
+        for device in devices:
+            device_id = device.get("Device ID")
+            if device_id in windows_autopilot_devices:
+                updated_devices[
+                    device_id
+                ] = windows_autopilot_devices[device_id]
+                success += 1
+            else:
+                skip += 1
+        self.logger.info(
+            f"{self.log_prefix}: Successfully updated {success}"
+            f" device(s) with group tags. Skipped updating"
+            f" {skip} device(s) with group tags as they were"
+            f" not found on {PLATFORM_NAME} platform."
+        )
+        return updated_devices
 
     def _fetch_device_health_scores(self) -> Dict[str, Dict[str, Any]]:
         """
@@ -692,8 +916,11 @@ class MicrosoftIntunePlugin(PluginBase):
         query_params = {
             "$top": PAGE_SIZE
         }
-        success = 0
+        total_success_count = 0
+        total_skip_count = 0
         while True:
+            page_success_count = 0
+            page_skip_count = 0
             try:
                 logger_msg = (
                     f"fetching device health score for page {page_number}"
@@ -725,22 +952,38 @@ class MicrosoftIntunePlugin(PluginBase):
                     device_id = health_data.get("id")
                     if extracted_fields and device_id:
                         device_health_scores[device_id] = extracted_fields
-                        success += 1
+                        page_success_count += 1
+                    else:
+                        page_skip_count += 1
+                fetch_msg = (
+                    "Successfully fetched health scores for"
+                    f" {page_success_count} device(s)"
+                )
+                if page_skip_count > 0:
+                    fetch_msg += (
+                        f" and skipped fetching health scores for"
+                        f" {page_skip_count} device(s)"
+                    )
+                self.logger.info(
+                    f"{self.log_prefix}: {fetch_msg} for page {page_number}."
+                )
+                total_success_count += page_success_count
+                total_skip_count += page_skip_count
                 next_link = response.get("@odata.nextLink")
                 if next_link:
-                    query_params = {
-                        "$top": PAGE_SIZE,
-                        "$skiptoken": self.parser.extract_next_token(
-                            next_page_url=next_link
+                    query_params = (
+                        self.microsoftintunehelper._update_query_param_with_next_link(
+                            query_params=query_params, next_link=next_link
                         )
-                    }
+                    )
                     page_number += 1
                 else:
                     break
             except MicrosoftIntunePluginException as err:
                 self.logger.error(
-                    f"{self.log_prefix}: Error occurred while {logger_msg}."
-                    f" Error: {err}"
+                    f"{self.log_prefix}: Error occurred while fetching device"
+                    f" health scores, hence skipping records for page"
+                    f" {page_number}. Error: {err}"
                 )
                 # This condition checks if the error occurred was during
                 # processing of the API response or during the API response
@@ -752,12 +995,10 @@ class MicrosoftIntunePlugin(PluginBase):
                 if isinstance(response, Dict):
                     next_link = response.get("@odata.nextLink")
                     if next_link:
-                        query_params = {
-                            "$top": PAGE_SIZE,
-                            "$skiptoken": self.parser.extract_next_token(
-                                next_page_url=next_link
-                            )
-                        }
+                        query_params = self.microsoftintunehelper._update_query_param_with_next_link(
+                            query_params=query_params,
+                            next_link=next_link,
+                        )
                         page_number += 1
                         continue
                     else:
@@ -773,16 +1014,19 @@ class MicrosoftIntunePlugin(PluginBase):
                     message=err_msg,
                     details=traceback.format_exc(),
                 )
+                self.logger.error(
+                    f"{self.log_prefix}: Unexpected error occurred while"
+                    f" fetching device health scores, hence skipping records"
+                    f" for page {page_number}. Error: {err}"
+                )
                 # Same as above
                 if isinstance(response, Dict):
                     next_link = response.get("@odata.nextLink")
                     if next_link:
-                        query_params = {
-                            "$top": PAGE_SIZE,
-                            "$skiptoken": self.parser.extract_next_token(
-                                next_page_url=next_link
-                            )
-                        }
+                        query_params = self.microsoftintunehelper._update_query_param_with_next_link(
+                            query_params=query_params,
+                            next_link=next_link,
+                        )
                         page_number += 1
                         continue
                     else:
@@ -790,9 +1034,15 @@ class MicrosoftIntunePlugin(PluginBase):
                 else:
                     break
         self.logger.info(
-            f"{self.log_prefix}: Found health score for "
-            f"{success} device(s) on {PLATFORM_NAME} platform."
+            f"{self.log_prefix}: Successfully fetched health score for"
+            f" {total_success_count} device(s) from {PLATFORM_NAME}"
+            f" platform."
         )
+        if page_skip_count > 0:
+            self.logger.info(
+                f"{self.log_prefix}: Failed to fetch health scores for"
+                f" {page_skip_count} device(s) as ID field was empty."
+            )
         return device_health_scores
 
     @exception_handler
@@ -800,7 +1050,7 @@ class MicrosoftIntunePlugin(PluginBase):
         self,
         devices: List[Dict],
         context: Dict = {},
-    ) -> List[Dict]:
+    ) -> Dict[str, Dict]:
         """
         Update devices with health scores.
 
@@ -809,17 +1059,17 @@ class MicrosoftIntunePlugin(PluginBase):
             context (Dict, optional): Context. Defaults to {}.
 
         Returns:
-            List[Dict]: List of updated devices.
+            Dict[str, Dict]: Dict of updated devices.
         """
         context["logger_msg"] = "updating devices with health scores"
         device_health_scores = self._fetch_device_health_scores()
-        updated_devices = []
+        updated_devices = {}
         success = 0
         skip = 0
         for device in devices:
             device_id = device.get("Device ID")
             if device_id in device_health_scores:
-                updated_devices.append(device_health_scores[device_id])
+                updated_devices[device_id] = device_health_scores[device_id]
                 success += 1
             else:
                 skip += 1
@@ -829,6 +1079,48 @@ class MicrosoftIntunePlugin(PluginBase):
             f" {skip} device(s) with health scores as they were"
             f" not found on {PLATFORM_NAME} platform."
         )
+        return updated_devices
+
+    def _update_records(
+        self,
+        devices_with_group_tags: Dict[str, Dict],
+        devices_with_health_scores: Dict[str, Dict],
+    ) -> List[Dict]:
+        """
+        Merge device records with group tags and health scores.
+
+        This method combines device data from two sources: devices with group
+        tags and devices with health scores. For devices that exist in both
+        dictionaries, it merges their data. Devices that exist in only one
+        dictionary are included as-is in the final result.
+
+        The method modifies the input dictionaries by removing processed
+        entries to avoid duplication in the final result.
+
+        Args:
+            devices_with_group_tags (Dict[str, Dict]): Dictionary mapping
+                device IDs to device data containing group tags.
+            devices_with_health_scores (Dict[str, Dict]): Dictionary mapping
+                device IDs to device data containing health scores.
+
+        Returns:
+            List[Dict]: List of merged device records containing combined data
+                from both sources where available, plus individual records
+                from devices that exist in only one source.
+        """
+        updated_devices = []
+        iterator_dict = deepcopy(devices_with_group_tags)
+        search_dict = deepcopy(devices_with_health_scores)
+        # Combine the records that have both group tags and device health score
+        for device_id, data in iterator_dict.items():
+            if device_id in search_dict:
+                data.update(search_dict[device_id])
+                updated_devices.append(data)
+                devices_with_group_tags.pop(device_id)
+                devices_with_health_scores.pop(device_id)
+        # Add the remaining values
+        updated_devices.extend(devices_with_group_tags.values())
+        updated_devices.extend(devices_with_health_scores.values())
         return updated_devices
 
     def get_actions(self) -> List[ActionWithoutParams]:

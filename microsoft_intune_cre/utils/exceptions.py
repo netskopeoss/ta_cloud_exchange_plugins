@@ -55,14 +55,14 @@ def exception_handler(func):
             function: Wrapped function.
         """
         self = args[0]
-        logger_msg = kwargs.get("context", {}).get("logger_msg")
-        if not logger_msg:
-            logger_msg = f"executing {func.__name__} method"
         try:
             return func(*args, **kwargs)
         except MicrosoftIntunePluginException:
             raise
         except Exception as err:
+            logger_msg = kwargs.get("context", {}).get("logger_msg")
+            if not logger_msg:
+                logger_msg = f"executing {func.__name__} method"
             err_msg = (
                 f"{self.log_prefix}: Unexpected error occurred while"
                 f" {logger_msg}. Error: {err}."

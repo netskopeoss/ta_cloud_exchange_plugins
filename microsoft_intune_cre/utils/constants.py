@@ -37,7 +37,7 @@ MAX_RETRIES = 4
 PAGE_SIZE = 500
 ACTION_BATCH_SIZE = 20
 MODULE_NAME = "CRE"
-PLUGIN_VERSION = "1.0.0"
+PLUGIN_VERSION = "1.1.0"
 PLATFORM_NAME = "Microsoft Intune"
 # The maximum CE version that does not support partial action failure
 MAXIMUM_CE_VERSION = "5.1.2"
@@ -51,6 +51,9 @@ GRAPH_API_BASE_URL = "https://graph.microsoft.com/v1.0"
 BATCHED_API_ENDPOINT = f"{GRAPH_API_BASE_URL}/$batch"
 PULL_DEVICES_API_ENDPOINT = (
     f"{GRAPH_API_BASE_URL}/deviceManagement/managedDevices"
+)
+GET_GROUP_TAGS = (
+    f"{GRAPH_API_BASE_URL}/deviceManagement/windowsAutopilotDeviceIdentities"
 )
 GET_DEVICE_HEALTH_SCORE_API_ENDPOINT = (
     f"{GRAPH_API_BASE_URL}/deviceManagement/userExperienceAnalytics"

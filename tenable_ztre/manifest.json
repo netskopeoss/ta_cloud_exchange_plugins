@@ -1,0 +1,42 @@
+{
+    "name": "Tenable",
+    "description": "This plugin is used to fetch Assets from the Vulnerability Management > Explore > Assets page of the Tenable platform. This plugin supports 'Tag/Untag Asset' actions on Assets.",
+    "minimum_version": "5.1.2",
+    "id": "tenable_ztre",
+    "version": "1.0.0",
+    "module": "CRE",
+    "configuration": [
+        {
+            "label": "Access Key",
+            "key": "access_key",
+            "type": "password",
+            "default": "",
+            "mandatory": true,
+            "description": "Access Key generated from the Tenable platform. It can be generated from the 'Profile > My Profile > API Keys > Generate' page."
+        },
+        {
+            "label": "Secret Key",
+            "key": "secret_key",
+            "type": "password",
+            "default": "",
+            "mandatory": true,
+            "description": "Secret Key generated from the Tenable platform. It can be generated from the 'Profile > My Profile > API Keys > Generate' page."
+        },
+        {
+            "label": "Initial Range (in days)",
+            "key": "initial_range",
+            "type": "number",
+            "mandatory": true,
+            "default": 7,
+            "description": "Number of days to pull the Vulnerability Finding data for the initial run. Value must be from 0 to 2^62."
+        },
+        {
+            "label": "Number of Retries",
+            "key": "no_of_retries",
+            "type": "number",
+            "mandatory": true,
+            "default": 3,
+            "description": "Number of retries of 60 seconds for the Export status check. Value must be from 0 to 2^62."
+        }
+    ]
+}

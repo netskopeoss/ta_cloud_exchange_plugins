@@ -1,174 +1,39 @@
 {
-  "name": "STIX/TAXII",
-  "id": "stix_taxii",
-  "version": "3.1.0",
-  "module": "CTE",
-  "description": "This plugin is used to fetch the indicators of type Domain, IPv4, IPv6, URL and Hash (MD5 and SHA256) from the TAXII feeds and extracts observables from them. This plugin does not support sharing of indicators to TAXII feeds.",
-  "patch_supported": false,
-  "push_supported": false,
-  "configuration": [
-    {
-      "label": "STIX/TAXII Version",
-      "key": "version",
-      "type": "choice",
-      "choices": [
+    "name": "STIX/TAXII",
+    "id": "stix_taxii",
+    "version": "3.2.0",
+    "module": "CTE",
+    "description": "This plugin is used to fetch IOCs of type Domain, URL and Hash (MD5 and SHA256) for version 1.1 and IOCs of type Domain, URL, IPv4, IPv6, and Hash (MD5 and SHA256) for version 2.1/2.2 from the TAXII feeds and extracts observables from them. This plugin supports retraction of IOCs pulled from TAXII feeds. This plugin does not support sharing of indicators to TAXII feeds.",
+    "patch_supported": false,
+    "push_supported": false,
+    "fetch_retraction_info": true,
+    "minimum_version": "6.0.0",
+    "configuration": [
         {
-          "key": "1.1",
-          "value": "1"
-        },
-        {
-          "key": "2.0",
-          "value": "2.0"
-        },
-        {
-          "key": "2.1",
-          "value": "2.1"
+            "label": "STIX/TAXII Version",
+            "key": "version",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "1.1",
+                    "value": "1"
+                },
+                {
+                    "key": "2.0",
+                    "value": "2.0"
+                },
+                {
+                    "key": "2.1",
+                    "value": "2.1"
+                }
+            ],
+            "mandatory": true,
+            "description": "STIX/TAXII Version.",
+            "default": "1",
+            "has_api_call": true,
+            "payload_fields": [
+                "version"
+            ]
         }
-      ],
-      "mandatory": true,
-      "description": "STIX/TAXII Version.",
-      "default": "1"
-    },
-    {
-      "label": "Discovery URL/API Root URL",
-      "key": "discovery_url",
-      "type": "text",
-      "default": "",
-      "mandatory": true,
-      "description": "Discovery/Feed URL of TAXII server for version 1.x and API Root URL for version 2.x. Contact your STIX/TAXII support to get the appropriate URL."
-    },
-    {
-      "label": "Username",
-      "key": "username",
-      "type": "text",
-      "mandatory": false,
-      "description": "Username required for authentication if any."
-    },
-    {
-      "label": "Password",
-      "key": "password",
-      "type": "password",
-      "mandatory": false,
-      "description": "Password required for authentication if any."
-    },
-    {
-      "label": "Collection Names",
-      "key": "collection_names",
-      "type": "text",
-      "default": "",
-      "mandatory": false,
-      "description": "Comma separated collection names from which data needs to be fetched. Leave empty to fetch data from all of the collections."
-    },
-    {
-      "label": "Pagination Method",
-      "key": "pagination_method",
-      "description": "Pagination Method to use while pulling the indicators. Contact your STIX/TAXII support to choose the appropriate option.",
-      "type": "choice",
-      "choices": [
-        {
-          "key": "Next",
-          "value": "next"
-        },
-        {
-          "key": "X-TAXII-Date-Added-Last",
-          "value": "last_added_date"
-        }
-      ],
-      "mandatory": true,
-      "default": "next"
-    },
-    {
-      "label": "Initial Range (in days)",
-      "key": "days",
-      "type": "number",
-      "mandatory": true,
-      "default": 7,
-      "description": "Number of days to pull the data for the initial run."
-    },
-    {
-      "label": "Look Back (in minutes)",
-      "key": "delay",
-      "type": "number",
-      "mandatory": false,
-      "description": "Number of minutes to backdate the start time for pulling the data. Valid value is anything between 0 to 1440."
-    },
-    {
-      "label": "Type of Threat data to pull",
-      "key": "type",
-      "type": "multichoice",
-      "choices": [
-        {
-          "key": "SHA-256",
-          "value": "sha256"
-        },
-        {
-          "key": "MD5",
-          "value": "md5"
-        },
-        {
-          "key": "URL",
-          "value": "url"
-        },
-        {
-          "key": "IPv4",
-          "value": "ipv4"
-        },
-        {
-          "key": "IPv6",
-          "value": "ipv6"
-        },
-        {
-          "key": "Domain",
-          "value": "domain"
-        }
-      ],
-      "default": ["sha256", "md5", "url", "ipv4", "ipv6", "domain"],
-      "mandatory": true,
-      "description": "Type of Threat data to pull. Note: IPv4/IPv6 is supported for STIX/TAXII version 2.x."
-    },
-    {
-      "label": "Severity",
-      "key": "severity",
-      "type": "multichoice",
-      "choices": [
-        {
-          "key": "Unknown",
-          "value": "unknown"
-        },
-        {
-          "key": "Low",
-          "value": "low"
-        },
-        {
-          "key": "Medium",
-          "value": "medium"
-        },
-        {
-          "key": "High",
-          "value": "high"
-        },
-        {
-          "key": "Critical",
-          "value": "critical"
-        }
-      ],
-      "default": [
-        "critical",
-        "high",
-        "medium",
-        "low",
-        "unknown"
-      ],
-      "mandatory": false,
-      "description": "Only indicators with matching severity will be fetched. For STIX/TAXII version 2.x, Unknown should be selected because for all the indicators fetched from these versions would have Unknown severity."
-    },
-    {
-      "label": "Reputation",
-      "key": "reputation",
-      "type": "number",
-      "mandatory": true,
-      "default": 5,
-      "description": "Only indicators with reputation equal to or greater than this will be saved."
-    }
-  ]
+    ]
 }

@@ -35,10 +35,13 @@ URE CrowdStrike plugin helper module.
 import json
 import time
 import traceback
+from dateutil import parser
 from typing import Dict, Tuple, Union
 
 import requests
 from netskope.common.utils import add_user_agent
+from netskope.common.api import __version__ as CE_VERSION
+from packaging import version
 
 from .constants import (
     DEFAULT_WAIT_TIME,
@@ -47,6 +50,7 @@ from .constants import (
     MODULE_NAME,
     PLATFORM_NAME,
     PLUGIN_NAME,
+    MAXIMUM_CE_VERSION,
 )
 
 
@@ -91,6 +95,33 @@ class CrowdstrikePluginHelper(object):
         self.verify = ssl_validation
         self.proxies = proxy
         self.configuration = configuration
+        self.partial_action_result_supported = version.parse(
+            CE_VERSION
+        ) > version.parse(MAXIMUM_CE_VERSION)
+        self.resolution_support = self.partial_action_result_supported
+        # Patch logger methods to handle resolution parameter compatibility
+        self._patch_logger_methods()
+
+    def _patch_logger_methods(self):
+        """patch logger methods to handle resolution parameter
+          compatibility."""
+        # Store original methods
+        original_error = self.logger.error
+
+        def patched_error(
+            message=None, details=None, resolution=None, **kwargs
+        ):
+            """Patched error method that handles resolution compatibility."""
+            log_kwargs = {"message": message}
+            if details:
+                log_kwargs["details"] = details
+            if resolution and self.resolution_support:
+                log_kwargs["resolution"] = resolution
+            log_kwargs.update(kwargs)
+            return original_error(**log_kwargs)
+
+        # Replace logger methods with patched versions
+        self.logger.error = patched_error
 
     def _add_user_agent(self, headers: Union[Dict, None] = None) -> Dict:
         """Add User-Agent in the headers for third-party requests.
@@ -321,9 +352,12 @@ class CrowdstrikePluginHelper(object):
                     "Proxy error occurred. Verify "
                     "the proxy configuration provided."
                 )
-
+            resolution = (
+                "Ensure that the proxy configuration " "provided is correct."
+            )
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {error}",
+                resolution=resolution,
                 details=traceback.format_exc(),
             )
             raise CrowdstrikePluginException(err_msg)
@@ -339,7 +373,6 @@ class CrowdstrikePluginHelper(object):
                     f"platform. Proxy server or {PLATFORM_NAME}"
                     " server is not reachable."
                 )
-
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {error}",
                 details=traceback.format_exc(),
@@ -448,6 +481,25 @@ class CrowdstrikePluginHelper(object):
             401: "Received exit code 401, Unauthorized access",
             404: "Received exit code 404, Resource not found",
         }
+        resolution_dict = {
+            400: (
+                "Ensure that the Base URL, Client ID and Client Secret "
+                " provided in the configuration parameters are correct."
+            ),
+            401: (
+                "Ensure that the Client ID and Client Secret "
+                " provided in the configuration parameters are correct."
+            ),
+            403: (
+                "Ensure that the API scopes provided to Client ID and "
+                "Client Secret are correct."
+            ),
+            404: (
+                "Ensure that the Base URL provided in the "
+                "configuration parameters is correct."
+            ),
+        }
+
         if is_validation:
             error_dict = {
                 400: (
@@ -470,7 +522,7 @@ class CrowdstrikePluginHelper(object):
                 ),
             }
 
-        if status_code in [200, 201]:
+        if status_code in [200, 201, 202]:
             return self.parse_response(
                 response=resp, is_validation=is_validation
             )
@@ -478,10 +530,37 @@ class CrowdstrikePluginHelper(object):
             return {}
         elif status_code in error_dict:
             err_msg = error_dict[status_code]
+            resolution = None
+            try:
+                if "resolution_dict" not in locals():
+                    resolution_dict = {
+                        400: (
+                            "Ensure that the Base URL, Client ID and "
+                            "Client Secret provided in the configuration"
+                            " parameters are correct."
+                        ),
+                        401: (
+                            "Ensure that the Client ID and Client Secret "
+                            " provided in the configuration parameters"
+                            " are correct."
+                        ),
+                        403: (
+                            "Ensure that the API scopes provided to Client"
+                            " ID and Client Secret are correct."
+                        ),
+                        404: (
+                            "Ensure that the Base URL provided in the "
+                            "configuration parameters is correct."
+                        ),
+                    }
+                resolution = resolution_dict[status_code]
+            except Exception:
+                pass
             if is_validation:
                 log_err_msg = validation_msg + err_msg
                 self.logger.error(
                     message=f"{self.log_prefix}: {log_err_msg}",
+                    resolution=resolution,
                     details=f"API response: {resp.text}",
                 )
                 raise CrowdstrikePluginException(err_msg)
@@ -502,7 +581,8 @@ class CrowdstrikePluginHelper(object):
             self.logger.error(
                 message=(
                     f"{self.log_prefix}: Received exit code {status_code}, "
-                    f"{validation_msg+err_msg} while {logger_msg}."
+                    f"{validation_msg+err_msg if is_validation else err_msg}"
+                    f" while {logger_msg}."
                 ),
                 details=f"API response: {resp.text}",
             )
@@ -543,7 +623,7 @@ class CrowdstrikePluginHelper(object):
                 is_validation=is_validation,
                 show_data=False,
             )
-            if response.status_code in [200, 201]:
+            if response.status_code in [200, 201, 202]:
                 resp_json = self.parse_response(response, is_validation)
                 # Check if auth JSON is valid or not.
                 return self.check_auth_json(resp_json)
@@ -608,3 +688,150 @@ class CrowdstrikePluginHelper(object):
             raise CrowdstrikePluginException(err_msg)
 
         return {"Authorization": f"Bearer {auth_token}"}
+
+    def extract_entity_fields(
+        self,
+        event: dict,
+        entity_field_mapping: Dict[str, Dict[str, str]],
+        update_records: bool = False,
+    ) -> dict:
+        """
+        Extracts the required entity fields from the event payload as
+        per the mapping provided.
+
+        Args:
+            event (dict): Event payload.
+            entity_field_mapping (Dict): Mapping of entity fields to
+                their corresponding keys in the event payload and
+                default values.
+
+        Returns:
+            dict: Dictionary containing the extracted entity fields.
+        """
+        extracted_fields = {}
+        for field_name, field_value in entity_field_mapping.items():
+            # Only process 'Tags' if update_records is True
+            if field_name == "Tags" and not update_records:
+                continue
+            key, default, transformation = (
+                field_value.get("key"),
+                field_value.get("default"),
+                field_value.get("transformation"),
+            )
+            self._add_field(
+                extracted_fields,
+                field_name,
+                self._extract_field_from_event(
+                    key,
+                    event,
+                    default,
+                    transformation,
+                ),
+            )
+        policies = event.get("policies", [])
+        device_policies = event.get("device_policies", {})
+        applied_policy_list = []
+        applied_device_policy_list = []
+        if policies and isinstance(policies, list):
+            for policy in policies:
+                if policy.get("applied"):
+                    applied_policy_list.append(policy.get("policy_type"))
+
+        if device_policies and isinstance(device_policies, dict):
+            for policy_type, policy in device_policies.items():
+                if policy.get("applied"):
+                    applied_device_policy_list.append(policy_type)
+        # Remove FalconGroupingTags/ prefix from tags if present
+        if (
+            update_records
+            and "Tags" in extracted_fields
+            and extracted_fields["Tags"]
+        ):
+            tags = extracted_fields["Tags"]
+            if isinstance(tags, list):
+                cleaned_tags = []
+                for tag in tags:
+                    tag_str = str(tag).strip()
+                    if tag_str.startswith("FalconGroupingTags/"):
+                        cleaned_tags.append(
+                            tag_str[len("FalconGroupingTags/"):]
+                        )
+                    else:
+                        cleaned_tags.append(tag_str)
+                extracted_fields["Tags"] = cleaned_tags
+            elif isinstance(tags, str):
+                tag_str = tags.strip()
+                if tag_str.startswith("FalconGroupingTags/"):
+                    extracted_fields["Tags"] = tag_str[
+                        len("FalconGroupingTags/"):
+                    ]
+
+        extracted_fields["Applied Policies"] = applied_policy_list
+        extracted_fields["Applied Device Policies"] = (
+            applied_device_policy_list
+        )
+        try:
+            extracted_fields["Modified Timestamp"] = parser.parse(
+                extracted_fields.get("Modified Timestamp")
+            )
+            extracted_fields["First Seen"] = parser.parse(
+                extracted_fields.get("First Seen")
+            )
+            extracted_fields["Last Seen"] = parser.parse(
+                extracted_fields.get("Last Seen")
+            )
+        except Exception:
+            extracted_fields["Modified Timestamp"] = None
+            extracted_fields["First Seen"] = None
+            extracted_fields["Last Seen"] = None
+        return extracted_fields
+
+    def _add_field(self, fields_dict: dict, field_name: str, value):
+        """
+        Add field to the extracted_fields dictionary.
+
+        Args:
+            fields_dict (dict): Field dictionary to update.
+            field_name (str): Field name to add.
+            value: Field to add.
+        """
+        # Skip empty dicts to prevent MongoDB errors
+        if (isinstance(value, dict) or isinstance(value, list)) and not value:
+            fields_dict[field_name] = None
+            return
+
+        if isinstance(value, int) or isinstance(value, float):
+            fields_dict[field_name] = value
+            return
+
+        fields_dict[field_name] = value
+
+    def _extract_field_from_event(
+        self, key: str, event: dict, default, transformation=None
+    ):
+        """
+        Extract field from event.
+
+        Args:
+            key (str): Key to fetch.
+            event (dict): Event dictionary.
+            default (str,None): Default value to set.
+            transformation (str, None, optional): Transformation
+                to perform on key. Defaults to None.
+
+        Returns:
+            Any: Value of the key from event.
+        """
+        keys = key.split(".")
+        while keys:
+            k = keys.pop(0)
+            if k not in event and default is not None:
+                return default
+            if k not in event:
+                return default
+            if not isinstance(event, dict):
+                return default
+            event = event.get(k)
+        if transformation and transformation == "string":
+            return str(event)
+        return event

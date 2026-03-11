@@ -164,7 +164,11 @@ class MicrosoftDefenderEndpointPluginHelper(object):
                     and regenerate_auth_token
                     and not is_validation
                 ):
-                    auth_header = self.get_auth_json(self.configuration, logger_msg)
+                    auth_header = self.get_auth_json(
+                        configuration=self.configuration,
+                        proxy=proxies,
+                        log_msg=logger_msg
+                    )
                     headers.update(auth_header)
                     return self.api_helper(
                         url=url,

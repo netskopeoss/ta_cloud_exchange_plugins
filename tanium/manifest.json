@@ -1,0 +1,82 @@
+{
+    "name": "Tanium",
+    "id": "tanium",
+    "version": "1.0.0",
+    "description": "This plugin is used to fetch the indicators of type Hash (MD5 and SHA256) from the Modules > Threat Response > Alerts page on the Tanium platform. This plugin does not support sharing of indicators to the Tanium platform. This plugin supports retraction of indicators pulled from the Tanium platform.",
+    "module": "CTE",
+    "minimum_version": "5.1.0",
+    "patch_supported": true,
+    "push_supported": false,
+    "fetch_retraction_info": true,
+    "configuration": [
+        {
+            "label": "API Base URL",
+            "key": "api_base_url",
+            "type": "text",
+            "mandatory": true,
+            "description": "API Base URL of Tanium instance. e.g. https://<domain>-api.titankube.com"
+        },
+        {
+            "label": "API Token",
+            "key": "api_token",
+            "type": "password",
+            "default": "",
+            "mandatory": true,
+            "description": "API Token generated from the Tanium instance. API Token can be generated from 'Administration > API Tokens > New API Token' page."
+        },
+        {
+            "label": "Type of Threat data to pull",
+            "key": "type",
+            "type": "multichoice",
+            "choices": [
+                {
+                    "key": "MD5",
+                    "value": "md5"
+                },
+                {
+                    "key": "SHA256",
+                    "value": "sha256"
+                }
+            ],
+            "default": [
+                "md5",
+                "sha256"
+            ],
+            "mandatory": true,
+            "description": "Type of Threat data to pull. Allowed values are MD5 and SHA256."
+        },
+        {
+            "label": "Enable Tagging",
+            "key": "enable_tagging",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Yes",
+                    "value": "yes"
+                },
+                {
+                    "key": "No",
+                    "value": "no"
+                }
+            ],
+            "default": "yes",
+            "mandatory": true,
+            "description": "Enable/Disable tagging functionality."
+        },
+        {
+            "label": "Retraction Interval (in days)",
+            "key": "retraction_interval",
+            "type": "number",
+            "mandatory": false,
+            "description": "Specify the number of days for which IoC retraction should be run for Tanium indicators. Note: This parameter is applicable only for Netskope CE version 5.1.0 or later, and if \"IoC(s) Retraction\" is enabled in Threat Exchange Settings."
+        },
+        {
+            "label": "Initial Range (in days)",
+            "key": "initial_pull_range",
+            "type": "number",
+            "mandatory": true,
+            "default": 7,
+            "description": "Number of days to pull the data for the initial run."
+        }
+    ]
+}

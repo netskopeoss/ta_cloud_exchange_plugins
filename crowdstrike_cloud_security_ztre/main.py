@@ -34,8 +34,10 @@ CRE CrowdStrike Cloud Security plugin.
 
 import traceback
 from datetime import datetime, timedelta
-from typing import List
+from typing import Callable, Dict, List, Tuple, Type, Union
+from urllib.parse import urlparse
 
+from netskope.common.api import __version__ as CE_VERSION
 from netskope.integrations.crev2.models import Action, ActionWithoutParams
 from netskope.integrations.crev2.plugin_base import (
     Entity,
@@ -44,31 +46,40 @@ from netskope.integrations.crev2.plugin_base import (
     PluginBase,
     ValidationResult,
 )
+from packaging import version
 
 from .utils.constants import (
+    ALLOWED_VALUE_MESSAGE,
     BASE_URLS,
     CLOUD_SERVICES,
     CROWDSTRIKE_DATE_FORMAT,
+    EMPTY_ERROR_MESSAGE,
     INTEGER_THRESHOLD,
     IOA_CLOUD_PROVIDERS,
     IOA_FIELD_MAPPING,
     IOA_RESOURCES_PAGE_SIZE,
     IOM_CLOUD_PROVIDERS,
+    IOM_ENTITY_NAME,
     IOM_FIELD_MAPPING,
     IOM_PAGE_SIZE,
+    MAXIMUM_CE_VERSION,
     MODULE_NAME,
     NORMALIZATION_MULTIPLIER,
     PAGE_SIZE,
     PLATFORM_NAME,
     PLUGIN_NAME,
     PLUGIN_VERSION,
+    PULL_IOA_EVENTS_ENDPOINT,
+    PULL_IOM_EVENT_DETAILS_ENDPOINT,
+    PULL_IOM_EVENT_IDS_ENDPOINT,
+    TYPE_ERROR_MESSAGE,
+    VALIDATION_ERROR_MESSAGE,
+    VALUE_OUT_OF_RANGE_ERROR_MESSAGE,
 )
 from .utils.helper import (
     CrowdstrikeCloudSecurityPluginException,
     CrowdstrikePluginHelper,
 )
-
-IOM_ENTITY_NAME = "Cloud Workloads (Applications)"
 
 
 class CrowdstrikeCloudSecurityPlugin(PluginBase):
@@ -90,6 +101,8 @@ class CrowdstrikeCloudSecurityPlugin(PluginBase):
             *args,
             **kwargs,
         )
+        self._is_ce_post_v512 = self._check_ce_version()
+        self._patch_error_logger()
         self.plugin_name, self.plugin_version = self._get_plugin_info()
         self.log_prefix = f"{MODULE_NAME} {self.plugin_name}"
         if name:
@@ -103,6 +116,39 @@ class CrowdstrikeCloudSecurityPlugin(PluginBase):
             proxy=self.proxy,
             configuration=self.configuration,
         )
+
+    def _check_ce_version(self):
+        """Check if CE version is greater than v5.1.2.
+
+        Returns:
+            bool: True if CE version is greater than v5.1.2, False otherwise.
+        """
+        return version.parse(CE_VERSION) > version.parse(MAXIMUM_CE_VERSION)
+
+    def _patch_error_logger(self):
+        """Monkey patch logger methods to handle resolution parameter
+        compatibility.
+        """
+        # Store original methods
+        original_error = self.logger.error
+
+        def patched_error(
+            message=None,
+            details=None,
+            resolution=None,
+            **kwargs,
+        ):
+            """Patched error method that handles resolution compatibility."""
+            log_kwargs = {"message": message}
+            if details:
+                log_kwargs["details"] = details
+            if resolution and self._is_ce_post_v512:
+                log_kwargs["resolution"] = resolution
+            log_kwargs.update(kwargs)
+            return original_error(**log_kwargs)
+
+        # Replace logger methods with patched versions
+        self.logger.error = patched_error
 
     def _get_plugin_info(self) -> tuple:
         """Get plugin name and version from manifest.
@@ -126,6 +172,145 @@ class CrowdstrikeCloudSecurityPlugin(PluginBase):
                 details=traceback.format_exc(),
             )
         return (PLUGIN_NAME, PLUGIN_VERSION)
+
+    def _validate_url(self, url: str) -> bool:
+        """Validate the URL using parsing.
+
+        Args:
+            url (str): Given URL.
+
+        Returns:
+            bool: True or False { Valid or not Valid URL }.
+        """
+        parsed = urlparse(url)
+        return parsed.scheme.strip() != "" and parsed.netloc.strip() != ""
+
+    def _validate_configuration_parameters(
+        self,
+        field_name: str,
+        field_value: Union[str, List, bool, int],
+        field_type: Type,
+        allowed_values: List = None,
+        max_value: int = None,
+        custom_validation_func: Callable = None,
+        is_required: bool = True,
+    ) -> Union[ValidationResult, None]:
+        """
+        Validate the given configuration field value.
+
+        Args:
+            field_name (str): Name of the configuration field.
+            field_value (str, List, bool, int): Value of the configuration
+                field.
+            field_type (type): Expected type of the configuration field.
+            allowed_values (List, optional): List of allowed values for
+                the configuration field. Defaults to None.
+            max_value (int, optional): Maximum allowed value for the
+                configuration field. Defaults to None.
+            custom_validation_func (Callable, optional): Custom validation
+                function to be applied. Defaults to None.
+            is_required (bool, optional): Whether the field is required.
+                Defaults to True.
+
+        Returns:
+            ValidationResult: ValidationResult object indicating whether the
+                validation was successful or not.
+        """
+        if isinstance(field_value, str):
+            field_value = field_value.strip()
+        if is_required and not isinstance(field_value, int) and not field_value:
+            err_msg = EMPTY_ERROR_MESSAGE.format(field_name=field_name)
+            self.logger.error(
+                message=(
+                    f"{self.log_prefix}: {VALIDATION_ERROR_MESSAGE}"
+                    f" {err_msg}"
+                ),
+                resolution=(
+                    f"Please provide some value for field {field_name}."
+                ),
+            )
+            return ValidationResult(
+                success=False,
+                message=err_msg,
+            )
+        if is_required and not isinstance(field_value, field_type) or (
+            custom_validation_func and not custom_validation_func(field_value)
+        ):
+            err_msg = TYPE_ERROR_MESSAGE.format(field_name=field_name)
+            self.logger.error(
+                message=(
+                    f"{self.log_prefix}: {VALIDATION_ERROR_MESSAGE}"
+                    f" {err_msg}"
+                ),
+                resolution=(
+                    f"Please provide a valid value for {field_name} field."
+                ),
+            )
+            return ValidationResult(
+                success=False,
+                message=err_msg,
+            )
+        if allowed_values:
+            err_msg = (
+                f"Invalid value provided for the configuration"
+                f" parameter '{field_name}'."
+            )
+            if field_type is str and field_value not in allowed_values:
+                allowed_value_msg = ALLOWED_VALUE_MESSAGE.format(
+                    allowed_values=', '.join(allowed_values)
+                )
+                self.logger.error(
+                    f"{self.log_prefix}: {VALIDATION_ERROR_MESSAGE}{err_msg}",
+                    details=allowed_value_msg,
+                    resolution=allowed_value_msg,
+                )
+                return ValidationResult(
+                    success=False,
+                    message=err_msg,
+                )
+            elif field_type is List:
+                invalid_values = []
+                for value in field_value:
+                    if value not in allowed_values:
+                        invalid_values.append(value)
+                if invalid_values:
+                    allowed_value_msg = ALLOWED_VALUE_MESSAGE.format(
+                        allowed_values=', '.join(allowed_values)
+                    )
+                    self.logger.error(
+                        message=(
+                            f"{self.log_prefix}: {VALIDATION_ERROR_MESSAGE}"
+                            f" {err_msg}"
+                        ),
+                        details=(
+                            f"Invalid values: {', '.join(invalid_values)}\n"
+                            f"{allowed_value_msg}"
+                        ),
+                        resolution=allowed_value_msg
+                    )
+                    return ValidationResult(
+                        success=False,
+                        message=err_msg,
+                    )
+        if max_value and isinstance(field_value, int) and (
+            field_value > max_value or field_value < 0
+        ):
+            if max_value == INTEGER_THRESHOLD:
+                max_value = "2^62"
+            err_msg = TYPE_ERROR_MESSAGE.format(field_name=field_name)
+            err_msg += VALUE_OUT_OF_RANGE_ERROR_MESSAGE.format(
+                max_value=max_value
+            )
+            self.logger.error(
+                f"{self.log_prefix}: {VALIDATION_ERROR_MESSAGE}{err_msg}",
+                resolution=(
+                    f"Please provide a value between 0 and {max_value}."
+                ),
+            )
+            return ValidationResult(
+                success=False,
+                message=err_msg,
+            )
 
     def get_entities(self) -> list[Entity]:
         """Get available entities."""
@@ -463,11 +648,18 @@ class CrowdstrikeCloudSecurityPlugin(PluginBase):
 
         return extracted_fields
 
-    def _fetch_ioa_events(self, checkpoint: datetime) -> List[dict]:
+    def _fetch_ioa_events(
+        self,
+        checkpoint: datetime,
+        base_url: str,
+        auth_header: Dict,
+    ) -> List[dict]:
         """Fetch IOA Events from CrowdStrike.
 
         Args:
            checkpoint(datetime): Checkpoint.
+           base_url(str): Base URL.
+           auth_header(dict): Auth header.
 
         Returns:
             List[dict]: List of extracted users details.
@@ -476,15 +668,7 @@ class CrowdstrikeCloudSecurityPlugin(PluginBase):
             f"{self.log_prefix}: Pulling users from IOA events "
             f"from {PLATFORM_NAME}."
         )
-        base_url, client_id, client_secret = (
-            self.crowdstrike_helper.get_credentials(self.configuration)
-        )
-        auth_header = self.crowdstrike_helper.get_auth_header(
-            client_id=client_id,
-            client_secret=client_secret,
-            base_url=base_url,
-        )
-        endpoint = f"{base_url}/detects/entities/ioa/v1"
+        endpoint = PULL_IOA_EVENTS_ENDPOINT.format(base_url=base_url)
         date_filter = checkpoint.strftime(CROWDSTRIKE_DATE_FORMAT)
 
         next_token = None
@@ -496,7 +680,7 @@ class CrowdstrikeCloudSecurityPlugin(PluginBase):
         }
         if ioa_cloud_service:
             params["service"] = ioa_cloud_service
-        records = []
+        records = {}
         skip_count = 0
         for provider in ioa_cloud_provider:
             page = 1
@@ -526,7 +710,9 @@ class CrowdstrikeCloudSecurityPlugin(PluginBase):
                             event=event, include_normalization=False
                         )
                         if extracted_fields:
-                            records.append(extracted_fields)
+                            username = extracted_fields.get("User Name")
+                            resource_id = extracted_fields.get("Resource ID")
+                            records[(username, resource_id)] = extracted_fields
                             page_record_count += 1
                             provider_record_count += 1
                         else:
@@ -548,7 +734,7 @@ class CrowdstrikeCloudSecurityPlugin(PluginBase):
                 self.logger.info(
                     f"{self.log_prefix}: Successfully fetched"
                     f" {page_record_count} user record(s) in page {page} for"
-                    f" {provider} Cloud Provider. Total records"
+                    f" {provider} Cloud Provider. Total unique User records"
                     f" fetched: {len(records)}."
                 )
                 next_token = (
@@ -579,10 +765,11 @@ class CrowdstrikeCloudSecurityPlugin(PluginBase):
             )
         self.logger.info(
             f"{self.log_prefix}: Successfully fetched {len(records)}"
-            f" user record(s) from IOA Events "
-            f"from {PLATFORM_NAME}."
+            f" unique user record(s) from IOA Events"
+            f" from {PLATFORM_NAME}."
         )
-        return records
+        records_list = list(records.values())
+        return records_list
 
     def add_field(self, fields_dict: dict, field_name: str, value):
         """Function to add field to the extracted_fields dictionary.
@@ -592,11 +779,7 @@ class CrowdstrikeCloudSecurityPlugin(PluginBase):
             field_name (str): Field name to add.
             value: Field to add.
         """
-        if isinstance(value, int):
-            fields_dict[field_name] = value
-            return
-        if value:
-            fields_dict[field_name] = value
+        fields_dict[field_name] = value
 
     def _extract_iom_fields(self, event: dict) -> dict:
         """Extract IOM fields from event payload.
@@ -636,30 +819,31 @@ class CrowdstrikeCloudSecurityPlugin(PluginBase):
         base_url: str,
         headers: dict,
         event_ids: List,
-        is_update: bool = False,
         page: int = 0,
         batch: int = 0,
-    ):
+    ) -> Tuple[Dict, int]:
         """Get IOM Event details.
 
         Args:
             base_url (str): Base URL.
             headers (dict): Headers.
             event_ids (List): Event Ids list.
-            is_update (bool, optional): Whether this method is called from
-                update or not. Defaults to False.
+            page (int): Page number.
+            batch (int): Batch number.
 
         Returns:
-            Dictionary|List: Dictionary containing details|List containing
-              details.
+            Dictionary|int: Dictionary containing details|int containing
+              skip count.
         """
 
-        iom_details_endpoint = f"{base_url}/detects/entities/iom/v2"
-        records = {} if is_update else []
+        iom_details_endpoint = PULL_IOM_EVENT_DETAILS_ENDPOINT.format(
+            base_url=base_url
+        )
+        records = {}
         skip_count = 0
-        try:
-            details_batch = 1
-            for i in range(0, len(event_ids), IOM_PAGE_SIZE):
+        details_batch = 1
+        for i in range(0, len(event_ids), IOM_PAGE_SIZE):
+            try:
                 batch_log = f"batch(Event IDs) {details_batch}"
                 payload = {"ids": event_ids[i : i + IOM_PAGE_SIZE]}  # noqa
                 logger_msg = (
@@ -678,21 +862,22 @@ class CrowdstrikeCloudSecurityPlugin(PluginBase):
                     show_params=False,
                 )
                 for event in resp_json.get("resources", []):
-
-                    # Extract fields from event
-                    resource_attributes = event.get("resource_attributes", {})
-                    instance_id = resource_attributes.get("Instance Id")
-
-                    # Check if Instance ID is present
-                    if not instance_id:
-                        skip_count += 1
-                        continue
                     try:
-                        extracted_devices = self._extract_iom_fields(event)
-                        if is_update:
-                            records[instance_id] = extracted_devices
-                        else:
-                            records.append(extracted_devices)
+                        # Extract fields from event
+                        resource_attributes = event.get(
+                            "resource_attributes", {}
+                        )
+                        if not resource_attributes:
+                            skip_count += 1
+                            continue
+                        instance_id = resource_attributes.get("Instance Id")
+
+                        # Check if Instance ID is present
+                        if not instance_id:
+                            skip_count += 1
+                            continue
+                        extracted_data = self._extract_iom_fields(event)
+                        records[instance_id] = extracted_data
                     except Exception:
                         event_id = event.get("id")
                         err_msg = (
@@ -706,23 +891,42 @@ class CrowdstrikeCloudSecurityPlugin(PluginBase):
                             details=str(traceback.format_exc()),
                         )
                         skip_count += 1
+                        continue
                 # Increment Details batch counter.
                 details_batch += 1
-            return records, skip_count
-        except CrowdstrikeCloudSecurityPluginException:
-            raise
-        except Exception:
-            err_msg = (
-                "Unexpected error occurred while fetching IOM"
-                f" event details for page {page}, {batch_log}"
-            )
-            if batch:
-                err_msg = err_msg + f", batch {batch}"
-            self.logger.error(
-                message=f"{self.log_prefix}: {err_msg}.",
-                details=str(traceback.format_exc()),
-            )
-            raise CrowdstrikeCloudSecurityPluginException(f"{err_msg}.")
+            except CrowdstrikeCloudSecurityPluginException as err:
+                err_msg = (
+                    f"Error occurred while fetching IOM"
+                    f" event details for page {page}, {batch_log}"
+                )
+                if batch:
+                    err_msg = err_msg + f", batch {batch}"
+                err_msg += f" Error: {str(err)}"
+                self.logger.error(
+                    message=f"{self.log_prefix}: {err_msg}.",
+                    details=str(traceback.format_exc()),
+                )
+                if payload.get("ids"):
+                    skip_count += len(payload["ids"])
+                details_batch += 1
+                continue
+            except Exception as err:
+                err_msg = (
+                    "Unexpected error occurred while fetching IOM"
+                    f" event details for page {page}, {batch_log}"
+                )
+                if batch:
+                    err_msg = err_msg + f", batch {batch}"
+                err_msg += f" Error: {str(err)}"
+                self.logger.error(
+                    message=f"{self.log_prefix}: {err_msg}.",
+                    details=str(traceback.format_exc()),
+                )
+                if payload.get("ids"):
+                    skip_count += len(payload["ids"])
+                details_batch += 1
+                continue
+        return records, skip_count
 
     def _fetch_iom_events(
         self,
@@ -736,19 +940,23 @@ class CrowdstrikeCloudSecurityPlugin(PluginBase):
 
         Args:
             filter_query (str): Filter Query.
-            log_msg (str, optional): Log msg. Defaults to "pulling".
+            batch (int, optional): Batch number. Defaults to 0.
             is_update (bool, optional): Is this update call? Defaults to False.
+            headers (dict, optional): Headers. Defaults to {}.
+            base_url (str, optional): Base URL. Defaults to "".
 
         Returns:
             List[dict]: List of fetched IOM fields dictionary.
         """
-        iom_ids_endpoint = f"{base_url}/detects/queries/iom/v2"
+        iom_ids_endpoint = PULL_IOM_EVENT_IDS_ENDPOINT.format(
+            base_url=base_url
+        )
         params = {
             "limit": PAGE_SIZE,
             "sort": "timestamp|asc",
             "filter": filter_query,
         }
-        records = {} if is_update else []
+        records = {}
         page = 1
         skip_count = 0
         next_token = None
@@ -757,7 +965,7 @@ class CrowdstrikeCloudSecurityPlugin(PluginBase):
             while True:
                 if next_token:
                     params["next_token"] = next_token
-                page_records = {} if is_update else []
+                page_records = {}
                 logger_msg = f"pulling IOM Event IDs for page {page}"
                 if batch:
                     logger_msg = logger_msg + (
@@ -778,30 +986,26 @@ class CrowdstrikeCloudSecurityPlugin(PluginBase):
                         base_url=base_url,
                         headers=headers,
                         event_ids=event_ids,
-                        is_update=is_update,
                         page=page,
                         batch=batch,
                     )
                     skip_count += page_skip_count
-                    if is_update:
-                        records.update(page_records)
-                    else:
-                        records.extend(page_records)
+                    records.update(page_records)
                     if is_update:
                         log_msg = (
                             f"Successfully fetched {len(page_records)} "
                             f"unique {IOM_ENTITY_NAME} record(s) from "
                             f"{len(event_ids)} Event ID(s) in page {page} "
-                            f", batch {batch}. Total {IOM_ENTITY_NAME} "
+                            f", batch {batch}. Total unique {IOM_ENTITY_NAME} "
                             f"record(s) fetched: {len(records)}."
                         )
                     else:
                         log_msg = (
-                            f"Successfully fetched {len(page_records)} "
-                            f"{IOM_ENTITY_NAME} record(s) from "
+                            f"Successfully fetched {len(page_records)}"
+                            f" unique {IOM_ENTITY_NAME} record(s) from "
                             f"{len(event_ids)} Event ID(s) in page {page}."
-                            f" Total {IOM_ENTITY_NAME} record(s) fetched:"
-                            f" {len(records)}."
+                            f" Total unique {IOM_ENTITY_NAME} record(s)"
+                            f" fetched: {len(records)}."
                         )
                     self.logger.info(f"{self.log_prefix}: {log_msg}")
                 next_token = (
@@ -823,7 +1027,7 @@ class CrowdstrikeCloudSecurityPlugin(PluginBase):
             if not is_update:
                 self.logger.info(
                     f"{self.log_prefix}: Successfully fetched "
-                    f"{len(records)} {IOM_ENTITY_NAME} record(s) "
+                    f"{len(records)} unique {IOM_ENTITY_NAME} record(s) "
                     f"from {PLATFORM_NAME}."
                 )
             return records
@@ -863,10 +1067,22 @@ class CrowdstrikeCloudSecurityPlugin(PluginBase):
         records = []
         entity_name = entity.lower()
         try:
+            base_url, client_id, client_secret = (
+                self.crowdstrike_helper.get_credentials(
+                    self.configuration
+                )
+            )
+            headers = self.crowdstrike_helper.get_auth_header(
+                base_url=base_url,
+                client_id=client_id,
+                client_secret=client_secret,
+            )
             if entity == "Users":
                 records.extend(
                     self._fetch_ioa_events(
                         checkpoint=checkpoint,
+                        base_url=base_url,
+                        auth_header=headers,
                     )
                 )
             elif entity == IOM_ENTITY_NAME:
@@ -884,23 +1100,12 @@ class CrowdstrikeCloudSecurityPlugin(PluginBase):
                     filter_query += (
                         f"+cloud_service_keyword: {iom_cloud_services}"
                     )
-                base_url, client_id, client_secret = (
-                    self.crowdstrike_helper.get_credentials(
-                        self.configuration
-                    )
-                )
-                headers = self.crowdstrike_helper.get_auth_header(
+                fetched_iom_events = self._fetch_iom_events(
+                    filter_query=filter_query,
+                    headers=headers,
                     base_url=base_url,
-                    client_id=client_id,
-                    client_secret=client_secret,
                 )
-                records.extend(
-                    self._fetch_iom_events(
-                        filter_query=filter_query,
-                        headers=headers,
-                        base_url=base_url,
-                    )
-                )
+                records.extend(list(fetched_iom_events.values()))
             else:
                 err_msg = (
                     f"Invalid entity found {PLUGIN_NAME} only supports "
@@ -934,7 +1139,7 @@ class CrowdstrikeCloudSecurityPlugin(PluginBase):
         Returns:
             list[Record]: list of records with updated fields.
         """
-        updated_records = {}
+        fetched_records = {}
         self.logger.info(
             f"{self.log_prefix}: Updating {entity.lower()}"
             f" records from {PLATFORM_NAME}."
@@ -946,6 +1151,14 @@ class CrowdstrikeCloudSecurityPlugin(PluginBase):
             checkpoint = datetime.now() - timedelta(days=initial_range)
         date_filter = checkpoint.strftime(CROWDSTRIKE_DATE_FORMAT)
 
+        base_url, client_id, client_secret = (
+            self.crowdstrike_helper.get_credentials(self.configuration)
+        )
+        headers = self.crowdstrike_helper.get_auth_header(
+            base_url=base_url,
+            client_id=client_id,
+            client_secret=client_secret,
+        )
         if entity == "Users":
             resource_ids = []
 
@@ -974,15 +1187,7 @@ class CrowdstrikeCloudSecurityPlugin(PluginBase):
             if ioa_cloud_service:
                 params["service"] = ioa_cloud_service
 
-            base_url, client_id, client_secret = (
-                self.crowdstrike_helper.get_credentials(self.configuration)
-            )
-            endpoint = f"{base_url}/detects/entities/ioa/v1"
-            auth_header = self.crowdstrike_helper.get_auth_header(
-                client_id=client_id,
-                client_secret=client_secret,
-                base_url=base_url,
-            )
+            endpoint = PULL_IOA_EVENTS_ENDPOINT.format(base_url=base_url)
             skip_count = 0
             for provider in ioa_cloud_provider:
                 # Add cloud provider.
@@ -998,7 +1203,7 @@ class CrowdstrikeCloudSecurityPlugin(PluginBase):
                     resp_json = self.crowdstrike_helper.api_helper(
                         url=endpoint,
                         method="GET",
-                        headers=auth_header,
+                        headers=headers,
                         params=params,
                         logger_msg=(
                             f"pulling {len(payload)} user(s) data for page"
@@ -1014,8 +1219,8 @@ class CrowdstrikeCloudSecurityPlugin(PluginBase):
                                 event=event, include_normalization=True
                             )
                             if extracted_fields:
-                                previous_record_count = len(updated_records)
-                                updated_records.update(
+                                previous_record_count = len(fetched_records)
+                                fetched_records.update(
                                     {
                                         event.get("aggregate", {})
                                         .get("resource", {})
@@ -1024,7 +1229,7 @@ class CrowdstrikeCloudSecurityPlugin(PluginBase):
                                 )
 
                                 if (
-                                    len(updated_records)
+                                    len(fetched_records)
                                     > previous_record_count
                                 ):
                                     page_record_count += 1
@@ -1050,7 +1255,7 @@ class CrowdstrikeCloudSecurityPlugin(PluginBase):
                         f" {page_record_count} unique user record(s) in"
                         f" page {page} for {provider} Cloud Provider. "
                         "Total user record(s) fetched: "
-                        f"{len(updated_records)}."
+                        f"{len(fetched_records)}."
                     )
                     page += 1
 
@@ -1069,22 +1274,24 @@ class CrowdstrikeCloudSecurityPlugin(PluginBase):
                 )
             self.logger.info(
                 f"{self.log_prefix}: Successfully fetched"
-                f" {len(updated_records)} unique user record(s) for"
+                f" {len(fetched_records)} unique user record(s) for"
                 f" update from {PLATFORM_NAME}."
             )
             # Checking for match in existing records.
             count = 0
+            updated_records = []
             for record in records:
                 record_id = record.get("Resource ID")
-                if record_id and record_id in updated_records:
-                    record.update(updated_records[record_id])
+                if record_id and record_id in fetched_records:
+                    updated_records.append(fetched_records[record_id])
                     count += 1
 
             self.logger.info(
                 f"{self.log_prefix}: Successfully updated {count} "
-                f"user record(s) out of {len(records)} from {PLATFORM_NAME}."
+                f"user record(s) out of {len(updated_records)}"
+                f" from {PLATFORM_NAME}."
             )
-            return records
+            return updated_records
         elif entity == IOM_ENTITY_NAME:
             resource_ids = []
             for record in records:
@@ -1109,14 +1316,6 @@ class CrowdstrikeCloudSecurityPlugin(PluginBase):
             iom_cloud_services = self.configuration.get(
                 "iom_cloud_service", []
             )
-            base_url, client_id, client_secret = (
-                self.crowdstrike_helper.get_credentials(self.configuration)
-            )
-            headers = self.crowdstrike_helper.get_auth_header(
-                base_url=base_url,
-                client_id=client_id,
-                client_secret=client_secret,
-            )
             batch = 1
             for i in range(0, len(resource_ids), PAGE_SIZE):
                 payload = resource_ids[i : i + PAGE_SIZE]  # noqa
@@ -1128,7 +1327,7 @@ class CrowdstrikeCloudSecurityPlugin(PluginBase):
                     filter_query += (
                         f"+cloud_service_keyword: {iom_cloud_services}"
                     )
-                updated_records.update(
+                fetched_records.update(
                     self._fetch_iom_events(
                         filter_query=filter_query,
                         is_update=True,
@@ -1139,7 +1338,7 @@ class CrowdstrikeCloudSecurityPlugin(PluginBase):
                 )
                 self.logger.info(
                     f"{self.log_prefix}: Successfully fetched"
-                    f" {len(updated_records)} unique {IOM_ENTITY_NAME}"
+                    f" {len(fetched_records)} unique {IOM_ENTITY_NAME}"
                     f" record(s) in batch {batch} for update from"
                     f" {PLATFORM_NAME}."
                 )
@@ -1147,21 +1346,22 @@ class CrowdstrikeCloudSecurityPlugin(PluginBase):
             # Checking for match in existing records if it
             # exists then update fields.
             count = 0
+            updated_records = []
             for record in records:
                 if (
                     record.get("Instance ID")
-                    and record.get("Instance ID") in updated_records
+                    and record.get("Instance ID") in fetched_records
                 ):
                     record_id = record["Instance ID"]
-                    record.update(updated_records[record_id])
+                    updated_records.append(fetched_records[record_id])
                     count += 1
 
                 elif (
                     record.get("Resource ID")
-                    and record.get("Resource ID") in updated_records
+                    and record.get("Resource ID") in fetched_records
                 ):
                     record_id = record["Resource ID"]
-                    record.update(updated_records[record_id])
+                    updated_records.append(fetched_records[record_id])
                     count += 1
 
             self.logger.info(
@@ -1170,7 +1370,7 @@ class CrowdstrikeCloudSecurityPlugin(PluginBase):
                 f" from {PLATFORM_NAME}."
             )
 
-        return records
+        return updated_records
 
     def get_actions(self):
         """Get available actions."""
@@ -1207,176 +1407,92 @@ class CrowdstrikeCloudSecurityPlugin(PluginBase):
             cte.plugin_base.ValidateResult: ValidateResult object with success
             flag and message.
         """
-        validation_err_msg = "Validation error occurred."
         # Validate Base URL
         base_url = configuration.get("base_url", "").strip()
-        if not base_url:
-            err_msg = "Base URL is a required configuration parameter."
-            self.logger.error(
-                f"{self.log_prefix}: {validation_err_msg}. {err_msg}"
-            )
-            return ValidationResult(success=False, message=err_msg)
-        elif base_url not in BASE_URLS:
-            err_msg = "Invalid Base URL provided in configuration parameter."
-            self.logger.error(
-                f"{self.log_prefix}: {validation_err_msg} "
-                f"{err_msg} Select the Base URL from the available options."
-            )
-            return ValidationResult(
-                success=False,
-                message=err_msg,
-            )
+        if validation_error := self._validate_configuration_parameters(
+            field_name="Base URL",
+            field_type=str,
+            field_value=base_url,
+            custom_validation_func=self._validate_url,
+            allowed_values=BASE_URLS,
+            is_required=True,
+        ):
+            return validation_error
 
         # Validate Client ID
-        client_id = configuration.get("client_id", "").strip()
-        if not client_id:
-            err_msg = "Client ID is a required configuration parameter."
-            self.logger.error(
-                f"{self.log_prefix}: {validation_err_msg} {err_msg}"
-            )
-            return ValidationResult(
-                success=False,
-                message=err_msg,
-            )
-        elif not isinstance(client_id, str):
-            err_msg = (
-                "Invalid Client ID provided in configuration parameters."
-            )
-            self.logger.error(
-                f"{self.log_prefix}: {validation_err_msg} {err_msg}"
-            )
-            return ValidationResult(
-                success=False,
-                message=err_msg,
-            )
+        client_id = configuration.get("client_id", "")
+        if validation_error := self._validate_configuration_parameters(
+            field_name="Client ID",
+            field_type=str,
+            field_value=client_id,
+            is_required=True,
+        ):
+            return validation_error
 
         # Validate Client Secret
-        client_secret = configuration.get("client_secret")
-        if not client_secret:
-            err_msg = "Client Secret is a required configuration parameter."
-            self.logger.error(
-                f"{self.log_prefix}: {validation_err_msg} {err_msg}"
-            )
-            return ValidationResult(
-                success=False,
-                message=err_msg,
-            )
-        elif not isinstance(client_secret, str):
-            err_msg = (
-                "Invalid Client Secret provided in configuration parameters."
-            )
-            self.logger.error(
-                f"{self.log_prefix}: {validation_err_msg} "
-                f"{err_msg} Client Secret should be an non-empty string."
-            )
-            return ValidationResult(
-                success=False,
-                message=err_msg,
-            )
+        client_secret = configuration.get("client_secret", "")
+        if validation_error := self._validate_configuration_parameters(
+            field_name="Client Secret",
+            field_type=str,
+            field_value=client_secret,
+            is_required=True,
+        ):
+            return validation_error
 
         # Validate IOA Cloud Provider
         ioa_cloud_provider = configuration.get("ioa_cloud_provider", [])
-
-        if not ioa_cloud_provider:
-            err_msg = (
-                "IOA Cloud Provider is a required configuration parameter."
-            )
-            self.logger.error(
-                f"{self.log_prefix}: {validation_err_msg} {err_msg}"
-            )
-            return ValidationResult(
-                success=False,
-                message=err_msg,
-            )
-        elif not all(x in IOA_CLOUD_PROVIDERS for x in ioa_cloud_provider):
-            err_msg = (
-                "Invalid IOA Cloud Provider provided in configuration"
-                " parameters. Valid values are AWS and Azure."
-            )
-            self.logger.error(
-                f"{self.log_prefix}: {validation_err_msg} {err_msg}"
-            )
-            return ValidationResult(
-                success=False,
-                message=err_msg,
-            )
+        if validation_error := self._validate_configuration_parameters(
+            field_name="IOA Cloud Provider",
+            field_type=List,
+            field_value=ioa_cloud_provider,
+            allowed_values=IOA_CLOUD_PROVIDERS,
+            is_required=True,
+        ):
+            return validation_error
 
         # Validate IOA Cloud Services
         ioa_cloud_service = configuration.get("ioa_cloud_service", "")
-        if ioa_cloud_service and ioa_cloud_service not in CLOUD_SERVICES:
-            err_msg = (
-                "Invalid IOA Cloud Service provided in configuration"
-                " parameters."
-            )
-            self.logger.error(
-                f"{self.log_prefix}: {validation_err_msg} {err_msg}"
-            )
-            return ValidationResult(
-                success=False,
-                message=f"{err_msg} Select from the provided options.",
-            )
+        if validation_error := self._validate_configuration_parameters(
+            field_name="IOA Cloud Service",
+            field_type=List,
+            field_value=ioa_cloud_service,
+            allowed_values=CLOUD_SERVICES,
+            is_required=False,
+        ):
+            return validation_error
 
         # Validate IOM Cloud Provider
         iom_cloud_provider = configuration.get("iom_cloud_provider", [])
-        if iom_cloud_provider and not all(
-            x in IOM_CLOUD_PROVIDERS for x in iom_cloud_provider
+        if validation_error := self._validate_configuration_parameters(
+            field_name="IOM Cloud Provider",
+            field_type=List,
+            field_value=iom_cloud_provider,
+            allowed_values=IOM_CLOUD_PROVIDERS,
+            is_required=True,
         ):
-            err_msg = (
-                "Invalid IOM Cloud Provider provided in configuration"
-                " parameters. Valid values are AWS, Azure and GCP."
-            )
-            self.logger.error(
-                f"{self.log_prefix}: {validation_err_msg} {err_msg}"
-            )
-            return ValidationResult(
-                success=False,
-                message=err_msg,
-            )
+            return validation_error
 
         # Validate IOM Cloud Services
         iom_cloud_service = configuration.get("iom_cloud_service", [])
-        if iom_cloud_service and not all(
-            x in CLOUD_SERVICES for x in iom_cloud_service
+        if validation_error := self._validate_configuration_parameters(
+            field_name="IOM Cloud Service",
+            field_type=List,
+            field_value=iom_cloud_service,
+            allowed_values=CLOUD_SERVICES,
+            is_required=False,
         ):
-            err_msg = (
-                "Invalid IOM Cloud Service provided in configuration"
-                " parameters."
-            )
-            self.logger.error(
-                f"{self.log_prefix}: {validation_err_msg} {err_msg}"
-            )
-            return ValidationResult(
-                success=False,
-                message=f"{err_msg} Select from the provided options.",
-            )
+            return validation_error
 
+        # Validate Initial Range
         days = configuration.get("days")
-        if days is None:
-            err_msg = "Initial Range is a required configuration parameter."
-            self.logger.error(f"{self.log_prefix}: {err_msg}")
-            return ValidationResult(
-                success=False,
-                message=err_msg,
-            )
-        elif not isinstance(days, int):
-            err_msg = (
-                "Invalid Initial Range provided in configuration parameter."
-            )
-            self.logger.error(f"{self.log_prefix}: {err_msg}")
-            return ValidationResult(
-                success=False,
-                message=err_msg,
-            )
-        elif days < 0 or days > INTEGER_THRESHOLD:
-            err_msg = (
-                "Invalid Initial Range provided in configuration"
-                " parameters. Valid value should be in range 0 to 2^62."
-            )
-            self.logger.error(f"{self.log_prefix}: {err_msg}")
-            return ValidationResult(
-                success=False,
-                message=err_msg,
-            )
+        if validation_error := self._validate_configuration_parameters(
+            field_name="Initial Range",
+            field_type=int,
+            field_value=days,
+            max_value=INTEGER_THRESHOLD,
+            is_required=True,
+        ):
+            return validation_error
 
         # Validate Auth Credentials
         return self.validate_auth_params(configuration)
@@ -1405,7 +1521,9 @@ class CrowdstrikeCloudSecurityPlugin(PluginBase):
                 client_id, client_secret, base_url, True
             )
             # Validate connection with IOA Events APIs.
-            query_endpoint = f"{base_url}/detects/entities/ioa/v1"  # noqa
+            query_endpoint = PULL_IOA_EVENTS_ENDPOINT.format(
+                base_url=base_url,
+            )
             params = {
                 "limit": 1,
                 "date_time_since": date_filter,
@@ -1430,7 +1548,9 @@ class CrowdstrikeCloudSecurityPlugin(PluginBase):
             )
 
             # Validate connection with IOM Event APIs.
-            iom_ids_endpoint = f"{base_url}/detects/queries/iom/v2"
+            iom_ids_endpoint = PULL_IOM_EVENT_IDS_ENDPOINT.format(
+                base_url=base_url
+            )
             iom_cloud_provider = configuration.get("iom_cloud_provider", [])
             iom_cloud_services = configuration.get("iom_cloud_service", [])
             params = {

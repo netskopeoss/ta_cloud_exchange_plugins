@@ -413,7 +413,7 @@ class IllumioPlugin(PluginBase):
             List[str]: the label tag names, of the form key:value.
         """
         if str(self.configuration.get("enable_tagging", "")).lower() != "yes":
-            return []
+            return [], []
 
         if not self.tag_utils:
             self.tag_utils = TagUtils()
@@ -444,6 +444,7 @@ class IllumioPlugin(PluginBase):
                 skipped_tags.add(label_tag)
 
         return list(created_tags), list(skipped_tags)
+
     def _validate_url(self, url: str) -> bool:
         """Validate the given URL."""
         parsed = urlparse(url.strip())

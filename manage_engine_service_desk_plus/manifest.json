@@ -1,0 +1,41 @@
+{
+    "name": "Manage Engine Service Desk Plus",
+    "description": "This plugin is used to create tasks for selected Service Desk Plus projects on the Service Desk Plus Platform. It also supports updating tasks and syncing their status. This plugin supports both Cloud and On Premise deployment types.",
+    "id": "manage_engine_service_desk_plus",
+    "pulling_supported": false,
+    "receiving_supported": true,
+    "version": "1.1.0",
+    "module": "CTO",
+    "minimum_version": "6.0.0",
+    "configuration": [
+        {
+            "label": "Service Desk Plus Deployment Type",
+            "name": "sdp_deployment_type",
+            "type": "step",
+            "fields": [
+                {
+                    "label": "Deployment Type",
+                    "key": "deployment_type",
+                    "type": "choice",
+                    "choices": [
+                        {
+                            "key": "Cloud",
+                            "value": "cloud"
+                        },
+                        {
+                            "key": "On Premise",
+                            "value": "onpremise"
+                        }
+                    ],
+                    "mandatory": true,
+                    "default": "cloud"
+                }
+            ]
+        },
+        {
+            "label": "Authentication",
+            "name": "auth",
+            "type": "dynamic_step"
+        }
+    ]
+}

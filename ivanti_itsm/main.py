@@ -49,6 +49,9 @@ from netskope.integrations.itsm.models import (
     Task,
     TaskStatus,
     Alert,
+    UpdatedTaskValues,
+    CustomFieldsSectionWithMappings,
+    CustomFieldMapping
 )
 
 from .utils.helper import IvantiPluginException, IvantiPluginHelper
@@ -60,23 +63,12 @@ from .utils.constants import (
     BATCH_SIZE,
 )
 
-STATUS_MAPPING = {
-    "Logged": TaskStatus.NEW,
-    "Active": TaskStatus.IN_PROGRESS,
-    "Waiting for Customer": TaskStatus.ON_HOLD,
-    "Waiting for Resolution": TaskStatus.ON_HOLD,
-    "Waiting for 3rd Party": TaskStatus.ON_HOLD,
-    "Resolved": TaskStatus.OTHER,
-    "Closed": TaskStatus.CLOSED,
-    "Cancelled": TaskStatus.OTHER,
-}
-
 
 class IvantiPlugin(PluginBase):
     """Ivanti plugin implementation."""
 
     def __init__(self, name, *args, **kwargs):
-        """Cynet plugin initializer
+        """Ivanti plugin initializer
         Args:
            name (str): Plugin configuration name.
         """
@@ -119,6 +111,33 @@ class IvantiPlugin(PluginBase):
 
         return PLUGIN_NAME, PLUGIN_VERSION
 
+    def _update_task_details(self, task: Task, task_data: dict):
+        """Update task fields with data fetched from Ivanti.
+
+        Args:
+            task (Task): CE task.
+            task_data (dict): Task fetched from Ivanti.
+        """
+        if task.updatedValues:
+            task.updatedValues.oldAssignee = task.dataItem.rawData.get(
+                "assignee", None
+            )
+            task.updatedValues.status = task_data.get(
+                "status", TaskStatus.OTHER.value
+            )
+        else:
+            # Status and Severity are managed from core
+            task.updatedValues = UpdatedTaskValues(
+                assignee=None,
+                oldAssignee=task.dataItem.rawData.get("assignee", None),
+            )
+
+        if task_data.get("owner"):
+            task.updatedValues.assignee = task_data["owner"]
+
+        task.status = task_data.get("status", TaskStatus.OTHER.value)
+        return task
+
     def create_task(self, alert: Alert, mappings: Dict, queue: Queue) -> Task:
         """Create an incidents on Ivanti platform.
 
@@ -155,13 +174,16 @@ class IvantiPlugin(PluginBase):
                 json=payload,
                 logger_msg=f"creating incident for Alert ID {alert.id}",
             )
+            status = resp_json.get("Status")
+            temp_status = status if status else TaskStatus.OTHER.value
             task = Task(
                 id=f"{resp_json.get('IncidentNumber')}|{resp_json.get('RecId')}",  # noqa
-                status=(
-                    STATUS_MAPPING.get(resp_json.get("Status"), TaskStatus.NEW)
-                    if resp_json.get("Status")
-                    else TaskStatus.NEW
-                ),
+                status=temp_status,
+                dataItem=alert,
+            )
+            task = self._update_task_details(
+                task,
+                task_data={"status": status, "owner": resp_json.get("Owner")}
             )
             self.logger.info(
                 f"{self.log_prefix}: Successfully created an incident "
@@ -215,6 +237,7 @@ class IvantiPlugin(PluginBase):
         page_count = 1
         success_count = 0
         failed_count = 0
+        synced_tasks = []
         for id in range(0, len(list(task_ids.keys())), BATCH_SIZE):
             page_success_count = 0
             incident_ids = task_id_values[id : id + BATCH_SIZE]  # noqa
@@ -239,11 +262,23 @@ class IvantiPlugin(PluginBase):
 
                 for value in resp_json.get("value", []):
                     incident_id = str(value.get("IncidentNumber"))
-                    task_ids[incident_id].status = (
-                        STATUS_MAPPING.get(value.get("Status"), TaskStatus.NEW)
-                        if value.get("Status")
-                        else TaskStatus.NEW
-                    )
+                    if task_ids.get(incident_id):
+                        task_ids[incident_id].status = (
+                            value.get("Status")
+                            if value.get("Status")
+                            else TaskStatus.NEW.value
+                        )
+                        updated_task = self._update_task_details(
+                            task=task_ids.get(incident_id),
+                            task_data={
+                                "status": value.get("Status"),
+                                "owner": value.get("Owner"),
+                            }
+                        )
+                        synced_tasks.append(
+                            updated_task
+                        )
+                        task_ids.pop(incident_id)
                     success_count += 1
                     page_success_count += 1
                 self.logger.info(
@@ -262,6 +297,29 @@ class IvantiPlugin(PluginBase):
                     message=f"{self.log_prefix}: {err_msg}. Error: {exp}",
                     details=str(traceback.format_exc()),
                 )
+        # Mark tasks not found on Ivanti as deleted
+        for task_to_delete in task_ids.values():
+            if (
+                task_to_delete.updatedValues.status
+                and task_to_delete.updatedValues.status != TaskStatus.DELETED.value
+            ):
+                (
+                    task_to_delete.updatedValues.oldStatus,
+                    task_to_delete.updatedValues.status,
+                ) = (
+                    task_to_delete.updatedValues.status,
+                    TaskStatus.DELETED.value,
+                )
+            else:
+                (
+                    task_to_delete.updatedValues.oldStatus,
+                    task_to_delete.updatedValues.status,
+                ) = (
+                    TaskStatus.DELETED.value,
+                    TaskStatus.DELETED.value,
+                )
+            task_to_delete.status = TaskStatus.DELETED.value
+            synced_tasks.append(task_to_delete)
         skip_count = len(tasks) - success_count - failed_count
 
         log_msg = f"Successfully synced {success_count} ticket(s)"
@@ -280,7 +338,7 @@ class IvantiPlugin(PluginBase):
         else:
             log_msg = log_msg + f" with {PLATFORM_NAME}."
         self.logger.info(f"{self.log_prefix}: {log_msg}")
-        return tasks
+        return synced_tasks
 
     def update_task(
         self, task: Task, alert: Alert, mappings: Dict, queue: Queue
@@ -322,18 +380,43 @@ class IvantiPlugin(PluginBase):
         payload = mappings
         try:
             log_msg = f"updating incident having ID {ticket_id}"
-            self.ivanti_helper.api_helper(
+            response = self.ivanti_helper.api_helper(
                 method="PATCH",
                 url=endpoint,
                 headers=headers,
                 json=payload,
                 logger_msg=log_msg,
+                is_handle_error_required=False,
             )
-            self.logger.info(
-                f"{self.log_prefix}: Successfully updated incident having"
-                f" ID {ticket_id} on {PLATFORM_NAME}."
-            )
-            return task
+            if response.status_code in [200, 201]:
+                self.logger.info(
+                    f"{self.log_prefix}: Successfully updated incident having"
+                    f" ID {ticket_id} on {PLATFORM_NAME}."
+                )
+                return task
+            elif response.status_code == 400:
+                if task.updatedValues.status and (
+                    task.updatedValues.status != TaskStatus.DELETED.value
+                ):
+                    task.updatedValues.oldStatus, task.updatedValues.status = (
+                        task.updatedValues.status, TaskStatus.DELETED.value
+                    )
+                else:
+                    task.updatedValues.oldStatus, task.updatedValues.status = (
+                        TaskStatus.DELETED.value, TaskStatus.DELETED.value
+                    )
+                task.status = TaskStatus.DELETED.value
+                self.logger.info(
+                    f"{self.log_prefix}: Task with ID '{task.id}' "
+                    f"no longer exists on {PLATFORM_NAME} platform."
+                )
+                return task
+            else:
+                self.ivanti_helper.handle_error(
+                    resp=response,
+                    logger_msg=log_msg,
+                    is_validation=False,
+                )
         except IvantiPluginException:
             raise
         except Exception as exp:
@@ -385,7 +468,7 @@ class IvantiPlugin(PluginBase):
         except IvantiPluginException as exp:
             return ValidationResult(success=False, message=str(exp))
         except Exception as exp:
-            err_msg = "Unexpected validation error ocurred."
+            err_msg = "Unexpected validation error occurred."
             self.logger.error(
                 message=(
                     f"{self.log_prefix}: {err_msg} while validating "
@@ -822,5 +905,54 @@ class IvantiPlugin(PluginBase):
             Queue(
                 label="Create Incidents",
                 value="create_incidents",
+            )
+        ]
+
+    def get_default_custom_mappings(
+        self
+    ) -> list[CustomFieldsSectionWithMappings]:
+        """
+        Get default custom field mappings with values for Ivanti ITSM plugin.
+
+        Returns:
+            list[CustomFieldsSectionWithMappings]: List of sections with \
+                field-to-value mappings
+        """
+        return [
+            CustomFieldsSectionWithMappings(
+                section="status",
+                event_field="status",
+                destination_label="Ivanti",
+                field_mappings=[
+                    CustomFieldMapping(
+                        name="New", mapped_value="Logged", is_default=True
+                    ),
+                    CustomFieldMapping(
+                        name="In Progress",
+                        mapped_value="Active",
+                        is_default=True,
+                    ),
+                    CustomFieldMapping(
+                        name="On Hold",
+                        mapped_value="Waiting for Customer",
+                        is_default=True,
+                    ),
+                    CustomFieldMapping(
+                        name="On Hold",
+                        mapped_value="Waiting for Resolution",
+                        is_default=True,
+                    ),
+                    CustomFieldMapping(
+                        name="On Hold",
+                        mapped_value="Waiting for 3rd Party",
+                        is_default=True,
+                    ),
+                    CustomFieldMapping(
+                        name="Closed", mapped_value="Closed", is_default=True
+                    ),
+                    CustomFieldMapping(
+                        name="Other", mapped_value="Resolved", is_default=True
+                    ),
+                ],
             )
         ]

@@ -4,7 +4,7 @@
 # license information.
 # -------------------------------------------------------------------------
 from typing import Any, NamedTuple, Optional
-from ...typing_extensions import Protocol, runtime_checkable
+from typing_extensions import Protocol, runtime_checkable
 
 
 class AccessToken(NamedTuple):

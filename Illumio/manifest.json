@@ -1,9 +1,9 @@
 {
     "name": "Illumio",
     "id": "Illumio",
-    "version": "1.1.0",
+    "version": "1.1.1",
     "module": "CTE",
-    "description": "This plugin is used to pull IOCs of the type URLs (IP Addresses and Hostname) from Workloads on the Illumio PCE based on the configured Label scope. This plugin does not support sharing of indicators to Illumio platform.",
+    "description": "This plugin is used to pull IOCs of the type URLs (IP Addresses and Hostname) from Workloads on the Illumio PCE based on the configured Label scope. This plugin does not support sharing of indicators to Illumio platform. This plugin supports retraction of IOCs pulled from Illumio platform.",
     "patch_supported": false,
     "push_supported": false,
     "fetch_retraction_info": true,

@@ -26,6 +26,10 @@ from . import exceptions
 
 _logger = getLogger(__name__)
 
+MODULE_NAME = "cte"
+PLUGIN_NAME = "threatq"
+PLUGIN_VERSION = "1.1.0"
+
 
 class TokenHolder(object):
     """Create a token holder, authenticating with the API in thep rocess
@@ -62,6 +66,9 @@ class TokenHolder(object):
         self.private = private
         self.session = session
 
+        headers = {"content-type": "application/json"}
+        headers = self._add_user_agent(headers)
+
         if not private:
             r = self.session.post(
                 self.threatq_host + "/api/token",
@@ -70,7 +77,7 @@ class TokenHolder(object):
                     "client_id": threatq_clientid,
                 },
                 data=json.dumps(auth),
-                headers=add_user_agent({"content-type": "application/json"}),
+                headers=headers,
             )
         else:
             r = self.session.post(
@@ -79,7 +86,7 @@ class TokenHolder(object):
                     "grant_type": "client_credentials",
                 },
                 data=json.dumps(auth),
-                headers=add_user_agent({"content-type": "application/json"}),
+                headers=headers,
                 auth=(auth[0], auth[1]),
             )
 
@@ -98,6 +105,27 @@ class TokenHolder(object):
 
         self.token_time = datetime.now()
 
+    def _add_user_agent(self, headers=None):
+        """Add User-Agent in the headers for threatq requests.
+
+        Args:
+            headers (Dict): Dictionary containing headers for any request.
+        Returns:
+            Dict: Dictionary after adding User-Agent.
+        """
+        if headers and "User-Agent" in headers:
+            return headers
+        headers = add_user_agent(headers)
+        ce_added_agent = headers.get("User-Agent", "netskope-ce")
+        user_agent = "{}-{}-{}-v{}".format(
+            ce_added_agent,
+            MODULE_NAME,
+            PLUGIN_NAME,
+            PLUGIN_VERSION,
+        )
+        headers.update({"User-Agent": user_agent})
+        return headers
+
     def is_token_expired(self):
         """Determine if the access token has expired based on the
         current time.
@@ -115,26 +143,22 @@ class TokenHolder(object):
             "grant_type": "refresh_token",
             "refresh_token": self.refreshtoken,
         }
+        headers = {
+            "Authorization": "Bearer %s" % self.accesstoken,
+            "content-type": "application/json",
+        }
+        headers = self._add_user_agent(headers)
+
         if not self.private:
             r = self.session.post(
                 self.threatq_host + "/api/token",
-                headers=add_user_agent(
-                    {
-                        "Authorization": "Bearer %s" % self.accesstoken,
-                        "content-type": "application/json",
-                    }
-                ),
+                headers=headers,
                 params=params,
             )
         else:
             r = self.session.post(
                 self.threatq_host + "/api/token",
-                headers=add_user_agent(
-                    {
-                        "Authorization": "Bearer %s" % self.accesstoken,
-                        "content-type": "application/json",
-                    }
-                ),
+                headers=headers,
                 auth=self.auth,
                 params=params,
             )

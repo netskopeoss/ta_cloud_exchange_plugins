@@ -1,0 +1,154 @@
+{
+    "name": "OpenCTI",
+    "id": "open_cti",
+    "version": "1.0.0",
+    "description": "The OpenCTI plugin is used to fetch the indicators of type URL, IPv4, Domain, IPv6, SHA256 and MD5 from the Observables on OpenCTI. This plugin supports sharing MD5, SHA256, URL, Domain, IPv4 and IPv6 to Observables on the OpenCTI platform using the Add Indicators action.",
+    "patch_supported": true,
+    "push_supported": true,
+    "fetch_retraction_info": true,
+    "delete_supported": true,
+    "module": "CTE",
+    "minimum_version": "5.0.1",
+    "configuration": [
+        {
+            "label": "Base URL",
+            "key": "base_url",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "OpenCTI Base URL."
+        },
+        {
+            "label": "API Key",
+            "key": "api_key",
+            "type": "password",
+            "default": "",
+            "mandatory": true,
+            "description": "Provide the API Key from 'My Profile > API Key' on the OpenCTI platform."
+        },
+        {
+            "label": "Type of Threat data to pull",
+            "key": "indicator_type",
+            "type": "multichoice",
+            "choices": [
+                {
+                    "key": "Stix File [SHA256] [MD5]",
+                    "value": "StixFile"
+                },
+                {
+                    "key": "Domain",
+                    "value": "Domain-Name"
+                },
+                {
+                    "key": "Url",
+                    "value": "Url"
+                },
+                {
+                    "key": "IPv4",
+                    "value": "IPv4-Addr"
+                },
+                {
+                    "key": "IPv6",
+                    "value": "IPv6-Addr"
+                }
+            ],
+            "default": [
+                "StixFile",
+                "Domain-Name",
+                "Url",
+                "IPv4-Addr",
+                "IPv6-Addr"
+            ],
+            "mandatory": false,
+            "description": "Type of Threat data to pull. Allowed values are Stix File [SHA256] [MD5], Domain, Url, IPv4, IPv6."
+        },
+        {
+            "label": "Minimum Confidence",
+            "key": "confidence",
+            "type": "number",
+            "default": 50,
+            "mandatory": false,
+            "description": "Enter the Minimum Confidence from the range 0 to 100. Only the indicators with confidence greater than or equal to the specified confidence will be fetched."
+        },
+        {
+            "label": "Revoked Indicators",
+            "key": "revoked_indicators",
+            "type": "multichoice",
+            "choices": [
+                {
+                    "key": "Yes",
+                    "value": "yes"
+                },
+                {
+                    "key": "No",
+                    "value": "no"
+                }
+            ],
+            "default": [
+                "yes",
+                "no"
+            ],
+            "mandatory": false,
+            "description": "Only indicators with matching revoked status will be fetched. If no specific value is chosen, indicators with all available revoked statuses will be retrieved."
+        },
+        {
+            "label": "Labels",
+            "key": "tags",
+            "type": "text",
+            "default": "",
+            "mandatory": false,
+            "description": "Only indicators with matching Tags will be fetched. Add multiple Tags separated by commas. Example: tag1,tag2,tag3. Keep blank to fetch indicators from all Tags."
+        },
+        {
+            "label": "Enable Polling",
+            "key": "is_pull_required",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Yes",
+                    "value": "Yes"
+                },
+                {
+                    "key": "No",
+                    "value": "No"
+                }
+            ],
+            "default": "Yes",
+            "mandatory": true,
+            "description": "Enable/Disable polling data from OpenCTI. Disable if you only need to push indicators to OpenCTI"
+        },
+        {
+            "label": "Enable Tagging",
+            "key": "enable_tagging",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Yes",
+                    "value": "Yes"
+                },
+                {
+                    "key": "No",
+                    "value": "No"
+                }
+            ],
+            "default": "No",
+            "mandatory": true,
+            "description": "Enable/Disable tagging functionality."
+        },
+        {
+            "label": "Retraction Interval (in days)",
+            "key": "retraction_interval",
+            "type": "number",
+            "mandatory": false,
+            "description": "Specify the number of days for which IoC retraction should be run for OpenCTI indicators. Note: This parameter is applicable only for Netskope CE version 5.1.0 or later, and if \"IoC(s) Retraction\" is enabled in Threat Exchange Settings."
+        },
+        {
+            "label": "Initial Range (in days)",
+            "key": "days",
+            "type": "number",
+            "mandatory": true,
+            "default": 7,
+            "description": "Number of days Threat IoCs to pull in the initial run."
+        }
+    ]
+}

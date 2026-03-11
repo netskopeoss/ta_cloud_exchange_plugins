@@ -1,0 +1,78 @@
+{
+    "name": "Qualys",
+    "id": "qualys_ztre",
+    "version": "1.0.0",
+    "description": "This plugin is used to fetch Assets data from the 'Cyber Security Asset management > Inventory Page', Asset Vulnerabilities from the 'Vulnerability Management Detection & Response > Vulnerabilities' page, Web Applications data from the 'Web Application Scanning > Applications' page and Web Application Findings from the 'Web Application Scanning > Detections' page. This plugin also supports 'Add/Remove Asset Tag(s)', 'Scan Assets' and 'Add/Remove Web Application Tag(s) actions.\n\n Netskope normalization score calculation => 1000 - (Qualys Asset/Web Application Risk Score).",
+    "minimum_version": "5.1.2",
+    "module": "CRE",
+    "configuration": [
+        {
+            "label": "API Server URL",
+            "key": "api_server_url",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "API Server URL of the Qualys instance."
+        },
+        {
+            "label": "API Gateway URL",
+            "key": "api_gateway_url",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "API Gateway URL of the Qualys instance."
+        },
+        {
+            "label": "Username",
+            "key": "username",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "The Username associated with the Qualys account."
+        },
+        {
+            "label": "Password",
+            "key": "password",
+            "type": "password",
+            "default": "",
+            "mandatory": true,
+            "description": "The Password associated with the Qualys account."
+        },
+        {
+            "label": "Pull Asset Vulnerabilities",
+            "key": "pull_asset_vulnerabilities",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Yes",
+                    "value": "Yes"
+                },
+                {
+                    "key": "No",
+                    "value": "No"
+                }
+            ],
+            "default": "No",
+            "mandatory": true,
+            "description": "Enable/Disable fetching asset vulnerabilities."
+        },
+        {
+            "label": "Pull Web Application Findings",
+            "key": "pull_webapp_findings",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Yes",
+                    "value": "Yes"
+                },
+                {
+                    "key": "No",
+                    "value": "No"
+                }
+            ],
+            "default": "No",
+            "mandatory": true,
+            "description": "Enable/Disable fetching web application findings."
+        }
+    ]
+}

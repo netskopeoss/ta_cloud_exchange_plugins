@@ -94,6 +94,99 @@ class Slack(Provider):
         },
     }
     _required = {"required": ["webhook_url", "message"]}
+    _blocks = {
+        "type": "array",
+        "items": {
+            "type": "object",
+            "properties": {
+                "type": {"type": "string"},
+                "block_id": {"type": "string"},
+                "text": {
+                    "type": "object",
+                    "properties": {
+                        "type": {"type": "string"},
+                        "text": {"type": "string"},
+                    },
+                },
+                "label": {
+                    "type": "object",
+                    "properties": {
+                        "type": {"type": "string"},
+                        "text": {"type": "string"},
+                    }
+                },
+                "dispatch_action": {"type": "boolean"},
+                "element": {
+                    "type": "object",
+                    "properties": {
+                        "type": {"type": "string"},
+                        "dispatch_action_config": {
+                            "type": "object",
+                            "properties": {
+                                "trigger_actions_on": {
+                                    "type": "array",
+                                    "items": {"type": "string"}
+                                }
+                            }
+                        },
+                        "initial_value": {"type": "string"},
+                        "action_id": {"type": "string"},
+                        "placeholder": {
+                            "type": "object",
+                            "properties": {
+                                "type": {"type": "string"},
+                                "text": {"type": "string"},
+                            }
+                        }
+                    }
+                },
+                "accessory": {
+                    "type": "object",
+                    "properties": {
+                        "action_id": {"type": "string"},
+                        "type": {"type": "string"},
+                        "initial_option": {
+                            "type": "object",
+                            "properties": {
+                                "text": {
+                                    "type": "object",
+                                    "properties": {
+                                        "type": {"type": "string"},
+                                        "text": {"type": "string"},
+                                    },
+                                },
+                                "value": {"type": "string"},
+                            },
+                        },
+                        "placeholder": {
+                            "type": "object",
+                            "properties": {
+                                "type": {"type": "string"},
+                                "text": {"type": "string"},
+                            },
+                        },
+                        "options": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "text": {
+                                        "type": "object",
+                                        "properties": {
+                                            "type": {"type": "string"},
+                                            "text": {"type": "string"},
+                                        },
+                                    },
+                                    "value": {"type": "string"},
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        },
+    }
+
     _schema = {
         "type": "object",
         "properties": {
@@ -125,6 +218,7 @@ class Slack(Provider):
                 "title": "This is the text that will be posted to the channel",
             },
             "attachments": __attachments,
+            "blocks": _blocks,
         },
         "additionalProperties": False,
     }

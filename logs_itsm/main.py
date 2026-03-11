@@ -70,7 +70,8 @@ class CELogsPlugin(PluginBase):
         alerts = []
         query = {}
         query["$and"] = [
-            {"type": {"$in": self.configuration["params"]["logs_type"]}}
+            {"$or": [{"type": {"$in": self.configuration["params"]["logs_type"]}},
+                     {"ce_log_type": {"$in": self.configuration["params"]["logs_type"]}}]},
         ]
         if self.last_run_at is not None:
             query["$and"].append({"createdAt": {"$gte": self.last_run_at}})
@@ -84,10 +85,15 @@ class CELogsPlugin(PluginBase):
                         alertType="Log",
                         app="Cloud Exchange",
                         appCategory="CE",
-                        type=log["type"],
+                        type=log.get("ce_log_type", log.get("type")),
                         user="",
                         timestamp=log["createdAt"],
-                        rawData={"message": log["message"], "errorCode": log["errorCode"]},
+                        rawData={
+                            "message": log["message"],
+                            "errorCode": log["errorCode"],
+                            "details": log.get("details"),
+                            "resolution": log.get("resolution")
+                        }
                     )
                 )
             except KeyError as ex:

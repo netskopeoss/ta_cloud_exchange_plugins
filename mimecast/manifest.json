@@ -1,101 +1,99 @@
 {
-  "name": "Mimecast Plugin",
-  "id": "mimecast",
-  "version": "1.2.0",
-  "description": "This plugin is used to fetch File hashes(SHA256 and MD5) and URLs from Mimecast. This plugin can share Hash(SHA256 and MD5) and URL type of Indicators to Mimecast. To access the plugin, you would need an API application on Mimecast and user credentials. Refer these Mimecast guides [here](https://integrations.mimecast.com/documentation/) for detailed steps.",
-  "patch_supported": true,
-  "push_supported": true,
-  "configuration": [
-    {
-      "label": "Base URL",
-      "key": "url",
-      "type": "text",
-      "default": "https://us-api.mimecast.com",
-      "mandatory": true,
-      "description": "Mimecast API Base URL including region."
-    },
-    {
-      "label": "Application ID",
-      "key": "app_id",
-      "type": "text",
-      "mandatory": true,
-      "description": "Mimecast API Application ID."
-    },
-    {
-      "label": "Application Key",
-      "key": "app_key",
-      "type": "password",
-      "mandatory": true,
-      "description": "Mimecast API Application Key."
-    },
-    {
-      "label": "Access Key",
-      "key": "access_key",
-      "type": "password",
-      "mandatory": true,
-      "description": "Mimecast Application Access key."
-    },
-    {
-      "label": "Secret Key",
-      "key": "secret_key",
-      "type": "password",
-      "mandatory": true,
-      "description": "Mimecast Application Secret key."
-    },
-    {
-      "label": "Indicator Feed Type",
-      "key": "feed_type",
-      "type": "multichoice",
-      "choices": [
+    "name": "Mimecast",
+    "id": "mimecast",
+    "version": "2.0.0",
+    "description": "This plugin is used to fetch the indicators of type URL from Services > URL Protection > Logs page, SHA256 and MD5 from the Mimecast. This plugin also support sharing the URL indicators to Services > URL Protection > URL Tools > Managed URLS page using Create Managed URL action and sharing of SHA256 and MD5 indicators using Perform Operation action to the Mimecast. To access the plugin, you would need an API application on Mimecast and user credentials. Refer these Mimecast guides [here](https://developer.services.mimecast.com/api-overview#application-registration-credential-management) for detailed steps.",
+    "patch_supported": true,
+    "push_supported": true,
+    "fetch_retraction_info": true,
+    "delete_supported": true,
+    "module": "CTE",
+    "configuration": [
         {
-          "key": "Malware Customer",
-          "value": "malware_customer"
+            "label": "API Base URL",
+            "key": "base_url",
+            "type": "text",
+            "default": "https://api.services.mimecast.com",
+            "mandatory": true,
+            "description": "Mimecast API Base URL. e.g. https://api.services.mimecast.com"
         },
         {
-          "key": "Malware Grid",
-          "value": "malware_grid"
+            "label": "Client ID",
+            "key": "client_id",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "Mimecast API Client ID. To generate the Client ID, go to Services > API and Platform Integrations > Mimecast API 2.0 > Generate Keys."
         },
         {
-          "key": "Malsite",
-          "value": "malsite"
+            "label": "Client Secret",
+            "key": "client_secret",
+            "type": "password",
+            "default": "",
+            "mandatory": true,
+            "description": "Mimecast API Client Secret. To generate the Client Secret, go to Services > API and Platform Integrations > Mimecast API 2.0 > Generate Keys."
+        },
+        {
+            "label": "Indicator Feed Type",
+            "key": "feed_type",
+            "type": "multichoice",
+            "choices": [
+                {
+                    "key": "Malware Customer",
+                    "value": "malware_customer"
+                },
+                {
+                    "key": "Malware Grid",
+                    "value": "malware_grid"
+                },
+                {
+                    "key": "Malsite",
+                    "value": "malsite"
+                }
+            ],
+            "mandatory": false,
+            "default": [
+                "malware_customer",
+                "malware_grid",
+                "malsite"
+            ],
+            "description": "The scope of data to fetch: 'Malware Customer' to pull file hash data from the account, Malware Grid to pull file hash data form the region grid and Malsite to pull URLs from URL Protection."
+        },
+        {
+            "label": "Types of Malware to Pull (applicable when 'Indicator Feed Type' is 'Malware Customer' or 'Malware Grid')",
+            "key": "indicator_type",
+            "type": "multichoice",
+            "choices": [
+                {
+                    "key": "MD5",
+                    "value": "MD5"
+                },
+                {
+                    "key": "SHA256",
+                    "value": "SHA256"
+                }
+            ],
+            "mandatory": false,
+            "default": [
+                "MD5",
+                "SHA256"
+            ],
+            "description": "Malware indicators of selected types will be extracted from Mimecast malware alerts and stored on CTE."
+        },
+        {
+            "label": "Retraction Interval (in days)",
+            "key": "retraction_interval",
+            "type": "number",
+            "mandatory": false,
+            "description": "Specify the number of days for which IoC retraction should be run for Mimecast indicators. Note: This parameter is applicable only for Netskope CE version 5.1.0 or later, and if \"IoC(s) Retraction\" is enabled in Threat Exchange Settings."
+        },
+        {
+            "label": "Initial Range (in days)",
+            "key": "days",
+            "type": "number",
+            "mandatory": true,
+            "default": 7,
+            "description": "Number of days to pull the data for the initial run."
         }
-      ],
-      "mandatory": false,
-      "default": [
-        "malware_customer",
-        "malware_grid",
-        "malsite"
-      ],
-      "description": "The scope of data to fetch - 'Malware Customer' to pull data from the account, Malware Grid to pull the data form the region grid and Malsite to pull URLs from URL Protection."
-    },
-    {
-      "label": "Types of Malware to Pull (applicable when 'feed_type' is 'Malware Customer' or 'Malware Grid')",
-      "key": "indicator_type",
-      "type": "multichoice",
-      "choices": [
-        {
-          "key": "MD5",
-          "value": "MD5"
-        },
-        {
-          "key": "SHA256",
-          "value": "SHA256"
-        }
-      ],
-      "mandatory": false,
-      "default": [
-        "MD5",
-        "SHA256"
-      ],
-      "description": "Malware indicators of selected types will be extracted from Mimecast malware alerts and stored on CTE."
-    },
-    {
-      "label": "Initial Range (in days)",
-      "key": "days",
-      "type": "number",
-      "mandatory": true,
-      "default": 7,
-      "description": "Number of days to pull the data for the initial run."
-    }
-  ]
+    ]
 }

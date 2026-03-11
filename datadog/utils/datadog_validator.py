@@ -31,11 +31,11 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 Datadog Validator."""
 
-
-import io
 import csv
-import traceback
+import io
 import re
+import traceback
+
 from jsonschema import validate
 from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
 
@@ -48,20 +48,6 @@ class DatadogValidator(object):
         super().__init__()
         self.logger = logger
         self.log_prefix = log_prefix
-
-    def validate_datadog_tags(self, dd_tags):
-        """Validate the datadog tags.
-        Args:
-            dd_tags: The datadog tags to be validated
-
-        Returns:
-            True if the datadog tags are valid, False otherwise
-        """
-        pattern = re.compile(r"^(\w+)(,:\s*\w+)*$")
-        if pattern.match(dd_tags) == None:
-            return False
-        else:
-            return True
 
     def validate_taxonomy(self, instance):
         """Validate the schema of given taxonomy JSON.

@@ -1,0 +1,43 @@
+{
+    "name": "BMC Helix ITSM",
+    "id": "bmc_helix_itsm",
+    "description": "This plugin is used to create incidents on the BMC Helix ITSM platform. It also supports syncing BMC Helix incident status and impact as severity.",
+    "version": "2.1.0",
+    "pulling_supported": false,
+    "receiving_supported": true,
+    "module": "CTO",
+    "minimum_version": "6.0.0",
+    "configuration": [
+      {
+        "label": "Authentication",
+        "name": "auth",
+        "type": "step",
+        "fields": [
+          {
+            "label": "BMC Helix API Base URL",
+            "key": "servername",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "BMC Helix API URL based on cloud or On-Prem setup. Example: http(s)://<instance-name>.com"
+          },
+          {
+            "label": "Username",
+            "key": "username",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "The Username associated with the BMC Helix ITSM account."
+          },
+          {
+            "label": "Password",
+            "key": "password",
+            "type": "password",
+            "default": "",
+            "mandatory": true,
+            "description": "The Password associated with the BMC Helix ITSM username."
+          }
+        ]
+      }
+    ]
+  }

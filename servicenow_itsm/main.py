@@ -51,6 +51,8 @@ from netskope.integrations.itsm.models import (
     Alert,
     Event,
     UpdatedTaskValues,
+    CustomFieldsSectionWithMappings,
+    CustomFieldMapping
 )
 
 from .utils.servicenow_itsm_constants import (
@@ -173,75 +175,6 @@ class ServiceNowITSMPlugin(PluginBase):
                 result.pop(mapping.destination_field)
         return result
 
-    def get_severity_status_mapping(self):
-        """Get severity status mapping.
-
-        Returns:
-            dict: Severity status mapping.
-        """
-        mapping_config = self.configuration.get("mapping_config", {})
-        ns_to_ce_severity = {
-            value: key for key, value in mapping_config.get(
-                "severity_mapping", {}
-            ).items()
-        }
-        ns_to_ce_status = {
-            value: key for key, value in mapping_config.get(
-                "status_mapping", {}
-            ).items()
-        }
-        return {
-            "severity": ns_to_ce_severity,
-            "status": ns_to_ce_status
-        }
-
-    def ce_to_snow_state_severity_mappings(
-        self,
-        mapping_config: dict,
-        mappings: dict,
-        status_field,
-        severity_field
-    ):
-        """Get state severity mappings.
-
-        Args:
-            mapping_config (Dict): Mapping config.
-            mappings (Dict): Mappings.
-            status_field (str): Status field based on table.
-            severity_field (str): Severity field based on table.
-
-        Returns:
-            dict: mappings with updated state severity mappings.
-        """
-        auth_params = self.configuration.get("auth", {})
-        ce_to_snow_severity = mapping_config.get("severity_mapping", {})
-        ce_to_snow_state = mapping_config.get("status_mapping", {})
-        if auth_params.get("table", "") == "sn_grc_issue":
-            severity_field = "impact"
-        for k, v in {
-            severity_field: ce_to_snow_severity,
-            status_field: ce_to_snow_state
-        }.items():
-            if k == severity_field and k in mappings.keys():
-                mappings.update(
-                    {
-                        k: v.get(mappings.get(k), "3")
-                    }
-                )
-            elif k == status_field and k in mappings.keys():
-                mappings.update(
-                    {
-                        k: v.get(mappings.get(k), "1")
-                    }
-                )
-            elif k == "impact" and k in mappings.keys():
-                mappings.update(
-                    {
-                        k: v.get(mappings.get(k), "3")
-                    }
-                )
-        return mappings
-
     def _get_custom_table_fields(self, custom_fields):
         """Get custom table fields.
 
@@ -289,7 +222,6 @@ class ServiceNowITSMPlugin(PluginBase):
         """
         config_params = self.configuration.get("params", {})
         auth_params = self.configuration.get("auth", {})
-        mapping_config = self.configuration.get("mapping_config", {})
         status_field = "state"
         severity_field = "severity"
         assignee_field = "assigned_to"
@@ -328,12 +260,6 @@ class ServiceNowITSMPlugin(PluginBase):
             )
             raise ServiceNowITSMPluginException(err_msg)
 
-        mappings = self.ce_to_snow_state_severity_mappings(
-            mapping_config,
-            mappings,
-            status_field,
-            severity_field
-        )
         for key, value in list(mappings.items()):
             if type(value) is not str:
                 mappings[key] = str(value)
@@ -383,8 +309,8 @@ class ServiceNowITSMPlugin(PluginBase):
             )
             task = Task(
                 id=sys_id,
-                status=state if state.upper() in TaskStatus.__members__ else TaskStatus.OTHER,
-                severity=severity if severity.upper() in Severity.__members__ else Severity.OTHER,
+                status=state if state else TaskStatus.OTHER,
+                severity=severity if severity else Severity.OTHER,
                 link=(
                     f"{url}/{table}.do?sys_id={sys_id}"
                 ),
@@ -435,8 +361,8 @@ class ServiceNowITSMPlugin(PluginBase):
         ids = list(usernames_ids.values())
 
         self.logger.info(
-            f"{self.log_prefix}: Fetching assignee usernames "
-            f" from {PLATFORM_NAME}."
+            f"{self.log_prefix}: Fetching assignee "
+            f"from {PLATFORM_NAME}."
         )
         url, username, password = self.servicenow_helper.get_auth_params(
             self.configuration
@@ -445,7 +371,7 @@ class ServiceNowITSMPlugin(PluginBase):
         headers = self.servicenow_helper.basic_auth(username, password)
 
         params = {
-            "sysparm_fields": "sys_id,user_name",
+            "sysparm_fields": "sys_id,email",
             "sysparm_query": (f"sys_idIN{','.join(ids)}"),
         }
 
@@ -458,20 +384,20 @@ class ServiceNowITSMPlugin(PluginBase):
                 verify=self.ssl_validation,
                 proxies=self.proxy,
                 logger_msg=(
-                    f"fetching usernames from {PLATFORM_NAME} platform"
+                    f"fetching assignee from {PLATFORM_NAME} platform"
                 ),
             )
 
             user_results = response.get("result", [])
             user_results = {
-                result["sys_id"]: result["user_name"]
+                result["sys_id"]: result.get("email", None)
                 for result in user_results
             }
         except ServiceNowITSMPluginException:
             raise
         except Exception as exp:
             err_msg = (
-                "Error occurred while fetching usernames "
+                "Error occurred while fetching assignee "
                 f"from {PLATFORM_NAME}."
             )
             self.logger.error(
@@ -506,60 +432,31 @@ class ServiceNowITSMPlugin(PluginBase):
             status_field (str): Status field based on table.
             assignee_field (str): Assignee field based on table.
         """
-        if task.dataItem and task.dataItem.rawData:
-            old_status = task.dataItem.rawData.get(
-                "status", TaskStatus.OTHER
-            )
-            old_severity = task.dataItem.rawData.get(
-                "severity", Severity.OTHER
-            )
-            if task.updatedValues:
-                task.updatedValues.oldSeverity = (
-                    old_severity if old_severity.upper() in Severity.__members__ else Severity.OTHER
-                )
-                task.updatedValues.oldStatus = (
-                    old_status if old_status.upper() in TaskStatus.__members__ else TaskStatus.OTHER
-                )
-                task.updatedValues.oldAssignee = task.dataItem.rawData.get(
-                    "assignee", None
-                )
-            else:
-                task.updatedValues = UpdatedTaskValues(
-                    status=None,
-                    oldStatus=(
-                        old_status if old_status.upper() in TaskStatus.__members__ else TaskStatus.OTHER
-                    ),
-                    assignee=None,
-                    oldAssignee=task.dataItem.rawData.get("assignee", None),
-                    severity=None,
-                    oldSeverity=(
-                        old_severity if old_severity.upper() in Severity.__members__ else Severity.OTHER
-                    ),
-                )
-        mapping_config = self.get_severity_status_mapping()
-
-        SEVERITY_MAPPING = mapping_config.get("severity", {})
-        STATE_MAPPINGS = mapping_config.get("status", {})
 
         if task.updatedValues:
-            task.updatedValues.status = STATE_MAPPINGS.get(
-                servicenow_data.get(status_field), TaskStatus.OTHER
+            task.updatedValues.status = servicenow_data.get(
+                status_field, TaskStatus.OTHER
+            )
+            task.updatedValues.oldAssignee = task.dataItem.rawData.get(
+                "assignee", None
+            )
+        else:
+            # Status and Severity are managed from core
+            task.updatedValues = UpdatedTaskValues(
+                assignee=None,
+                oldAssignee=task.dataItem.rawData.get("assignee", None),
             )
 
         if servicenow_data[severity_field]:
-            task.updatedValues.severity = SEVERITY_MAPPING.get(
-                servicenow_data.get(severity_field), Severity.OTHER
+            task.updatedValues.severity = servicenow_data.get(
+                severity_field, Severity.OTHER
             )
 
         if servicenow_data[assignee_field]:
             task.updatedValues.assignee = servicenow_data[assignee_field]
 
-        task.status = STATE_MAPPINGS.get(
-            servicenow_data.get(status_field), TaskStatus.OTHER
-        )
-        task.severity = SEVERITY_MAPPING.get(
-            servicenow_data.get(severity_field), Severity.OTHER
-        )
+        task.status = servicenow_data.get(status_field, TaskStatus.OTHER)
+        task.severity = servicenow_data.get(severity_field, Severity.OTHER)
         return task
 
     def sync_states(self, tasks: List[Task]) -> List[Task]:
@@ -671,7 +568,10 @@ class ServiceNowITSMPlugin(PluginBase):
                     assignee_field
                 )
             else:
-                if task.updatedValues.status and task.updatedValues.status != TaskStatus.DELETED:
+                if (
+                    task.updatedValues.status and
+                    task.updatedValues.status != TaskStatus.DELETED
+                ):
                     task.updatedValues.oldStatus, task.updatedValues.status = (
                         task.updatedValues.status, TaskStatus.DELETED
                     )
@@ -709,7 +609,6 @@ class ServiceNowITSMPlugin(PluginBase):
         updates = {}
         config_params = self.configuration.get("params", {})
         auth_params = self.configuration.get("auth", {})
-        mapping_config = self.configuration.get("mapping_config", {})
         status_field = "state"
         severity_field = "severity"
         assignee_field = "assigned_to"
@@ -737,16 +636,10 @@ class ServiceNowITSMPlugin(PluginBase):
                 mappings_list = mappings_default.get("mappings", [])
                 mappings = self.map_values(alert, mappings_list)
             if "sys_id" in mappings:
-                mappings.pop("sys_id")  # special field; do not allow overriding
+                mappings.pop("sys_id")  # special field; do not allow overriding # noqa
             for key, value in list(mappings.items()):
                 if type(value) is not str:
                     mappings[key] = str(value)
-            mappings = self.ce_to_snow_state_severity_mappings(
-                mapping_config,
-                mappings,
-                status_field,
-                severity_field
-            )
             updates = mappings
 
         if mappings.get(update_field, None):
@@ -819,7 +712,10 @@ class ServiceNowITSMPlugin(PluginBase):
                 )
                 return task
             elif response.status_code == 404:
-                if task.updatedValues.status and task.updatedValues.status != TaskStatus.DELETED:
+                if (
+                    task.updatedValues.status and
+                    task.updatedValues.status != TaskStatus.DELETED
+                ):
                     task.updatedValues.oldStatus, task.updatedValues.status = (
                         task.updatedValues.status, TaskStatus.DELETED
                     )
@@ -1059,7 +955,9 @@ class ServiceNowITSMPlugin(PluginBase):
             ValidationResult: Validation Result.
         """
         try:
-            custom_table_name = config_params.get("custom_table_name", "").strip()
+            custom_table_name = (
+                config_params.get("custom_table_name", "").strip()
+            )
             if not custom_table_name:
                 err_msg = (
                     "Custom Table Name is required Configuration Parameter."
@@ -1214,66 +1112,7 @@ class ServiceNowITSMPlugin(PluginBase):
                 return ValidationResult(success=False, message=err_msg)
 
         validation_msg = (
-            f"Successfully validated Configuration Parameters"
-        )
-        self.logger.debug(
-            f"{self.log_prefix}: {validation_msg}."
-        )
-        return ValidationResult(
-            success=True,
-            message=validation_msg
-        )
-
-    def _validate_mapping_param(self, configuration):
-        """Validate mapping configuration parameters.
-
-        Args:
-            configuration (Dict): Configuration dictionary.
-
-        Returns:
-            ValidationResult: Validation result with success flag and message.
-        """
-        config = configuration.get("mapping_config", {})
-        validation_error = "Validation error occurred."
-
-        # Validate status mapping
-        status_mapping = config.get("status_mapping", {})
-        if not status_mapping:
-            err_msg = "Status Mapping is required in Mapping Configurations."
-            self.logger.error(
-                f"{self.log_prefix}: {validation_error} {err_msg}"
-            )
-            return ValidationResult(success=False, message=err_msg)
-        elif not isinstance(status_mapping, dict):
-            err_msg = (
-                "Invalid Status Mapping provided in Mapping Configurations."
-            )
-            self.logger.error(
-                f"{self.log_prefix}: {validation_error} {err_msg}"
-            )
-            return ValidationResult(success=False, message=err_msg)
-
-        # Validate severity mapping
-        severity_mapping = config.get("severity_mapping", {})
-        if not severity_mapping:
-            err_msg = (
-                "Severity Mapping is required in Mapping Configurations."
-            )
-            self.logger.error(
-                f"{self.log_prefix}: {validation_error} {err_msg}"
-            )
-            return ValidationResult(success=False, message=err_msg)
-        elif not isinstance(severity_mapping, dict):
-            err_msg = (
-                "Invalid Severity Mapping provided in Mapping Configurations."
-            )
-            self.logger.error(
-                f"{self.log_prefix}: {validation_error} {err_msg}"
-            )
-            return ValidationResult(success=False, message=err_msg)
-
-        validation_msg = (
-            f"Successfully validated Mapping Configurations"
+            "Successfully validated Configuration Parameters"
         )
         self.logger.debug(
             f"{self.log_prefix}: {validation_msg}."
@@ -1297,8 +1136,6 @@ class ServiceNowITSMPlugin(PluginBase):
             return self._validate_auth(configuration)
         elif name == "params":
             return self._validate_params(configuration)
-        elif name == "mapping_config":
-            return self._validate_mapping_param(configuration)
         else:
             return ValidationResult(
                 success=True, message="Validation successful."
@@ -1691,3 +1528,90 @@ class ServiceNowITSMPlugin(PluginBase):
                     ]
                 )
         return fields
+
+    def get_default_custom_mappings(self) -> list[
+        CustomFieldsSectionWithMappings
+    ]:
+        """
+        Get default custom field mappings with values for Netskope ITSM plugin.
+
+        Returns:
+            list[CustomFieldsSectionWithMappings]: List of sections with \
+                field-to-value mappings
+        """
+        return [
+            CustomFieldsSectionWithMappings(
+                section="status",
+                event_field="status",
+                destination_label="ServiceNow",
+                field_mappings=[
+                    CustomFieldMapping(
+                        name="New",
+                        mapped_value="1",
+                        is_default=True
+                    ),
+                    CustomFieldMapping(
+                        name="In Progress",
+                        mapped_value="2",
+                        is_default=True
+                    ),
+                    CustomFieldMapping(
+                        name="On Hold",
+                        mapped_value="3",
+                        is_default=True
+                    ),
+                    CustomFieldMapping(
+                        name="Closed",
+                        mapped_value="7",
+                        is_default=True
+                    ),
+                    CustomFieldMapping(
+                        name="Deleted",
+                        mapped_value="",
+                        is_default=True
+                    ),
+                    CustomFieldMapping(
+                        name="Other",
+                        mapped_value="",
+                        is_default=True
+                    ),
+                ]
+            ),
+            CustomFieldsSectionWithMappings(
+                section="severity",
+                event_field="severity",
+                destination_label="ServiceNow",
+                field_mappings=[
+                    CustomFieldMapping(
+                        name="Critical",
+                        mapped_value="",
+                        is_default=True
+                    ),
+                    CustomFieldMapping(
+                        name="High",
+                        mapped_value="1",
+                        is_default=True
+                    ),
+                    CustomFieldMapping(
+                        name="Medium",
+                        mapped_value="2",
+                        is_default=True
+                    ),
+                    CustomFieldMapping(
+                        name="Low",
+                        mapped_value="3",
+                        is_default=True
+                    ),
+                    CustomFieldMapping(
+                        name="Informational",
+                        mapped_value="",
+                        is_default=True
+                    ),
+                    CustomFieldMapping(
+                        name="Other",
+                        mapped_value="",
+                        is_default=True
+                    ),
+                ]
+            )
+        ]

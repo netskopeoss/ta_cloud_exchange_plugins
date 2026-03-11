@@ -31,24 +31,29 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 Datadog Plugin CEF Generator."""
 
-
 import collections
+import socket
 import time
 import traceback
-import socket
+
+from netskope.integrations.cls.utils.converter import *
+from netskope.integrations.cls.utils.sanitizer import *
+
 from .datadog_constants import (
+    AUDIT_SEVERITY_MAP,
+    CE_TENANT_NAME,
     SEVERITY_MAP,
     SEVERITY_UNKNOWN,
-    AUDIT_SEVERITY_MAP,
 )
-from netskope.integrations.cls.utils.sanitizer import *
-from netskope.integrations.cls.utils.converter import *
+from .datadog_helper import get_tenant_name
 
 
 class CEFGenerator(object):
     """CEF Generator class."""
 
-    def __init__(self, mapping, delimiter, cef_version, logger, log_prefix):
+    def __init__(
+        self, mapping, delimiter, cef_version, logger, log_prefix, source
+    ):
         """Init method."""
         self.logger = logger
         self.log_prefix = log_prefix
@@ -71,6 +76,7 @@ class CEFGenerator(object):
         self.valid_extensions = self._valid_extensions()
         self.extension_converters = self._type_converter()
         self.delimiter = delimiter
+        self.source = source
 
     def _type_converter(self):
         """To Parse the CEF transformation mapping and creates
@@ -93,13 +99,15 @@ class CEFGenerator(object):
                 for subtype, subtype_mapping in data_mapping.items():
                     for key, value in subtype_mapping.items():
                         for field, field_mapping in value.items():
-                            field_converters[field] = self.extension_converter(
-                                key_name=field,
-                                converter=converters[
-                                    field_mapping.get(
-                                        "transformation", "String"
-                                    )
-                                ],
+                            field_converters[field] = (
+                                self.extension_converter(
+                                    key_name=field,
+                                    converter=converters[
+                                        field_mapping.get(
+                                            "transformation", "String"
+                                        )
+                                    ],
+                                )
                             )
             return field_converters
         except Exception as err:
@@ -264,9 +272,9 @@ class CEFGenerator(object):
                 if isinstance(sanitized_value, str):
                     sanitized_value = self._equals_escaper(sanitized_value)
 
-                extension_strs[
-                    self.valid_extensions[name].key_name
-                ] = sanitized_value
+                extension_strs[self.valid_extensions[name].key_name] = (
+                    sanitized_value
+                )
             except KeyError:
                 self.logger.warn(
                     "{}: [{}][{}]- An error occurred while generating "
@@ -337,6 +345,10 @@ class CEFGenerator(object):
             date = self.webtx_timestamp(raw_data)
             if date:
                 extension_strs["rt"] = date
+        else:
+            tenant_name = get_tenant_name(source=self.source)
+            if tenant_name:
+                extension_strs[CE_TENANT_NAME] = tenant_name
 
         extensions_str = " ".join(
             sorted("{}={}".format(k, v) for k, v in extension_strs.items())

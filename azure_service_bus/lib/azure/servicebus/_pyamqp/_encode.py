@@ -30,9 +30,9 @@ from typing import (
 try:
     from typing import TypeAlias  # type: ignore
 except ImportError:
-    from ....typing_extensions import TypeAlias
+    from typing_extensions import TypeAlias
 
-from ....typing_extensions import Buffer
+from typing_extensions import Buffer
 
 from .types import (
     TYPE,

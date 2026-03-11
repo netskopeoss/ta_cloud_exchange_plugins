@@ -71,10 +71,12 @@ class UDMGenerator(object):
         self.extension_converters = self._type_converter()
 
     def _type_converter(self):
-        """To Parse the UDM extension CSV string and creates the dict for data type converters.
+        """To Parse the UDM extension CSV string and \
+            creates the dict for data type converters.
 
         Returns:
-            Dict object having details of all the available UDM fields and its type converters
+            Dict object having details of all \
+                the available UDM fields and its type converters
         """
         converters = type_converter()
 
@@ -110,10 +112,12 @@ class UDMGenerator(object):
             raise
 
     def _valid_extensions(self):
-        """To Parse the given extension CSV string and creates the dict for each provided values with its sanitizers.
+        """To Parse the given extension CSV string and \
+            creates the dict for each provided values with its sanitizers.
 
         Returns:
-            Dict object having details of all the available UDM fields and its sanitizers
+            Dict object having details of all \
+                the available UDM fields and its sanitizers
         """
         sanitizers = get_sanitizers()
 
@@ -149,7 +153,8 @@ class UDMGenerator(object):
             raise
 
     def get_header_value(self, header, headers):
-        """To Fetch sanitized value of header from given configured headers dict.
+        """To Fetch sanitized value of header \
+            from given configured headers dict.
 
         Args:
             header: The header for which sanitized value is to be fetched
@@ -171,7 +176,8 @@ class UDMGenerator(object):
             possible_headers: Possible UDM headers
             headers: Configured headers
             data_type: Data type for which UDM event is being generated
-            subtype: Subtype of data type for which UDM event is being generated
+            subtype: Subtype of data type for which \
+                UDM event is being generated
         """
         for configured_header in list(headers.keys()):
             if configured_header not in possible_headers:
@@ -224,8 +230,9 @@ class UDMGenerator(object):
             extensions (dict): key-value pairs for event metadata.
         """
         extension_pairs = {}
+        skip_fields = []
         for name, value in extensions.items():
-            # First convert the incoming value from Netskope to appropriate data type
+            # First convert the incoming value from Netskope to appropriate data type  # noqa
             try:
                 value = self.extension_converters[name].converter(value, name)
             except KeyError:
@@ -235,10 +242,11 @@ class UDMGenerator(object):
                     'find the field in the "valid_extensions". '
                     'Field will be ignored.'
                 )
-                self.logger.error(
+                self.logger.debug(
                     message=f"{self.log_prefix}: {err_msg}",
                     details=str(traceback.format_exc())
                 )
+                skip_fields.append(name)
                 continue
             except Exception as err:
                 err_msg = (
@@ -246,13 +254,14 @@ class UDMGenerator(object):
                     f'generating UDM data for field: "{name}". '
                     f'Error: {str(err)}. Field will be ignored'
                 )
-                self.logger.error(
+                self.logger.debug(
                     message=f"{self.log_prefix}: {err_msg}",
                     details=str(traceback.format_exc())
                 )
+                skip_fields.append(name)
                 continue
 
-            # Validate and sanitise (if required) the incoming value from Netskope before mapping it UDM
+            # Validate and sanitise (if required) the incoming value from Netskope before mapping it UDM  # noqa
             try:
                 extension_pairs[
                     self.valid_extensions[name].key_name
@@ -264,20 +273,22 @@ class UDMGenerator(object):
                     'find the field in the "valid_extensions". '
                     'Field will be ignored'
                 )
-                self.logger.error(
+                self.logger.debug(
                     message=f"{self.log_prefix}: {err_msg}",
                     details=str(traceback.format_exc())
                 )
+                skip_fields.append(name)
             except Exception as err:
                 err_msg = (
                     f'[{data_type}][{subtype}]: An error occurred while '
                     f'generating UDM data for field: "{name}". '
                     f'Error: {str(err)}. Field will be ignored.'
                 )
-                self.logger.error(
+                self.logger.debug(
                     message=f"{self.log_prefix}: {err_msg}",
                     details=str(traceback.format_exc())
                 )
+                skip_fields.append(name)
 
         possible_headers = [
             "metadata.event_timestamp",
@@ -310,10 +321,11 @@ class UDMGenerator(object):
                         f'generating UDM data for header field: "{header}". '
                         f'Error: {str(err)}. Field will be ignored'
                     )
-                    self.logger.error(
+                    self.logger.debug(
                         message=f"{self.log_prefix}: {err_msg}",
                         details=str(traceback.format_exc())
                     )
+                    skip_fields.append(header)
 
         all_pairs = {**header_pairs, **extension_pairs}
 
@@ -328,10 +340,11 @@ class UDMGenerator(object):
                 f'generating UDM data for header field: "{header}". '
                 f'Error: {str(err)}. Fields will be ignored'
             )
-            self.logger.error(
+            self.logger.debug(
                 message=f"{self.log_prefix}: {err_msg}",
                 details=str(traceback.format_exc())
             )
+            skip_fields.append(header)
 
         udm_data = self.json_converter(all_pairs)
-        return udm_data
+        return udm_data, skip_fields

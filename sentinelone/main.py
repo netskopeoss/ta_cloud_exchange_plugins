@@ -62,6 +62,7 @@ from .utils.constants import (
     PUSH_DATE_FORMAT,
     PUSH_PAGE_SIZE,
     RETRACTION,
+    USER_TYPE_OPTIONS,
 )
 from .utils.helper import SentinelOnePluginException, SentinelOnePluginHelper
 
@@ -278,6 +279,11 @@ class SentinelOnePlugin(PluginBase):
             "updatedAt__lte": f"{end_time.isoformat()}Z",
             "limit": PULL_PAGE_SIZE,
         }
+
+        user_type = self.configuration.get("user_type", "account")
+        if user_type == "global":
+            params["tenant"] = True
+
         cursor = None
         if site_name:
             site_id = self._get_site_id(
@@ -319,9 +325,7 @@ class SentinelOnePlugin(PluginBase):
                 )
                 for alert in resp_json.get("data", []):
                     threatInfo = alert.get("threatInfo", {})
-                    if not (
-                        threatInfo.get("sha256") or threatInfo.get("md5")
-                    ):
+                    if not (threatInfo.get("sha256") or threatInfo.get("md5")):
                         skip_count += 1
                         continue
                     if threatInfo.get("sha256"):
@@ -502,12 +506,18 @@ class SentinelOnePlugin(PluginBase):
         batch = 1
         total_success_count = 0
         total_failed_count = 0
+
+        user_type = self.configuration.get("user_type", "account")
+        filters = {}
+        if user_type == "global":
+            filters = {"tenant": True}
+
         for chunked_list in self.divide_in_chunks(
             indicators_data, PUSH_PAGE_SIZE
         ):
             indicator_json_data = {
                 "data": chunked_list,
-                "filter": {},
+                "filter": filters,
             }
             try:
                 self.sentinelone_helper.api_helper(
@@ -557,7 +567,7 @@ class SentinelOnePlugin(PluginBase):
         )
 
     def _validate_credentials(
-        self, url: str, token: str, site: str
+        self, url: str, token: str, site: str, user_type: str
     ) -> ValidationResult:
         """Validate API Credentials.
 
@@ -571,6 +581,8 @@ class SentinelOnePlugin(PluginBase):
         """
         try:
             params = {"limit": 1}
+            if user_type == "global":
+                params["tenant"] = True
             if site:
                 site_id = self._get_site_id(site, url, token, True)
                 if site_id is None:
@@ -667,17 +679,36 @@ class SentinelOnePlugin(PluginBase):
             )
             return ValidationResult(success=False, message=err_msg)
         elif not isinstance(token, str):
-            err_msg = (
-                "Invalid API Token provided in configuration parameters."
-            )
+            err_msg = "Invalid API Token provided in configuration parameters."
             self.logger.error(
                 f"{self.log_prefix}: {validation_err_msg}. {err_msg}"
             )
             return ValidationResult(success=False, message=err_msg)
 
         if site and (not isinstance(site, str)):
+            err_msg = "Invalid Site Name provided in configuration parameters."
+            self.logger.error(
+                f"{self.log_prefix}: {validation_err_msg}. {err_msg}"
+            )
+            return ValidationResult(success=False, message=err_msg)
+
+        user_type = configuration.get("user_type")
+        if not user_type:
+            err_msg = "User Type is a required configuration parameter."
+            self.logger.error(
+                f"{self.log_prefix}: {validation_err_msg}. {err_msg}"
+            )
+            return ValidationResult(success=False, message=err_msg)
+        if not isinstance(user_type, str):
+            err_msg = "Invalid User Type provided in configuration parameters."
+            self.logger.error(
+                f"{self.log_prefix}: {validation_err_msg}. {err_msg}"
+            )
+            return ValidationResult(success=False, message=err_msg)
+        if user_type not in USER_TYPE_OPTIONS:
             err_msg = (
-                "Invalid Site Name provided in configuration parameters."
+                "Invalid User Type value provided in configuration parameters."
+                " Valid values are 'Global User' and 'Account User'."
             )
             self.logger.error(
                 f"{self.log_prefix}: {validation_err_msg}. {err_msg}"
@@ -747,6 +778,7 @@ class SentinelOnePlugin(PluginBase):
             url=url,
             token=token,
             site=site,
+            user_type=user_type,
         )
 
     def get_actions(self):
@@ -762,9 +794,7 @@ class SentinelOnePlugin(PluginBase):
         """Validate SentinelOne Action Configuration."""
         if action.value not in ["create_iocs"]:
             return ValidationResult(success=False, message="Invalid action.")
-        return ValidationResult(
-            success=True, message="Validation successful."
-        )
+        return ValidationResult(success=True, message="Validation successful.")
 
     def get_action_fields(self, action: Action):
         """Get fields required for an action."""
@@ -862,6 +892,9 @@ class SentinelOnePlugin(PluginBase):
         url, token, _ = self.sentinelone_helper.get_config_params(
             self.configuration
         )
+
+        user_type = self.configuration.get("user_type", "account")
+        filters = {}
         api_endpoint = f"{url}/{API_VERSION}/threat-intelligence/iocs"
         batch = 1
         for retraction_batch in retracted_indicators_lists:
@@ -870,12 +903,18 @@ class SentinelOnePlugin(PluginBase):
             ioc_values = [ioc.value for ioc in retraction_batch]
             for ioc_value in ioc_values:
                 try:
+                    if user_type == "global":
+                        filters = {
+                            "filter": {"value": ioc_value, "tenant": True},
+                        }
+                    else:
+                        filters = {
+                            "filter": {"value": ioc_value},
+                        }
                     self.sentinelone_helper.api_helper(
                         method="DELETE",
                         url=api_endpoint,
-                        json={
-                            "filter": {"value": ioc_value},
-                        },
+                        json=filters,
                         headers={"Authorization": f"ApiToken {token}"},
                         verify=self.ssl_validation,
                         proxies=self.proxy,
@@ -907,9 +946,7 @@ class SentinelOnePlugin(PluginBase):
                         details=traceback.format_exc(),
                     )
                     fail_count += 1
-            log_msg = (
-                f"Successfully retracted {retraction_count} indicator(s)"
-            )
+            log_msg = f"Successfully retracted {retraction_count} indicator(s)"
             if fail_count > 0:
                 log_msg += (
                     f" and {fail_count} indicator(s) were failed to retract"
@@ -922,8 +959,7 @@ class SentinelOnePlugin(PluginBase):
             yield ValidationResult(
                 success=True,
                 message=(
-                    f"Completed execution for batch {batch}"
-                    " for retraction."
+                    f"Completed execution for batch {batch} for retraction."
                 ),
             )
             batch += 1

@@ -58,6 +58,7 @@ from .utils.sentinel_helper import (
     map_sentinel_data,
 )
 from .utils.sentinel_validator import AzureSentinelValidator
+from urllib.parse import urlparse
 
 
 class AzureSentinelPlugin(PluginBase):
@@ -173,12 +174,16 @@ class AzureSentinelPlugin(PluginBase):
             plugin_name=self.plugin_name,
             plugin_version=self.plugin_version,
         )
+        base_url = (
+            f"{self.configuration.get('azure_domain', '').strip().rstrip('/')}"
+        )
         try:
             sentinel_client.push(
                 transformed_data,
                 data_type,
                 sub_type=subtype,
                 logger_msg=f"ingesting data into {PLUGIN_NAME}",
+                base_url=base_url,
             )
         except AzureSentinelException as err:
             raise err
@@ -352,11 +357,15 @@ class AzureSentinelPlugin(PluginBase):
                 plugin_name=self.plugin_name,
                 plugin_version=self.plugin_version,
             )
+            base_url = (
+               f"{configuration.get('azure_domain', '').strip().rstrip('/')}"
+            )
             sentinel_client.push(
                 data=[],
                 data_type="alerts",
                 sub_type="",
                 logger_msg="validating credentials",
+                base_url=base_url,
                 is_validation=True,
             )
         except AzureSentinelException as error:
@@ -376,6 +385,23 @@ class AzureSentinelPlugin(PluginBase):
             )
 
         return ValidationResult(success=True, message="Validation successful.")
+    
+    def _validate_domain(self, value: str) -> bool:
+        """Validate domain name.
+
+        Args:
+            value (str): Domain name.
+
+        Returns:
+            bool: Whether the name is valid or not.
+        """
+        if re.match(
+            r"^((?=[a-z0-9-]{1,63}\.)(xn--)?[a-z0-9]+(-[a-z0-9]+)*\.)+[a-z]{2,63}$",  # noqa
+            value,
+        ):
+            return True
+        else:
+            return False
 
     def validate(self, configuration: dict) -> ValidationResult:
         """Validate the configuration parameters dict.
@@ -401,6 +427,28 @@ class AzureSentinelPlugin(PluginBase):
                 success=False,
                 message=err_msg,
             )
+        
+        # Azure Domain
+        azure_domain = (
+               f"{configuration.get('azure_domain', '').strip().rstrip('/')}"
+            )
+        if not azure_domain:
+            err_msg = (
+                "Azure Log Analytics Domain a required "
+                "configuration parameter."
+            )
+            self.logger.error(f"{self.validation_msg} {err_msg}")
+            return ValidationResult(success=False, message=err_msg)
+        elif not isinstance(azure_domain, str) or not self._validate_domain(
+            azure_domain
+        ):
+            err_msg = (
+                "Invalid Azure Log Analytics Domain provided "
+                "in the configuration parameters."
+            )
+            self.logger.error(f"{self.validation_msg} {err_msg}")
+            return ValidationResult(success=False, message=err_msg)
+        
         if not workspace_id:
             err_msg = "Workspace ID is a required configuration parameter."
             self.logger.error(f"{self.validation_msg} {err_msg}")

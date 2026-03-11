@@ -38,14 +38,16 @@ class SyslogServicePlugin(PluginBase):
         for log in logs:
             try:
                 prepared = {
-                    "createdAt": log["createdAt"].strftime(
-                        "%m/%d/%Y %I:%M:%S %p"
-                    ),
-                    "type": log["type"],
+                    "createdAt": log["createdAt"],
+                    "ce_log_type": log.get("ce_log_type", log.get("type", "info")),
                     "message": log["message"],
                 }
                 if log.get("errorCode", None) is not None:
                     prepared["errorCode"] = log.get("errorCode", None)
+                if log.get("details", None) is not None:
+                    prepared["details"] = log.get("details", None)
+                if log.get("resolution", None) is not None:
+                    prepared["resolution"] = log.get("resolution", None)
                 logs_list.append(prepared)
                 count += 1
                 if len(logs_list) >= LOG_BATCH_SIZE:

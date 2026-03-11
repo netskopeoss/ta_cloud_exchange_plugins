@@ -1,0 +1,175 @@
+{
+    "name": "Infoblox",
+    "id": "infoblox_tide",
+    "version": "2.0.0",
+    "description": "This plugin is used to fetch the indicators of type Host, IPv4, IPv6, URL and Hash (MD5 and SHA256) from the Active Indicators page (Monitor > Research > Active Indicators), indicators of type Domain from Lookalike Domains page (Monitor > Reports > Security > Lookalike Domains) and indicators of type Host, IPv4, IPv6, URL, Hash (MD5 and SHA256) and Domain from SOC Insights page (Monitors > Reports > Security > Insights) on Infoblox platform. This plugin supports sharing indicators of type Host, IPv4, IPv6, URL and Hash (MD5 and SHA256) to Monitor > Research > Active Indicators page on Infoblox platform. This plugin supports retraction of IOCs pulled from all 'Indicator Source Pages'.",
+    "patch_supported": true,
+    "push_supported": true,
+    "minimum_version": "5.1.0",
+    "fetch_retraction_info": true,
+    "module": "CTE",
+    "configuration": [
+        {
+            "label": "API Base URL",
+            "key": "base_url",
+            "type": "text",
+            "mandatory": true,
+            "description": "API Base URL of Infoblox instance. e.g. https://csp.infoblox.com."
+        },
+        {
+            "label": "API Key",
+            "key": "api_key",
+            "type": "password",
+            "default": "",
+            "mandatory": true,
+            "description": "API Key generated from the Infoblox instance. API Key can be generated from 'Profile > User API Keys' page."
+        },
+        {
+            "label": "Indicator Source Page",
+            "key": "indicator_source_page",
+            "type": "multichoice",
+            "choices": [
+                {
+                    "key": "Active Indicators",
+                    "value": "active_indicators"
+                },
+                {
+                    "key": "Lookalike Domains",
+                    "value": "lookalike_domains"
+                },
+                {
+                    "key": "SOC Insights",
+                    "value": "soc_insights"
+                }
+            ],
+            "default": [
+                "active_indicators",
+                "lookalike_domains",
+                "soc_insights"
+            ],
+            "mandatory": false,
+            "description": "The source page from which plugin should pull the indicators. Select at-least one option."
+        },
+        {
+            "label": "Type of Threat data to pull",
+            "key": "type",
+            "type": "multichoice",
+            "choices": [
+                {
+                    "key": "Host",
+                    "value": "host"
+                },
+                {
+                    "key": "IPv4",
+                    "value": "ipv4"
+                },
+                {
+                    "key": "IPv6",
+                    "value": "ipv6"
+                },
+                {
+                    "key": "URL",
+                    "value": "url"
+                },
+                {
+                    "key": "Hash (MD5 and SHA256)",
+                    "value": "hash"
+                },
+                {
+                    "key": "Domain",
+                    "value": "domain"
+                }
+            ],
+            "default": [
+                "host",
+                "ipv4",
+                "ipv6",
+                "url",
+                "hash",
+                "domain"
+            ],
+            "mandatory": true,
+            "description": "Type of Threat data to pull. Allowed values are Host, IPv4, IPv6, URL, Hash, Domain."
+        },
+        {
+            "label": "Data Profiles",
+            "key": "data_profile",
+            "type": "text",
+            "default": "",
+            "mandatory": false,
+            "description": "Data profiles from where data is to be pulled. Multiple data profiles can be separated by comma. e.g. 'DataProfile1,DataProfile2,DataProfile3'. If left blank, data will be pulled from all data profiles. Names of data profile can be found under 'Configuration > Security > TIDE > Data Profiles' page. Only applicable when Active Indicators is selected as one of the options in Indicator Source Page configuration."
+        },
+        {
+            "label": "SOC Insight IoC Action Type",
+            "key": "soc_insight_ioc_action_type",
+            "type": "multichoice",
+            "choices": [
+                {
+                    "key": "Blocked",
+                    "value": "blocked"
+                },
+                {
+                    "key": "Not Blocked",
+                    "value": "not blocked"
+                }
+            ],
+            "default": [
+                "blocked",
+                "not blocked"
+            ],
+            "mandatory": false,
+            "description": "Whether to pull blocked or not blocked SOC Insight IoCs. Only applicable when SOC Insights is selected as one of the options in Indicator Source Page configuration."
+        },
+        {
+            "label": "Enable Polling",
+            "key": "is_pull_required",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Yes",
+                    "value": "yes"
+                },
+                {
+                    "key": "No",
+                    "value": "no"
+                }
+            ],
+            "default": "yes",
+            "mandatory": true,
+            "description": "Enable/Disable polling data from Infoblox. Disable if you only need to push indicators to Infoblox."
+        },
+        {
+            "label": "Enable Tagging",
+            "key": "enable_tagging",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Yes",
+                    "value": "yes"
+                },
+                {
+                    "key": "No",
+                    "value": "no"
+                }
+            ],
+            "default": "yes",
+            "mandatory": true,
+            "description": "Enable/Disable tagging functionality."
+        },
+        {
+            "label": "Retraction Interval (in days)",
+            "key": "retraction_interval",
+            "type": "number",
+            "mandatory": false,
+            "description": "Specify the number of days for which IoC retraction should be run for Infoblox TIDE indicators. Note: This parameter is applicable only for Netskope CE version 5.1.0 or later, and if \"IoC(s) Retraction\" is enabled in Threat Exchange Settings."
+        },
+        {
+            "label": "Initial Range (in days)",
+            "key": "initial_pull_range",
+            "type": "number",
+            "mandatory": true,
+            "default": 7,
+            "description": "Number of days to pull the data for the initial run."
+        }
+    ]
+}

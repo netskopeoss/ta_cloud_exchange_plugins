@@ -1,0 +1,32 @@
+{
+    "name": "Infoblox SOC Insights",
+    "description": "This plugin is used to fetch devices from Monitor > Reports > Security > Insights page of the Infoblox SOC Insights. This plugin does not support performing action on the devices on Infoblox SOC Insights. \n\nNetskope normalization score calculation => Device Threat Level Info (-1): 1000, Device Threat Level Low (1): 667, Device Threat Level Medium (2): 333, Device Threat Level High (3): 0.",
+    "id": "infoblox_soc_insights_ztre",
+    "minimum_version": "5.1.0",
+    "version": "1.0.0",
+    "module": "CRE",
+    "configuration": [
+        {
+            "label": "Base URL",
+            "key": "base_url",
+            "type": "text",
+            "mandatory": true,
+            "description": "API Base URL of Infoblox instance. e.g. https://csp.infoblox.com"
+        },
+        {
+            "label": "API Key",
+            "key": "api_key",
+            "type": "password",
+            "mandatory": true,
+            "description": "API Key generated from the Infoblox instance. API Key can be generated from 'Profile > User API Keys' page."
+        },
+        {
+            "label": "Initial Range (in days)",
+            "key": "days",
+            "type": "number",
+            "mandatory": true,
+            "default": 7,
+            "description": "Number of days to pull the data for the initial run."
+        }
+    ]
+}

@@ -28,7 +28,7 @@
 import functools
 
 from typing import Awaitable, Callable, Any, TypeVar, overload, Optional
-from ....typing_extensions import ParamSpec
+from typing_extensions import ParamSpec
 from .common import change_context, get_function_and_class_name
 from . import SpanKind as _SpanKind
 from ..settings import settings

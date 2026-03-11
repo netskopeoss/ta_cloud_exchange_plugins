@@ -183,9 +183,9 @@ class WebPageIOCScraperPlugin(PluginBase):
             if skipped_count > 0:
                 self.logger.info(
                     f"{self.log_prefix}: Skipped {skipped_count} record(s) as "
-                    "IOC value might be empty string or the IOC type does not "
-                    'match the "Type of Threat data to pull" '
-                    "configuration parameter."
+                    "IOC value might be duplicate, invalid or the IOC"
+                    ' type does not match the "Type of Threat data to pull" '
+                    "selected in the configuration parameter."
                 )
             return indicators
 
@@ -219,10 +219,22 @@ class WebPageIOCScraperPlugin(PluginBase):
             Tuple[List[dict], int]: A tuple containing a list of extracted \
                                     indicators and the number of skipped indicators.
         """
+        all_indicators_set = set()
         indicators = []
+        exact_indicators = []
+        extracted_domains = []
+        extracted_domains_2 = []
         skipped_count = 0
+        exact_skipped_count = 0
+        extracted_skipped_count = 0
+        domain_flag = False
         indicator_type_count = {
-            indicator_type: 0 for indicator_type in indicator_types
+            "sha256": 0,
+            "md5": 0,
+            "url": 0,
+            "domain": 0,
+            "ipv4": 0,
+            "ipv6": 0,
         }
 
         if "sha256" in indicator_types:
@@ -237,6 +249,7 @@ class WebPageIOCScraperPlugin(PluginBase):
                         )
                     )
                     indicator_type_count["sha256"] += 1
+                    all_indicators_set.add(sha256.strip())
                 except ValidationError:
                     skipped_count += 1
                 except Exception:
@@ -254,22 +267,7 @@ class WebPageIOCScraperPlugin(PluginBase):
                         )
                     )
                     indicator_type_count["md5"] += 1
-                except ValidationError:
-                    skipped_count += 1
-                except Exception:
-                    skipped_count += 1
-
-        if "url" in indicator_types:
-            url_regex = r"(?:https?|ftp):\/\/(?:(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}|localhost|(?:\d{1,3}\.){3}\d{1,3})(?::(?:6[0-5]{2}[0-3][0-5]|65[0-4][0-9][0-9]|[1-5]?[0-9]{1,4}|0))?(?:\/[a-zA-Z0-9-._~%!$&'()*+,;=:@]*)*(?:\?[a-zA-Z0-9-._~%!$&'()*+,;=:@/?]*)?(?:#[a-zA-Z0-9-._~%!$&'()*+,;=:@/?]*)?(?::(?:6553[0-5]|655[0-2]\d|65[0-4]\d{2}|6[0-4]\d{3}|[1-5]\d{4}|\d{1,4}))?(?:\/)?(?![:\/\w])"  # noqa
-            url_list = re.findall(url_regex, response)
-            for url in url_list:
-                try:
-                    indicators.append(
-                        Indicator(
-                            value=url.strip(), type=indicator_types["url"]
-                        )
-                    )
-                    indicator_type_count["url"] += 1
+                    all_indicators_set.add(md5.strip())
                 except ValidationError:
                     skipped_count += 1
                 except Exception:
@@ -289,6 +287,7 @@ class WebPageIOCScraperPlugin(PluginBase):
                             )
                         )
                         indicator_type_count["ipv4"] += 1
+                        all_indicators_set.add(ipv4)
                 except ValidationError:
                     skipped_count += 1
                 except Exception:
@@ -298,7 +297,7 @@ class WebPageIOCScraperPlugin(PluginBase):
 
             response_list_regex = r"[^\s]+"
 
-            ipv6_regex = r"^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|([0-9a-fA-F]{1,4}:){1,7}:)(/*)?$"  # noqa
+            ipv6_regex = r"^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|([0-9a-fA-F]{1,4}:){1,7}:)(\/*)?$"  # noqa
 
             response_list = re.findall(response_list_regex, str(response))
 
@@ -320,27 +319,213 @@ class WebPageIOCScraperPlugin(PluginBase):
                             )
                         )
                         indicator_type_count["ipv6"] += 1
+                        all_indicators_set.add(ipv6)
                 except ValidationError:
                     skipped_count += 1
                 except Exception:
                     skipped_count += 1
 
-        if "domain" in indicator_types:
-            domain_regex = r"(?<!-)(?<![:\/\w.])(?:\*\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}|(?<!\*)[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)*\.[a-zA-Z]{2,})(?::(?:6553[0-5]|655[0-2]\d|65[0-4]\d{2}|6[0-4]\d{3}|[1-5]\d{4}|\d{1,4}))?(?:\/)?(?![:\/\w])"  # noqa
-            domain_list = re.findall(domain_regex, response)
-            for domain in domain_list:
+        if "url" in indicator_types:
+
+            extract_domains = self.configuration.get("extract_domains", "yes")
+            domain_regex = r"^(?:\*\.)?[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}"  # noqa
+
+            domain_regex_2 = r"(?<!-)(?<![:\/\w.])(?:\*\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}|(?<!\*)[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)*\.[a-zA-Z]{2,})(?::(?:6553[0-5]|655[0-2]\d|65[0-4]\d{2}|6[0-4]\d{3}|[1-5]\d{4}|\d{1,4}))?(?:\/)?(?![:\/\w])"
+
+            response_list_regex = r"[^\s]+"
+
+            response_list = re.findall(response_list_regex, response)
+
+            for indicator in response_list:
                 try:
+                    try:
+                        parse_result = urlparse(indicator)
+                    except Exception as e:
+                        err_msg = f"Error while parsing indicator {indicator}."
+                        self.logger.error(
+                            message=f"{self.log_prefix}: {err_msg} Error: {e}",
+                            details=traceback.format_exc(),
+                        )
+                        if indicator not in all_indicators_set:
+                            all_indicators_set.add(indicator)
+                            exact_skipped_count += 1
+                        continue
+
+                    netloc = parse_result.netloc.strip()
+                    fragment = parse_result.fragment.strip()
+                    path = parse_result.path.strip()
+                    scheme = parse_result.scheme.strip()
+
+                    if extract_domains == "yes":
+                        if netloc and (netloc not in all_indicators_set):
+                            extracted_domains.append(
+                                Indicator(
+                                    value=netloc,
+                                    type=getattr(
+                                        IndicatorType,
+                                        "DOMAIN",
+                                        IndicatorType.URL,
+                                    ),
+                                )
+                            )
+                            indicator_type_count["domain"] += 1
+                            all_indicators_set.add(netloc)
+                        else:
+                            extracted_domain = re.findall(domain_regex, path)
+                            if not extracted_domain:
+                                extracted_domain = re.findall(
+                                    domain_regex_2, path
+                                )
+
+                            if (
+                                extracted_domain
+                                and (extracted_domain[0] != fragment)
+                                and (
+                                    extracted_domain[0]
+                                    not in all_indicators_set
+                                )
+                            ):
+                                extracted_domains.append(
+                                    Indicator(
+                                        value=extracted_domain[0],
+                                        type=getattr(
+                                            IndicatorType,
+                                            "DOMAIN",
+                                            IndicatorType.URL,
+                                        ),
+                                    )
+                                )
+                                indicator_type_count["domain"] += 1
+                                all_indicators_set.add(extracted_domain[0])
+                            else:
+                                if indicator not in all_indicators_set:
+                                    extracted_skipped_count += 1
+                                    all_indicators_set.add(indicator)
+                    else:
+                        if indicator not in all_indicators_set:
+                            exact_indicators.append(
+                                Indicator(
+                                    value=indicator,
+                                    type=IndicatorType.URL,
+                                )
+                            )
+                            indicator_type_count["url"] += 1
+                            all_indicators_set.add(indicator)
+                except Exception as e:
+                    err_msg = f"Error while parsing indicator {indicator}."
+                    self.logger.error(
+                        message=f"{self.log_prefix}: {err_msg} Error: {e}",
+                        details=traceback.format_exc(),
+                    )
                     indicators.append(
                         Indicator(
-                            value=domain.strip(),
-                            type=indicator_types["domain"],
+                            value=indicator,
+                            type=IndicatorType.URL,
                         )
                     )
-                    indicator_type_count["domain"] += 1
-                except ValidationError:
-                    skipped_count += 1
-                except Exception:
-                    skipped_count += 1
+                    indicator_type_count["url"] += 1
+                    all_indicators_set.add(indicator)
+                    continue
+
+            indicators += (
+                exact_indicators if exact_indicators else extracted_domains
+            )
+
+        if "domain" in indicator_types:
+            extract_domains = self.configuration.get("extract_domains", "yes")
+
+            if ("url" in indicator_types and extract_domains == "no") or (
+                "url" not in indicator_types
+            ):
+                domain_flag = True
+
+            domain_regex = r"^(?:\*\.)?[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}"  # noqa
+
+            domain_regex_2 = r"(?<!-)(?<![:\/\w.])(?:\*\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}|(?<!\*)[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)*\.[a-zA-Z]{2,})(?::(?:6553[0-5]|655[0-2]\d|65[0-4]\d{2}|6[0-4]\d{3}|[1-5]\d{4}|\d{1,4}))?(?:\/)?(?![:\/\w])"
+
+            response_list_regex = r"[^\s]+"
+
+            response_list = re.findall(response_list_regex, response)
+
+            for indicator in response_list:
+                try:
+                    try:
+                        parse_result = urlparse(indicator)
+                    except Exception as e:
+                        err_msg = f"Error while parsing indicator {indicator}."
+                        self.logger.error(
+                            message=f"{self.log_prefix}: {err_msg} Error: {e}",
+                            details=traceback.format_exc(),
+                        )
+                        if indicator not in all_indicators_set:
+                            all_indicators_set.add(indicator)
+                            exact_skipped_count += 1
+                        continue
+
+                    netloc = parse_result.netloc.strip()
+                    fragment = parse_result.fragment.strip()
+                    path = parse_result.path.strip()
+                    scheme = parse_result.scheme.strip()
+
+                    if netloc and (netloc not in all_indicators_set):
+                        extracted_domains_2.append(
+                            Indicator(
+                                value=netloc,
+                                type=getattr(
+                                    IndicatorType,
+                                    "DOMAIN",
+                                    IndicatorType.URL,
+                                ),
+                            )
+                        )
+                        indicator_type_count["domain"] += 1
+                        all_indicators_set.add(netloc)
+                    else:
+                        extracted_domain = re.findall(domain_regex, path)
+                        if not extracted_domain:
+                            extracted_domain = re.findall(domain_regex_2, path)
+
+                        if (
+                            extracted_domain
+                            and (extracted_domain[0] != fragment)
+                            and (extracted_domain[0] not in all_indicators_set)
+                        ):
+                            extracted_domains_2.append(
+                                Indicator(
+                                    value=extracted_domain[0],
+                                    type=getattr(
+                                        IndicatorType,
+                                        "DOMAIN",
+                                        IndicatorType.URL,
+                                    ),
+                                )
+                            )
+                            indicator_type_count["domain"] += 1
+                            all_indicators_set.add(extracted_domain[0])
+                        else:
+                            if (
+                                domain_flag
+                                and indicator not in all_indicators_set
+                            ):
+                                extracted_skipped_count += 1
+                                all_indicators_set.add(indicator)
+
+                except Exception as e:
+                    err_msg = f"Error while parsing indicator {indicator}."
+                    self.logger.error(
+                        message=f"{self.log_prefix}: {err_msg} Error: {e}",
+                        details=traceback.format_exc(),
+                    )
+                    if indicator not in all_indicators_set:
+                        skipped_count += 1
+                        all_indicators_set.add(indicator)
+                    continue
+
+            indicators += extracted_domains_2
+
+        skipped_count = (
+            skipped_count + extracted_skipped_count + exact_skipped_count
+        )
 
         return indicators, skipped_count, indicator_type_count
 
@@ -440,6 +625,19 @@ class WebPageIOCScraperPlugin(PluginBase):
             err_msg = (
                 "Invalid value for 'Type of Threat data to pull' "
                 f"provided. Allowed values are {', '.join(THREAT_TYPES).upper()}."
+            )
+            self.logger.error(f"{self.log_prefix}: {validation_err} {err_msg}")
+            return ValidationResult(success=False, message=err_msg)
+
+        extract_domains = configuration.get("extract_domains", "").strip()
+        if not extract_domains:
+            err_msg = "Extract Domains from URL is a required configuration parameter."
+            self.logger.error(f"{self.log_prefix}: {validation_err} {err_msg}")
+            return ValidationResult(success=False, message=err_msg)
+        elif extract_domains not in ["yes", "no"]:
+            err_msg = (
+                "Invalid value for Extract Domains from URL "
+                "provided. Allowed values are 'Yes' and 'No'."
             )
             self.logger.error(f"{self.log_prefix}: {validation_err} {err_msg}")
             return ValidationResult(success=False, message=err_msg)

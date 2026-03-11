@@ -8,7 +8,7 @@
 from collections import namedtuple
 import sys
 from typing import NamedTuple, Optional
-from ....typing_extensions import Buffer
+from typing_extensions import Buffer
 from .types import AMQPTypes, FieldDefinition, ObjDefinition
 from .constants import FIELD
 

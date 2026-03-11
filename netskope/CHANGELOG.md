@@ -1,3 +1,22 @@
+# 2.3.0
+## Added
+- Added configuration option to enable/disable querying Retrohunt API.
+## Fixed
+- Fixed tagging of indicators while sharing.
+
+# 2.2.0
+## Added
+- Added support for retraction of False Positive if IoC type is File Hash.
+- Added support for port range in Add to Private App Target.
+- Added support for severity in URL IoCs.
+## Changed
+- Pull only malicious file hash IoCs using Retrohunt.
+- Updated URL List limit to 7 MB from 8 MB.
+
+# 2.1.3
+## Changed
+- Bug fixes.
+
 # 2.1.2
 ## Added
 - Added support to create indicators from SHA256 and MD5 fields, along with Local SHA256 and Local MD5, from malware alerts.

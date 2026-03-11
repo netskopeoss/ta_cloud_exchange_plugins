@@ -34,7 +34,7 @@ CRE ExtraHop Reveal(x) 360 plugin constants.
 
 PLATFORM_NAME = "ExtraHop Reveal(x) 360"
 MODULE_NAME = "CRE"
-PLUGIN_VERSION = "1.0.0"
+PLUGIN_VERSION = "1.0.1"
 DEFAULT_WAIT_TIME = 60
 MAX_API_CALLS = 4
 PAGE_LIMIT = 10000

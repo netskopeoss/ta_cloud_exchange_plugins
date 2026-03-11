@@ -36,6 +36,8 @@ import json
 import time
 import traceback
 from typing import Dict, Tuple, Union
+from netskope.common.api import __version__ as CE_VERSION
+from packaging import version
 
 import requests
 from netskope.common.utils import add_user_agent
@@ -46,6 +48,7 @@ from .constants import (
     MODULE_NAME,
     PLATFORM_NAME,
     RETRACTION,
+    MAXIMUM_CE_VERSION,
 )
 
 
@@ -83,6 +86,30 @@ class MISPPluginHelper(object):
         self.log_prefix = log_prefix
         self.plugin_name = plugin_name
         self.plugin_version = plugin_version
+        self.partial_action_result_supported = version.parse(
+            CE_VERSION
+        ) > version.parse(MAXIMUM_CE_VERSION)
+        self.resolution_support = self.partial_action_result_supported
+        # Patch logger methods to handle resolution parameter compatibility
+        self._patch_logger_methods()
+
+    def _patch_logger_methods(self):
+        """Monkey patch logger methods to handle resolution parameter compatibility."""
+        # Store original methods
+        original_error = self.logger.error
+        
+        def patched_error(message=None, details=None, resolution=None, **kwargs):
+            """Patched error method that handles resolution compatibility."""
+            log_kwargs = {"message": message}
+            if details:
+                log_kwargs["details"] = details
+            if resolution and self.resolution_support:
+                log_kwargs["resolution"] = resolution
+            log_kwargs.update(kwargs)
+            return original_error(**log_kwargs)
+        
+        # Replace logger methods with patched versions
+        self.logger.error = patched_error
 
     def _add_user_agent(self, headers: Union[Dict, None] = None) -> Dict:
         """Add User-Agent in the headers for third-party requests.
@@ -228,10 +255,18 @@ class MISPPluginHelper(object):
                     "Proxy error occurred. Verify "
                     "the proxy configuration provided."
                 )
+            
+            resolution = (
+                "Verify that the proxy configuration is correct and "
+                "accessible from the Cloud Exchange host. "
+                "Verify that outbound network connectivity through "
+                "the proxy is allowed for the required endpoints."
+            )
 
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {error}",
                 details=traceback.format_exc(),
+                resolution=resolution,
             )
             raise MISPPluginException(err_msg)
         except requests.exceptions.ConnectionError as error:
@@ -246,10 +281,19 @@ class MISPPluginHelper(object):
                     f"platform. Proxy server or {PLATFORM_NAME}"
                     " server is not reachable."
                 )
+            
+            resolution = (
+                f"Verify that the proxy and the {PLATFORM_NAME}" 
+                "server are reachable from the Cloud Exchange host." 
+                "Verify network connectivity, proxy settings, and" 
+                "any firewall rules that may block outbound" 
+                f"connections to the {PLATFORM_NAME} platform."
+            )
 
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {error}",
                 details=traceback.format_exc(),
+                resolution=resolution,
             )
             raise MISPPluginException(err_msg)
         except requests.HTTPError as err:
@@ -259,9 +303,17 @@ class MISPPluginHelper(object):
                     "HTTP error occurred. Verify"
                     " configuration parameters provided."
                 )
+            
+            resolution = (
+                "Please verify the configuration parameters provided "
+                "and Cloud Exchange host is able to communite to "
+                f"the {PLATFORM_NAME} platform."
+            )    
+            
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {err}",
                 details=traceback.format_exc(),
+                resolution=resolution,
             )
             raise MISPPluginException(err_msg)
         except Exception as exp:
@@ -355,6 +407,26 @@ class MISPPluginHelper(object):
             401: "Received exit code 401, Unauthorized access",
             404: "Received exit code 404, Resource not found",
         }
+        
+        resolution_dict = {
+            400: (
+                "Ensure that the API Base URL "
+                "provided in the configuration parameter is correct."
+            ),
+            401: (
+                "Ensure that the API Token "
+                "provided in the configuration parameter is correct."
+            ),
+            403: (
+                "Ensure that the permission for API Token "
+                "provided in the configuration parameter is correct."
+            ),
+            404: (
+                "Ensure that the API Base URL "
+                "provided in the configuration parameter is correct."
+            ),
+        }
+        
         if is_validation:
             error_dict = {
                 400: (
@@ -385,11 +457,13 @@ class MISPPluginHelper(object):
             return {}
         elif status_code in error_dict:
             err_msg = error_dict[status_code]
+            resolution = resolution_dict[status_code]
             if is_validation:
                 log_err_msg = validation_msg + err_msg
                 self.logger.error(
                     message=f"{self.log_prefix}: {log_err_msg}",
                     details=f"API response: {resp.text}",
+                    resolution=resolution,
                 )
                 raise MISPPluginException(err_msg)
             else:
@@ -428,32 +502,6 @@ class MISPPluginHelper(object):
             configuration.get("base_url", "").strip().strip("/"),
             configuration.get("api_key", ""),
         )
-
-    def check_auth_json(self, auth_json: Dict) -> str:
-        """Check the validity of auth token.
-
-        Args:
-            auth_json (Dict): Auth Json.
-
-        Returns:
-            str: Access token if valid else raise exception.
-        """
-        auth_token = auth_json.get("access_token")
-        if not auth_token:
-            err_msg = (
-                f"Unable to get auth token from {PLATFORM_NAME}."
-                " Verify the provided configuration parameters."
-            )
-            self.logger.error(
-                message=f"{self.log_prefix}: {err_msg}",
-                details=str(auth_json),
-            )
-            raise MISPPluginException(err_msg)
-
-        return {
-            "Authorization": f"Bearer {auth_token}",
-            "Accept": "application/json",
-        }
 
     def get_header(self, api_key: str) -> dict:
         return {

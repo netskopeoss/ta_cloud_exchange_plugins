@@ -1,3 +1,8 @@
+# 3.0.3
+## Added
+- Added the 'Azure Log Analytics Domain' field in the configuration parameters.
+- Added support for Endpoint event.
+
 # 3.0.2
 ## Updated
 - Updated the default timeout to 3 minutes.

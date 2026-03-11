@@ -1,0 +1,241 @@
+{
+    "name": "AWS Security Hub",
+    "description": "This plugin is used to fetch device records from the Security Hub CSPM > Findings. This plugin does not support performing any actions on the Security Hub. Netskope Normalized Score will be calculated based on the severity of the finding.\n\nNetskope Normalized score mapping => Severity INFORMATIONAL: 875, Severity LOW: 875, Severity MEDIUM: 625, Severity HIGH: 375, Severity CRITICAL: 125, Severity None: -.",
+    "id": "aws_security_hub_ztre",
+    "minimum_version": "5.1.0",
+    "version": "1.0.0",
+    "module": "CRE",
+    "configuration": [
+        {
+            "label": "Authentication Method",
+            "key": "authentication_method",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Deployed on AWS",
+                    "value": "deployed_on_aws"
+                },
+                {
+                    "key": "AWS IAM Roles Anywhere",
+                    "value": "aws_iam_roles_anywhere"
+                }
+            ],
+            "default": "deployed_on_aws",
+            "mandatory": true,
+            "description": "Select the method to be used for AWS client authentication."
+        },
+        {
+            "label": "Private Key",
+            "key": "private_key_file",
+            "type": "textarea",
+            "default": "",
+            "mandatory": false,
+            "editable":true,
+            "description": "Private Key for decrypting the AWS Private CA Certificate. Required for 'AWS IAM Roles Anywhere' authentication type."
+        },
+        {
+            "label": "Certificate Body",
+            "key": "public_certificate_file",
+            "type": "textarea",
+            "default": "",
+            "mandatory": false,
+            "editable":true,
+            "description": "Certificate Body for AWS Public/Private CA Certificate. Required for 'AWS IAM Roles Anywhere' authentication type."
+        },
+        {
+            "label": "Password Phrase",
+            "key": "pass_phrase",
+            "type": "password",
+            "default": "",
+            "mandatory": false,
+            "editable":true,
+            "description": "Password Phrase for decrypting the CA Certificate. Required for 'AWS IAM Roles Anywhere' authentication type."
+        },
+        {
+            "label": "Profile ARN",
+            "key": "profile_arn",
+            "type": "text",
+            "default": "",
+            "mandatory": false,
+            "editable":true,
+            "description": "AWS Profile ARN for AWS client authentication. Required for 'AWS IAM Roles Anywhere' authentication type."
+        },
+        {
+            "label": "Role ARN",
+            "key": "role_arn",
+            "type": "text",
+            "default": "",
+            "mandatory": false,
+            "editable":true,
+            "description": "AWS Role ARN for AWS client authentication. Required for 'AWS IAM Roles Anywhere' authentication type."
+        },
+        {
+            "label": "Trust Anchor ARN",
+            "key": "trust_anchor_arn",
+            "type": "text",
+            "default": "",
+            "mandatory": false,
+            "editable":true,
+            "description": "AWS Trust Anchor ARN for AWS client authentication. Required for 'AWS IAM Roles Anywhere' authentication type."
+        },
+        {
+            "label": "AWS Region Name",
+            "key": "region_name",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "US East (N. Virginia) [us-east-1]",
+                    "value": "us-east-1"
+                },
+                {
+                    "key": "US East (Ohio) [us-east-2]",
+                    "value": "us-east-2"
+                },
+                {
+                    "key": "US West (N. California) [us-west-1]",
+                    "value": "us-west-1"
+                },
+                {
+                    "key": "US West (Oregon) [us-west-2]",
+                    "value": "us-west-2"
+                },
+                {
+                    "key": "Africa (Cape Town) [af-south-1]",
+                    "value": "af-south-1"
+                },
+                {
+                    "key": "Asia Pacific (Hong Kong) [ap-east-1]",
+                    "value": "ap-east-1"
+                },
+                {
+                    "key": "Asia Pacific (Mumbai) [ap-south-1]",
+                    "value": "ap-south-1"
+                },
+                {
+                    "key": "Asia Pacific (Tokyo) [ap-northeast-1]",
+                    "value": "ap-northeast-1"
+                },
+                {
+                    "key": "Asia Pacific (Seoul) [ap-northeast-2]",
+                    "value": "ap-northeast-2"
+                },
+                {
+                    "key": "Asia Pacific (Melbourne) [ap-southeast-4]",
+                    "value": "ap-southeast-4"
+                },
+                {
+                    "key": "Asia Pacific (Thailand) [ap-southeast-7]",
+                    "value": "ap-southeast-7"
+                },
+                {
+                    "key": "Canada (Calgary) [ca-west-1]",
+                    "value": "ca-west-1"
+                },
+                {
+                    "key": "Asia Pacific (Osaka) [ap-northeast-3]",
+                    "value": "ap-northeast-3"
+                },
+                {
+                    "key": "Asia Pacific (Singapore) [ap-southeast-1]",
+                    "value": "ap-southeast-1"
+                },
+                {
+                    "key": "Asia Pacific (Sydney) [ap-southeast-2]",
+                    "value": "ap-southeast-2"
+                },
+                {
+                    "key": "Canada (Central) [ca-central-1]",
+                    "value": "ca-central-1"
+                },
+                {
+                    "key": "Canada (Calgary) [ca-west1]",
+                    "value": "ca-west1"
+                },
+                {
+                    "key": "China (Beijing) [cn-north-1]",
+                    "value": "cn-north-1"
+                },
+                {
+                    "key": "China (Ningxia) [cn-northwest-1]",
+                    "value": "cn-northwest-1"
+                },
+                {
+                    "key": "Europe (Frankfurt) [eu-central-1]",
+                    "value": "eu-central-1"
+                },
+                {
+                    "key": "Europe (Ireland) [eu-west-1]",
+                    "value": "eu-west-1"
+                },
+                {
+                    "key": "Europe (London) [eu-west-2]",
+                    "value": "eu-west-2"
+                },
+                {
+                    "key": "Europe (Paris) [eu-west-3]",
+                    "value": "eu-west-3"
+                },
+                {
+                    "key": "Europe (Milan) [eu-south-1]",
+                    "value": "eu-south-1"
+                },
+                {
+                    "key": "Europe (Stockholm) [eu-north-1]",
+                    "value": "eu-north-1"
+                },
+                {
+                    "key": "Israel (Tel Aviv) [il-central-1]",
+                    "value": "il-central-1"
+                },
+                {
+                    "key": "Middle East (Bahrain) [me-south-1]",
+                    "value": "me-south-1"
+                },
+                {
+                    "key": "South America (São Paulo) [sa-east-1]",
+                    "value": "sa-east-1"
+                },
+                {
+                    "key": "Asia Pacific (Hyderabad) [ap-south-2]",
+                    "value": "ap-south-2"
+                },
+                {
+                    "key": "Asia Pacific (Jakarta) [ap-southeast-3]",
+                    "value": "ap-southeast-3"
+                },
+                {
+                    "key": "Asia Pacific (Malaysia) [ap-southeast-5]",
+                    "value": "ap-southeast-5"
+                },
+                {
+                    "key": "Europe (Spain) [eu-south-2]",
+                    "value": "eu-south-2"
+                },
+                {
+                    "key": "Europe (Zurich) [eu-central-2]",
+                    "value": "eu-central-2"
+                },
+                {
+                    "key": "Mexico (Central) mx-central-1",
+                    "value": "mx-central-1"
+                },
+                {
+                    "key": "Middle East (UAE) [me-central-1]",
+                    "value": "me-central-1"
+                }
+            ],
+            "default": "us-east-1",
+            "mandatory": true,
+            "editable":true,
+            "description": "AWS Region Name in which Security Hub CSPM is setup. Make sure that the region name matches the region in the Profile ARN and Trust Anchor ARN."
+        },
+        {
+            "label": "Initial Range (in days)",
+            "key": "days",
+            "type": "number",
+            "mandatory": true,
+            "default": 7,
+            "description": "Number of days findings to pull in the initial run. Valid value should be in range of 1 to 709999."
+        }
+    ]
+}

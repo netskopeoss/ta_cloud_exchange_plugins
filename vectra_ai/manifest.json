@@ -1,0 +1,180 @@
+{
+    "name": "Vectra AI",
+    "id": "vectra_ai",
+    "version": "1.0.0",
+    "description": "This plugin is used to pull IOCs of the type URLs (IPv4 Addresses and Domains) from the Detections on Vectra AI. This plugin does not support sharing of indicators to Vectra AI.",
+    "patch_supported": false,
+    "push_supported": false,
+    "delete_supported": false,
+    "fetch_retraction_info": true,
+    "minimum_version": "5.0.1",
+    "module": "CTE",
+    "configuration": [
+        {
+            "label": "Vectra Portal URL",
+            "key": "vectra_url",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "Vectra AI Portal URL. e.g. https://<account_id>.cc1.portal.vectra.ai"
+        },
+        {
+            "label": "API Client ID",
+            "key": "client_id",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "Vectra AI API Client ID. To generate the API Client ID, navigate to Manage > API Clients > Add API Client."
+        },
+        {
+            "label": "API Client Secret Key",
+            "key": "client_secret_key",
+            "type": "password",
+            "default": "",
+            "mandatory": true,
+            "description": "Vectra AI API Client Secret Key. To generate the API Client Secret Key, navigate to Manage > API Clients > Add API Client."
+        },
+        {
+            "label": "Entity Type",
+            "key": "type",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Account",
+                    "value": "account"
+                },
+                {
+                    "key": "Host",
+                    "value": "host"
+                },
+                {
+                    "key": "All Entity Types",
+                    "value": "all_entity_types"
+                }
+            ],
+            "default": "all_entity_types",
+            "mandatory": false,
+            "description": "Indicators will be pulled based on the selected entity type of the detections. Account type to pull domains and Host type to pull IP addresses from Detections. Select All Entity Types to fetch indicators from both entity types of the detections."
+        },
+        {
+            "label": "State",
+            "key": "state",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Active",
+                    "value": "active"
+                },
+                {
+                    "key": "Inactive",
+                    "value": "inactive"
+                },
+                {
+                    "key": "Ignored",
+                    "value": "ignored"
+                },
+                {
+                    "key": "Ignored for all",
+                    "value": "ignored for all"
+                },
+                {
+                    "key": "All States",
+                    "value": "all_states"
+                }
+            ],
+            "default": "all_states",
+            "mandatory": false,
+            "description": "Indicators will be pulled based on selected state of the detections. Select All States to fetch indicators from all states of the detections."
+        },
+        {
+            "label": "Detection Category",
+            "key": "detection_category",
+            "type": "multichoice",
+            "choices": [
+                {
+                    "key": "Command",
+                    "value": "command"
+                },
+                {
+                    "key": "Botnet",
+                    "value": "botnet"
+                },
+                {
+                    "key": "Reconnaissance",
+                    "value": "reconnaissance"
+                },
+                {
+                    "key": "Lateral",
+                    "value": "lateral"
+                },
+                {
+                    "key": "Exfiltration",
+                    "value": "exfiltration"
+                },
+                {
+                    "key": "Info",
+                    "value": "info"
+                }
+            ],
+            "default": [
+                "command",
+                "botnet",
+                "reconnaissance",
+                "lateral",
+                "exfiltration",
+                "info"
+            ],
+            "mandatory": false,
+            "description": "Indicators from only specified Detection Categories will be fetched. Indicators from all detection categories will be fetched if Detection Category is empty."
+        },
+        {
+            "label": "Certainty",
+            "key": "certainty",
+            "type": "number",
+            "default": 0,
+            "mandatory": false,
+            "description": "Indicators from detection greater than or equal to specified certainty will be fetched. The allowed value should be greater than or equal to 0. Indicators from any detection certainty will be fetched if Certainty is empty."
+        },
+        {
+            "label": "Tags",
+            "key": "tags",
+            "type": "text",
+            "default": "",
+            "mandatory": false,
+            "description": "Indicators from detection with specified comma separated tags will be fetched. Keep empty to fetch indicators from all detections. (Ex. ABC,XYZ)"
+        },
+        {
+            "label": "Enable Tagging",
+            "key": "enable_tagging",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Yes",
+                    "value": "yes"
+                },
+                {
+                    "key": "No",
+                    "value": "no"
+                }
+            ],
+            "default": "yes",
+            "mandatory": true,
+            "description": "Enable/Disable tagging functionality."
+        },
+        {
+            "label": "Retraction Interval (in days)",
+            "key": "retraction_interval",
+            "type": "number",
+            "mandatory": false,
+            "description": "Retraction Interval days to run IoC(s) retraction for Vectra AI indicators. Note: This parameter will only be considered if \"IoC(s) Retraction\" is enabled in Threat Exchange Settings."
+        },
+        {
+            "label": "Initial Range(in days)",
+            "key": "days",
+            "type": "number",
+            "default": 7,
+            "mandatory": false,
+            "description": "Number of days to pull the data for the initial run."
+        }
+    ]
+}

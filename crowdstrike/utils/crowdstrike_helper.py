@@ -214,7 +214,10 @@ class CrowdStrikePluginHelper(object):
                     )
 
                 elif status_code == 429 and not is_validation:
-                    resp_json = self.parse_response(response=response)
+                    resp_json = self.parse_response(
+                        response=response,
+                        logger_msg=logger_msg
+                    )
                     api_err_msg = str(
                         resp_json.get(
                             "errors",
@@ -272,7 +275,10 @@ class CrowdStrikePluginHelper(object):
                     )
                     time.sleep(diff_retry_after)
                 elif (500 <= status_code <= 600) and not is_validation:
-                    resp_json = self.parse_response(response=response)
+                    resp_json = self.parse_response(
+                        response=response,
+                        logger_msg=logger_msg
+                    )
                     api_err_msg = str(
                         resp_json.get(
                             "errors",
@@ -312,6 +318,22 @@ class CrowdStrikePluginHelper(object):
                     )
         except CrowdstrikePluginException:
             raise
+        except requests.exceptions.ReadTimeout as error:
+            err_msg = (
+                f"Read Timeout error occurred while {logger_msg}."
+                f"Verify if the platform UI is up and running."
+            )
+            if is_validation:
+                err_msg = (
+                    "Unable to reach CrowdStrike APIs. "
+                    "Verify if the platform UI is up and running."
+                )
+
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg} Error: {error}",
+                details=traceback.format_exc(),
+            )
+            raise CrowdstrikePluginException(err_msg)
         except requests.exceptions.ProxyError as error:
             err_msg = (
                 f"Proxy error occurred while {logger_msg}. Verify the"
@@ -379,7 +401,10 @@ class CrowdStrikePluginHelper(object):
             raise CrowdstrikePluginException(err_msg)
 
     def parse_response(
-        self, response: requests.models.Response, is_validation: bool = False
+        self,
+        response: requests.models.Response,
+        is_validation: bool = False,
+        logger_msg: str = None,
     ):
         """Parse Response will return JSON from response object.
 
@@ -393,7 +418,8 @@ class CrowdStrikePluginHelper(object):
             return response.json()
         except json.JSONDecodeError as err:
             err_msg = (
-                f"Invalid JSON response received from API. Error: {str(err)}"
+                f"Invalid JSON response received from API while "
+                f"{logger_msg}. Error: {str(err)}"
             )
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg}",
@@ -408,7 +434,7 @@ class CrowdStrikePluginHelper(object):
         except Exception as exp:
             err_msg = (
                 "Unexpected error occurred while parsing"
-                f" json response. Error: {exp}"
+                f" json response for {logger_msg}. Error: {exp}"
             )
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg}",
@@ -473,7 +499,9 @@ class CrowdStrikePluginHelper(object):
 
         if status_code in [200, 201]:
             return self.parse_response(
-                response=resp, is_validation=is_validation
+                response=resp,
+                is_validation=is_validation,
+                logger_msg=logger_msg
             )
         elif status_code == 204:
             return {}
@@ -538,17 +566,22 @@ class CrowdStrikePluginHelper(object):
             "client_id": client_id,
             "client_secret": client_secret,
         }
+        logger_msg = f"getting auth token from {PLUGIN_NAME}"
         try:
             response = self.api_helper(
                 method="POST",
                 url=auth_endpoint,
                 data=auth_params,
-                logger_msg=f"getting auth token from {PLUGIN_NAME}",
+                logger_msg=logger_msg,
                 is_handle_error_required=False,
                 is_validation=is_validation,
             )
             if response.status_code in [200, 201]:
-                resp_json = self.parse_response(response, is_validation)
+                resp_json = self.parse_response(
+                    response=response,
+                    is_validation=is_validation,
+                    logger_msg=logger_msg
+                )
                 # Check if auth JSON is valid or not.
                 return self.check_auth_json(resp_json)
             else:

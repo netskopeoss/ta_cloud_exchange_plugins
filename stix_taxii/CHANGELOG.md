@@ -1,3 +1,10 @@
+# 3.1.0
+## Added
+- Added support for pulling ipv4 and ipv6 and Domain for STIX/TAXII version 2.x.
+- Added support to bifurcate the URL by types (Domain, IPv4, IPv6).
+## Fixed
+- Fixed the plugin validation method.
+
 # 3.0.0
 ## Added
 - Added "Pagination Method" configuration parameter.

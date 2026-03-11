@@ -19,7 +19,9 @@ def get_all_subtypes():
             "uba": "uba",
             "ctep": "ctep",
             "ips": "ips",
-            "c2": "c2"
+            "c2": "c2",
+            "Device": "device",
+            "Content": "content",
         },
         "events": {
             "Page": "page",
@@ -29,5 +31,6 @@ def get_all_subtypes():
             "Network": "network",
             "Incident": "incident",
             "Endpoint": "endpoint",
+            "clientstatus": "clientstatus"
         }
     }

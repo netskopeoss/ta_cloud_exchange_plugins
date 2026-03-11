@@ -136,7 +136,7 @@ class ElasticPlugin(PluginBase):
             )
             raise ElasticPluginException(err_msg)
         finally:
-            elastic_client.close()
+            elastic_client.close(is_validation=True)
 
     def validate(self, configuration: Dict) -> ValidationResult:
         """Validate the configuration parameters dict.

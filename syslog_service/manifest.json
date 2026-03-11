@@ -5,13 +5,11 @@
   "pulling_supported": true,
   "receiving_supported": false,
   "netskope": true,
-  "version": "2.0.0",
+  "version": "2.1.0",
   "minimum_version": "5.1.0",
   "module": "CLS",
   "mapping": "",
-  "types": [
-    "logs"
-  ],
+  "types": ["logs"],
   "configuration": [
     {
       "label": "Log Types",
@@ -35,9 +33,7 @@
           "value": "error"
         }
       ],
-      "default": [
-        "error"
-      ],
+      "default": ["error"],
       "mandatory": true,
       "description": "Types of the logs to fetch."
     },

@@ -181,26 +181,20 @@ def validate_extension_field(instance, name):
     validate_header_extension_subdict(instance, name)
 
 
-def get_syslog_mappings(mappings, data_type, name):
-    """Read mapping json and return the dict of mappings
-    to be applied to raw_data.
+def validate_syslog_mappings(mappings, data_type, name):
+    """Read mapping json and validate the dict of mappings.
 
     Args:
         data_type (str): Data type (alert/event) for which
         the mappings are to be fetched
         mappings: Attribute mapping json string
 
-    Returns:
-        mapping delimiter, cef_version, syslog_mappings
+    Raises:
+        MappingValidationError: For in-valid mapping json for any of the data_type.
     """
     data_type_specific_mapping = mappings["taxonomy"][data_type]
-
     if data_type == "json":
-        return (
-            mappings["delimiter"],
-            mappings["cef_version"],
-            mappings["taxonomy"],
-        )
+        return
 
     # Validate the headers of each mapped subtype
     for subtype, subtype_map in data_type_specific_mapping.items():
@@ -236,7 +230,21 @@ def get_syslog_mappings(mappings, data_type, name):
                     )
                 )
 
-    return mappings["delimiter"], mappings["cef_version"], mappings["taxonomy"]
+def get_syslog_mappings(mappings):
+    """Read mapping json and return the dict of mappings
+    to be applied to raw_data.
+
+    Args:
+        mappings (dict): Attribute mapping json file.
+
+    Returns:
+        mapping delimiter, cef_version, syslog_mappings
+    """
+    return (
+        mappings.get("delimiter", ""),
+        mappings.get("cef_version", ""),
+        mappings.get("taxonomy", {}),
+    )
 
 
 def extract_subtypes(mappings, data_type):

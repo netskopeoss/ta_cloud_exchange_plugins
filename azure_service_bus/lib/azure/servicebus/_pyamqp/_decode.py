@@ -20,7 +20,7 @@ from typing import (
     TYPE_CHECKING,
 )
 
-from ....typing_extensions import Literal
+from typing_extensions import Literal
 
 from .message import Message, Header, Properties
 

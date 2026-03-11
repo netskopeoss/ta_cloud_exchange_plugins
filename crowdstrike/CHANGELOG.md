@@ -1,3 +1,10 @@
+# 2.3.0
+## Added
+- Added filtering to exclude given Pattern Disposition.
+- Added source tagging to Endpoint Detection IoCs.
+## Changed
+- Migrated from legacy /detects to new /alerts API when pulling Indicators from Endpoint Detection.
+
 # 2.2.0
 ## Added
 - Added support for IoC(s) Retraction.

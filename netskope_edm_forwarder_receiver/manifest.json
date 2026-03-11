@@ -1,0 +1,48 @@
+{
+    "name": "Netskope EDM Forwarder/Receiver",
+    "id": "netskope_edm_forwarder_receiver",
+    "module": "EDM",
+    "version": "1.0.0",
+    "description": "This plugin is used to share or receive data between Netskope CE machines. 'Receiver' type of configuration is used to receive data, while 'Forwarder' type of configuration is used to send the data to remote Netskope CE machine. Please make sure that you have configured receiver configuration in destination Netskope CE machine before adding forwarder configuration.",
+    "netskope": true,
+    "patch_supported": false,
+    "push_supported": true,
+    "pull_supported": true,
+    "pull_sample_data_on_validate": false,
+    "minimum_version": "6.0.0",
+    "supported_edm_method": [
+        "edm_file_hashes"
+    ],
+    "configuration": [
+        {
+            "label": "Authentication Method",
+            "name": "authentication_type",
+            "type": "step",
+            "fields": [
+                {
+                    "label": "Authentication Method",
+                    "key": "auth_method",
+                    "type": "choice",
+                    "choices": [
+                        {
+                            "key": "Username & Password",
+                            "value": "basic_auth"
+                        },
+                        {
+                            "key": "Token",
+                            "value": "secret_token_auth"
+                        }
+                    ],
+                    "default": "basic_auth",
+                    "mandatory": true,
+                    "description": "Authentication method to use while communicating with Receiver Netskope CE plugin instance."
+                }
+            ]
+        },
+        {
+            "label": "Configuration Parameters",
+            "name": "configuration",
+            "type": "dynamic_step"
+        }
+    ]
+}

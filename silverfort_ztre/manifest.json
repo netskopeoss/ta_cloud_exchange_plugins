@@ -1,0 +1,32 @@
+{
+    "name": "Silverfort Risk",
+    "id": "silverfort_ztre",
+    "description": "This plugin supports performing 'Update Silverfort Risk' action for the users available on the 'Silverfort > User Enrollment' page of the Silverfort platform. This plugin does not support fetching data from the Silverfort platform.",
+    "minimum_version": "5.1.0",
+    "version": "1.0.0",
+    "module": "CRE",
+    "configuration": [
+        {
+            "label": "Silverfort Base URL",
+            "key": "base_url",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "The Base URL for Silverfort platform."
+        },
+        {
+            "label": "Auth ID",
+            "key": "auth_id",
+            "type": "password",
+            "mandatory": true,
+            "description": "The Silverfort Auth ID. To get the Auth ID, navigate to the 'Silverfort > Settings > Notifications > Custom' page of the Silverfort platform and copy the 'authId' from the Configuration Custom Integration JSON."
+        },
+        {
+            "label": "Webhook ID",
+            "key": "webhook_id",
+            "type": "text",
+            "mandatory": true,
+            "description": "The Silverfort Webhook ID. To get the Webhook ID, navigate to the 'Silverfort > Settings > Notifications > Custom' page of the Silverfort platform and copy the 'webhookId' from the Configuration Custom Integration JSON."
+        }
+    ]
+}

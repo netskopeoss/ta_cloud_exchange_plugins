@@ -1,3 +1,18 @@
+# 4.0.1
+## Fixed
+- Fixed CEF transformation for nested JSON fields in data.
+
+# 4.0.0
+## Added
+- Added support for invoking mapping validation separately.
+## Changed
+- Enhanced the efficiency of database interactions.
+
+# 3.3.0
+## Added
+- Added support for the content and device alert type. 
+- Added support for clientstatus and BWAN events.
+
 # 3.2.2
 ## Added
 - Enhancement in the error handling.

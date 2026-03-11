@@ -6,8 +6,9 @@ import re
 import requests
 import time
 import traceback
-from typing import List, Union, Tuple
+from typing import List, Union, Tuple, Generator, Dict
 from datetime import datetime
+from jsonschema import validate, ValidationError
 
 from netskope.common.utils import (
     AlertsHelper,
@@ -29,38 +30,32 @@ from netskope.integrations.itsm.models import (
     Event,
     DataType,
     Task,
+    UpdatedTaskValues,
     Severity,
-    TaskStatus
+    TaskStatus,
+    CustomFieldsSectionWithMappings,
+    CustomFieldMapping,
+    Queue,
+    Filters,
 )
+from netskope.integrations.itsm.utils import alert_event_query_schema
 from netskope.common.utils.plugin_provider_helper import PluginProviderHelper
+from .utils.netskope_itsm_constants import (
+    MODULE_NAME,
+    PLUGIN_NAME,
+    PLATFORM_NAME,
+    MAX_API_CALLS,
+    PLUGIN_VERSION,
+    IGNORED_RAW_KEYS,
+    INCIDENT_BATCH_SIZE,
+    INCIDENT_UPDATE_API,
+    VALID_SEVERITY_VALUES,
+    INCIDENT_DETAILS_LINK,
+    REQUEST_RATE_LIMIT_DELAY,
+)
 
 helper = AlertsHelper()
 plugin_provider_helper = PluginProviderHelper()
-
-IGNORED_RAW_KEYS = [
-    "_id",
-    "alert_name",
-    "alert_type",
-    "app",
-    "appcategory",
-    "type",
-    "file_type",
-    "user",
-    "timestamp",
-]
-REQUEST_RATE_LIMIT_DELAY = 30
-REQUEST_RATE_LIMIT_DELAY_ON_ERROR = 2
-MAX_RETRIES_ON_RATE_LIMIT = 3
-INCIDENT_UPDATE_API = "{}/api/v2/incidents/update"
-MODULE_NAME = "CTO"
-PLUGIN_NAME = "Netskope CTO"
-PLUGIN_VERSION = "2.1.0"
-DEFAULT_STATUS_VALUE_MAP = {
-    "New": "new",
-    "In Progress": "in_progress",
-    "Resolved": "closed"
-}
-INCIDENT_BATCH_SIZE = 10
 
 
 class NetskopePlugin(PluginBase):
@@ -112,7 +107,8 @@ class NetskopePlugin(PluginBase):
         """Validate a given step."""
         if name == "params":
             config = configuration.get(name, {})
-            if "alert_types" not in config or type(config["alert_types"]) is not list:
+            # Validate alert_types
+            if "alert_types" not in config or not isinstance(config["alert_types"], list):
                 self.logger.error(
                     "Netskope ITSM Plugin: Validation error occurred. Error: "
                     "Invalid alert types found in the configuration parameters.",
@@ -121,7 +117,8 @@ class NetskopePlugin(PluginBase):
                 return ValidationResult(
                     success=False, message="Invalid alert type provided."
                 )
-            if "event_types" not in config or type(config["event_types"]) is not list:
+            # Validate event_types
+            if "event_types" not in config or not isinstance(config["event_types"], list):
                 self.logger.info(
                     "Netskope ITSM Plugin: Validation error occurred. Error: "
                     "Invalid event types found in the configuration parameters.",
@@ -130,11 +127,13 @@ class NetskopePlugin(PluginBase):
                 return ValidationResult(
                     success=False, message="Invalid event type provided."
                 )
+            # Validate either alert_types or event_types is provided
             if not config.get("alert_types") and not config.get("event_types"):
                 return ValidationResult(
                     success=False,
                     message="Alert types or Event types either should be provided.",
                 )
+            # Validate hours
             hours = config.get("hours")
             if hours is None:
                 err_msg = "Initial Range for Events is a required configuration parameter."
@@ -162,6 +161,7 @@ class NetskopePlugin(PluginBase):
                     success=False,
                     message=err_msg,
                 )
+            # Validate days
             days = config.get("days")
             if days is None:
                 err_msg = "Initial Range for Alerts is a required configuration parameter."
@@ -189,11 +189,33 @@ class NetskopePlugin(PluginBase):
                     success=False,
                     message=err_msg,
                 )
+            # Validate incident_forensics
+            incident_forensics = config.get("incident_forensics", "")
+            if (
+                not isinstance(incident_forensics, str)
+                or not incident_forensics
+                or incident_forensics not in ["yes", "no"]
+            ):
+                err_msg = (
+                    "Invalid DLP Incident Forensics option "
+                    "provided in configuration parameter."
+                )
+                self.logger.error(f"{self.log_prefix}: {err_msg}")
+                return ValidationResult(
+                    success=False,
+                    message=err_msg,
+                )
+
+            filters_payload = config.get("filters", {})
+            filters_validation_result = self.validate_filters(filters_payload)
+            if not filters_validation_result.success:
+                return filters_validation_result
 
             tenant_name = configuration.get("tenant")
             if not configuration.get("tenant"):
                 tenant_name = helper.get_tenant_itsm(self.name).name
             provider = plugin_provider_helper.get_provider(tenant_name=tenant_name)
+
             type_map = {}
             if config.get("alert_types"):
                 type_map["alerts"] = config["alert_types"]
@@ -208,7 +230,7 @@ class NetskopePlugin(PluginBase):
                 )
         elif name == "incident_update_config":
             config = configuration.get(name, {})
-            if "user_email" not in config or type(config["user_email"]) is not str:
+            if "user_email" not in config or not isinstance(config["user_email"], str):
                 self.logger.error(
                     "Netskope ITSM Plugin: Validation error occurred. Error: "
                     "Invalid user email found in the configuration parameters.",
@@ -231,41 +253,145 @@ class NetskopePlugin(PluginBase):
                         success=False,
                         message="User email should be valid email.",
                     )
+        elif name == "mapping_config":
+            config = configuration.get(name, {})
             if (
-                "status_mapping" not in config
-                or type(config["status_mapping"]) is not dict
+                "severity" not in config
+                or not isinstance(config.get("severity", {}).get("mappings"), list)
+                or not len(config.get("severity", {}).get("mappings", [])) > 0
             ):
                 self.logger.error(
-                    "Netskope ITSM Plugin: Validation error occurred. Error: "
-                    "Invalid status mapping found in the configuration parameters.",
-                    error_code="CTO_1029",
-                )
-                return ValidationResult(
-                    success=False, message="Invalid status mapping provided."
-                )
-            if not config.get("status_mapping"):
-                return ValidationResult(
-                    success=False,
-                    message="Status Mapping can not be empty.",
-                )
-            if (
-                "severity_mapping" not in config
-                or type(config["severity_mapping"]) is not dict
-            ):
-                self.logger.error(
-                    "Netskope ITSM Plugin: Validation error occurred. Error: "
-                    "Invalid severity mapping found in the configuration parameters.",
+                    f"{self.log_prefix}: Validation error occurred. Error: "
+                    "Severity mapping not found in the configuration parameters.",
                     error_code="CTO_1029",
                 )
                 return ValidationResult(
                     success=False, message="Invalid severity mapping provided."
                 )
-            if not config.get("severity_mapping"):
-                return ValidationResult(
-                    success=False,
-                    message="Severity Mapping can not be empty.",
+            # Validate each severity
+            severity_mappings = config.get("severity").get("mappings")
+            invalid_mapping = next(
+                (
+                    mapping for mapping in severity_mappings
+                    if (
+                        not isinstance(mapping, dict)
+                        or
+                        any(
+                            value not in VALID_SEVERITY_VALUES for _, value in mapping.items()
+                        )
+                    )
+                ),
+                None
+            )
+            if invalid_mapping:
+                self.logger.error(
+                    f"{self.log_prefix}: Validation error occurred. Error: "
+                    "Incorrect Severity mapping found in the configuration parameters.",
+                    error_code="CTO_1029",
                 )
+                return ValidationResult(
+                    success=False, message="Invalid severity mapping provided."
+                )
+            # If all validations are successful, update tenant storage with incident
+            # enrichment option
+            tenant_name = configuration.get("tenant")
+            if not configuration.get("tenant"):
+                tenant_name = helper.get_tenant_itsm(self.name).name
+            incident_forensics = configuration.get(
+                "params", {}
+            ).get("incident_forensics", "")
+
+            provider = plugin_provider_helper.get_provider(tenant_name=tenant_name)
+            provider.update_incident_enrichment_option_to_storage(
+                tenant_name=tenant_name,
+                module_name="cto",
+                plugin_name=self.name,
+                incident_enrichment_option=incident_forensics,
+                operation="set",
+            )
         return ValidationResult(success=True, message="Validation successful.")
+
+    def validate_filters(self, filters: dict) -> ValidationResult:
+        """Validate Alert/Event filters configured for the plugin."""
+
+        # Validate that filters is a dictionary
+        if not isinstance(filters, dict):
+            err_msg = "Please provide a valid alert/event query."
+            self.logger.error(
+                f"{self.log_prefix}: {err_msg}",
+                error_code="CTO_1022",
+            )
+            return ValidationResult(success=False, message=err_msg)
+
+        try:
+            mongo_value = filters.get("mongo", "{}")
+            if isinstance(mongo_value, dict):
+                mongo_value = json.dumps(mongo_value)
+            elif not isinstance(mongo_value, str):
+                raise ValueError("Alert/Event mongo query must be a dictionary or JSON string.")
+
+            query_value = filters.get("query", "")
+            if isinstance(query_value, dict):
+                query_value = json.dumps(query_value)
+
+            filters_model = Filters(
+                query=query_value or "",
+                mongo=mongo_value or "{}",
+            )
+        except (TypeError, ValueError, json.JSONDecodeError):
+            err_msg = "Invalid Alert/Event query provided in filters."
+            self.logger.error(
+                f"{self.log_prefix}: {err_msg}",
+                error_code="CTO_1022",
+            )
+            return ValidationResult(success=False, message=err_msg)
+
+        if filters_model.isValid is False:
+            err_msg = (
+                "Alert/Event filters are invalid. Reconfigure the Alert/Event query "
+                "using the Edit button in the CTO Module -> Plugins page."
+            )
+            self.logger.error(
+                f"{self.log_prefix}: {err_msg}",
+                error_code="CTO_1022",
+            )
+            return ValidationResult(success=False, message=err_msg)
+
+        mongo_query = filters_model.mongo
+        try:
+            mongo_query = json.loads(mongo_query or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            err_msg = "Invalid Alert/Event query provided in filters."
+            self.logger.error(
+                f"{self.log_prefix}: {err_msg}",
+                error_code="CTO_1022",
+            )
+            return ValidationResult(success=False, message=err_msg)
+
+        try:
+            [*_, query_schema] = alert_event_query_schema()
+            validate(mongo_query, query_schema)
+        except ValidationError as error:
+            err_msg = (
+                "Invalid Alert/Event query provided in filters. "
+                f"{error.message}."
+            )
+            self.logger.error(
+                f"{self.log_prefix}: {err_msg}",
+                error_code="CTO_1022",
+            )
+            return ValidationResult(success=False, message=err_msg)
+        except Exception:
+            err_msg = "Error occurred while validating Alert/Event query."
+            self.logger.error(
+                f"{self.log_prefix}: {err_msg}",
+                details=traceback.format_exc(),
+                error_code="CTO_1022",
+            )
+            return ValidationResult(success=False, message=err_msg)
+
+        return ValidationResult(success=True, message="Validation successful.")
+
 
     def get_types_to_pull(self, data_type: str):
         """Get the types of data to pull.
@@ -280,47 +406,23 @@ class NetskopePlugin(PluginBase):
 
     def _get_raw_dict(self, data):
         """Get raw dict."""
-        data_item = {k: str(v) for k, v in data.items() if k not in IGNORED_RAW_KEYS}
-        for k, v in self.get_severity_status_mapping().items():
-            if k == "severity" and k in data_item.keys():
-                data_item.update(
-                    {
-                        k: v.get(data_item.get(k), Severity.OTHER)
-                        if data_item.get(k) != "informational" else Severity.INFO
-                    }
+
+        data_item = {
+            k: (
+                str(v)
+                if not (
+                    v is None or isinstance(v, int) or isinstance(v, float) or isinstance(v, bool)
                 )
-            elif k == "status" and k in data_item.keys():
-                data_item.update(
-                    {
-                        k: v.get(data_item.get(k), TaskStatus.OTHER)
-                    }
-                )
+                else v
+            )
+            for k, v in data.items()
+            if k not in IGNORED_RAW_KEYS
+        }
         if "assignee" in data_item.keys() and (
             data_item.get("assignee", "") == "" or data_item.get("assignee", "none").lower() == "none"
         ):
             data_item.update({"assignee": None})
         return data_item
-
-    def get_severity_status_mapping(self):
-        """Get severity status mapping."""
-        ns_to_ce_severity = {}
-        for key, value in self.configuration[
-            "incident_update_config"
-        ].get("severity_mapping", {}).items():
-            if key == Severity.OTHER or key == Severity.INFO:
-                continue
-            ns_to_ce_severity[value] = key
-        ns_to_ce_status = {}
-        for key, value in self.configuration[
-            "incident_update_config"
-        ].get("status_mapping", {}).items():
-            if value in DEFAULT_STATUS_VALUE_MAP.keys():
-                value = DEFAULT_STATUS_VALUE_MAP[value]
-            ns_to_ce_status[value] = key
-        return {
-            "severity": ns_to_ce_severity,
-            "status": ns_to_ce_status
-        }
 
     def convert_raw_data_in_model(self, raw_data: dict):
         """Convert raw data in model."""
@@ -334,6 +436,8 @@ class NetskopePlugin(PluginBase):
                 timestamp=datetime.fromtimestamp(raw_data["timestamp"]),
                 rawData=raw_fields,
             )
+        if "severity" in raw_fields.keys() and raw_fields.get("severity"):
+            raw_fields["severity"] = raw_fields.get("severity", "").capitalize()
         return Alert(
             id=raw_data["_id"],
             alertName=raw_data.get("alert_name"),
@@ -362,57 +466,71 @@ class NetskopePlugin(PluginBase):
                     details=traceback.format_exc(),
                     error_code="CTO_1021",
                 )
-        filters = self.configuration.get("filters", {}) or {}
-        query = filters.get("query", "")
+        filters = self.configuration.get("params", {}).get("filters", {}) or {}
+        query = filters.get("mongo", "{}")
+        try:
+            [*_, QUERY_SCHEMA] = alert_event_query_schema()
+            validate(json.loads(json.dumps(query)), QUERY_SCHEMA)
+        except ValidationError:
+            self.logger.error(
+                f"{self.log_prefix}: Storing of {len(all_data)} alert(s)/event(s)"
+                " have failed because one or more field data types"
+                f" are incompatible in Alert/Event query for configuration {self.name}."
+                " Reconfigure Alert/Event query using the Edit button in the CTO Module -> Plugins page."
+            )
+        except Exception as e:
+            self.logger.error(
+                f"{self.log_prefix}: Error occurred while validating Alert/Event Query for "
+                f"configuration {self.name}.",
+                details=traceback.format_exc(),
+                error_code="CTO_1022",
+            )
+            raise e
         if query != "":
-            from netskope.integrations.itsm.tasks.pull_data_items import (
+            from netskope.integrations.itsm.utils.tickets import (
                 _filter_data_items,
             )
 
-            results = _filter_data_items(results, query)
+            results = _filter_data_items(results, json.dumps(query))
+            self.logger.info(
+                f"{self.log_prefix}: Storing {len(results)} alert(s)/event(s) "
+                f"out of {len(all_data)} alert(s)/event(s) "
+                f"based on Alert/Event query for configuration {self.name}."
+            )
         return results
 
     def handle_update_incident_api_call(self, url, data, field, batch_no):
         """Call and Handle update incident API call."""
-        (
-            success,
-            response,
-        ) = handle_exception(
-            self.session.patch,
-            error_code="CTO_1030",
-            custom_message=f"Error occurred while updating the incidents' {field}"
-            f" of batch {batch_no} to Netskope Tenant",
-            plugin=self.log_prefix,
-            url=url,
-            json=data,
-        )
-        if response.status_code in [429, 409]:
-            count_of_tries = 1
-            while (
-                response.status_code in [429, 409]
-                and count_of_tries <= MAX_RETRIES_ON_RATE_LIMIT
-            ):
+        for attempt in range(MAX_API_CALLS):
+            (
+                success,
+                response,
+            ) = handle_exception(
+                self.session.patch,
+                error_code="CTO_1030",
+                custom_message=f"Error occurred while updating the incidents' {field}"
+                f" of batch {batch_no} to Netskope Tenant",
+                plugin=self.log_prefix,
+                url=url,
+                json=data,
+            )
+
+            is_retryable_error = (
+                hasattr(response, "status_code") and response.status_code in [429, 409]
+            )
+
+            if not is_retryable_error:
+                break
+
+            if attempt < MAX_API_CALLS - 1:
                 self.logger.error(
                     f"{self.log_prefix}: Retrying to update {field}"
                     f" of the incidents of batch {batch_no}."
-                    f"Performing retry for url {url}. "
+                    f" Performing retry for url {url}. "
                     f"Received exit code {response.status_code}."
                 )
                 time.sleep(REQUEST_RATE_LIMIT_DELAY)
-                count_of_tries += 1
-                (
-                    success,
-                    response,
-                ) = handle_exception(
-                    self.session.patch,
-                    error_code="CTO_1030",
-                    custom_message=f"Error occurred while updating the "
-                    f"incidents' {field} of batch {batch_no} "
-                    "to Netskope Tenant",
-                    plugin=self.log_prefix,
-                    url=url,
-                    json=data,
-                )
+
         return success, response
 
     def create_incident_update_payload(self, incidents_map):
@@ -426,28 +544,12 @@ class NetskopePlugin(PluginBase):
                     and incident.updatedValues
                     and incident.updatedValues.status != incident.updatedValues.oldStatus
                 ):
-                    status_mapping = self.configuration["incident_update_config"][
-                        "status_mapping"
-                    ]
-                    if not status_mapping.get(
-                        incident.updatedValues.status.value
-                    ):
+                    if not incident.updatedValues.status:
                         continue
-                    new_value = status_mapping[
-                        incident.updatedValues.status.value
-                    ]
-                    if new_value in DEFAULT_STATUS_VALUE_MAP:
-                        new_value = DEFAULT_STATUS_VALUE_MAP[new_value]
-                    old_value = (
-                            status_mapping.get(
-                                incident.updatedValues.oldStatus.value,
-                                incident.updatedValues.oldStatus.value
-                            )
-                            if incident.updatedValues.oldStatus
-                            else "Other"
-                    )
-                    if old_value in DEFAULT_STATUS_VALUE_MAP:
-                        old_value = DEFAULT_STATUS_VALUE_MAP[old_value]
+                    new_value = incident.updatedValues.status
+
+                    old_value = incident.updatedValues.oldStatus if incident.updatedValues.oldStatus else TaskStatus.OTHER
+
                     payload.append({
                         "field": "status",
                         "new_value": new_value,
@@ -481,24 +583,33 @@ class NetskopePlugin(PluginBase):
                     and incident.updatedValues
                     and incident.updatedValues.severity != incident.updatedValues.oldSeverity
                 ):
-                    severity_mapping = self.configuration["incident_update_config"][
-                        "severity_mapping"
-                    ]
+                    new_value = incident.updatedValues.severity
+                    old_value = incident.updatedValues.oldSeverity
+                    if not new_value or new_value not in VALID_SEVERITY_VALUES:
+                        self.logger.error(
+                            f"{self.log_prefix}: The severity update for "
+                            "the ticket has been skipped because "
+                            "the current severity level does "
+                            "not match the expected severity levels "
+                            "defined by the Netskope Tenant "
+                            "[Critical, High, Medium, Low]."
+                        )
+                        continue
+                    if not old_value or old_value not in VALID_SEVERITY_VALUES:
+                        self.logger.error(
+                            f"{self.log_prefix}: The severity update for "
+                            "the ticket has been skipped because "
+                            "the old severity level does "
+                            "not match the expected severity levels "
+                            "defined by the Netskope Tenant "
+                            "[Critical, High, Medium, Low]."
+                        )
+                        continue
                     payload.append({
                         "field": "severity",
-                        "new_value": severity_mapping.get(
-                            incident.updatedValues.severity.value,
-                            incident.updatedValues.severity.value
-                        ),
+                        "new_value": new_value,
                         "object_id": object_id,
-                        "old_value": (
-                            severity_mapping.get(
-                                incident.updatedValues.oldSeverity,
-                                incident.updatedValues.oldSeverity
-                            )
-                            if incident.updatedValues.oldSeverity
-                            else "Other"
-                        ),
+                        "old_value": old_value,
                         "user": (
                             self.configuration["incident_update_config"]
                             .get("user_email")
@@ -574,7 +685,7 @@ class NetskopePlugin(PluginBase):
                     continue
             except requests.exceptions.HTTPError:
                 self.logger.error(
-                    f"{self.log_prefix}: Error occured while updating the {field}"
+                    f"{self.log_prefix}: Error occurred while updating the {field}"
                     f" for the incidents on the Netskope Tenant for batch no. {batch_no}.",
                     details=traceback.format_exc(),
                     error_code="CTO_1044",
@@ -601,7 +712,7 @@ class NetskopePlugin(PluginBase):
         self,
         incidents: List[Task],
         batch_size: int
-    ) -> List[Task]:
+    ) -> Generator[List[Task], None, None]:
         """Get incidents in batches."""
         n_incidents = len(incidents)
         for ndx in range(0, n_incidents, batch_size):
@@ -644,3 +755,62 @@ class NetskopePlugin(PluginBase):
             success=True,
             results=results
         )
+
+    def cleanup(self, action_type: str):
+        """Unsert Incident option"""
+        tenant_name = helper.get_tenant_itsm(self.name).name
+        provider = plugin_provider_helper.get_provider(
+            tenant_name=tenant_name
+        )
+
+        provider.update_incident_enrichment_option_to_storage(
+            tenant_name=tenant_name,
+            module_name="cto",
+            plugin_name=self.name,
+            incident_enrichment_option="no",
+            operation="unset",
+        )
+
+    def get_default_custom_mappings(self) -> list[CustomFieldsSectionWithMappings]:
+        """
+        Get default custom field mappings with values for Netskope ITSM plugin.
+
+        Returns:
+            list[CustomFieldsSectionWithMappings]: List of sections with field-to-value mappings
+        """
+        return [
+            CustomFieldsSectionWithMappings(
+                section="status",
+                event_field="status",
+                destination_label="Netskope Tenant",
+                field_mappings=[
+                    CustomFieldMapping(name="New", mapped_value="new", is_default=True),
+                    CustomFieldMapping(name="In Progress", mapped_value="in_progress", is_default=True),
+                    CustomFieldMapping(name="On Hold", mapped_value="", is_default=True),
+                    CustomFieldMapping(name="Closed", mapped_value="closed", is_default=True),
+                    CustomFieldMapping(name="Deleted", mapped_value="closed", is_default=True),
+                    CustomFieldMapping(name="Other", mapped_value="", is_default=True),
+                ]
+            ),
+            CustomFieldsSectionWithMappings(
+                section="severity",
+                event_field="severity",
+                destination_label="Netskope Tenant",
+                field_mappings=[
+                    CustomFieldMapping(name="Critical", mapped_value="Critical", is_default=True),
+                    CustomFieldMapping(name="High", mapped_value="High", is_default=True),
+                    CustomFieldMapping(name="Medium", mapped_value="Medium", is_default=True),
+                    CustomFieldMapping(name="Low", mapped_value="Low", is_default=True),
+                    CustomFieldMapping(name="Informational", mapped_value="Low", is_default=True),
+                    CustomFieldMapping(name="Other", mapped_value="Low", is_default=True),
+                ]
+            )
+        ]
+
+    def get_queues(self) -> List[Queue]:
+        """Get list of ServiceNow groups as queues.
+
+        Returns:
+            List[Queue]: List of queues.
+        """
+        return [Queue(label="Resolve Incident", value="resolve_incident")]

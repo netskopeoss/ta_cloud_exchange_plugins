@@ -1,0 +1,63 @@
+{
+  "name": "Scality",
+  "id": "scality",
+  "version": "1.0.0",
+  "mapping": "Scality Default Mappings",
+  "netskope": false,
+  "types": [
+    "events",
+    "alerts",
+    "webtx"
+  ],
+  "description": "This plugin is used to deliver Alerts (Anomaly, DLP, Malware, Policy, Compromised Credential, Legal Hold, Malsite, Quarantine, Remediation, Security Assessment, Watchlist, UBA and CTEP), Events (Page, Application, Audit, Infrastructure, Network, Incident and Endpoint) and WebTx logs to the Scality platform. To access the plugin, you would need the credentials of Scality. Note: This plugin is designed to send raw (JSON) logs to Scality.",
+  "configuration": [
+    {
+      "label": "Scality Endpoint URL",
+      "key": "endpoint_url",
+      "type": "text",
+      "default": "https://s3-your.domain.com/",
+      "mandatory": true,
+      "description": "Endpoint URL of the Scality instance. Eg - https://s3-your.domain.com/"
+    },
+    {
+      "label": "Access Key",
+      "key": "access_key",
+      "type": "text",
+      "default": "",
+      "mandatory": true,
+      "description": "Access Key for the Scality instance."
+    },
+    {
+      "label": "Secret Access Key",
+      "key": "secret_access_key",
+      "type": "password",
+      "default": "",
+      "mandatory": true,
+      "description": "Secret Access Key for the Scality instance."
+    },
+    {
+      "label": "Scality Bucket Name",
+      "key": "bucket_name",
+      "type": "text",
+      "default": "",
+      "mandatory": true,
+      "description": "Scality Bucket Name in which the logs object will be stored. (Bucket will not be created if the bucket with the specified name does not exist on Scality.)"
+    },
+    {
+      "label": "Maximum File Size (in MBs)",
+      "key": "max_file_size",
+      "type": "number",
+      "default": 10,
+      "mandatory": true,
+      "description": "Maximum size of WebTx data object to be stored in the bucket (Value should be between 1 to 100). Note: This field will only be used for WebTx logs."
+    },
+    {
+      "label": "Maximum Duration (in Seconds)",
+      "key": "max_duration",
+      "type": "number",
+      "default": 30,
+      "mandatory": true,
+      "description": "Maximum duration after which the WebTx data object should be stored in the bucket. Note: This field will only be used for WebTx logs."
+    }
+  ]
+}

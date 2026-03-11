@@ -1,0 +1,39 @@
+{
+    "name": "CrowdStrike Next-Gen SIEM",
+    "id": "crowdstrike_ngsiem_cls",
+    "version": "1.0.0",
+    "mapping": "CrowdStrike Next-Gen SIEM Default Mappings",
+    "description": "This plugin supports the ingestion of Alerts (DLP, Malware, Policy, Compromised Credential, Malsite, Quarantine, Remediation, Security Assessment, Watchlist, UBA, and CTEP) and Events (Page, Application, Audit, Infrastructure, Network, Incident, and Endpoint) to HEC / HTTP Event Connector on CrowdStrike Next-Gen SIEM platform. This plugin only supports sharing raw JSON data to CrowdStrike Next-Gen SIEM.",
+    "module": "CLS",
+    "netskope": false,
+    "types": [
+        "alerts",
+        "events"
+    ],
+    "configuration": [
+        {
+            "label": "API URL",
+            "key": "api_url",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "API URL obtained from Next-Gen SIEM > Data onboarding > Data sources > HEC / HTTP Event Connector page from CrowdStrike Next-Gen SIEM platform. Example: https://<Unique Identifier>.ingest.<Region>.crowdstrike.com/services/collector"
+        },
+        {
+            "label": "API Token",
+            "key": "token",
+            "type": "password",
+            "default": "",
+            "mandatory": true,
+            "description": "API Token obtained from Next-Gen SIEM > Data onboarding > Data sources > HEC / HTTP Event Connector page from CrowdStrike Next-Gen SIEM platform."
+        },
+        {
+            "label": "Log Source Identifier",
+            "key": "log_source_identifier",
+            "type": "text",
+            "default": "Netskope Cloud Exchange",
+            "mandatory": true,
+            "description": "This will be added as tag to all the alerts and events. Default value is Netskope Cloud Exchange."
+        }
+    ]
+}

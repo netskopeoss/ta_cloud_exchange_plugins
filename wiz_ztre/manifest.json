@@ -1,40 +1,68 @@
 {
-  "name": "Wiz",
-  "description": "This plugin is used to fetch applications from the Wiz platform. This plugin does not support sharing applications or pushing applications to Wiz.",
-  "id": "wiz_ztre",
-  "minimum_version": "5.1.0",
-  "version": "1.0.0",
-  "module": "CRE",
-  "configuration": [
-    {
-      "label": "Base URL",
-      "key": "base_url",
-      "type": "text",
-      "mandatory": true,
-      "description": "Base URL for Wiz platform. e.g. https://api.<region>.app.wiz.io"
-    },
-    {
-      "label": "Token URL",
-      "key": "token_url",
-      "type": "text",
-      "mandatory": true,
-      "description": "Token URL for Wiz platform to generate the auth token. e.g. https://auth.app.wiz.io"
-    },
-    {
-      "label": "Client ID",
-      "key": "client_id",
-      "type": "text",
-      "default": "",
-      "mandatory": true,
-      "description": "Client ID of Wiz platform."
-    },
-    {
-      "label": "Client Secret",
-      "key": "client_secret",
-      "type": "password",
-      "default": "",
-      "mandatory": true,
-      "description": "Client Secret of Wiz platform."
-    }
-  ]
+    "name": "Wiz",
+    "description": "This plugin is used to fetch Applications and Workloads from the Wiz platform. This plugin does not support performing any actions on the Applications and Workloads.",
+    "id": "wiz_ztre",
+    "minimum_version": "5.1.2",
+    "version": "2.0.0",
+    "module": "CRE",
+    "configuration": [
+        {
+            "label": "API Endpoint URL",
+            "key": "base_url",
+            "type": "text",
+            "mandatory": true,
+            "description": "API Endpoint URL for Wiz platform based on Tenant type. e.g. https://api.<TENANT_DATA_CENTER>.<ENVIRONMENT>"
+        },
+        {
+            "label": "Token URL",
+            "key": "token_url",
+            "type": "text",
+            "mandatory": true,
+            "description": "Token URL for Wiz platform based on Tenant type to generate the auth token. e.g. https://auth.app.wiz.io"
+        },
+        {
+            "label": "Client ID",
+            "key": "client_id",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "Client ID of Wiz platform."
+        },
+        {
+            "label": "Client Secret",
+            "key": "client_secret",
+            "type": "password",
+            "default": "",
+            "mandatory": true,
+            "description": "Client Secret of Wiz platform."
+        },
+        {
+            "label": "Wiz Tables",
+            "key": "wiz_tables",
+            "type": "multichoice",
+            "choices": [
+                {
+                    "key": "Applications",
+                    "value": "applications"
+                },
+                {
+                    "key": "Workloads",
+                    "value": "workloads"
+                }
+            ],
+            "default": [
+                "applications"
+            ],
+            "mandatory": true,
+            "description": "Select the Wiz tables to fetch data from."
+        },
+        {
+            "label": "Initial Range (in days)",
+            "key": "initial_range",
+            "type": "number",
+            "mandatory": false,
+            "default": 7,
+            "description": "Number of days to pull the Workloads data for the initial run. Value must be from 0 to 2^62."
+        }
+    ]
 }

@@ -36,15 +36,18 @@ import json
 import requests
 import time
 import traceback
+from packaging import version
 from typing import Dict, Union
 
 from netskope.common.utils import add_user_agent
+from netskope.common.api import __version__ as CE_VERSION
 
 from .constants import (
     DEFAULT_WAIT_TIME,
     MAX_API_CALLS,
     MODULE_NAME,
-    PLATFORM_NAME
+    PLATFORM_NAME,
+    MAXIMUM_CE_VERSION
 )
 
 
@@ -76,6 +79,33 @@ class TaniumPluginHelper(object):
         self.logger = logger
         self.plugin_name = plugin_name
         self.plugin_version = plugin_version
+        self.partial_action_result_supported = version.parse(
+            CE_VERSION
+        ) > version.parse(MAXIMUM_CE_VERSION)
+        self.resolution_support = self.partial_action_result_supported
+        # Patch logger methods to handle resolution parameter compatibility
+        self._patch_logger_methods()
+
+    def _patch_logger_methods(self):
+        """patch logger methods to handle resolution parameter
+          compatibility."""
+        # Store original methods
+        original_error = self.logger.error
+
+        def patched_error(
+            message=None, details=None, resolution=None, **kwargs
+        ):
+            """Patched error method that handles resolution compatibility."""
+            log_kwargs = {"message": message}
+            if details:
+                log_kwargs["details"] = details
+            if resolution and self.resolution_support:
+                log_kwargs["resolution"] = resolution
+            log_kwargs.update(kwargs)
+            return original_error(**log_kwargs)
+
+        # Replace logger methods with patched versions
+        self.logger.error = patched_error
 
     def _add_user_agent(self, headers: Union[Dict, None] = None) -> Dict:
         """Add User-Agent in the headers for Tanium requests.
@@ -231,9 +261,12 @@ class TaniumPluginHelper(object):
                     "Proxy error occurred. Verify "
                     "the proxy configuration provided."
                 )
-
+            resolution = (
+                "Ensure that the proxy configuration provided is correct."
+            )
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {error}",
+                resolution=resolution,
                 details=traceback.format_exc(),
             )
             raise TaniumPluginException(err_msg)
@@ -242,6 +275,10 @@ class TaniumPluginHelper(object):
                 f"Unable to establish connection with {PLATFORM_NAME} "
                 f"platform while {logger_msg}. Proxy server or "
                 f"{PLATFORM_NAME} server is not reachable."
+            )
+            resolution = (
+                "Connection error occurred. Ensure that the proxy server or "
+                f"{PLATFORM_NAME} server is reachable."
             )
             if is_validation:
                 err_msg = (
@@ -252,6 +289,7 @@ class TaniumPluginHelper(object):
 
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {error}",
+                resolution=resolution,
                 details=traceback.format_exc(),
             )
             raise TaniumPluginException(err_msg)
@@ -262,8 +300,13 @@ class TaniumPluginHelper(object):
                     "HTTP error occurred. Verify "
                     "configuration parameters provided."
                 )
+            resolution = (
+                "Ensure that the configuration parameters "
+                "provided are correct."
+            )
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {err}",
+                resolution=resolution,
                 details=traceback.format_exc(),
             )
             raise TaniumPluginException(err_msg)
@@ -362,6 +405,24 @@ class TaniumPluginHelper(object):
             401: "Received exit code 401, Unauthorized access",
             404: "Received exit code 404, Resource not found",
         }
+        resolution_dict = {
+            400: (
+                "Ensure that the API Base URL "
+                "provided in the configuration parameter is correct."
+            ),
+            401: (
+                "Ensure that the API Token "
+                "provided in the configuration parameter is correct."
+            ),
+            403: (
+                "Ensure that the permission for API Token "
+                "provided in the configuration parameter is correct."
+            ),
+            404: (
+                "Ensure that the API Base URL "
+                "provided in the configuration parameter is correct."
+            ),
+        }
         if is_validation:
             error_dict = {
                 400: (
@@ -396,10 +457,37 @@ class TaniumPluginHelper(object):
             return {}
         elif status_code in error_dict:
             err_msg = error_dict[status_code]
+            resolution = None
+            try:
+                if "resolution_dict" not in locals():
+                    resolution_dict = {
+                        400: (
+                            "Ensure that the Base URL, Client ID and "
+                            "Client Secret provided in the configuration"
+                            " parameters are correct."
+                        ), 
+                        401: (
+                            "Ensure that the Client ID and Client Secret "
+                            " provided in the configuration parameters"
+                            " are correct."
+                        ),
+                        403: (
+                            "Ensure that the API scopes provided to Client"
+                            " ID and Client Secret are correct."
+                        ),
+                        404: (
+                            "Ensure that the Base URL provided in the "
+                            "configuration parameters is correct."
+                        ),
+                    }
+                resolution = resolution_dict[status_code]
+            except Exception:
+                pass
             if is_validation:
                 log_err_msg = validation_msg + err_msg
                 self.logger.error(
                     message=f"{self.log_prefix}: {log_err_msg}",
+                    resolution=resolution,
                     details=f"API response: {resp.text}",
                 )
                 raise TaniumPluginException(err_msg)
@@ -412,6 +500,7 @@ class TaniumPluginHelper(object):
                     )
                 self.logger.error(
                     message=f"{self.log_prefix}: {err_msg}",
+                    resolution=resolution,
                     details=f"API response: {resp.text}",
                 )
                 raise TaniumPluginException(err_msg)

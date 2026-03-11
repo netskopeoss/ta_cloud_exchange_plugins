@@ -172,8 +172,10 @@ class JiraITSMPluginHelper(object):
                     api_err_msg = str(response.text)
                     if retry_counter == MAX_API_CALLS - 1:
                         err_msg = (
-                            f"Received exit code {status_code}, API rate limit "
-                            f"exceeded while {logger_msg}. Max retries for rate limit "
+                            f"Received exit code {status_code}, "
+                            "API rate limit "
+                            f"exceeded while {logger_msg}. "
+                            "Max retries for rate limit "
                             "handler exceeded hence returning status "
                             f"code {status_code}."
                         )
@@ -182,11 +184,14 @@ class JiraITSMPluginHelper(object):
                             details=api_err_msg,
                         )
                         raise JiraITSMPluginException(err_msg)
-                    retry_after = int(response.headers.get("Retry-After", DEFAULT_WAIT_TIME))
+                    retry_after = int(
+                        response.headers.get("Retry-After", DEFAULT_WAIT_TIME)
+                    )
                     if retry_after > 300:
                         err_msg = (
                             "'Retry-After' value received from response "
-                            f"headers while {logger_msg} is greater than 5 minutes hence"
+                            f"headers while {logger_msg} is "
+                            "greater than 5 minutes hence"
                             f" returning status code {status_code}."
                         )
                         self.logger.error(f"{self.log_prefix}: {err_msg}")
@@ -197,10 +202,12 @@ class JiraITSMPluginHelper(object):
                         log_err_msg = "HTTP server error occurred"
                     self.logger.error(
                         message=(
-                            f"{self.log_prefix}: Received exit code {status_code}, "
-                            f"{log_err_msg} while {logger_msg}. "
+                            f"{self.log_prefix}: Received exit code "
+                            f"{status_code}, {log_err_msg} "
+                            f"while {logger_msg}. "
                             f"Retrying after {retry_after} seconds. "
-                            f"{MAX_API_CALLS - 1 - retry_counter} retries remaining."
+                            f"{MAX_API_CALLS - 1 - retry_counter} "
+                            "retries remaining."
                         ),
                         details=api_err_msg,
                     )
@@ -289,7 +296,10 @@ class JiraITSMPluginHelper(object):
             )
 
     def parse_response(
-        self, response: requests.models.Response, logger_msg, is_validation: bool = False
+        self,
+        response: requests.models.Response,
+        logger_msg,
+        is_validation: bool = False
     ):
         """Parse Response will return JSON from response object.
 
@@ -305,7 +315,8 @@ class JiraITSMPluginHelper(object):
             return response.json()
         except json.JSONDecodeError as err:
             err_msg = (
-                f"Invalid JSON response received from API while {logger_msg}. Error: {str(err)}"
+                f"Invalid JSON response received from API while {logger_msg}. "
+                f"Error: {str(err)}"
             )
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg}",
@@ -314,7 +325,7 @@ class JiraITSMPluginHelper(object):
             if is_validation:
                 err_msg = (
                     "Verify Jira Cloud Instance URL provided in the "
-                    "configuration parameters. Check logs for more details."
+                    "Authentication parameters. Check logs for more details."
                 )
             raise JiraITSMPluginException(err_msg)
         except Exception as exp:
@@ -330,7 +341,7 @@ class JiraITSMPluginHelper(object):
                 err_msg = (
                     "Unexpected validation error occurred, "
                     "Verify Jira Cloud Instance URL provided in the "
-                    "configuration parameters. Check logs for more details."
+                    "Authentication parameters. Check logs for more details."
                 )
             raise JiraITSMPluginException(err_msg)
 
@@ -366,22 +377,22 @@ class JiraITSMPluginHelper(object):
                 400: (
                     "Received exit code 400, Bad Request, "
                     "Verify the Jira Cloud Instance URL provided in "
-                    "the configuration parameters."
+                    "the Authentication parameters."
                 ),
                 401: (
                     "Received exit code 401, Unauthorized, "
                     "Verify Email Address and API Token provided in "
-                    "the configuration parameters."
+                    "the Authentication parameters."
                 ),
                 403: (
                     "Received exit code 403, Forbidden, "
                     "Verify permission for Email Address provided in "
-                    "the configuration parameters."
+                    "the Authentication parameters."
                 ),
                 404: (
                     "Received exit code 404, Resource not found, "
                     "Verify the Jira Cloud Instance URL provided in "
-                    "the configuration parameters."
+                    "the Authentication parameters."
                 ),
             }
 
@@ -406,8 +417,8 @@ class JiraITSMPluginHelper(object):
                 err_msg = err_msg + " while " + logger_msg + "."
                 if status_code == 401:
                     err_msg = (
-                        f"{err_msg} Verify Email Address and API Token provided "
-                        "in configuration parameters."
+                        f"{err_msg} Verify Email Address and API Token "
+                        "provided in Authentication parameters."
                     )
                 self.logger.error(
                     message=f"{self.log_prefix}: {err_msg}",

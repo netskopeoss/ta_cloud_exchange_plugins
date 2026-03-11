@@ -109,9 +109,17 @@ class ElasticClient:
         except Exception as exp:
             raise ElasticPluginException(exp)
 
-    def close(self):
-        """To Close socket connection."""
+    def close(self, is_validation=False):
+        """To Close socket connection gracefully."""
         try:
+            if not is_validation:
+                # Close writes
+                self.sock.shutdown(socket.SHUT_WR)
+                # Drain reads
+                while True:
+                    data = self.sock.recv(1024)
+                    if not data:
+                        break
             self.sock.close()
         except Exception as err:
             err_msg = "Error while closing socket connection."

@@ -1,4 +1,35 @@
-"""Netskope CRE plugin."""
+"""
+BSD 3-Clause License
+
+Copyright (c) 2021, Netskope OSS
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its
+   contributors may be used to endorse or promote products derived from
+   this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+Netskope CRE plugin."""
 
 import json
 import re
@@ -31,6 +62,7 @@ from .utils.constants import (
     MAX_HOSTS_PER_PRIVATE_APP,
     REGEX_HOST,
     REGEX_EMAIL,
+    REGEX_TAG,
     MODULE_NAME,
     PLUGIN,
     PLUGIN_VERSION,
@@ -45,8 +77,12 @@ from .utils.constants import (
     USERS_BATCH_SIZE,
     APPLICATIONS_BATCH_SIZE,
     TAG_APP_TAG_LENGTH,
+    TAG_DEVICE_TAG_LENGTH,
+    TAG_DEVICE_BATCH_SIZE,
     TAG_EXISTS,
     DEVICE_FIELD_MAPPING,
+    MAX_TAGS_PER_DEVICE,
+    TAG_CACHE_PAGE_SIZE,
 )
 from .utils.helper import NetskopePluginHelper, NetskopeException
 
@@ -197,7 +233,8 @@ class NetskopePlugin(PluginBase):
                     ),
                     EntityField(
                         name="Netskope Device UID",
-                        type=EntityFieldType.STRING
+                        type=EntityFieldType.STRING,
+                        required=True,
                     ),
                     EntityField(
                         name="Mac Addresses",
@@ -213,7 +250,8 @@ class NetskopePlugin(PluginBase):
                     ),
                     EntityField(
                         name="Device Serial Number",
-                        type=EntityFieldType.STRING
+                        type=EntityFieldType.STRING,
+                        required=True,
                     ),
                     EntityField(
                         name="Operating System",
@@ -253,11 +291,16 @@ class NetskopePlugin(PluginBase):
                     ),
                     EntityField(
                         name="User Key",
-                        type=EntityFieldType.STRING
+                        type=EntityFieldType.LIST,
+                        required=True,
                     ),
                     EntityField(
                         name="Device Classification Status",
                         type=EntityFieldType.STRING
+                    ),
+                    EntityField(
+                        name="Tags",
+                        type=EntityFieldType.LIST
                     ),
                 ],
             )
@@ -279,13 +322,19 @@ class NetskopePlugin(PluginBase):
         return data_object
 
     def _add_field(self, fields_dict: dict, field_name: str, value):
-        """Add field to the extracted_fields dictionary.
+        """
+        Add field to the extracted_fields dictionary.
 
         Args:
             fields_dict (dict): Field dictionary to update.
             field_name (str): Field name to add.
             value: Field to add.
         """
+        # Skip empty dicts to prevent MongoDB errors
+        if (isinstance(value, dict) or isinstance(value, list)) and not value:
+            fields_dict[field_name] = None
+            return
+
         if isinstance(value, int) or isinstance(value, float):
             fields_dict[field_name] = value
             return
@@ -316,7 +365,11 @@ class NetskopePlugin(PluginBase):
             k = keys.pop(0)
             if k not in event and default is not None:
                 return default
-            event = event.get(k, {})
+            if k not in event:
+                return default
+            if not isinstance(event, dict):
+                return default
+            event = event.get(k)
         if transformation and transformation == "string":
             return str(event)
         return event
@@ -326,7 +379,7 @@ class NetskopePlugin(PluginBase):
         event: dict,
         entity_field_mapping: Dict[str, Dict[str, str]],
         entity: str,
-    ) -> dict:
+    ) -> list[dict]:
         """
         Extracts the required entity fields from the event payload as
         per the mapping provided.
@@ -339,7 +392,9 @@ class NetskopePlugin(PluginBase):
             entity (str): Entity name.
 
         Returns:
-            dict: Dictionary containing the extracted entity fields.
+            list[dict]: List of dictionaries containing the extracted
+                entity fields. For Users entity with comma-separated
+                emails, returns multiple records.
         """
         extracted_fields = {}
         for field_name, field_value in entity_field_mapping.items():
@@ -358,6 +413,24 @@ class NetskopePlugin(PluginBase):
                     transformation=transformation,
                 ),
             )
+
+        if entity == "Users":
+            email_value = extracted_fields.get("email", "")
+            if email_value and "," in email_value:
+                emails = [
+                    email.strip()
+                    for email in email_value.split(",")
+                    if email.strip()
+                ]
+                records = []
+                for email in emails:
+                    record = extracted_fields.copy()
+                    record["email"] = email
+                    records.append(record)
+                return records
+            else:
+                return [extracted_fields] if extracted_fields else []
+        
         # If the CSV response has multiple values for mac address field they
         # are separated by '|' and the tenant plugin parses it into a list
         # of strings but for single value in mac address field it is parsed
@@ -366,6 +439,13 @@ class NetskopePlugin(PluginBase):
             extracted_fields = self._convert_string_to_list(
                 data_object=extracted_fields,
                 key="Mac Addresses",
+            )
+            # The userkey earlier was going as str, but 
+            # in the netity mapping we have made it as list now 
+            # so it should also be returned as list
+            extracted_fields = self._convert_string_to_list(
+                data_object=extracted_fields,
+                key="User Key",
             )
             # Converting Unix timestamp to datetime object
             last_updated_timestamp = extracted_fields.get(
@@ -380,7 +460,7 @@ class NetskopePlugin(PluginBase):
             except Exception:
                 converted_datetime = None
             extracted_fields["Last Updated Timestamp"] = converted_datetime
-        return extracted_fields
+        return [extracted_fields] if extracted_fields else []
 
     def fetch_records(self, entity: str) -> list[dict]:
         """Fetch user and application records from Netskope alerts.
@@ -803,7 +883,7 @@ class NetskopePlugin(PluginBase):
                     entity="Users",
                 )
                 if extracted_data:
-                    users.append(extracted_data)
+                    users.extend(extracted_data)
                 else:
                     skipped_count += 1
             except Exception as err:
@@ -921,6 +1001,170 @@ class NetskopePlugin(PluginBase):
         )
         return updated_users
 
+    def _update_devices(self, records: list[dict]) -> list[dict]:
+        """Update device tags by fetching them from the Netskope tenant.
+
+        Args:
+            records (list): List of device records to update.
+
+        Returns:
+            list: List of updated device records with a new 'Tags' field.
+        """
+        tenant_name = self.tenant.parameters.get("tenantName", "").strip()
+        url = f"{tenant_name}{URLS.get('V2_DEVICE_GET_TAGS')}"
+        token = resolve_secret(self.tenant.parameters.get("v2token", ""))
+        headers = {
+            "Netskope-API-Token": token,
+            "Content-Type": "application/json",
+        }
+        total_updated_record_counter = 0
+        updated_records = []
+        for record in records:
+            # Make a copy to avoid modifying the original record in case of failure
+            updated_record = {}
+
+            device_uid = record.get("Netskope Device UID")
+            user_key = record.get("User Key")
+            updated_record["Device Serial Number"] = record.get(
+                "Device Serial Number"
+            )
+            updated_record["Device ID"] = record.get("Device ID")
+            updated_record["Netskope Device UID"] = device_uid
+            updated_record["User Key"] = user_key
+
+            # Handle User Key as list (multi-user scenario)
+            user_keys = user_key
+            if isinstance(user_key, str):
+                user_keys = [user_key] if user_key else []
+            elif not isinstance(user_key, list):
+                user_keys = []
+
+            unique_user_keys = set()
+            for uk in user_keys:
+                unique_user_keys.add(uk)
+
+            if not device_uid or not unique_user_keys:
+                self.logger.info(
+                    f"{self.log_prefix}: Missing Netskope Device UID or "
+                    f"User Key for device '{record.get('Device ID')}'. "
+                    "Skipping update."
+                )
+                continue
+
+            user_keys_list = list(unique_user_keys)
+            total_batches = (
+                (len(user_keys_list) + TAG_DEVICE_BATCH_SIZE - 1) //
+                TAG_DEVICE_BATCH_SIZE
+            )
+
+            if total_batches > 1:
+                self.logger.debug(
+                    f"{self.log_prefix}: Device '{device_uid}' has "
+                    f"{len(user_keys_list)} user key(s). Processing "
+                    f"{total_batches} batch(es) of {TAG_DEVICE_BATCH_SIZE}."
+                )
+
+            all_tags = set()
+            successful_batches = 0
+            failed_batches = 0
+
+            for batch_num in range(total_batches):
+                start_idx = batch_num * TAG_DEVICE_BATCH_SIZE
+                end_idx = min(
+                    start_idx + TAG_DEVICE_BATCH_SIZE,
+                    len(user_keys_list)
+                )
+                user_keys_batch = user_keys_list[start_idx:end_idx]
+
+                devices_payload = [
+                    {"nsdeviceuid": device_uid, "userkey": user_key}
+                    for user_key in user_keys_batch
+                ]
+                payload = {"devices": devices_payload}
+                logger_msg = (
+                    f"fetching tags for device with UID '{device_uid}' "
+                    f"(batch {batch_num + 1}/{total_batches} with "
+                    f"{len(user_keys_batch)} user(s))"
+                )
+
+                try:
+                    response = self.netskope_helper._api_call_helper(
+                        url=url,
+                        method="post",
+                        headers=headers,
+                        json=payload,
+                        proxies=self.proxy,
+                        message=f"Error occurred while {logger_msg}",
+                        logger_msg=logger_msg,
+                        error_codes=["CRE_1045", "CRE_1049"],
+                    )
+
+                    if response.get("success"):
+                        tags = [
+                            tag.get("name")
+                            for tag in response.get("data", {}).get("data", [])
+                            if tag.get("name")
+                        ]
+                        all_tags.update(tags)
+                        successful_batches += 1
+                    else:
+                        self.logger.info(
+                            message=(
+                                f"{self.log_prefix}: Batch "
+                                f"{batch_num + 1}/{total_batches} failed for device "
+                                f"with UID '{device_uid}'."
+                            ),
+                            details=(
+                                f"{str(response.get('error'))}"
+                            )
+                        )
+                        failed_batches += 1
+                        continue
+
+                except NetskopeException as e:
+                    self.logger.error(
+                        f"{self.log_prefix}: {logger_msg} failed due to an "
+                        f"exception. Error: {e}"
+                    )
+                    failed_batches += 1
+                    continue
+                except Exception as e:
+                    self.logger.error(
+                        message=(
+                            f"{self.log_prefix}: Unexpected error while "
+                            f"{logger_msg}. Error: {e}"
+                        ),
+                        details=str(traceback.format_exc()),
+                    )
+                    failed_batches += 1
+                    continue
+
+            log_msg = ""
+            if failed_batches > 0:
+                log_msg = (
+                    f" Failed to fetch tags for {failed_batches} "
+                    f"out of {total_batches} batch(es) for device "
+                    f"with UID '{device_uid}'."
+                )
+            
+            self.logger.debug(
+                f"{self.log_prefix}: Successfully fetched tags for "
+                f"{successful_batches} batch(es).{log_msg}"
+            )
+
+            updated_record["Tags"] = list(all_tags)
+            updated_records.append(updated_record)
+
+            if list(all_tags):
+                total_updated_record_counter += 1
+
+        self.logger.info(
+            f"{self.log_prefix}: Successfully updated {len(updated_records)}"
+            f" record(s). Fetched tag(s) for {total_updated_record_counter} out "
+            f"of {len(records)} record(s)."
+        )
+        return updated_records
+
     def _update_applications(self, records: list[dict]):
         """Update application scores.
 
@@ -962,7 +1206,7 @@ class NetskopePlugin(PluginBase):
                     entity="Devices",
                 )
                 if extracted_data:
-                    devices.append(extracted_data)
+                    devices.extend(extracted_data)
                 else:
                     skipped_count += 1
             except Exception as e:
@@ -1005,9 +1249,9 @@ class NetskopePlugin(PluginBase):
             self.logger.info(update_logger_msg)
             return self._update_applications(records)
         elif entity == "Devices":
-            # There is no score related field in Devices entity
-            # hence returning empty list.
-            return []
+            # Add tags to devices
+            self.logger.info(update_logger_msg)
+            return self._update_devices(records)
         else:
             raise ValueError(f"Unsupported entity '{entity}'")
 
@@ -1028,6 +1272,9 @@ class NetskopePlugin(PluginBase):
             ),
             ActionWithoutParams(
                 label="Tag/Untag Application", value="tag_app"
+            ),
+            ActionWithoutParams(
+                label="Tag/Untag Device", value="tag_device"
             ),
             ActionWithoutParams(label="No actions", value="generate"),
         ]
@@ -1832,6 +2079,16 @@ class NetskopePlugin(PluginBase):
             return ValidationResult(
                 success=True, message="Validation successful."
             )
+        elif action.value == "tag_device":
+            try:
+                self._process_params_for_tag_device_action(
+                    action.parameters, is_validation=True
+                )
+            except NetskopeException as ex:
+                return ValidationResult(success=False, message=str(ex))
+            return ValidationResult(
+                success=True, message="Validation successful."
+            )
         elif action.value == "app_instance":
             try:
                 self._process_params_for_app_instance_action(action.parameters)
@@ -2608,6 +2865,77 @@ class NetskopePlugin(PluginBase):
                     ),
                 },
             ]
+        elif action.value == "tag_device":
+            return [
+                {
+                    "label": "Tag Action",
+                    "key": "tag_device_action",
+                    "type": "choice",
+                    "choices": [
+                        {
+                            "key": "Add",
+                            "value": "append"
+                        },
+                        {
+                            "key": "Remove",
+                            "value": "remove"
+                        },
+                        {
+                            "key": "Replace",
+                            "value": "replace"
+                        }
+                    ],
+                    "default": "append",
+                    "placeholder": "Add",
+                    "mandatory": True,
+                    "description": (
+                        "Select whether to add, remove, or replace tags on the "
+                        "devices. Select Tag Action from the static dropdown only. Note: "
+                        "at max 5 tags are allowed per user-device pair on Netskope."
+                    ),
+                },
+                {
+                    "label": "Tags",
+                    "key": "tags",
+                    "type": "text",
+                    "default": "",
+                    "placeholder": "e.g. tag-1, tag-2",
+                    "mandatory": False,
+                    "description": (
+                        "Select a source field for the tags or provide static "
+                        "comma-separated tag values. Note: For Replace "
+                        "action, if tags are not provided or empty, all tags "
+                        "will be removed from the device."
+                    ),
+                },
+                {
+                    "label": "Netskope Device UID",
+                    "key": "device_id",
+                    "type": "text",
+                    "default": "",
+                    "placeholder": "e.g. uid-1",
+                    "mandatory": True,
+                    "description": (
+                        "The Device UID of the device to which the tag action should be "
+                        "performed. Select a source field or "
+                        "provide a static value."
+                    ),
+                },
+                {
+                    "label": "User Key",
+                    "key": "device_user_key",
+                    "type": "text",
+                    "default": "",
+                    "placeholder": "e.g. user-1",
+                    "mandatory": True,
+                    "description": (
+                        "The User Key of the user associated with the"
+                        " device on which the tag action should be "
+                        "performed. Select a source field or "
+                        "provide a static value."
+                    ),
+                },
+            ]
         elif action.value == "app_instance":
             return [
                 {
@@ -3121,6 +3449,386 @@ class NetskopePlugin(PluginBase):
                 f"{self.log_prefix}: {log_msg}"
             )
 
+    def _fetch_all_tags(self):
+        """Fetch all tags from Netskope tenant with pagination.
+        
+        Returns:
+            dict: Dictionary mapping tag_name to tag_id, or None if fetch fails.
+        """
+        tenant_name = self.tenant.parameters.get('tenantName', '').strip().strip('/')
+        headers = {
+            "Netskope-API-Token": resolve_secret(
+                self.tenant.parameters.get("v2token", "")
+            )
+        }
+        
+        tag_cache = {}
+        offset = 0
+        total_fetched = 0
+        
+        try:
+            self.logger.info(
+                f"{self.log_prefix}: Fetching all tags from Netskope."
+            )
+            
+            while True:
+                log_message = f"fetching tags (offset: {offset}, limit: {TAG_CACHE_PAGE_SIZE})"
+                self.logger.debug(f"{self.log_prefix}: {log_message.capitalize()}.")
+                
+                url = f"{tenant_name}{URLS.get('V2_DEVICE_GET_TAGS')}"
+                payload = {
+                    "devices": [],
+                    "offset": offset,
+                    "limit": TAG_CACHE_PAGE_SIZE
+                }
+                
+                response = self.netskope_helper._api_call_helper(
+                    url=url,
+                    method="post",
+                    error_codes=["CRE_1045", "CRE_1049"],
+                    headers=headers,
+                    json=payload,
+                    proxies=self.proxy,
+                    message=f"Error occurred while {log_message}",
+                    logger_msg=log_message,
+                )
+                
+                if not response.get("success"):
+                    err_msg = (
+                        "Error occurred while fetching all tags "
+                        "from Netskope."
+                    )
+                    self.logger.error(
+                        message=(
+                            f"{self.log_prefix}: {err_msg}."
+                        ),
+                        details=str(response.get("error", {}))
+                    )
+                    raise NetskopeException(err_msg)
+                
+                data = response.get("data", {})
+                tags = data.get("data", []) if data and isinstance(data, dict) else []
+                
+                for tag_info in tags:
+                    if isinstance(tag_info, dict):
+                        # as the Netskope API is case insensitive ,
+                        # we are normalizing the tags and then storing it
+                        tag_name = tag_info.get("name").lower()
+                        tag_id = tag_info.get("id")
+                        if tag_name and tag_id:
+                            tag_cache[tag_name] = tag_id
+                
+                total_fetched += len(tags)
+                
+                total_count = data.get("total_count", 0)
+                self.logger.debug(
+                    f"{self.log_prefix}: Fetched {len(tags)} tag(s) in current page. "
+                    f"Total fetched: {total_fetched}/{total_count}."
+                )
+                
+                if total_fetched >= total_count or len(tags) < TAG_CACHE_PAGE_SIZE:
+                    break
+                
+                offset += TAG_CACHE_PAGE_SIZE
+            
+            self.logger.info(
+                f"{self.log_prefix}: Successfully fetched {len(tag_cache)} tag(s)"
+                " from Netskope tenant"
+            )
+            return tag_cache
+            
+        except Exception as e:
+            err_msg = (
+                "An Unexpected error occurred while "
+                "fetching all tags from Netskope."
+            )
+            self.logger.error(
+                message=(
+                    f"{self.log_prefix}: {err_msg} Error: {e}"
+                ),
+                details=str(traceback.format_exc())
+            )
+            raise NetskopeException(err_msg)
+
+    def _query_and_create_tags_with_cache(
+        self,
+        tags: list[str],
+        action: str,
+        tag_cache: dict = None
+    ):
+        """Query for tags using cache and create them if they don't exist.
+
+        Args:
+            tags (list[str]): List of tags to query and create.
+            action (str): Action type - 'append', 'remove', or 'replace'.
+            tag_cache (dict): Cache mapping tag_name to tag_id.
+
+        Returns:
+            tuple: (tag_ids list[str], updated_tag_cache dict)
+
+        Raises:
+            NetskopeException: If any tag creation/validation fails.
+        """
+        tenant_name = self.tenant.parameters.get('tenantName', '').strip().strip('/')
+        headers = {
+            "Netskope-API-Token": resolve_secret(
+                self.tenant.parameters.get("v2token", "")
+            )
+        }
+
+        tag_ids = []
+        updated_cache = tag_cache.copy()
+        failed_tags = []
+        non_empty_tags_list = []
+        for tag in tags:
+            if not tag:
+                continue
+            else:
+                non_empty_tags_list.append(tag)
+
+            if not re.match(REGEX_TAG, tag):
+                err_msg = (
+                    f"Invalid tag '{tag}' provided. Tag name must contain "
+                    "only alphanumeric characters, hyphens, and spaces. This"
+                    f"tag will be skipped for {str(action)} action"
+                )
+                self.logger.info(f"{self.log_prefix}: {err_msg}")
+                failed_tags.append(tag)
+                continue
+
+            if len(tag) > TAG_DEVICE_TAG_LENGTH:
+                err_msg = (
+                    f"Invalid tag '{tag}' provided. Tag length cannot "
+                    f"exceed {TAG_DEVICE_TAG_LENGTH} characters. This"
+                    f"tag will be skipped for {str(action)} action"
+                )
+                self.logger.info(f"{self.log_prefix}: {err_msg}")
+                failed_tags.append(tag)
+                continue
+
+            normalized_tag = tag.lower()
+            if normalized_tag in updated_cache:
+                tag_ids.append(updated_cache[normalized_tag])
+                self.logger.debug(
+                    f"{self.log_prefix}: Tag '{tag}' found in tag lookup"
+                    f" list with ID '{updated_cache[normalized_tag]}'."
+                )
+            elif action in ["append", "replace"]:
+                log_message = f"creating tag '{tag}'"
+                self.logger.debug(f"{self.log_prefix}: {log_message.capitalize()}.")
+
+                try:
+                    url = f"{tenant_name}{URLS.get('V2_DEVICE_TAG')}"
+                    create_response = self.netskope_helper._api_call_helper(
+                        url=url,
+                        method="post",
+                        error_codes=["CRE_1045", "CRE_1049"],
+                        headers=headers,
+                        json={"name": tag, "description": "Tag created by Cloud Exchange"},
+                        proxies=self.proxy,
+                        message=f"Error occurred while {log_message}",
+                        logger_msg=log_message,
+                    )
+
+                    if not create_response.get("success"):
+                        err_msg = (
+                            f"Error occurred while {log_message}. This"
+                            f"tag will be skipped for {str(action)} action"
+                        )
+                        self.logger.error(
+                            message=f"{self.log_prefix}: {err_msg}",
+                            details=json.dumps(create_response.get("error", {}))
+                        )
+                        failed_tags.append(tag)
+                    elif tag_info := create_response.get("data", {}):
+                        tag_id = tag_info.get("id")
+                        if tag_id:
+                            tag_ids.append(tag_id)
+                            updated_cache[normalized_tag] = tag_id
+                            self.logger.debug(
+                                f"{self.log_prefix}: Successfully created "
+                                f"tag '{tag}' with ID '{tag_id}'."
+                            )
+                        else:
+                            failed_tags.append(tag)
+                    else:
+                        failed_tags.append(tag)
+                except Exception:
+                    failed_tags.append(tag)
+            elif action == "remove":
+                err_msg = (
+                    f"Provided tag '{tag}' not found on Netskope "
+                    "when trying to untag device. "
+                    "Please provide valid tags."
+                )
+                self.logger.error(
+                    message=f"{self.log_prefix}: {err_msg}"
+                )
+                failed_tags.append(tag)
+
+        if failed_tags:
+            msg = (
+                f"Failed to process {len(failed_tags)} tag(s) either "
+                "due to being invalid or of unsupported type for "
+                f"{action} action. Following tag(s) {failed_tags} will be "
+                "skipped."
+            )
+            self.logger.info(
+                f"{self.log_prefix}: {msg}"
+            )
+
+        if not tag_ids:
+            if action == "replace" and not non_empty_tags_list:
+                self.logger.debug(
+                    f"{self.log_prefix}: No tags provided for "
+                    "replace action. All tags will be removed from "
+                    "the device(s)."
+                )
+                return tag_ids, updated_cache
+            else:
+                err_msg = (
+                    f"No tag ids found for {str(tags)} tag(s) to"
+                    f" perform {action} tag(s) action on Device(s)."
+                )
+                raise NetskopeException(err_msg)
+
+        return tag_ids, updated_cache
+
+    def _get_tag_id(
+        self,
+        tag_name: str,
+        response: dict
+    ):
+        """Check Tag Query Response for given tag
+
+        Args:
+            tag_name str: tag name to search for in response
+            response dict: Response received from Netskope
+        
+        Returns:
+            tag_id str: tag id if it exists, else None
+        """
+        if not response.get("success"):
+            return None
+        data = response.get("data", {}).get("data", [])
+        try:
+            for tag_info in data:
+                if tag_info.get("name").lower() == tag_name.lower():
+                    return tag_info.get("id")
+        except Exception:
+            pass
+        return None
+
+    def _tag_devices(
+        self,
+        tag_ids: list[str],
+        devices: list[dict],
+        cci_tag_action: str
+    ):
+        """Tag the device(s) on Netskope.
+
+        Args:
+            tags (list[str]): List of tags to be attached to \
+                the device(s).
+            device_ids (list[str]): List of device IDs to be tagged.
+            device_user_keys (list[str]): List of device user keys to be tagged.
+            cci_tag_action (str): Action to be performed on the tags.
+        """
+        tenant_name = (
+            self.tenant.parameters.get('tenantName', '').strip()
+        )
+        headers = {
+            "Netskope-API-Token": resolve_secret(
+                self.tenant.parameters.get("v2token", "")
+            )
+        }
+
+        if cci_tag_action == "append":
+            log_message = "adding tags to devices"
+            url = f"{tenant_name}{URLS.get('V2_DEVICE_BULK_ADD_TAGS')}"
+        else:  # remove
+            log_message = "removing tags from devices"
+            url = f"{tenant_name}{URLS.get('V2_DEVICE_BULK_REMOVE_TAGS')}"
+        
+        data = {"tags": tag_ids, "devices": devices}
+
+        self.logger.debug(f"{self.log_prefix}: {log_message.capitalize()}.")
+        response = self.netskope_helper._api_call_helper(
+            url=url,
+            method="post",
+            error_codes=["CRE_1045", "CRE_1049"],
+            headers=headers,
+            json=data,
+            proxies=self.proxy,
+            message=f"Error occurred while {log_message}",
+            logger_msg=log_message,
+        )
+        if not response.get("success"):
+            err_msg = f"Error occurred while {log_message}."
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg}",
+                details=json.dumps(response),
+            )
+            raise NetskopeException(err_msg)
+
+        log_msg = (
+            f"Successfully {'added' if cci_tag_action == 'append' else 'removed'} "
+            f"tags for {len(devices)} device record(s) on the Netskope Tenant."
+        )
+        self.logger.debug(
+            f"{self.log_prefix}: {log_msg}"
+        )
+
+    def _replace_device_tags(
+        self,
+        tag_ids: list[int],
+        devices: list[dict],
+    ):
+        """Replace all tags on devices with the provided tags.
+
+        Args:
+            tag_ids (list[int]): List of tag IDs to replace on the devices.
+            devices (list[dict]): List of device dicts with nsdeviceuid and
+                userkey.
+        """
+        tenant_name = (
+            self.tenant.parameters.get('tenantName', '').strip().strip('/')
+        )
+        headers = {
+            "Netskope-API-Token": resolve_secret(
+                self.tenant.parameters.get("v2token", "")
+            )
+        }
+
+        log_message = f"replacing tags on {len(devices)} device record(s)"
+        url = f"{tenant_name}{URLS.get('V2_DEVICE_BULK_REPLACE_TAGS')}"
+
+        data = {"tags": tag_ids, "devices": devices}
+
+        self.logger.debug(f"{self.log_prefix}: {log_message.capitalize()}.")
+        response = self.netskope_helper._api_call_helper(
+            url=url,
+            method="post",
+            error_codes=["CRE_1045", "CRE_1049"],
+            headers=headers,
+            json=data,
+            proxies=self.proxy,
+            message=f"Error occurred while {log_message}",
+            logger_msg=log_message,
+        )
+        if not response.get("success"):
+            err_msg = f"Error occurred while {log_message}."
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg}",
+                details=json.dumps(response),
+            )
+            raise NetskopeException(err_msg)
+
+        self.logger.debug(
+            f"{self.log_prefix}: Successfully replaced tags for "
+            f"{len(devices)} device record(s) on the Netskope Tenant."
+        )
+
     def _create_app_instance(
         self,
         instance_id: str,
@@ -3630,6 +4338,144 @@ class NetskopePlugin(PluginBase):
 
         return tags, apps, ids, tag_action
 
+    def _process_params_for_tag_device_action(
+        self,
+        params: dict,
+        is_execute: bool = False,
+        is_validation: bool = False
+    ) -> tuple:
+        """Process parameters for tag device action.
+
+        Args:
+            params (dict): Params dictionary.
+
+        Returns:
+            tuple: Processed params.
+        """
+
+        def convert_to_list(
+            value: Union[str, list[str]],
+            static_input_len_validation: bool = False,
+            field_name: str = "",
+            is_validation: bool = False,
+            action_name: str = ""
+        ) -> list[str]:
+            """Convert to list.
+
+            Args:
+                value (Union[str, list[str]]): Value to be converted.
+
+            Returns:
+                list[str]: List of values.
+            """
+            list_values = []
+            if isinstance(value, list):
+                list_values = value
+            if isinstance(value, str):
+                list_values = [v.strip() for v in value.split(",")]
+                if (
+                    is_validation and any(not v for v in list_values)
+                ):
+                    log_and_raise = False
+                    if action_name == "replace" and len(list_values) > 1:
+                        log_and_raise = True
+                    elif action_name != "replace":
+                        log_and_raise = True
+
+                    if log_and_raise:
+                        err_msg = (
+                            f"Static field '{field_name}' "
+                            "can not have empty comma separated values."
+                        )
+                        raise NetskopeException(err_msg)
+                if is_validation and static_input_len_validation and len(list_values) > 1:
+                    err_msg = (
+                        f"Static field '{field_name}'"
+                        "can not have multiple comma separated values."
+                    )
+                    raise NetskopeException(err_msg)
+            return list_values
+
+        tags = params.get("tags") or ""
+        tag_action = params.get("tag_device_action") or "append"
+
+        skip_tag_validation = isinstance(tags, str) and tags.startswith("$")
+        tags = convert_to_list(
+            action_name=tag_action,
+            value=tags,
+            field_name="Tags",
+            is_validation=is_validation
+        )
+
+        device_id = params.get("device_id") or ""
+        skip_device_id_validation = isinstance(device_id, str) and device_id.startswith("$")
+        convert_to_list(
+            value=device_id,
+            static_input_len_validation=True,
+            field_name="Netskope Device UID",
+            is_validation=is_validation
+        )
+
+        device_user_key = params.get("device_user_key") or ""
+        skip_device_user_key_validation = isinstance(device_user_key, str) and device_user_key.startswith("$")
+        device_user_key = convert_to_list(
+            value=device_user_key,
+            field_name="User Key",
+            is_validation=is_validation
+        )
+
+        if isinstance(tag_action, str) and tag_action.startswith("$"):
+            err_msg = (
+                "Select Tag Action "
+                "from Static field dropdown only."
+            )
+            self.logger.error(f"{self.log_prefix}: {err_msg}")
+            raise NetskopeException(err_msg)
+        if tag_action not in ["append", "remove", "replace"]:
+            err_msg = (
+                "Invalid value for Tag Action provided. "
+                "It must be either 'Add', 'Remove', or 'Replace'."
+            )
+            self.logger.error(f"{self.log_prefix}: {err_msg}")
+            raise NetskopeException(err_msg)
+        if not tags and not skip_tag_validation and tag_action in ["append", "remove"]:
+            err_msg = (
+                f"Invalid value for tags provided. Tags cannot be empty for "
+                f"'{tag_action}' action."
+            )
+            self.logger.error(f"{self.log_prefix}: {err_msg}")
+            raise NetskopeException(err_msg)
+
+        if not skip_tag_validation and not is_execute:
+            for tag in tags:
+                if not re.match(REGEX_TAG, tag):
+                    err_msg = (
+                        "Invalid value for Tags provided. "
+                        "Tag name must contain only alphanumeric characters, hyphens, and spaces."
+                    )
+                    self.logger.error(f"{self.log_prefix}: {err_msg}")
+                    raise NetskopeException(err_msg)
+                if len(tag) > TAG_DEVICE_TAG_LENGTH:
+                    err_msg = (
+                        "Invalid value for Tags provided. "
+                        "Each tag length can not exceed "
+                        f"{TAG_DEVICE_TAG_LENGTH} characters."
+                    )
+                    self.logger.error(f"{self.log_prefix}: {err_msg}")
+                    raise NetskopeException(err_msg)
+
+        if (not device_id and not device_user_key) and not (
+            skip_device_id_validation or skip_device_user_key_validation
+        ):
+            err_msg = (
+                "Invalid value for Netskope Device UID/User Key provided. "
+                "Provide either Netskope Device UID or User Key."
+            )
+            self.logger.error(f"{self.log_prefix}: {err_msg}")
+            raise NetskopeException(err_msg)
+
+        return tags, device_id, device_user_key, tag_action
+
     def revert_action(self, action: Action):
         """Revert the action.
 
@@ -3871,6 +4717,353 @@ class NetskopePlugin(PluginBase):
                 details=str(traceback.format_exc()),
             )
             raise NetskopeException(error_message)
+
+    def _bulk_add_remove_tag_device(self, actions: List[Action], action_label: str) -> List[str]:
+        """Tag devices in bulk.
+
+        Args:
+            actions (List[Action]): List of actions.
+            action_label (str): Action label.
+        
+        Returns:
+            List[str]: List of failed action IDs.
+        """
+
+        try:
+            failed_action_ids = []
+            tag_groups = {}
+            tag_cache = self._fetch_all_tags()
+            action_value = None
+            for action_dict in actions:
+                action_id, action = action_dict.get("id"), action_dict.get("params")
+                try:
+                    (
+                        tags,
+                        device_id,
+                        device_user_key,
+                        cci_tag_action,
+                    ) = self._process_params_for_tag_device_action(
+                        action.parameters, True
+                    )
+
+                    user_keys = device_user_key
+                    action_value = "Add" if cci_tag_action == "append" else "Remove"
+                    if isinstance(device_user_key, str):
+                        user_keys = [device_user_key] if device_user_key else []
+                    elif not isinstance(device_user_key, list):
+                        user_keys = []
+
+                    unique_user_keys = set()
+                    for uk in user_keys:
+                        if uk:
+                            unique_user_keys.add(uk)
+
+                    if not unique_user_keys or not device_id:
+                        failed_action_ids.append(action_id)
+                        continue
+
+                    for user_key in unique_user_keys:
+                        device = {"nsdeviceuid": device_id, "userkey": user_key}
+
+                        for tag in tags:
+                            tag_key = (tag, cci_tag_action)
+                            if tag_key not in tag_groups:
+                                tag_groups[tag_key] = {
+                                    'devices': [],
+                                    'action_id_to_devices': {}
+                                }
+
+                            tag_groups[tag_key]['devices'].append(device)
+                            if action_id not in tag_groups[tag_key][
+                                'action_id_to_devices'
+                            ]:
+                                tag_groups[tag_key][
+                                    'action_id_to_devices'
+                                ][action_id] = []
+                            tag_groups[tag_key][
+                                'action_id_to_devices'
+                            ][action_id].append(device)
+
+                except Exception as e:
+                    self.logger.error(
+                        f"{self.log_prefix}: Error occurred while processing "
+                        f"action '{action_label}' for record with ID '{action_id}'. "
+                        f"Error: {e}."
+                    )
+                    failed_action_ids.append(action_id)
+            log_msg = ""
+            skipped_records = len(failed_action_ids)
+            if skipped_records > 0:
+                log_msg = (
+                    f" {skipped_records} record(s) will be skipped "
+                    "either due to being invalid or missing "
+                    "'Netskope Device UID' or 'User Key' field values."
+                )
+            self.logger.info(
+                f"{self.log_prefix}: Performing '{action_value}' Tag(s)"
+                f" action on {len(actions)-skipped_records} "
+                f"record(s).{log_msg if log_msg else ''}"
+            )
+            for (tag, cci_tag_action), group_data in tag_groups.items():
+                devices = group_data['devices']
+                action_id_to_devices = group_data['action_id_to_devices']
+
+                try:
+                    tag_ids, tag_cache = self._query_and_create_tags_with_cache(
+                        [tag], action=cci_tag_action, tag_cache=tag_cache
+                    )
+
+                    unique_devices = []
+                    seen_devices = set()
+                    for device in devices:
+                        device_key = (device.get("nsdeviceuid"), device.get("userkey"))
+                        if device_key not in seen_devices:
+                            unique_devices.append(device)
+                            seen_devices.add(device_key)
+
+                    total_batches = (len(unique_devices) + TAG_DEVICE_BATCH_SIZE - 1) // TAG_DEVICE_BATCH_SIZE
+                    for batch_num in range(total_batches):
+                        start_idx = batch_num * TAG_DEVICE_BATCH_SIZE
+                        end_idx = min(start_idx + TAG_DEVICE_BATCH_SIZE, len(unique_devices))
+                        device_batch = unique_devices[start_idx:end_idx]
+                        
+                        batch_action_ids = []
+                        batch_device_keys = set(
+                            (d.get("nsdeviceuid"), d.get("userkey"))
+                            for d in device_batch
+                        )
+                        for action_id, action_devices in action_id_to_devices.items():
+                            for action_device in action_devices:
+                                action_device_key = (
+                                    action_device.get("nsdeviceuid"),
+                                    action_device.get("userkey")
+                                )
+                                if action_device_key in batch_device_keys:
+                                    batch_action_ids.append(action_id)
+                                    break
+                        
+                        try:
+                            self.logger.info(
+                                f"{self.log_prefix}: Processing batch {batch_num + 1}/{total_batches} "
+                                f"of {len(device_batch)} device record(s) for tag '{tag}'."
+                            )
+                            self._tag_devices(tag_ids, device_batch, cci_tag_action)
+                            
+                            self.logger.info(
+                                f"{self.log_prefix}: Successfully {'tagged' if cci_tag_action == 'append' else 'untagged'} "
+                                f"batch {batch_num + 1}/{total_batches} ({len(device_batch)} device record(s)) with tag '{tag}'."
+                            )
+                        
+                        except Exception as batch_e:
+                            self.logger.error(
+                                f"{self.log_prefix}: Failed to {'tag' if cci_tag_action == 'append' else 'untag'} "
+                                f"batch {batch_num + 1}/{total_batches} ({len(device_batch)} device record(s)) with tag '{tag}'. "
+                                f"Error: {batch_e}"
+                            )
+                            failed_action_ids.extend(batch_action_ids)
+
+                except Exception as group_e:
+                    self.logger.error(
+                        f"{self.log_prefix}: Failed to execute action '{action_label}' for tag '{tag}'. "
+                        f"Error: {group_e}"
+                    )
+                    failed_action_ids.extend(list(action_id_to_devices.keys()))
+        except Exception as group_e:
+            failed_action_ids = []
+            self.logger.error(
+                f"{self.log_prefix}: Failed to execute action '{action_label}'. "
+                f"Error: {group_e}"
+            )
+            for action_dict in actions:
+                action_id = action_dict.get("id")
+                failed_action_ids.append(action_id)
+            return failed_action_ids
+
+        return failed_action_ids
+
+    def _bulk_replace_device_tags(
+        self,
+        actions: List[Action],
+        action_label: str
+    ) -> List[str]:
+        """Replace tags on devices in bulk using optimized tag-set grouping.
+
+        This method optimizes API calls by:
+        1. Grouping devices with identical tag sets together
+        2. Batching devices (max 100 per API call)
+        3. Enforcing 5-tag limit per device
+
+        Args:
+            actions (List[Action]): List of actions.
+            action_label (str): Action label.
+
+        Returns:
+            List[str]: List of failed action IDs.
+        """
+        failed_action_ids = []
+        device_to_tags = {}
+        tag_cache = self._fetch_all_tags()
+        for action_dict in actions:
+            action_id = action_dict.get("id")
+            action = action_dict.get("params")
+            try:
+                (
+                    tags,
+                    device_id,
+                    device_user_key,
+                    _,
+                ) = self._process_params_for_tag_device_action(
+                    action.parameters, True
+                )
+
+                user_keys = device_user_key
+                if isinstance(device_user_key, str):
+                    user_keys = [device_user_key] if device_user_key else []
+                elif not isinstance(device_user_key, list):
+                    user_keys = []
+
+                unique_user_keys = set()
+                for uk in user_keys:
+                    if uk:
+                        unique_user_keys.add(uk)
+
+                if not unique_user_keys or not device_id:
+                    failed_action_ids.append(action_id)
+                    continue
+
+                for user_key in unique_user_keys:
+                    device_key = (device_id, user_key)
+                    if device_key not in device_to_tags:
+                        device_to_tags[device_key] = {
+                            'tags': set(),
+                            'action_ids': set()
+                        }
+                    device_to_tags[device_key]['tags'].update(tags)
+                    device_to_tags[device_key]['action_ids'].add(action_id)
+
+            except Exception as e:
+                self.logger.error(
+                    f"{self.log_prefix}: Error occurred while processing "
+                    f"action '{action_label}' for record with ID '{action_id}'. "
+                    f"Error: {e}."
+                )
+                failed_action_ids.append(action_id)
+        log_msg = ""
+        skipped_records = len(failed_action_ids)
+        if skipped_records > 0:
+            log_msg = (
+                f" {skipped_records} record(s) will be skipped "
+                "either due to being invalid or missing "
+                "'Netskope Device UID' or 'User Key' field values."
+            )
+        self.logger.info(
+            f"{self.log_prefix}: Performing 'Replace' Tag(s) "
+            f"action on {len(actions)-skipped_records} "
+            f"record(s).{log_msg if log_msg else ''}"
+        )
+
+        tag_set_groups = {}
+
+        for (device_id, user_key), group_data in device_to_tags.items():
+            tags = sorted(list(group_data['tags']))  # Sort for consistent grouping
+            action_ids = group_data['action_ids']
+
+            # 5-tag limit
+            if len(tags) > MAX_TAGS_PER_DEVICE:
+                skipped_tags = tags[MAX_TAGS_PER_DEVICE:]
+                tags = tags[:MAX_TAGS_PER_DEVICE]
+                self.logger.info(
+                    f"{self.log_prefix}: Device '{device_id}' (userkey: "
+                    f"'{user_key}') has more than {MAX_TAGS_PER_DEVICE} tags. "
+                    f"Only the first {MAX_TAGS_PER_DEVICE} sorted tags will be "
+                    f"applied: {tags}. Skipped tags: {skipped_tags}"
+                )
+
+            tag_set_key = tuple(tags)
+            if tag_set_key not in tag_set_groups:
+                tag_set_groups[tag_set_key] = {
+                    'devices': [],
+                    'action_ids': set()
+                }
+
+            device = {"nsdeviceuid": device_id, "userkey": user_key}
+            tag_set_groups[tag_set_key]['devices'].append(device)
+            tag_set_groups[tag_set_key]['action_ids'].update(action_ids)
+
+        self.logger.debug(
+            f"{self.log_prefix}: Grouped {len(device_to_tags)} device record(s) into "
+            f"{len(tag_set_groups)} tag set group(s)."
+        )
+
+        for tags_tuple, group_data in tag_set_groups.items():
+            tags = list(tags_tuple)
+            devices = group_data['devices']
+            action_ids = list(group_data['action_ids'])
+
+            try:
+                tag_ids, tag_cache = self._query_and_create_tags_with_cache(
+                    tags, action="replace", tag_cache=tag_cache
+                )
+
+                # Batch TAG_DEVICE_BATCH_SIZE per API call)
+                total_batches = (
+                    (len(devices) + TAG_DEVICE_BATCH_SIZE - 1) // TAG_DEVICE_BATCH_SIZE
+                )
+
+                self.logger.info(
+                    f"{self.log_prefix}: Replacing tags {tags} on "
+                    f"{len(devices)} device record(s) in {total_batches} batch(es)."
+                )
+
+                for batch_num in range(total_batches):
+                    start_idx = batch_num * TAG_DEVICE_BATCH_SIZE
+                    end_idx = min(
+                        start_idx + TAG_DEVICE_BATCH_SIZE, len(devices)
+                    )
+                    device_batch = devices[start_idx:end_idx]
+
+                    try:
+                        self.logger.info(
+                            f"{self.log_prefix}: Processing batch "
+                            f"{batch_num + 1}/{total_batches} with "
+                            f"{len(device_batch)} device records(s) for tags {tags}."
+                        )
+
+                        self._replace_device_tags(tag_ids, device_batch)
+
+                        self.logger.info(
+                            f"{self.log_prefix}: Successfully replaced tags "
+                            f"on batch {batch_num + 1}/{total_batches} "
+                            f"({len(device_batch)} device records) with tags {tags}."
+                        )
+
+                    except Exception as batch_e:
+                        self.logger.error(
+                            message=(
+                                f"{self.log_prefix}: Failed to replace tags on "
+                                f"batch {batch_num + 1}/{total_batches} "
+                                f"({len(device_batch)} records). Error: {batch_e}"
+                            ),
+                            details=str(traceback.format_exc()),
+                        )
+                        batch_device_keys = set(
+                            (d.get("nsdeviceuid"), d.get("userkey"))
+                            for d in device_batch
+                        )
+                        for device_key, dev_data in device_to_tags.items():
+                            if device_key in batch_device_keys:
+                                failed_action_ids.extend(
+                                    list(dev_data['action_ids'])
+                                )
+
+            except Exception as group_e:
+                self.logger.error(
+                    f"{self.log_prefix}: Failed to process tag set group "
+                    f"with tags {tags}. Error: {group_e}"
+                )
+                failed_action_ids.extend(action_ids)
+
+        return failed_action_ids
 
     def execute_action(self, action: Action):
         """Execute action on the user.
@@ -4351,6 +5544,33 @@ class NetskopePlugin(PluginBase):
                 message=f"Successfully {log_msg_add_remove} applications.",
                 failed_action_ids=failed_action_ids
             )
+        elif first_action.value == "tag_device":
+            cci_tag_action = first_action.parameters.get(
+                "tag_device_action", "append"
+            )
+            if cci_tag_action == "replace":
+                # Use device-to-tags mapping for replace action
+                failed_action_ids = self._bulk_replace_device_tags(
+                    actions, action_label
+                )
+                return ActionResult(
+                    success=True,
+                    message="Successfully replaced tags on devices.",
+                    failed_action_ids=list(set(failed_action_ids)),
+                )
+            else:
+                # Use tag-to-devices mapping for add/remove actions
+                log_msg_add_remove = (
+                    "tagged" if cci_tag_action == "append" else "untagged"
+                )
+                failed_action_ids = self._bulk_add_remove_tag_device(
+                    actions, action_label
+                )
+                return ActionResult(
+                    success=True,
+                    message=f"Successfully {log_msg_add_remove} devices.",
+                    failed_action_ids=list(set(failed_action_ids)),
+                )
         elif first_action.value == "app_instance":
             bulk_app_instance_payload = {
                 "update": [],

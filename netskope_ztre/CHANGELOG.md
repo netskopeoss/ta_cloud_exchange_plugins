@@ -1,3 +1,11 @@
+# 1.6.0
+## Added
+- Added support for 'Tag/Untag Device' action on Netskope.
+- Added handling to split and store comma separated UBA user records.
+- Added support to pull Netskope Device tags in CE.
+## Fixed
+- Fixed an issue where the plugin sends empty dict if the expected fields are not found in API response.
+
 # 1.5.1
 ## Added
 - Added support for partial failure in bulk action.

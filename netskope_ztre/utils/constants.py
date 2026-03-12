@@ -1,4 +1,35 @@
-"""Netskope CRE plugin Constants."""
+"""
+BSD 3-Clause License
+
+Copyright (c) 2021, Netskope OSS
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its
+   contributors may be used to endorse or promote products derived from
+   this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+Netskope CRE plugin Constants."""
 
 MAX_RETRY_COUNT = 4
 DEFAULT_WAIT_TIME = 60
@@ -11,15 +42,21 @@ REGEX_HOST = (
     r"^(?:(?:25[0-5]|(2[0-4]|1\d|[1-9]|)\d)\.){3}(?:25[0-5]|(?:2[0-4]|1\d|[1-9]|)\d)$"
 )
 REGEX_EMAIL = r"[^@]+@[^@]+\.[^@]+"
+REGEX_TAG = r"^[a-zA-Z0-9- ]*$"
 MODULE_NAME = "CRE"
 PLUGIN = "Netskope Risk Exchange"
-PLUGIN_VERSION = "1.5.1"
+PLUGIN_VERSION = "1.6.0"
 URLS = {
     "V2_PRIVATE_APP": "/api/v2/steering/apps/private",
     "V2_PRIVATE_APP_PATCH": "/api/v2/steering/apps/private/{}",
     "V2_PUBLISHER": "/api/v2/infrastructure/publishers",
     "V2_CCI_TAG_CREATE": "/api/v2/services/cci/tags",
     "V2_CCI_TAG_UPDATE": "/api/v2/services/cci/tags/{}",
+    "V2_DEVICE_GET_TAGS": "/api/v2/devices/device/tags/gettags",
+    "V2_DEVICE_TAG": "/api/v2/devices/device/tags",
+    "V2_DEVICE_BULK_ADD_TAGS": "/api/v2/devices/device/tags/bulkadd",
+    "V2_DEVICE_BULK_REMOVE_TAGS": "/api/v2/devices/device/tags/bulkremove",
+    "V2_DEVICE_BULK_REPLACE_TAGS": "/api/v2/devices/device/tags/bulkreplace",
     "V1_APP_INSTANCE": "/api/v1/app_instances",
     "V2_SCIM_GROUPS": "/api/v2/scim/Groups",
     "V2_SCIM_USERS": "/api/v2/scim/Users",
@@ -44,6 +81,10 @@ ADD_REMOVE_USER_BATCH_SIZE = 5000
 APP_INSTANCE_BATCH_SIZE = 500
 TAG_APP_BATCH_SIZE = 100
 TAG_APP_TAG_LENGTH = 75
+TAG_DEVICE_TAG_LENGTH = 80
+TAG_DEVICE_BATCH_SIZE = 100
+MAX_TAGS_PER_DEVICE = 5
+TAG_CACHE_PAGE_SIZE = 10
 DEVICE_FIELD_MAPPING = {
     "Device ID": {"key": "device_id"},
     "Hostname": {"key": "host_info.hostname"},

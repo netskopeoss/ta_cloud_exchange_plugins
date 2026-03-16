@@ -34,6 +34,7 @@ Helper functions for STIX/TAXII plugin."""
 from datetime import datetime
 from typing import Dict, Any, Union
 from netskope.common.utils import add_user_agent
+import pytz
 from .constants import (
     STIX_VERSION_1,
     USER_AGENT_FORMAT,
@@ -53,16 +54,27 @@ class STIXTAXIIException(Exception):
 
 
 def get_configuration_parameters(
-    configuration: Dict[str, Any], is_validation: bool = False
+    configuration: Dict[str, Any],
+    is_validation: bool = False,
+    keys: list = []
 ):
     """
     Get configuration parameters.
 
     Args:
         configuration (Dict[str, Any]): Configuration dictionary.
+        is_validation (bool): Whether this is for validation.
+        keys (list, optional): List of specific keys to return. If provided,
+            returns tuple of only those values in the order specified.
 
     Returns:
+        tuple: Tuple of configuration parameters.
+            If keys is specified, returns only those values.
 
+    Available keys:
+        version, discovery_url, username, password, collection_names,
+        pagination_method, days, delay, type_to_pull, severity,
+        reputation, batch_size, retraction_interval
     """
     version = configuration.get(
         "version", STIX_VERSION_1 if not is_validation else ""
@@ -75,7 +87,7 @@ def get_configuration_parameters(
         "pagination_method", "next" if not is_validation else ""
     ).strip()
     days = configuration.get("days", 7 if not is_validation else None)
-    delay = configuration.get("delay", 0) or 0
+    delay = configuration.get("delay", 0 if not is_validation else None)
     type_to_pull = configuration.get(
         "type",
         (
@@ -88,6 +100,32 @@ def get_configuration_parameters(
     reputation = configuration.get(
         "reputation", 5 if not is_validation else None
     )
+    batch_size = configuration.get(
+        "batch_size", 1000 if not is_validation else None
+    )
+    retraction_interval = configuration.get(
+        "retraction_interval",
+        0 if not is_validation else None
+    )
+
+    all_params = {
+        "version": version,
+        "discovery_url": discovery_url,
+        "username": username,
+        "password": password,
+        "collection_names": collection_names,
+        "pagination_method": pagination_method,
+        "days": days,
+        "delay": delay,
+        "type_to_pull": type_to_pull,
+        "severity": severity,
+        "reputation": reputation,
+        "batch_size": batch_size,
+        "retraction_interval": retraction_interval,
+    }
+
+    if keys:
+        return tuple(all_params[key] for key in keys)
 
     return (
         version,
@@ -101,13 +139,33 @@ def get_configuration_parameters(
         type_to_pull,
         severity,
         reputation,
+        batch_size,
+        retraction_interval,
     )
 
+def ensure_utc_aware(dt) -> datetime:
+    """Ensure datetime is UTC-aware (timezone-aware, converted to UTC).
+
+    Args:
+        dt (datetime): A datetime object, either naive or aware.
+
+    Returns:
+        datetime: A timezone-aware datetime object in UTC.
+    """
+    if dt is None:
+        return pytz.utc.localize(datetime.now())
+    # If dt is timezone-naive, assume UTC. If it is already timezone-aware,
+    # normalize it to UTC for consistent comparisons and serialization.
+    if dt.tzinfo is None or dt.tzinfo.utcoffset(dt) is None:
+        return pytz.utc.localize(dt)
+    # If dt is timezone aware, ensure it is converted to UTC.
+    return dt.astimezone(pytz.utc)
 
 def str_to_datetime(
     string: str,
     date_format: str = DATE_FORMAT_STRING,
     replace_dot: bool = True,
+    return_now_on_error: bool = True,
 ) -> datetime:
     """Convert ISO formatted string to datetime object.
 
@@ -122,8 +180,7 @@ def str_to_datetime(
             string.replace(".", "") if replace_dot else string, date_format
         )
     except ValueError:
-        return datetime.now()
-
+        return datetime.now() if return_now_on_error else None
 
 def add_ce_user_agent(
     headers: Union[Dict, None] = None,

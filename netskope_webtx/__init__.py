@@ -1,1 +1,0 @@
-"""Netskope WebTx Plugin Package."""

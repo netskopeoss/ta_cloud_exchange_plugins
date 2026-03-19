@@ -151,7 +151,8 @@ class MicrosoftDefenderEndpointPluginHelper(object):
                     verify=verify,
                     proxies=proxies,
                     json=json,
-                    files=files
+                    files=files,
+                    timeout=300
                 )
                 status_code = response.status_code
                 self.logger.debug(
@@ -185,7 +186,6 @@ class MicrosoftDefenderEndpointPluginHelper(object):
                         logger_msg=logger_msg,
                         regenerate_auth_token=False,
                     )
-
                 elif (
                     status_code == 429
                     or 500 <= status_code <= 600
@@ -240,6 +240,16 @@ class MicrosoftDefenderEndpointPluginHelper(object):
                         if is_handle_error_required
                         else response
                     )
+        except requests.exceptions.Timeout as error:
+            err_msg = (
+                f"Request timed out while {logger_msg}. The API did not "
+                "respond within the expected time (300 seconds)."
+            )
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg} Error: {error}",
+                details=str(traceback.format_exc()),
+            )
+            raise MicrosoftDefenderEndpointPluginException(err_msg)
         except requests.exceptions.ProxyError as error:
             err_msg = (
                 f"Proxy error occurred while {logger_msg}. Verify the "

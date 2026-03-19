@@ -1,9 +1,9 @@
 {
   "name": "Microsoft Defender for Endpoint",
   "id": "microsoft_defender_endpoint_ztre",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "module": "CRE",
-  "minimum_version": "5.1.0",
+  "minimum_version": "6.0.1",
   "description": "This plugin is used to fetch device data from Assets > Devices and users from Assets > Devices > Select device > Overview > Logged on users page of the Microsoft Defender for Endpoint platform. This plugin supports performing actions such as Isolate device, Undo isolation, Restrict app execution, Remove app restriction, Run antivirus scan, Offboard device and Collect investigation package actions on the devices and doesn't support any action on the users.\n\nNetskope normalization score calculation => RiskLevel Low: 875, RiskLevel Medium: 625, RiskLevel High: 375.\n\nFor RiskLevels 'None' and 'Informational' the normalization score value will be blank.",
   "configuration": [
     {
@@ -71,6 +71,24 @@
       "mandatory": true,
       "default": "",
       "description": "Secret value of Microsoft Entra ID Application."
+    },
+    {
+      "label": "Fetch User Details from Alert Evidences",
+      "key": "fetch_user_details",
+      "type": "choice",
+      "choices": [
+          {
+            "key": "Yes",
+            "value": "yes"
+          },
+          {
+            "key": "No",
+            "value": "no"
+          }
+      ],
+      "mandatory": true,
+      "default": "no",
+      "description": "Fetch user details from alert evidences. Note: If 'Yes' is selected, additional API calls will be made to '/api/alerts' endpoint to fetch device user details."
     }
   ]
 }

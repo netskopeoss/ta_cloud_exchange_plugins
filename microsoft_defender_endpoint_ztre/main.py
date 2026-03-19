@@ -35,20 +35,18 @@ CRE Microsoft Defender for Endpoint Plugin.
 import datetime
 import json
 import jwt
+import time
 import traceback
 import requests
 from typing import List
 from netskope.integrations.crev2.utils import get_latest_values
-from netskope.integrations.crev2.models import (
-    Action,
-    ActionWithoutParams
-)
+from netskope.integrations.crev2.models import Action, ActionWithoutParams
 from netskope.integrations.crev2.plugin_base import (
     PluginBase,
     ValidationResult,
     Entity,
     EntityField,
-    EntityFieldType
+    EntityFieldType,
 )
 
 from .utils.constants import (
@@ -56,11 +54,11 @@ from .utils.constants import (
     MODULE_NAME,
     PLATFORM_NAME,
     PLUGIN_VERSION,
-    PAGE_RECORD_SCORE
+    PAGE_RECORD_SCORE,
 )
 from .utils.helper import (
     MicrosoftDefenderEndpointPluginException,
-    MicrosoftDefenderEndpointPluginHelper
+    MicrosoftDefenderEndpointPluginHelper,
 )
 
 
@@ -90,7 +88,7 @@ class MicrosoftDefenderEndpointPlugin(PluginBase):
             log_prefix=self.log_prefix,
             plugin_name=self.plugin_name,
             plugin_version=self.plugin_version,
-            configuration=self.configuration
+            configuration=self.configuration,
         )
 
     def _get_plugin_info(self) -> tuple:
@@ -120,7 +118,7 @@ class MicrosoftDefenderEndpointPlugin(PluginBase):
         self,
         response=requests.models.Response,
         action_label=str,
-        logger_msg=str
+        logger_msg=str,
     ):
         """Handle action response.
 
@@ -135,12 +133,17 @@ class MicrosoftDefenderEndpointPlugin(PluginBase):
             )
             return
         elif response.status_code == 400:
-            resp_json = self.defender_endpoint_helper.parse_response(response=response)
+            resp_json = self.defender_endpoint_helper.parse_response(
+                response=response
+            )
             api_err_msg = resp_json.get(
                 "error", "No error details found in API response."
             ).get("message", "No error message found in API response.")
             msg = f"Unexpected error occurred while executing '{action_label}' action."
-            if resp_json.get("error", {}).get("code", "") == "OsPlatformNotSupported":
+            if (
+                resp_json.get("error", {}).get("code", "")
+                == "OsPlatformNotSupported"
+            ):
                 msg = (
                     f"This error may occur if device OS is not "
                     f"supported '{action_label}' action."
@@ -164,9 +167,7 @@ class MicrosoftDefenderEndpointPlugin(PluginBase):
                 f"action for {logger_msg}. This error may occur if device "
                 f"does not exist on Microsoft Defender."
             )
-            self.logger.error(
-                f"{self.log_prefix}: {raise_msg}"
-            )
+            self.logger.error(f"{self.log_prefix}: {raise_msg}")
             raise MicrosoftDefenderEndpointPluginException(raise_msg)
 
         self.defender_endpoint_helper.handle_error(
@@ -182,13 +183,15 @@ class MicrosoftDefenderEndpointPlugin(PluginBase):
         logger_msg: str,
         isolation_type: str = None,
         scan_type: str = None,
-        headers: dict = {}
+        headers: dict = {},
     ):
         self.logger.info(
             f"{self.log_prefix}: Performing '{action_label}' on {logger_msg}."
         )
 
-        base_url = self.configuration.get("base_url", DEFAULT_BASE_URL).strip("/")
+        base_url = self.configuration.get("base_url", DEFAULT_BASE_URL).strip(
+            "/"
+        )
         url = f"{base_url}/api/machines/{machine_id}/{action_endpoint}"
 
         data = {
@@ -213,9 +216,7 @@ class MicrosoftDefenderEndpointPlugin(PluginBase):
         )
 
         self._handle_action_response(
-            response=response,
-            action_label=action_label,
-            logger_msg=logger_msg
+            response=response, action_label=action_label, logger_msg=logger_msg
         )
 
     def get_actions(self) -> List[ActionWithoutParams]:
@@ -230,14 +231,27 @@ class MicrosoftDefenderEndpointPlugin(PluginBase):
 
         """
         return [
-            ActionWithoutParams(label="Isolate device", value="isolate_machine"),
-            ActionWithoutParams(label="Undo isolation", value="undo_isolation"),
-            ActionWithoutParams(label="Restrict app execution", value="restrict_app_execution"),
-            ActionWithoutParams(label="Remove app restriction", value="remove_app_restriction"),
-            ActionWithoutParams(label="Run antivirus scan", value="run_antivirus_scan"),
-            ActionWithoutParams(label="Offboard device", value="offboard_machine"),
             ActionWithoutParams(
-                label="Collect investigation package", value="collect_investigation_package"
+                label="Isolate device", value="isolate_machine"
+            ),
+            ActionWithoutParams(
+                label="Undo isolation", value="undo_isolation"
+            ),
+            ActionWithoutParams(
+                label="Restrict app execution", value="restrict_app_execution"
+            ),
+            ActionWithoutParams(
+                label="Remove app restriction", value="remove_app_restriction"
+            ),
+            ActionWithoutParams(
+                label="Run antivirus scan", value="run_antivirus_scan"
+            ),
+            ActionWithoutParams(
+                label="Offboard device", value="offboard_machine"
+            ),
+            ActionWithoutParams(
+                label="Collect investigation package",
+                value="collect_investigation_package",
             ),
             ActionWithoutParams(label="No actions", value="generate"),
         ]
@@ -284,7 +298,7 @@ class MicrosoftDefenderEndpointPlugin(PluginBase):
                     "default": "Isolate device action triggered by Netskope CE.",
                     "mandatory": True,
                     "description": "Add comment associated with the action.",
-                }
+                },
             ]
 
         elif action.value == "undo_isolation":
@@ -304,7 +318,7 @@ class MicrosoftDefenderEndpointPlugin(PluginBase):
                     "default": "Undo isolation action triggered by Netskope CE.",
                     "mandatory": True,
                     "description": "Add comment associated with the action.",
-                }
+                },
             ]
 
         elif action.value == "restrict_app_execution":
@@ -324,7 +338,7 @@ class MicrosoftDefenderEndpointPlugin(PluginBase):
                     "default": "Restrict app execution action triggered by Netskope CE.",
                     "mandatory": True,
                     "description": "Add comment associated with the action.",
-                }
+                },
             ]
 
         elif action.value == "remove_app_restriction":
@@ -344,7 +358,7 @@ class MicrosoftDefenderEndpointPlugin(PluginBase):
                     "default": "Remove app restriction action triggered by Netskope CE.",
                     "mandatory": True,
                     "description": "Add comment associated with the action.",
-                }
+                },
             ]
 
         elif action.value == "run_antivirus_scan":
@@ -376,7 +390,7 @@ class MicrosoftDefenderEndpointPlugin(PluginBase):
                     "default": "Run antivirus scan action triggered by Netskope CE.",
                     "mandatory": True,
                     "description": "Add comment associated with the action.",
-                }
+                },
             ]
 
         elif action.value == "offboard_machine":
@@ -396,7 +410,7 @@ class MicrosoftDefenderEndpointPlugin(PluginBase):
                     "default": "Offboard device action triggered by Netskope CE.",
                     "mandatory": True,
                     "description": "Add comment associated with the action.",
-                }
+                },
             ]
 
         elif action.value == "collect_investigation_package":
@@ -416,8 +430,27 @@ class MicrosoftDefenderEndpointPlugin(PluginBase):
                     "default": "Collect investigation package action triggered by Netskope CE.",
                     "mandatory": True,
                     "description": "Add comment associated with the action.",
-                }
+                },
             ]
+
+    def execute_actions(self, actions):
+        """Execute actions in bulk.
+
+        Args:
+            actions (List[Action]): List of Action objects.
+        """
+        first_action = actions[0]
+        action_label = first_action.label
+        if first_action.value == "generate":
+            self.logger.info(
+                f"{self.log_prefix}: Successfully performed action "
+                f"'{action_label}' on {len(actions)} records."
+                "Note: No processing will be done from plugin for "
+                f"the '{action_label}' action."
+            )
+            return
+        else:
+            raise NotImplementedError
 
     def execute_action(self, action: Action):
         """Execute action on the user.
@@ -485,9 +518,7 @@ class MicrosoftDefenderEndpointPlugin(PluginBase):
 
         logger_msg = f"executing '{action_label}' action"
         headers = self.defender_endpoint_helper.get_auth_json(
-            self.configuration,
-            self.proxy,
-            logger_msg
+            self.configuration, self.proxy, logger_msg
         )
         headers = self.get_headers(headers)
 
@@ -503,7 +534,7 @@ class MicrosoftDefenderEndpointPlugin(PluginBase):
                     comment=comment,
                     logger_msg=log_msg,
                     isolation_type=isolation_type,
-                    headers=headers
+                    headers=headers,
                 )
             except Exception as err:
                 err_msg = (
@@ -524,7 +555,7 @@ class MicrosoftDefenderEndpointPlugin(PluginBase):
                     action_endpoint="unisolate",
                     comment=comment,
                     logger_msg=log_msg,
-                    headers=headers
+                    headers=headers,
                 )
             except Exception as err:
                 err_msg = (
@@ -545,7 +576,7 @@ class MicrosoftDefenderEndpointPlugin(PluginBase):
                     action_endpoint="restrictCodeExecution",
                     comment=comment,
                     logger_msg=log_msg,
-                    headers=headers
+                    headers=headers,
                 )
             except Exception as err:
                 err_msg = (
@@ -566,7 +597,7 @@ class MicrosoftDefenderEndpointPlugin(PluginBase):
                     action_endpoint="unrestrictCodeExecution",
                     comment=comment,
                     logger_msg=log_msg,
-                    headers=headers
+                    headers=headers,
                 )
             except Exception as err:
                 err_msg = (
@@ -590,7 +621,7 @@ class MicrosoftDefenderEndpointPlugin(PluginBase):
                     comment=comment,
                     logger_msg=log_msg,
                     scan_type=scan_type,
-                    headers=headers
+                    headers=headers,
                 )
             except Exception as err:
                 err_msg = (
@@ -611,7 +642,7 @@ class MicrosoftDefenderEndpointPlugin(PluginBase):
                     action_endpoint="offboard",
                     comment=comment,
                     logger_msg=log_msg,
-                    headers=headers
+                    headers=headers,
                 )
             except Exception as err:
                 err_msg = (
@@ -632,7 +663,7 @@ class MicrosoftDefenderEndpointPlugin(PluginBase):
                     action_endpoint="collectInvestigationPackage",
                     comment=comment,
                     logger_msg=log_msg,
-                    headers=headers
+                    headers=headers,
                 )
             except Exception as err:
                 err_msg = (
@@ -658,7 +689,7 @@ class MicrosoftDefenderEndpointPlugin(PluginBase):
                 "run_antivirus_scan",
                 "offboard_machine",
                 "collect_investigation_package",
-                "generate"
+                "generate",
             ]:
                 return ValidationResult(
                     success=False, message="Unsupported action provided."
@@ -687,21 +718,17 @@ class MicrosoftDefenderEndpointPlugin(PluginBase):
                         " Please select Isolation Type from Static Field dropdown only."
                     )
                     self.logger.error(f"{self.log_prefix}: {err_msg}")
-                    return ValidationResult(
-                        success=False, message=err_msg
-                    )
+                    return ValidationResult(success=False, message=err_msg)
                 elif action_params.get("isolation_type", "") not in [
                     "Full",
-                    "Selective"
+                    "Selective",
                 ]:
                     err_msg = (
                         "Invalid Isolation Type provided. "
                         "Supported isolation types are: 'Full', 'Selective'"
                     )
                     self.logger.error(f"{self.log_prefix}: {err_msg}")
-                    return ValidationResult(
-                        success=False, message=err_msg
-                    )
+                    return ValidationResult(success=False, message=err_msg)
 
             if action_value == "run_antivirus_scan":
                 if "$" in action_params.get("scan_type", ""):
@@ -710,21 +737,17 @@ class MicrosoftDefenderEndpointPlugin(PluginBase):
                         " Please select Scan Type from Static Field dropdown only."
                     )
                     self.logger.error(f"{self.log_prefix}: {err_msg}")
-                    return ValidationResult(
-                        success=False, message=err_msg
-                    )
+                    return ValidationResult(success=False, message=err_msg)
                 elif action_params.get("scan_type", "") not in [
                     "Quick",
-                    "Full"
+                    "Full",
                 ]:
                     err_msg = (
                         "Invalid Scan Type provided. "
                         "Supported scan types are: 'Quick', 'Full'"
                     )
                     self.logger.error(f"{self.log_prefix}: {err_msg}")
-                    return ValidationResult(
-                        success=False, message=err_msg
-                    )
+                    return ValidationResult(success=False, message=err_msg)
 
             comment = action_params.get("comment", "").strip()
             if not comment:
@@ -746,7 +769,9 @@ class MicrosoftDefenderEndpointPlugin(PluginBase):
                 ),
                 details=str(traceback.format_exc()),
             )
-            raise MicrosoftDefenderEndpointPluginException(traceback.format_exc())
+            raise MicrosoftDefenderEndpointPluginException(
+                traceback.format_exc()
+            )
 
     def get_headers(self, headers):
         """Get headers with additional fields.
@@ -876,7 +901,89 @@ class MicrosoftDefenderEndpointPlugin(PluginBase):
             )
             return ValidationResult(success=False, message=err_msg)
 
+        # Validate required fields in entity mappings
+        is_valid, err_msg = self._validate_required_field_in_entity_mappings(configuration)
+        if not is_valid:
+            self.logger.error(
+                "{}: Validation error occurred. Error: {}".format(
+                    self.log_prefix, err_msg
+                )
+            )
+            return ValidationResult(success=False, message=err_msg)
+
         return self.validate_auth_params(configuration)
+
+    def _validate_required_field_in_entity_mappings(self, configuration):
+        """Validate if required fields are present in entity mappings."""
+
+        mapped_entities = self.mappedEntities if hasattr(self, "mappedEntities") else []
+
+        required_user_fields = ["User ID"]
+        required_device_fields = []
+
+        fetch_user_details = configuration.get("fetch_user_details", "no")
+        if fetch_user_details == "yes":
+            required_device_fields = ["Computer Name", "Device ID", "User Email"]
+        else:
+            required_device_fields = ["Computer Name", "Device ID"]
+
+        user_mapped_device_entity_field = set()
+        user_mapped_user_entity_field = set()
+
+        missing_device_entity_fields = []
+        missing_user_entity_fields = []
+
+        missing_device_err_msg = ""
+        missing_user_err_msg = ""
+
+        if mapped_entities:
+            for mapped_entity in mapped_entities:
+                if mapped_entity.get("entity") == "Devices":
+                    user_mapped_device_fields = mapped_entity.get("fields", [])
+                    for field in user_mapped_device_fields:
+                        mapped_source_field = field.get("source", "")
+                        if mapped_source_field:
+                            user_mapped_device_entity_field.add(mapped_source_field)
+
+                    # Check if all required fields are present
+                    for field in required_device_fields:
+                        if field not in user_mapped_device_entity_field:
+                            missing_device_entity_fields.append(field)
+
+                    if missing_device_entity_fields:
+                        formatted_fields = (
+                            ", ".join(f"'{field}'" for field in missing_device_entity_fields)
+                        )
+                        missing_device_err_msg = (
+                            f"Missing required fields {formatted_fields}"
+                            " in entity mappings for Devices."
+                        )
+
+                if mapped_entity.get("entity") == "Users":
+                    user_mapped_user_fields = mapped_entity.get("fields", [])
+                    for field in user_mapped_user_fields:
+                        mapped_source_field = field.get("source", "")
+                        if mapped_source_field:
+                            user_mapped_user_entity_field.add(mapped_source_field)
+
+                    # Check if all required fields are present
+                    for field in required_user_fields:
+                        if field not in user_mapped_user_entity_field:
+                            missing_user_entity_fields.append(field)
+
+                    if missing_user_entity_fields:
+                        formatted_fields = (
+                            ", ".join(f"'{field}'" for field in missing_user_entity_fields)
+                        )
+                        missing_user_err_msg = (
+                            f"Missing required fields {formatted_fields}"
+                            " in entity mappings for Users."
+                        )
+
+        if missing_device_err_msg or missing_user_err_msg:
+            return False, f"{missing_device_err_msg}. {missing_user_err_msg}"
+
+        return True, ""
 
     def validate_auth_params(self, configuration):
         """Validate the authentication params with Microsoft Defender Endpoint platform.
@@ -895,10 +1002,7 @@ class MicrosoftDefenderEndpointPlugin(PluginBase):
             isValid = False
             logger_msg = "validating authentication credentials"
             auth_token = self.defender_endpoint_helper.get_auth_json(
-                configuration,
-                self.proxy,
-                logger_msg,
-                True
+                configuration, self.proxy, logger_msg, True
             )
 
             alg = jwt.get_unverified_header(auth_token)["alg"]
@@ -908,7 +1012,26 @@ class MicrosoftDefenderEndpointPlugin(PluginBase):
                 options={"verify_signature": False},
             )
             roles = set(decoded_auth_token.get("roles", []))
-            if ("Machine.ReadWrite.All" in roles or "Machine.Read.All" in roles) and "User.Read.All" in roles:
+            fetch_user_details = configuration.get("fetch_user_details", "no")
+
+            if (
+                "Machine.ReadWrite.All" in roles or "Machine.Read.All" in roles
+            ) and "User.Read.All" in roles:  # noqa
+                if (
+                    fetch_user_details == "yes"
+                    and "Alert.Read.All" not in roles
+                ):
+                    err_msg = (
+                        "'Alert.Read.All' permission is required to "
+                        "fetch user details from alerts evidences when "
+                        "'Fetch User Details from Alerts Evidences' "
+                        "is set to 'Yes'."
+                    )
+                    self.logger.error(
+                        message=f"{self.log_prefix}: {err_msg}",
+                        details=str(traceback.format_exc()),
+                    )
+                    raise MicrosoftDefenderEndpointPluginException(err_msg)
                 isValid = True
 
             if isValid:
@@ -930,7 +1053,7 @@ class MicrosoftDefenderEndpointPlugin(PluginBase):
                     verify=self.ssl_validation,
                     logger_msg=f"checking connectivity with {PLATFORM_NAME} platform",
                     is_validation=True,
-                    regenerate_auth_token=False
+                    regenerate_auth_token=False,
                 )
 
                 return ValidationResult(
@@ -944,13 +1067,19 @@ class MicrosoftDefenderEndpointPlugin(PluginBase):
             else:
                 err_msg = (
                     "Couldn't find required API permissions. "
-                    "'Machine.Read.All' or 'Machine.ReadWrite.All' and 'User.Read.All'"
-                    " permissions is required."
+                    "'Machine.Read.All' or 'Machine.ReadWrite.All' and "
+                    "'User.Read.All' permissions are required."
                 )
-                self.logger.error(
-                        message=f"{self.log_prefix}: {err_msg}",
-                        details=traceback.format_exc(),
+                if fetch_user_details == "yes":
+                    err_msg += (
+                        " Additionally, 'Alert.Read.All' permission is "
+                        "required when 'Fetch User Details from Alerts "
+                        "Evidences' is set to 'Yes'."
                     )
+                self.logger.error(
+                    message=f"{self.log_prefix}: {err_msg}",
+                    details=traceback.format_exc(),
+                )
                 raise MicrosoftDefenderEndpointPluginException(err_msg)
 
         except MicrosoftDefenderEndpointPluginException as exp:
@@ -973,58 +1102,169 @@ class MicrosoftDefenderEndpointPlugin(PluginBase):
                 message=f"{err_msg} Check logs for more details.",
             )
 
-    def _fetch_users(
-        self,
-        device_id,
-        base_url,
-        headers
-    ):
+    def _fetch_users(self, device_id, base_url, headers):
+        """
+        Fetch user(s) associated with a device from Microsoft Defender for Endpoint.
+        
+        Args:
+            device_id (str): The device ID to fetch users for.
+            base_url (str): The base URL for the API.
+            headers (dict): The headers to use for the API request.
+            
+        Returns:
+            list: A list of user dictionaries.
+        """
+        try:
+            self.logger.info(
+                f"{self.log_prefix}: Fetching user(s) associated with device"
+                f" '{device_id}' from {PLATFORM_NAME} platform."
+            )
+            user_list = []
+
+            url = f"{base_url}/api/machines/{device_id}/logonusers"
+            resp_json = self.defender_endpoint_helper.api_helper(
+                url=url,
+                method="GET",
+                headers=headers,
+                proxies=self.proxy,
+                verify=self.ssl_validation,
+                logger_msg=(
+                    f"fetching user(s) associated with device "
+                    f"'{device_id}' from {PLATFORM_NAME}"
+                ),
+            )
+            users = resp_json.get("value", [])
+
+            if users:
+                for user in users:
+                    user_fetched = {
+                        "User ID": user.get("id", ""),
+                        "User Name": user.get("accountName", ""),
+                        "User Domain": user.get("accountDomain", ""),
+                        "First Seen": (
+                            datetime.datetime.strptime(
+                                user.get("firstSeen", ""), "%Y-%m-%dT%H:%M:%SZ"
+                            )
+                        ),
+                        "Computer Name": device_id,
+                    }
+                    user_list.append(user_fetched)
+
+                self.logger.info(
+                    f"{self.log_prefix}: Successfully fetched {len(user_list)}"
+                    f" user(s) associated with device '{device_id}' from {PLATFORM_NAME} platform."
+                )
+            else:
+                self.logger.info(
+                    f"{self.log_prefix}: No user(s) associated with "
+                    f"device '{device_id}' are fetched from {PLATFORM_NAME} platform."
+                )
+            return user_list
+        except MicrosoftDefenderEndpointPluginException:
+            raise
+        except Exception:
+            raise
+
+    def _fetch_user_emails_from_alerts(self, base_url, headers):
+        """Fetch user emails from alerts API with evidence expansion.
+
+        Args:
+            base_url (str): Base URL for the API
+            headers (dict): Request headers with authentication
+
+        Returns:
+            dict: Dictionary mapping computer DNS names to user principal names
+        """
         self.logger.info(
-            f"{self.log_prefix}: Fetching user(s) associated with device"
-            f" '{device_id}' from {PLATFORM_NAME} platform."
+            f"{self.log_prefix}: Fetching user email from evidences"
+            f" of alerts from {PLATFORM_NAME} platform."
         )
-        user_list = []
 
-        url = f"{base_url}/api/machines/{device_id}/logonusers"
-        resp_json = self.defender_endpoint_helper.api_helper(
-            url=url,
-            method="GET",
-            headers=headers,
-            proxies=self.proxy,
-            verify=self.ssl_validation,
-            logger_msg=(
-                f"fetching user(s) associated with device "
-                f"'{device_id}' from {PLATFORM_NAME}"
-            )
-        )
-        users = resp_json.get("value", [])
+        device_user_map = {}
+        url = f"{base_url}/api/alerts"
+        page_count = 1
+        skip_count = 0
 
-        if users:
-            for user in users:
-                user_fetched = {
-                    "User ID": user.get("id", ""),
-                    "User Name": user.get("accountName", ""),
-                    "User Domain": user.get("accountDomain", ""),
-                    "First Seen": (
-                        datetime.datetime.strptime(
-                            user.get("firstSeen", ""),
-                            "%Y-%m-%dT%H:%M:%SZ"
-                        )
-                    ),
-                    "Computer Name": device_id
+        try:
+            while True:
+                self.logger.debug(
+                    f"{self.log_prefix}: Fetching evidence from"
+                    f" alerts for page {page_count}."
+                )
+
+                params = {
+                    "$expand": "evidence",
+                    "$top": PAGE_RECORD_SCORE,
+                    "$skip": skip_count,
                 }
-                user_list.append(user_fetched)
+
+                resp_json = self.defender_endpoint_helper.api_helper(
+                    url=url,
+                    method="GET",
+                    headers=headers,
+                    params=params,
+                    proxies=self.proxy,
+                    verify=self.ssl_validation,
+                    logger_msg=(
+                        "fetching evidence from alerts "
+                        f"for page {page_count} from {PLATFORM_NAME}"
+                    ),
+                )
+
+                alerts = resp_json.get("value", [])
+                current_alert_count = len(alerts)
+
+                for alert in alerts:
+                    computer_dns_name = alert.get("computerDnsName", "")
+                    if not computer_dns_name:
+                        continue
+
+                    evidences = alert.get("evidence", [])
+                    for evidence in evidences:
+                        if evidence.get("entityType") == "User":
+                            user_principal_name = evidence.get(
+                                "userPrincipalName", ""
+                            )
+                            if user_principal_name:
+                                if computer_dns_name not in device_user_map:
+                                    device_user_map[computer_dns_name] = set()
+                                device_user_map[computer_dns_name].add(
+                                    user_principal_name
+                                )
+
+                self.logger.debug(
+                    f"{self.log_prefix}: Processed {current_alert_count} alerts in page {page_count}. "
+                    f"Total devices with user emails: {len(device_user_map)}."
+                )
+
+                page_count += 1
+
+                if current_alert_count < int(PAGE_RECORD_SCORE) or not alerts:
+                    break
+
+                skip_count = skip_count + int(PAGE_RECORD_SCORE)
+
+            device_user_map_list = {
+                k: list(v) for k, v in device_user_map.items()
+            }
 
             self.logger.info(
-                f"{self.log_prefix}: Successfully fetched {len(user_list)}"
-                f" user(s) associated with device '{device_id}' from {PLATFORM_NAME} platform."
+                f"{self.log_prefix}: Successfully fetched user email details for "
+                f"{len(device_user_map_list)} device(s) from alert evidences."
             )
-        else:
-            self.logger.info(
-                f"{self.log_prefix}: No user(s) associated with "
-                f"device '{device_id}' are fetched from {PLATFORM_NAME} platform."
+
+            return device_user_map_list
+
+        except Exception as exp:
+            err_msg = (
+                f"Error occurred while fetching user emails from alert"
+                f" evidences. Error: {exp}"
             )
-        return user_list
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg}",
+                details=str(traceback.format_exc()),
+            )
+            return {}
 
     def fetch_records(self, entity: str) -> List:
         """Pull Records from Microsoft Defender Endpoint.
@@ -1036,7 +1276,9 @@ class MicrosoftDefenderEndpointPlugin(PluginBase):
             f"{self.log_prefix}: Fetching records from "
             f"{PLATFORM_NAME} platform."
         )
-        base_url = self.configuration.get("base_url", DEFAULT_BASE_URL).strip("/")
+        base_url = self.configuration.get("base_url", DEFAULT_BASE_URL).strip(
+            "/"
+        )
         url = f"{base_url}/api/machines"
 
         logger_msg = "fetching records"
@@ -1047,21 +1289,29 @@ class MicrosoftDefenderEndpointPlugin(PluginBase):
         entity_name = entity.lower()
 
         headers = self.defender_endpoint_helper.get_auth_json(
-            self.configuration,
-            self.proxy,
-            logger_msg
+            self.configuration, self.proxy, logger_msg
         )
         headers = self.get_headers(headers)
+
+        device_user_email_map = {}
+        fetch_user_details = self.configuration.get("fetch_user_details", "no")
+        if fetch_user_details == "yes":
+            device_user_email_map = self._fetch_user_emails_from_alerts(
+                base_url, headers
+            )
+        else:
+            self.logger.info(
+                f"{self.log_prefix}: Skipping user email fetching as "
+                f"'Fetch User Details from Alert Evidences' is set to 'No'."
+            )
+
         while True:
             try:
                 self.logger.info(
                     f"{self.log_prefix}: Fetching {entity_name} for page {page_count}"
                     f" from {PLATFORM_NAME} platform."
                 )
-                params = {
-                    "$top": PAGE_RECORD_SCORE,
-                    "$skip": skip_count
-                }
+                params = {"$top": PAGE_RECORD_SCORE, "$skip": skip_count}
                 resp_json = self.defender_endpoint_helper.api_helper(
                     url=url,
                     method="GET",
@@ -1079,26 +1329,39 @@ class MicrosoftDefenderEndpointPlugin(PluginBase):
                 for each_user in current_user_list:
                     try:
                         if entity == "Devices":
-                            currRecord = {
+                            computer_name = each_user.get("computerDnsName", "")
+                            base_record = {
                                 "Device ID": each_user.get("id", ""),
-                                "Computer Name": each_user.get("computerDnsName", ""),
+                                "Computer Name": computer_name,
                                 "OS": each_user.get("osPlatform", ""),
-                                "Last IP Address": each_user.get("lastIpAddress", ""),
-                                "Risk Score": each_user.get("riskScore", "")
+                                "Last IP Address": each_user.get(
+                                    "lastIpAddress", ""
+                                ),
+                                "Risk Score": each_user.get("riskScore", ""),
                             }
-                            total_records.append(currRecord)
+                            
+                            if computer_name in device_user_email_map:
+                                user_emails = device_user_email_map[computer_name]
+                                if user_emails:
+                                    for email in user_emails:
+                                        currRecord = base_record.copy()
+                                        currRecord["Device User Email"] = email
+                                        currRecord["User Email"] = email
+                                        total_records.append(currRecord)
+                                else:
+                                    total_records.append(base_record)
+                            else:
+                                total_records.append(base_record)
                         elif entity == "Users":
-                            device_id = (
-                                each_user.get("computerDnsName", "") or
-                                each_user.get("id", "")
-                            )
+                            device_id = each_user.get(
+                                "computerDnsName", ""
+                            ) or each_user.get("id", "")
                             if device_id:
                                 currRecord = self._fetch_users(
-                                    device_id,
-                                    base_url,
-                                    headers
+                                    device_id, base_url, headers
                                 )
                                 total_records.extend(currRecord)
+                                time.sleep(2)
                             else:
                                 skip_records_count += 1
                     except Exception as err:
@@ -1179,7 +1442,9 @@ class MicrosoftDefenderEndpointPlugin(PluginBase):
             f"{self.log_prefix}: Updating {len(records)}"
             f" {entity_name} record(s) from {PLATFORM_NAME} platform."
         )
-        base_url = self.configuration.get("base_url", DEFAULT_BASE_URL).strip("/")
+        base_url = self.configuration.get("base_url", DEFAULT_BASE_URL).strip(
+            "/"
+        )
         url = f"{base_url}/api/machines"
 
         logger_msg = f"updating {entity_name} records"
@@ -1188,21 +1453,17 @@ class MicrosoftDefenderEndpointPlugin(PluginBase):
         skip_count = 0
 
         headers = self.defender_endpoint_helper.get_auth_json(
-            self.configuration,
-            self.proxy,
-            logger_msg
+            self.configuration, self.proxy, logger_msg
         )
         headers = self.get_headers(headers)
+
         while True:
             try:
                 self.logger.debug(
                     f"{self.log_prefix}: Updating records for {entity_name} in page {page_count}"
                     f" from {PLATFORM_NAME} platform."
                 )
-                params = {
-                    "$top": PAGE_RECORD_SCORE,
-                    "$skip": skip_count
-                }
+                params = {"$top": PAGE_RECORD_SCORE, "$skip": skip_count}
                 resp_json = self.defender_endpoint_helper.api_helper(
                     url=url,
                     method="GET",
@@ -1230,10 +1491,10 @@ class MicrosoftDefenderEndpointPlugin(PluginBase):
                         score_users[current_uid] = current_score
 
                 self.logger.debug(
-                        f"{self.log_prefix}: Successfully updated records for "
-                        f"{current_user_count} {entity_name} in page {page_count}."
-                        f" Total record(s) updated: {len(score_users)}."
-                    )
+                    f"{self.log_prefix}: Successfully updated records for "
+                    f"{current_user_count} {entity_name} in page {page_count}."
+                    f" Total record(s) updated: {len(score_users)}."
+                )
                 page_count += 1
 
                 if current_user_count < int(PAGE_RECORD_SCORE):
@@ -1259,14 +1520,12 @@ class MicrosoftDefenderEndpointPlugin(PluginBase):
         user_count = 0
         for record in records:
             try:
-                if record["Computer Name"] in score_users:
-                    record["Risk Score"] = score_users[record["Computer Name"]]
+                computer_name = record.get("Computer Name", "")
+                if computer_name in score_users:
+                    record["Risk Score"] = score_users[computer_name]
 
                     risk_level = record.get("Risk Score", "")
-                    if (
-                        risk_level == "None"
-                        or risk_level == "Informational"
-                    ):
+                    if risk_level == "None" or risk_level == "Informational":
                         record["Netskope Normalized Score"] = None
                     elif risk_level == "Low":
                         record["Netskope Normalized Score"] = 875
@@ -1275,6 +1534,7 @@ class MicrosoftDefenderEndpointPlugin(PluginBase):
                     elif risk_level == "High":
                         record["Netskope Normalized Score"] = 375
                     user_count += 1
+
                 for k, v in list(record.items()):
                     if v is None:
                         record.pop(k)
@@ -1282,7 +1542,7 @@ class MicrosoftDefenderEndpointPlugin(PluginBase):
                 self.logger.error(
                     message=(
                         f"{self.log_prefix}: Error occurred while updating record"
-                        f" for device {str(record['Computer Name'])}."
+                        f" for device {str(record.get('Computer Name', 'Unknown'))}."
                     ),
                     details=f"Error details: {error}",
                 )
@@ -1294,26 +1554,54 @@ class MicrosoftDefenderEndpointPlugin(PluginBase):
 
     def get_entities(self) -> list[Entity]:
         """Get available entities."""
+
+        device_data_fields = [
+            EntityField(
+                name="Device ID",
+                type=EntityFieldType.STRING,
+                required=True,
+            ),
+            EntityField(
+                name="Computer Name",
+                type=EntityFieldType.STRING,
+                required=True,
+            ),
+            EntityField(name="OS", type=EntityFieldType.STRING),
+            EntityField(name="Last IP Address", type=EntityFieldType.STRING),
+            EntityField(name="Risk Score", type=EntityFieldType.STRING),
+            EntityField(
+                name="Netskope Normalized Score", type=EntityFieldType.NUMBER
+            ),
+        ]
+
+        user_data_fields = [
+            EntityField(
+                name="User ID", type=EntityFieldType.STRING, required=True
+            ),
+            EntityField(name="User Name", type=EntityFieldType.STRING),
+            EntityField(name="User Domain", type=EntityFieldType.STRING),
+            EntityField(name="First Seen", type=EntityFieldType.DATETIME),
+            EntityField(name="Computer Name", type=EntityFieldType.REFERENCE),
+        ]
+
+        device_user_email_field = EntityField(
+            name="Device User Email", type=EntityFieldType.REFERENCE
+        )
+        device_user_email_duplicate = EntityField(
+            name="User Email", type=EntityFieldType.STRING, required=True
+        )
+
+        fetch_user_details = self.configuration.get("fetch_user_details", "no")
+        if fetch_user_details == "yes":
+            device_data_fields.append(device_user_email_field)
+            device_data_fields.append(device_user_email_duplicate)
         return [
             Entity(
                 name="Devices",
-                fields=[
-                    EntityField(name="Device ID", type=EntityFieldType.STRING),
-                    EntityField(name="Computer Name", type=EntityFieldType.STRING, required=True),
-                    EntityField(name="OS", type=EntityFieldType.STRING),
-                    EntityField(name="Last IP Address", type=EntityFieldType.STRING),
-                    EntityField(name="Risk Score", type=EntityFieldType.STRING),
-                    EntityField(name="Netskope Normalized Score", type=EntityFieldType.NUMBER)
-                ],
+                fields=device_data_fields,
             ),
             Entity(
                 name="Users",
-                fields=[
-                    EntityField(name="User ID", type=EntityFieldType.STRING, required=True),
-                    EntityField(name="User Name", type=EntityFieldType.STRING),
-                    EntityField(name="User Domain", type=EntityFieldType.STRING),
-                    EntityField(name="First Seen", type=EntityFieldType.DATETIME),
-                    EntityField(name="Computer Name", type=EntityFieldType.REFERENCE)
-                ],
-            )
+                fields=user_data_fields,
+            ),
         ]

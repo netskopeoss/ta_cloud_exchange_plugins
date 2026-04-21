@@ -1,14 +1,14 @@
 {
     "name": "Netskope Ticket Orchestrator",
-    "description": "Pull Alerts (DLP, Malware, Policy, Compromised Credential, Malsite, Quarantine, Remediation, Security Assessment, Watchlist, UBA, CTEP, Device, and Content) and Events (Incident and Endpoint) from Netskope tenants. Supports updating incidents back to the Netskope Tenant.",
+    "description": "This plugin is used to pull Alerts (DLP, Malware, Policy, Compromised Credential, Malsite, Quarantine, Remediation, Security Assessment, Watchlist, UBA, CTEP, Device, and Content) and Events (Incident and Endpoint) from Netskope Tenant. It also supports updating and resolving incidents on Netskope Tenant.",
     "id": "netskope_itsm",
     "netskope": true,
     "pulling_supported": true,
-    "receiving_supported": false,
+    "receiving_supported": true,
     "sharing_supported": true,
-    "version": "2.4.1",
+    "version": "2.5.0",
     "module": "CTO",
-    "minimum_version": "6.0.1",
+    "minimum_version": "6.1.0",
     "minimum_provider_version": "1.5.0",
     "provider_id": "netskope_provider",
     "supported_subtypes": {

@@ -1,3 +1,13 @@
+# 2.4.0
+## Added
+- Added support for Destination Profile sharing and delete retraction.
+- Added delete retraction for URL List.
+- Added resolution for error logs.
+## Changed
+- Updated URL List sharing to share only modified indicators.
+- Updated error log to info log when duplicate file hashes are shared.
+- Updated sharing behavior irrespective of selected IOC types in configuration.
+
 # 2.3.0
 ## Added
 - Added configuration option to enable/disable querying Retrohunt API.

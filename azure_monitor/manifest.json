@@ -1,61 +1,81 @@
 {
-  "name": "Microsoft Azure Monitor",
-  "id": "azure_monitor",
-  "version": "1.1.0",
-  "mapping": "Azure Monitor Default Mappings",
-  "types": [
-    "alerts",
-    "events"
-  ],
-  "description": "This plugin is designed for ingesting Alerts and Events data into the Microsoft Azure Monitor Log Analytics Workspace 'basic' table. You would need the credentials on the Microsoft Azure platform to access the plugin.",
-  "configuration": [
-    {
-      "label": "Directory (tenant) ID",
-      "key": "tenantid",
-      "type": "text",
-      "mandatory": true,
-      "default": "",
-      "description": "Directory (tenant) ID of your AzureAD application."
-    },
-    {
-      "label": "Application (client) ID",
-      "key": "appid",
-      "type": "text",
-      "mandatory": true,
-      "default": "",
-      "description": "Application (client) ID of your AzureAD Application"
-    },
-    {
-      "label": "Client Secret",
-      "key": "appsecret",
-      "type": "password",
-      "mandatory": true,
-      "default": "",
-      "description": "Client Secret of your AzureAD Application"
-    },
-    {
-      "label": "DCE URI",
-      "key": "dce_uri",
-      "type": "text",
-      "default": "",
-      "mandatory": true,
-      "description": "URI of Data Collector Endpoint."
-    },
-    {
-      "label": "DCR Immutable ID",
-      "key": "dcr_immutable_id",
-      "type": "text",
-      "default": "",
-      "mandatory": true,
-      "description": "Immutable ID of Data Collection Rule."
-    },
-    {
-      "label": "Custom Log Table Name",
-      "key": "custom_log_table_name",
-      "type": "text",
-      "default": "",
-      "mandatory": true,
-      "description": "Custom Log Table name for ingesting data. Make sure that the Table exists in your Log Analytics Workspace."
-    }
-  ]
+    "name": "Microsoft Azure Monitor",
+    "id": "azure_monitor",
+    "version": "2.0.0",
+    "minimum_version": "5.1.2",
+    "mapping": "Azure Monitor Default Mappings",
+    "module": "CLS",
+    "format_options": [
+        {
+            "label": "CEF",
+            "value": "cef"
+        },
+        {
+            "label": "JSON",
+            "value": "json"
+        }
+    ],
+    "types": [
+        "alerts",
+        "events"
+    ],
+    "description": "This plugin supports ingestion of Alerts (DLP, Malware, Policy, Compromised Credential, Malsite, Quarantine, Remediation, Security Assessment, Watchlist, UBA, CTEP, Device, Content), Events (Page, Application, Audit, Infrastructure, Network, Incident, Endpoint, Client Status). The data will be ingested in the Microsoft Azure Monitor Log Analytics Workspace table. This plugin supports ingestion in CEF and JSON format.",
+    "configuration": [
+        {
+            "label": "Directory (tenant) ID",
+            "key": "tenantid",
+            "type": "text",
+            "mandatory": true,
+            "default": "",
+            "description": "Directory (tenant) ID of Microsoft Entra ID application."
+        },
+        {
+            "label": "Application (client) ID",
+            "key": "appid",
+            "type": "text",
+            "mandatory": true,
+            "default": "",
+            "description": "Application (client) ID of Microsoft Entra ID application."
+        },
+        {
+            "label": "Client Secret",
+            "key": "appsecret",
+            "type": "password",
+            "mandatory": true,
+            "default": "",
+            "description": "Client Secret of Microsoft Entra ID application."
+        },
+        {
+            "label": "DCE URI",
+            "key": "dce_uri",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "URI of Data Collector Endpoint."
+        },
+        {
+            "label": "DCR Immutable ID",
+            "key": "dcr_immutable_id",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "Immutable ID of Data Collection Rule."
+        },
+        {
+            "label": "Custom Log Table Name",
+            "key": "custom_log_table_name",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "Custom Log Table name for ingesting data. Make sure that the Table exists in Log Analytics Workspace."
+        },
+        {
+            "label": "Log Source Identifier",
+            "key": "log_source_identifier",
+            "type": "text",
+            "default": "Netskope CE",
+            "mandatory": true,
+            "description": "This will be added in Application field of the Custom Log Table."
+        }
+    ]
 }

@@ -46,7 +46,8 @@ class Error(Exception):
 
 
 class ValidationError(Error):
-    """Exception raised for validation failures for the parameters of docker-compose file.
+    """Exception raised for validation failures for \
+        the parameters of docker-compose file.
 
     :attribute: expression -- input expression in which the error occurred
     :attribute: message -- explanation of the error
@@ -71,7 +72,8 @@ class CEFValueError(FormatCEFError, ValueError):
 
 
 class CEFTypeError(FormatCEFError, TypeError):
-    """Exception raised for data type mismatch between mapped value and CEF fields.
+    """Exception raised for data type mismatch \
+        between mapped value and CEF fields.
 
     Attributes:
         message -- explanation of the error
@@ -110,7 +112,6 @@ class FieldNotFoundError(Exception):
     def __init__(self, message):
         """Initialize."""
         self.message = message
-
 
 
 class MicrosoftAzureMonitorPluginException(Exception):

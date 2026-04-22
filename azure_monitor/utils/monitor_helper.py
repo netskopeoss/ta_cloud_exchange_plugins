@@ -53,7 +53,8 @@ def validate_extension(instance):
 
 
 def validate_header_extension_subdict(instance):
-    """Validate sub dict of header and extension having fields "mapping" and "default".
+    """Validate sub dict of header and extension \
+        having fields "mapping" and "default".
 
     Args:
         instance: JSON instance to be validated
@@ -64,7 +65,9 @@ def validate_header_extension_subdict(instance):
         and "default_value" in instance
         and (not instance["mapping_field"] and not instance["default_value"])
     ):
-        raise JsonSchemaValidationError('Both "mapping" and "default" can not be empty')
+        raise JsonSchemaValidationError(
+            'Both "mapping" and "default" can not be empty.'
+        )
 
     # If only one is there and it is empty, that's not valid
     if (
@@ -73,7 +76,7 @@ def validate_header_extension_subdict(instance):
         and (not instance["mapping_field"])
     ):
         raise JsonSchemaValidationError(
-            '"mapping" field can not be empty as no "default" is provided'
+            '"mapping" field can not be empty as no "default" is provided.'
         )
 
     # If only one is there and it is empty, that's not valid
@@ -83,7 +86,7 @@ def validate_header_extension_subdict(instance):
         and (not instance["default_value"])
     ):
         raise JsonSchemaValidationError(
-            '"default" field can not be empty as no "mapping" is provided'
+            '"default" field can not be empty as no "mapping" is provided.'
         )
 
 
@@ -100,7 +103,8 @@ def validate_header(instance):
     }
 
     one_of_sub_schema = [
-        # both empty are not allowed. So schema will be: one of (one of (both), both)
+        # both empty are not allowed. So schema will be:
+        # one of (one of (both), both)
         {
             "oneOf": [
                 {"required": ["mapping_field"]},
@@ -137,7 +141,8 @@ def validate_header(instance):
 
     validate(instance=instance, schema=schema)
 
-    # After validating schema, validate the "mapping" and "default" fields for each header fields
+    # After validating schema, validate the "mapping" and "default" fields
+    # for each header fields
     for field in instance:
         validate_header_extension_subdict(instance[field])
 
@@ -158,7 +163,7 @@ def validate_extension_field(instance):
         },
         "minProperties": 0,
         "maxProperties": 4,
-        "oneOf": [  # both empty are not allowed. So schema will be: one of (one of (both), both)
+        "oneOf": [  # both empty are not allowed. So schema will be: one of (one of (both), both)  # noqa
             {
                 "oneOf": [
                     {"required": ["mapping_field"]},
@@ -178,21 +183,22 @@ def validate_extension_field(instance):
     validate_header_extension_subdict(instance)
 
 
-def get_monitor_mappings(mappings, data_type):
-    """Read mapping json and return the dict of mappings to be applied to raw_data.
+def validate_monitor_mappings(mappings, data_type):
+    """Read mapping json and return the dict of mappings \
+        to be applied to raw_data.
 
     Args:
-        data_type (str): Data type (alert/event) for which the mappings are to be fetched
+        data_type (str): Data type (alert/event) for which the mappings \
+            are to be fetched
         mappings: Attribute mapping json string
 
     Returns:
         mapping delimiter, cef_version, monitor_mappings
     """
     data_type_specific_mapping = mappings["taxonomy"][data_type]
-    # print("Data Type Specific Mapping:",data_type_specific_mapping)
 
     if data_type == "json":
-        return mappings["delimiter"], mappings["cef_version"], mappings["taxonomy"]
+        return
 
     # Validate the headers of each mapped subtype
     for subtype, subtype_map in data_type_specific_mapping.items():
@@ -201,8 +207,8 @@ def get_monitor_mappings(mappings, data_type):
             validate_header(subtype_header)
         except JsonSchemaValidationError as err:
             raise MappingValidationError(
-                'Error occurred while validating azure monitor header for type "{}". '
-                "Error: {}".format(subtype, err)
+                f'Error occurred while validating azure monitor '
+                f'header for type "{subtype}". Error: {err}.'
             )
 
     # Validate the extension for each mapped subtype
@@ -212,8 +218,8 @@ def get_monitor_mappings(mappings, data_type):
             validate_extension(subtype_extension)
         except JsonSchemaValidationError as err:
             raise MappingValidationError(
-                'Error occurred while validating azure monitor extension for type "{}". '
-                "Error: {}".format(subtype, err)
+                f'Error occurred while validating azure monitor '
+                f'extension for type "{subtype}". Error: {err}.'
             )
 
         # Validate each extension
@@ -222,17 +228,36 @@ def get_monitor_mappings(mappings, data_type):
                 validate_extension_field(ext_dict)
             except JsonSchemaValidationError as err:
                 raise MappingValidationError(
-                    'Error occurred while validating azure monitor extension field "{}" for '
-                    'type "{}". Error: {}'.format(cef_field, subtype, err)
+                    f'Error occurred while validating azure monitor '
+                    f'extension field "{cef_field}" for type "{subtype}". '
+                    f'Error: {err}.'
                 )
-    return mappings["delimiter"], mappings["cef_version"], mappings["taxonomy"]
+
+
+def get_monitor_mappings(mappings):
+    """Read mapping json and return the dict of mappings
+    to be applied to raw_data.
+
+    Args:
+        mappings (dict): Attribute mapping json file.
+
+    Returns:
+        mapping delimiter, cef_version, monitor_mappings
+    """
+    return (
+        mappings.get("delimiter", ""),
+        mappings.get("cef_version", ""),
+        mappings.get("taxonomy", {}),
+    )
 
 
 def extract_subtypes(mappings, data_type):
-    """Extract subtypes of given data types. e.g: for data type "alert", possible subtypes are "dlp", "policy" etc.
+    """Extract subtypes of given data types. e.g: for data type "alert", \
+        possible subtypes are "dlp", "policy" etc.
 
     Args:
-        data_type (str): Data type (alert/event) for which the mappings are to be fetched
+        data_type (str): Data type (alert/event) for which the mappings \
+            are to be fetched
         mappings: Attribute mapping json string
 
     Returns:
@@ -250,14 +275,15 @@ def split_into_size(data_list):
     - data_list: The list of data to be split.
 
     Returns:
-    A list of parts, each with a total size approximately equal to the target size.
+    A list of parts, each with a total size approximately equal to \
+        the target size.
     """
     result = []
     current_part = []
     current_size_mb = 0
 
     for item in data_list:
-        item_size_mb = sys.getsizeof(f"{item}") / (1024 * 1024)  # Convert bytes to MB
+        item_size_mb = sys.getsizeof(f"{item}") / (1024 * 1024)  # Convert bytes to MB  # noqa
         if current_size_mb + item_size_mb <= 1:
             current_part.append(item)
             current_size_mb += item_size_mb

@@ -1,0 +1,33 @@
+{
+    "name": "SMB File Share",
+    "id": "smb_file_share_edm",
+    "version": "1.0.0",
+    "module": "EDM",
+    "description": "This plugin is used to pull a CSV file from a remote SMB server and to generate EDM hashes of the pulled CSV file. The plugin supports SMB protocol version from SMB 2.0.2 to SMB 3.1.1.",
+    "patch_supported": false,
+    "push_supported": false,
+    "pull_supported": true,
+    "pull_sample_data_on_validate": true,
+    "minimum_version": "6.1.0",
+    "supported_edm_method": [
+        "edm_file_hashes"
+    ],
+    "configuration": [
+        {
+            "label": "Configuration Parameters",
+            "name": "configuration",
+            "type": "dynamic_step"
+        },
+        {
+            "label": "Hash Generation and Sanitization Parameters",
+            "name": "sanity_inputs",
+            "type": "dynamic_step"
+        },
+        {
+            "label": "Preview Sanitization Results",
+            "labelInfo": "Preview the output of the first 20 records with sanitization performed on the data pulled from the SMB server. If the 'Proceed without sanitization' is unchecked, only the Good file will be used for EDM Hash generation. In this case, review the Bad file and update the sanitization parameters or data source to prevent important records from being excluded. If the 'Proceed without sanitization' is checked, all data without sanitization will be used for EDM Hash generation.",
+            "name": "sanity_results",
+            "type": "dynamic_step"
+        }
+    ]
+}

@@ -34,6 +34,7 @@ Azure Monitor Validator."""
 
 import io
 import csv
+import traceback
 from jsonschema import validate
 from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
 
@@ -123,8 +124,8 @@ class AzureMonitorValidator(object):
             validate(instance=mappings, schema=schema)
         except JsonSchemaValidationError as err:
             self.logger.error(
-                "{}: Validation error occurred. Error: validating"
-                " JSON schema: {}".format(self.log_prefix, err)
+                f"{self.log_prefix}: Validation error occurred. "
+                f"Error: validating JSON schema: {err}."
             )
             return False
 
@@ -138,9 +139,9 @@ class AzureMonitorValidator(object):
                         self.validate_taxonomy(subtype_taxonomy)
                     except JsonSchemaValidationError as err:
                         self.logger.error(
-                            "{}: Validation error occurred. Error: while "
-                            'validating JSON schema for type "{}" and subtype "{}": '
-                            "{}".format(self.log_prefix, data_type, subtype, err)
+                            f"{self.log_prefix}: Validation error occurred. "
+                            f'Error: while validating JSON schema for type '
+                            f'"{data_type}" and subtype "{subtype}": {err}.'
                         )
                         return False
         return True
@@ -160,12 +161,12 @@ class AzureMonitorValidator(object):
         try:
             if self.validate_mapping_schema(mappings):
                 return True
-
-        except Exception as err:
+        except Exception:
             self.logger.error(
-                "{}: Validation error occurred. Error: {}"
-                "".format(self.log_prefix, str(err))
+                message=f"{self.log_prefix}: Validation error occurred.",
+                details=str(traceback.format_exc()),
             )
+            return False
 
         return False
 
@@ -180,7 +181,9 @@ class AzureMonitorValidator(object):
             True in case of valid value, False otherwise
         """
         try:
-            csviter = csv.DictReader(io.StringIO(valid_extensions), strict=True)
+            csviter = csv.DictReader(
+                io.StringIO(valid_extensions), strict=True
+            )
             headers = next(csviter)
 
             if all(

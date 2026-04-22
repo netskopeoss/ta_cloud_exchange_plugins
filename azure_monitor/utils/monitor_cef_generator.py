@@ -200,16 +200,17 @@ class CEFGenerator(object):
         """
         extension_strs = {}
         for name, value in extensions.items():
-            # First convert the incoming value from Netskope to appropriate data type
+            # First convert the incoming value from Netskope
+            # to appropriate data type
             try:
                 value = self.extension_converters[name].converter(value, name)
             except KeyError:
                 self.logger.error(
                     message=(
-                        '{}: [{}][{}]: An error occurred while generating CEF data for field: "{}". Could not '
-                        'find the field in the "valid_extensions". Field will be ignored'.format(
-                            self.log_prefix, data_type, subtype, name
-                        )
+                        f'{self.log_prefix}: [{data_type}][{subtype}]: '
+                        'An error occurred while generating CEF data '
+                        f'for field: "{name}". Could not find the field '
+                        'in the "valid_extensions". Field will be ignored.'
                     ),
                     details=str(traceback.format_exc()),
                 )
@@ -217,16 +218,17 @@ class CEFGenerator(object):
             except Exception as err:
                 self.logger.error(
                     message=(
-                        '{}: [{}][{}]: An error occurred while generating CEF data for field: "{}". Error: {}. '
-                        "Field will be ignored".format(
-                            self.log_prefix, data_type, subtype, name, str(err)
-                        )
+                        f'{self.log_prefix}: [{data_type}][{subtype}]: '
+                        'An error occurred while generating CEF data '
+                        f'for field: "{name}". Error: {str(err)}. '
+                        'Field will be ignored.'
                     ),
                     details=str(traceback.format_exc()),
                 )
                 continue
 
-            # Validate and sanitise (if required) the incoming value from Netskope before mapping it CEF
+            # Validate and sanitise (if required) the incoming value
+            # from Netskope before mapping it CEF
             try:
                 sanitized_value = self.valid_extensions[name].sanitizer(value, name)
                 if isinstance(sanitized_value, str):
@@ -236,20 +238,20 @@ class CEFGenerator(object):
             except KeyError:
                 self.logger.error(
                     message=(
-                        '{}: [{}][{}]: An error occurred while generating CEF data for field: "{}". Could not '
-                        'find the field in the "valid_extensions". Field will be ignored'.format(
-                            self.log_prefix, data_type, subtype, name
-                        )
+                        f'{self.log_prefix}: [{data_type}][{subtype}]: '
+                        'An error occurred while generating CEF data '
+                        f'for field: "{name}". Could not find the field '
+                        'in the "valid_extensions". Field will be ignored.'
                     ),
                     details=str(traceback.format_exc()),
                 )
             except Exception as err:
                 self.logger.error(
                     message=(
-                        '{}: [{}][{}]: An error occurred while generating CEF data for field: "{}". Error: {}. '
-                        "Field will be ignored".format(
-                            self.log_prefix, data_type, subtype, name, str(err)
-                        )
+                        f'{self.log_prefix}: [{data_type}][{subtype}]: '
+                        'An error occurred while generating CEF data '
+                        f'for field: "{name}". Error: {str(err)}. '
+                        'Field will be ignored.'
                     ),
                     details=str(traceback.format_exc()),
                 )

@@ -33,12 +33,33 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """Provides constants for Azure Monitor plugin."""
 
 
-GENERATE_TOKEN_BASE_URL = "https://login.microsoftonline.com/{}/oauth2/v2.0/token"
+GENERATE_TOKEN_BASE_URL = (
+   "https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
+)
 API_SCOPE = "https://monitor.azure.com/.default"
 GRANT_TYPE = "client_credentials"
+PUSH_DATA_ENDPOINT = (
+   "{dce_uri}/dataCollectionRules/{dcr_immutable_id}/streams/"
+   "Custom-{custom_log_table_name}?api-version=2023-01-01"
+)
+
 MAX_RETRIES = 3
 RETRY_SLEEP_TIME = 60
 MAX_WAIT_TIME = 120
 MODULE_NAME = "CLS"
 PLUGIN_NAME = "Microsoft Azure Monitor"
-PLUGIN_VERSION = "1.1.0"
+PLUGIN_VERSION = "2.0.0"
+MAXIMUM_CE_VERSION = "5.1.2"
+
+RETRY_ERROR_MSG = (
+   "Received exit code {status_code}, {error_reason} "
+   "while {logger_msg}. Retrying after {wait_time} "
+   "seconds. {retry_remaining} retries remaining."
+)
+NO_MORE_RETRIES_ERROR_MSG = (
+   "Received exit code {status_code}, API rate limit "
+   "exceeded while {logger_msg}. Max retries for rate "
+   "limit handler exceeded hence returning status "
+   "code {status_code}."
+)
+VALIDATION_ERROR_MSG = "Validation error occurred. "

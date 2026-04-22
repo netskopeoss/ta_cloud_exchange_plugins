@@ -35,41 +35,38 @@ import datetime
 import traceback
 import json
 import sys
-import requests
-import time
-from typing import List
+from typing import Dict, List, Tuple, Union
 from jsonpath import jsonpath
+from packaging import version
 
-from netskope.common.utils import add_user_agent
-
+from netskope.common.api import __version__ as CE_VERSION
 from netskope.integrations.cls.plugin_base import (
     PluginBase,
     ValidationResult,
+    PushResult
 )
 from netskope.common.utils import AlertsHelper
-from .utils.monitor_validator import (
-    AzureMonitorValidator,
+from .utils.monitor_cef_generator import CEFGenerator
+from .utils.monitor_validator import AzureMonitorValidator
+from .utils.monitor_client import AzureMonitorClient
+from .utils.monitor_helper import (
+    validate_monitor_mappings,
+    get_monitor_mappings,
+    split_into_size
 )
-from .utils.monitor_helper import get_monitor_mappings, split_into_size
 from .utils.monitor_exceptions import (
-    MappingValidationError,
-    EmptyExtensionError,
     FieldNotFoundError,
     MicrosoftAzureMonitorPluginException,
-)
-from .utils.monitor_cef_generator import (
-    CEFGenerator,
+    MappingValidationError,
+    EmptyExtensionError,
 )
 from .utils.monitor_constants import (
-    GENERATE_TOKEN_BASE_URL,
     PLUGIN_NAME,
     PLUGIN_VERSION,
     MODULE_NAME,
-    MAX_RETRIES,
-    RETRY_SLEEP_TIME,
-    MAX_WAIT_TIME,
-    API_SCOPE,
-    GRANT_TYPE,
+    PUSH_DATA_ENDPOINT,
+    VALIDATION_ERROR_MSG,
+    MAXIMUM_CE_VERSION,
 )
 
 
@@ -87,8 +84,46 @@ class AzureMonitorPlugin(PluginBase):
             *args,
             **kwargs,
         )
+        # Flag to check if CE version is more than v5.1.2
+        self._is_ce_post_v512 = self._check_ce_version()
+        # Method to decide which logger to use with or without
+        # resolutions based on the CE version
+        self._patch_error_logger()
         self.plugin_name, self.plugin_version = self._get_plugin_info()
         self.log_prefix = f"{MODULE_NAME} {self.plugin_name} [{name}]"
+
+    def _check_ce_version(self):
+        """Check if CE version is greater than v5.1.2.
+
+        Returns:
+            bool: True if CE version is greater than v5.1.2, False otherwise.
+        """
+        return version.parse(CE_VERSION) > version.parse(MAXIMUM_CE_VERSION)
+
+    def _patch_error_logger(self):
+        """Monkey patch logger methods to handle resolution parameter
+        compatibility.
+        """
+        # Store original methods
+        original_error = self.logger.error
+
+        def patched_error(
+            message=None,
+            details=None,
+            resolution=None,
+            **kwargs,
+        ):
+            """Patched error method that handles resolution compatibility."""
+            log_kwargs = {"message": message}
+            if details:
+                log_kwargs["details"] = details
+            if resolution and self._is_ce_post_v512:
+                log_kwargs["resolution"] = resolution
+            log_kwargs.update(kwargs)
+            return original_error(**log_kwargs)
+
+        # Replace logger methods with patched versions
+        self.logger.error = patched_error
 
     def _get_plugin_info(self) -> tuple:
         """Get plugin name and version from manifest.
@@ -113,10 +148,12 @@ class AzureMonitorPlugin(PluginBase):
 
     @staticmethod
     def get_subtype_mapping(mappings, subtype):
-        """Retrieve subtype mappings (mappings for subtypes of alerts/events) case insensitively.
+        """Retrieve subtype mappings (mappings for subtypes of alerts/events) \
+            case insensitively.
 
         :param mappings: Mapping JSON from which subtypes are to be retrieved
-        :param subtype: Subtype (e.g. DLP for alerts) for which the mapping is to be fetched
+        :param subtype: Subtype (e.g. DLP for alerts) for which \
+            the mapping is to be fetched
         :return: Fetched mapping JSON object
         """
         mappings = {k.lower(): v for k, v in mappings.items()}
@@ -125,57 +162,9 @@ class AzureMonitorPlugin(PluginBase):
         else:
             return mappings[subtype.upper()]
 
-    def generate_auth_token(self, tenantid, appid, appsecret, is_validation=False):
-        try:
-            url = GENERATE_TOKEN_BASE_URL.format(tenantid)
-            body = {
-                "client_id": appid,
-                "client_secret": appsecret,
-                "scope": API_SCOPE,
-                "grant_type": GRANT_TYPE,
-            }
-            headers = {"Content-Type": "application/x-www-form-urlencoded"}
-            response = self.api_helper(
-                "generating token",
-                url,
-                "POST",
-                headers=self._add_user_agent(headers),
-                data=body,
-                proxies=self.proxy,
-                is_validation=is_validation,
-            )
-            if response and "access_token" in response:
-                return response.get("access_token")
-
-            return None
-        except MicrosoftAzureMonitorPluginException as err:
-            raise err
-        except Exception as e:
-            err_msg = "Error occurred while generating access token."
-            self.logger.error(
-                message=f"{self.log_prefix}: {err_msg} {e}",
-                details=str(traceback.format_exc()),
-            )
-            raise MicrosoftAzureMonitorPluginException(err_msg)
-
-    def push_data_to_monitor(
-        self, logger_msg, header, url_endpoint, transformed_data, is_validation=False
-    ):
-        try:
-            self.api_helper(
-                logger_msg,
-                url_endpoint,
-                "POST",
-                data=transformed_data,
-                headers=header,
-                proxies=self.proxy,
-                is_validation=is_validation,
-            )
-        except Exception as err:
-            raise MicrosoftAzureMonitorPluginException(str(err))
-
-    def push(self, transformed_data, data_type, subtype):
-        """Transform and ingests the given data chunks to Microsoft Azure Monitor.
+    def push(self, transformed_data, data_type, subtype) -> PushResult:
+        """Transform and ingests the given data chunks to \
+            Microsoft Azure Monitor.
 
         :param data_type: The type of data being pushed.
          Current possible values: alerts, events and webtx
@@ -191,54 +180,75 @@ class AzureMonitorPlugin(PluginBase):
             else:
                 transformed_data = [transformed_data]
 
-            url_endpoint = (
-                f"{self.configuration.get('dce_uri').strip()}/"
-                f"dataCollectionRules/{self.configuration.get('dcr_immutable_id').strip()}/"
-                f"streams/Custom-{self.configuration.get('custom_log_table_name').strip()}?api-version=2023-01-01"
+            monitor_client = AzureMonitorClient(
+                logger=self.logger,
+                log_prefix=self.log_prefix,
+                plugin_name=self.plugin_name,
+                plugin_version=self.plugin_version,
+                verify_ssl=self.ssl_validation,
+                proxy=self.proxy,
             )
-            auth_token = self.generate_auth_token(
-                self.configuration.get("tenantid").strip(),
-                self.configuration.get("appid").strip(),
-                self.configuration.get("appsecret"),
+
+            (
+                tenant_id,
+                app_id,
+                app_secret,
+                dce_uri,
+                dcr_immutable_id,
+                custom_log_table_name,
+                _,
+            ) = monitor_client.get_configuration_parameters(self.configuration)
+
+            auth_header, storage = self.get_access_token_and_storage(
+                tenant_id=tenant_id,
+                app_id=app_id,
+                app_secret=app_secret,
+                dce_uri=dce_uri,
+                dcr_immutable_id=dcr_immutable_id,
+                custom_log_table_name=custom_log_table_name,
+                monitor_client=monitor_client,
             )
-            if not auth_token:
-                raise MicrosoftAzureMonitorPluginException(
-                    "Unable to Generate Access Token for the provided "
-                    "Application credentials."
-                )
+
+            url_endpoint = PUSH_DATA_ENDPOINT.format(
+                dce_uri=dce_uri,
+                dcr_immutable_id=dcr_immutable_id,
+                custom_log_table_name=custom_log_table_name,
+            )
+
             skipped_count = 0
             total_count = 0
             page = 0
-            headers = {
-                "Authorization": f"Bearer {auth_token}",
-                "Content-Type": "application/json",
-            }
-            headers = self._add_user_agent(headers)
+
             for chunk in transformed_data:
                 page += 1
                 try:
-                    self.push_data_to_monitor(
-                        f"ingesting data to {self.plugin_name} for page {page}",
-                        headers,
-                        url_endpoint,
-                        json.dumps(chunk),
+                    logger_msg = (
+                        f"ingesting data to {PLUGIN_NAME} for page {page}"
                     )
-                    log_msg = "[{}]:[{}] Successfully ingested {} {}(s) for page {} to {}.".format(
-                        data_type,
-                        subtype,
-                        len(chunk),
-                        data_type,
-                        page,
-                        self.plugin_name,
+                    monitor_client.api_helper(
+                        logger_msg=logger_msg,
+                        url=url_endpoint,
+                        method="POST",
+                        data=json.dumps(chunk),
+                        headers=auth_header,
+                        verify=self.ssl_validation,
+                        proxies=self.proxy,
+                        configuration=self.configuration,
+                        storage=storage,
+                    )
+                    log_msg = (
+                        f"[{data_type}][{subtype}] Successfully ingested "
+                        f"{len(chunk)} {data_type} for page {page} "
+                        f"to {PLUGIN_NAME}."
                     )
                     self.logger.info(f"{self.log_prefix}: {log_msg}")
                     total_count += len(chunk)
                 except Exception as err:
                     self.logger.error(
                         message=(
-                            "{}: [{}]:[{}] Error occurred while ingesting data. Error: {}".format(
-                                self.log_prefix, data_type, subtype, err
-                            )
+                            f"{self.log_prefix}: [{data_type}][{subtype}] "
+                            f"Error occurred while ingesting data. "
+                            f"Error: {err}"
                         ),
                         details=str(traceback.format_exc()),
                     )
@@ -246,21 +256,25 @@ class AzureMonitorPlugin(PluginBase):
                     continue
             if skipped_count > 0:
                 self.logger.info(
-                    f"{self.log_prefix}: Skipped {skipped_count} records due to some unexpected error occurred, check logs for more details."
+                    f"{self.log_prefix}: Skipped {skipped_count} records "
+                    "due to some unexpected error occurred, "
+                    "check logs for more details."
                 )
 
-            log_msg = "[{}]:[{}] Successfully ingested {} {}(s) to {}.".format(
-                data_type,
-                subtype,
-                total_count,
-                data_type,
-                self.plugin_name,
+            log_msg = (
+                f"[{data_type}][{subtype}] Successfully ingested "
+                f"{total_count} {data_type} to {PLUGIN_NAME}."
             )
             self.logger.info(f"{self.log_prefix}: {log_msg}")
+            return PushResult(
+                success=True,
+                message=log_msg,
+            )
         except MicrosoftAzureMonitorPluginException as err:
             self.logger.error(
                 message=(
-                    f"{self.log_prefix}: Error occurred while ingesting [{data_type}]:[{subtype}]. Error: {err}"
+                    f"{self.log_prefix}: Error occurred while ingesting "
+                    f"[{data_type}][{subtype}]. Error: {err}"
                 ),
                 details=str(traceback.format_exc()),
             )
@@ -271,7 +285,8 @@ class AzureMonitorPlugin(PluginBase):
             # even after a few retries.
             self.logger.error(
                 message=(
-                    f"{self.log_prefix}: Error occurred while ingesting [{data_type}]:[{subtype}]. Error: {err}"
+                    f"{self.log_prefix}: Error occurred while ingesting "
+                    f"[{data_type}][{subtype}]. Error: {err}"
                 ),
                 details=str(traceback.format_exc()),
             )
@@ -321,7 +336,10 @@ class AzureMonitorPlugin(PluginBase):
         # Iterate over mapped extensions
         for cef_extension, extension_mapping in extension_mappings.items():
             try:
-                extension[cef_extension], mapped_field = self.get_field_value_from_data(
+                (
+                    extension[cef_extension],
+                    mapped_field,
+                ) = self.get_field_value_from_data(
                     extension_mapping,
                     data,
                     is_json_path="is_json_path" in extension_mapping,
@@ -333,7 +351,8 @@ class AzureMonitorPlugin(PluginBase):
         return extension, mapped_field_flag
 
     def get_headers(self, header_mappings, data, data_type):
-        """To Create a dictionary of CEF headers from given header mappings for given Netskope alert/event record.
+        """To Create a dictionary of CEF headers from \
+            given header mappings for given Netskope alert/event record.
 
         Args:
             data_type: Data type for which the headers are being transformed
@@ -346,16 +365,19 @@ class AzureMonitorPlugin(PluginBase):
         headers = {}
         mapping_variables = {}
         if data_type != "webtx":
-            helper = AlertsHelper()
-            tenant = helper.get_tenant_cls(self.source)
-            mapping_variables = {"$tenant_name": tenant.name}
+            if not hasattr(self, "tenant"):
+                helper = AlertsHelper()
+                self.tenant = helper.get_tenant_cls(self.source)
+            mapping_variables = {"$tenant_name": self.tenant.name}
 
         missing_fields = []
         mapped_field_flag = False
         # Iterate over mapped headers
         for cef_header, header_mapping in header_mappings.items():
             try:
-                headers[cef_header], mapped_field = self.get_field_value_from_data(
+                (
+                    headers[cef_header], mapped_field,
+                ) = self.get_field_value_from_data(
                     header_mapping, data, False
                 )
                 if mapped_field:
@@ -366,14 +388,57 @@ class AzureMonitorPlugin(PluginBase):
                     isinstance(headers[cef_header], str)
                     and headers[cef_header].lower() in mapping_variables
                 ):
-                    headers[cef_header] = mapping_variables[headers[cef_header].lower()]
+                    headers[cef_header] = mapping_variables[
+                        headers[cef_header].lower()
+                    ]
             except FieldNotFoundError as err:
                 missing_fields.append(str(err))
 
         return headers, mapped_field_flag
 
-    def get_field_value_from_data(self, extension_mapping, data, is_json_path=False):
-        """To Fetch the value of extension based on "mapping" and "default" fields.
+    def get_nested_field_value(self, data, field_path):
+        """Extract value from nested dictionary using dot notation.
+
+        Args:
+            data: The data dictionary
+            field_path: Dot-separated field path \
+                (e.g., 'host_info.device_make')
+
+        Returns:
+            tuple: (value, exists) where exists is True if field was found
+        """
+
+        try:
+            current_data = data
+            field_parts = field_path.split('.')
+
+            for i, part in enumerate(field_parts):
+
+                if isinstance(current_data, dict) and part in current_data:
+                    current_data = current_data[part]
+                else:
+                    return None, False
+
+            return current_data, True
+
+        except Exception as exp:
+            self.logger.error(
+                message=(
+                    f"{self.log_prefix}: Error occurred while"
+                    f" getting nested field value. Error: {exp}"
+                ),
+                details=str(traceback.format_exc()),
+            )
+            return None, False
+
+    def get_field_value_from_data(
+        self,
+        extension_mapping,
+        data,
+        is_json_path=False
+    ) -> Tuple[Union[str, int], bool]:
+        """To Fetch the value of extension based on \
+            "mapping" and "default" fields.
 
         Args:
             extension_mapping: Dict containing "mapping" and "default" fields
@@ -400,7 +465,10 @@ class AzureMonitorPlugin(PluginBase):
         -----------------------------------------------------------------------
         """
         mapped_field = False
-        if "mapping_field" in extension_mapping and extension_mapping["mapping_field"]:
+        if (
+            "mapping_field" in extension_mapping
+            and extension_mapping["mapping_field"]
+        ):
             if is_json_path:
                 # If mapping field specified by JSON path is present in data,
                 # map that field, else skip by raising exception:
@@ -411,11 +479,13 @@ class AzureMonitorPlugin(PluginBase):
                     mapped_field = True
                     return ",".join([str(val) for val in value]), mapped_field
                 else:
-                    raise FieldNotFoundError(extension_mapping["mapping_field"])
+                    raise FieldNotFoundError(
+                        extension_mapping["mapping_field"]
+                    )
             else:
                 # If mapping is present in data, map that field,
                 # else skip by raising exception
-                if extension_mapping["mapping_field"] in data:  # case #1 and case #4
+                if extension_mapping["mapping_field"] in data:  # case #1 and case #4  # noqa
                     if (
                         extension_mapping.get("transformation") == "Time Stamp"
                         and data[extension_mapping["mapping_field"]]
@@ -431,12 +501,39 @@ class AzureMonitorPlugin(PluginBase):
                     return self.get_mapping_value_from_field(
                         data, extension_mapping["mapping_field"]
                     )
-                elif "default_value" in extension_mapping:
-                    # If mapped value is not found in response and default is
-                    # mapped, map the default value (case #2)
-                    return extension_mapping["default_value"], mapped_field
-                else:  # case #6
-                    raise FieldNotFoundError(extension_mapping["mapping_field"])
+                else:
+                    # Try nested field access using dot notation
+                    nested_value, field_exists = self.get_nested_field_value(
+                        data, extension_mapping["mapping_field"]
+                    )
+
+                    if field_exists:
+                        if (
+                            extension_mapping.get("transformation") == "Time Stamp"  # noqa
+                            and nested_value
+                        ):
+                            try:
+                                mapped_field = True
+                                timestamp_value = int(nested_value)
+                                return timestamp_value, mapped_field
+                            except Exception:
+                                pass
+
+                        mapped_field = True
+                        final_result = (
+                            (nested_value, True)
+                            if nested_value or isinstance(nested_value, int)
+                            else ("null", False)
+                        )
+                        return final_result
+                    elif "default_value" in extension_mapping:
+                        # If mapped value is not found in response and
+                        # default is mapped, map the default value (case #2)
+                        return extension_mapping["default_value"], mapped_field
+                    else:  # case #6
+                        raise FieldNotFoundError(
+                            extension_mapping["mapping_field"]
+                        )
         else:
             # If mapping is not present, 'default_value' must be there
             # because of validation (case #3 and case #5)
@@ -454,23 +551,42 @@ class AzureMonitorPlugin(PluginBase):
             return data
 
         mapped_dict = {}
+        data_keys = data.keys()
         for key in mappings:
-            if key in data:
+            if key in data_keys:
                 mapped_dict[key] = data[key]
+            else:
+                (
+                    value,
+                    field_exist
+                ) = self.get_nested_field_value(data, key)
+                if field_exist:
+                    mapped_dict[key] = value
         return mapped_dict
 
     def transform(self, raw_data, data_type, subtype) -> List:
-        """To Transform the raw netskope JSON data into target platform supported data formats."""
+        """To Transform the raw netskope JSON data into \
+            target platform supported data formats."""
 
         skip_count = 0
-        if not self.configuration.get("transformData", True):
+        log_source_identifier = self.configuration.get(
+            "log_source_identifier", "Netskope CE"
+        )
+        transform_data_json = False
+        if version.parse(CE_VERSION) <= version.parse(MAXIMUM_CE_VERSION):
+            if not self.configuration.get("transformData", True):
+                transform_data_json = True
+        else:
+            if self.configuration.get("transformData", "json") == "json":
+                transform_data_json = True
+        if transform_data_json:
             formatted_raw_data = []
             if data_type not in ["alerts", "events"]:
                 for data in raw_data:
                     formatted_raw_data.append(
                         {
                             "RawData": data,
-                            "Application": "Netskope CE",
+                            "Application": log_source_identifier,
                             "DataType": data_type,
                             "SubType": subtype,
                             "TimeGenerated": f"{datetime.datetime.now()}",
@@ -479,13 +595,26 @@ class AzureMonitorPlugin(PluginBase):
                 return formatted_raw_data
 
             try:
-                delimiter, cef_version, monitor_mappings = get_monitor_mappings(
-                    self.mappings, "json"
+                if (
+                    version.parse(CE_VERSION) <=
+                    version.parse(MAXIMUM_CE_VERSION)
+                ):
+                    validate_monitor_mappings(
+                        self.mappings,
+                        data_type,
+                    )
+                (
+                    delimiter,
+                    cef_version,
+                    monitor_mappings,
+                ) = get_monitor_mappings(
+                    self.mappings
                 )
             except KeyError as err:
                 self.logger.error(
                     message=(
-                        f"{self.log_prefix}: An error occurred while fetching the mappings. Error: {err}"
+                        f"{self.log_prefix}: An error occurred while fetching "
+                        f"the mappings. Error: {err}"
                     ),
                     details=str(traceback.format_exc()),
                 )
@@ -493,7 +622,8 @@ class AzureMonitorPlugin(PluginBase):
             except MappingValidationError as err:
                 self.logger.error(
                     message=(
-                        f"{self.log_prefix}: An error occurred while validating the mapping file. {str(err)}"
+                        f"{self.log_prefix}: An error occurred while "
+                        f"validating the mapping file. {str(err)}"
                     ),
                     details=str(traceback.format_exc()),
                 )
@@ -529,8 +659,8 @@ class AzureMonitorPlugin(PluginBase):
                 if mapped_dict:
                     formatted_transformed_data.append(
                         {
-                            "RawData": data,
-                            "Application": "Netskope CE",
+                            "RawData": mapped_dict,
+                            "Application": log_source_identifier,
                             "DataType": data_type,
                             "SubType": subtype,
                             "TimeGenerated": f"{datetime.datetime.now()}",
@@ -550,13 +680,24 @@ class AzureMonitorPlugin(PluginBase):
 
         else:
             try:
-                delimiter, cef_version, monitor_mappings = get_monitor_mappings(
-                    self.mappings, data_type
+                if (
+                    version.parse(CE_VERSION) <=
+                    version.parse(MAXIMUM_CE_VERSION)
+                ):
+                    validate_monitor_mappings(
+                        self.mappings,
+                        data_type,
+                    )
+                (
+                    delimiter, cef_version, monitor_mappings,
+                ) = get_monitor_mappings(
+                    self.mappings
                 )
             except KeyError as err:
                 self.logger.error(
                     message=(
-                        f"{self.log_prefix}: An error occurred while fetching the mappings. Error: {err}"
+                        f"{self.log_prefix}: An error occurred while "
+                        f"fetching the mappings. Error: {err}"
                     ),
                     details=str(traceback.format_exc()),
                 )
@@ -564,7 +705,8 @@ class AzureMonitorPlugin(PluginBase):
             except MappingValidationError as err:
                 self.logger.error(
                     message=(
-                        f"{self.log_prefix}: An error occurred while validating the mapping file. {err}"
+                        f"{self.log_prefix}: An error occurred while "
+                        f"validating the mapping file. {err}"
                     ),
                     details=str(traceback.format_exc()),
                 )
@@ -572,15 +714,19 @@ class AzureMonitorPlugin(PluginBase):
             except Exception as err:
                 self.logger.error(
                     message=(
-                        f"{self.log_prefix}: An error occurred while mapping data "
-                        f"using given json mappings. Error: {err}"
+                        f"{self.log_prefix}: An error occurred while mapping "
+                        f"data using given json mappings. Error: {err}"
                     ),
                     details=str(traceback.format_exc()),
                 )
                 raise
 
             cef_generator = CEFGenerator(
-                self.mappings, delimiter, cef_version, self.logger, self.log_prefix
+                self.mappings,
+                delimiter,
+                cef_version,
+                self.logger,
+                self.log_prefix
             )
 
             try:
@@ -611,8 +757,8 @@ class AzureMonitorPlugin(PluginBase):
                     self.logger.error(
                         message=(
                             f"{self.log_prefix}: [{data_type}][{subtype}]- "
-                            f"Error occurred while creating CEF header: {err}."
-                            " Transformation of current record will be skipped."
+                            f"Error occurred while creating CEF header: {err}. "  # noqa
+                            "Transformation of current record will be skipped."  # noqa
                         ),
                         details=str(traceback.format_exc()),
                     )
@@ -626,9 +772,9 @@ class AzureMonitorPlugin(PluginBase):
                 except Exception as err:
                     self.logger.error(
                         message=(
-                            f"{self.log_prefix}: [{data_type}][{subtype}]- Error "
-                            f"occurred while creating CEF extension: {err}. "
-                            "Transformation of the current record will be skipped."
+                            f"{self.log_prefix}: [{data_type}][{subtype}]- "
+                            f"Error occurred while creating CEF extension: {err}. "  # noqa
+                            "Transformation of the current record will be skipped."  # noqa
                         ),
                         details=str(traceback.format_exc()),
                     )
@@ -646,7 +792,7 @@ class AzureMonitorPlugin(PluginBase):
                         transformed_data.append(
                             {
                                 "RawData": cef_generated_event,
-                                "Application": "Netskope CE",
+                                "Application": log_source_identifier,
                                 "DataType": data_type,
                                 "SubType": subtype,
                                 "TimeGenerated": f"{datetime.datetime.now()}",
@@ -667,7 +813,7 @@ class AzureMonitorPlugin(PluginBase):
                     self.logger.error(
                         message=(
                             f"{self.log_prefix}: [{data_type}][{subtype}]- An "
-                            f"error occurred during transformation. Error: {err}"
+                            f"error occurred during transformation. Error: {err}"  # noqa
                         ),
                         details=str(traceback.format_exc()),
                     )
@@ -684,469 +830,397 @@ class AzureMonitorPlugin(PluginBase):
 
         return transformed_data
 
-    def validate(self, configuration: dict) -> ValidationResult:
-        """Validate the configuration parameters dict."""
-        monitor_validator = AzureMonitorValidator(self.logger, self.log_prefix)
-        validation_msg = f"{self.log_prefix}: Validation error occurred."
-        tenant_id = configuration.get("tenantid", "").strip()
-        if not tenant_id:
-            error_message = (
-                "Directory (tenant) ID is a required configuration parameter."
+    def _get_storage(self) -> Dict:
+        """Get storage object.
+
+        Returns:
+            Dict: Storage object.
+        """
+        storage = self.storage if self.storage is not None else {}
+        return storage
+
+    def get_access_token_and_storage(
+        self,
+        tenant_id: str,
+        app_id: str,
+        app_secret: str,
+        dce_uri: str,
+        dcr_immutable_id: str,
+        custom_log_table_name: str,
+        monitor_client: AzureMonitorClient,
+        is_validation: bool = False
+    ) -> Tuple[Dict, Dict]:
+        """
+        Get authentication header and storage.
+
+        Args:
+            tenant_id (str): Tenant ID.
+            app_id (str): App ID.
+            app_secret (str): App secret.
+            dce_uri (str): DCE URI.
+            dcr_immutable_id (str): DCR Immutable ID.
+            custom_log_table_name (str): Custom log table name.
+            monitor_client (AzureMonitorClient): Monitor client.
+            is_validation (bool, optional): Is validation. Defaults to False.
+
+        Returns:
+            Tuple[Dict, Dict]: Authentication header and storage.
+        """
+        storage = self._get_storage()
+        auth_header = storage.get("auth_header")
+        stored_config_hash = storage.get("config_hash")
+
+        current_config_hash = monitor_client.hash_string(
+            string=(
+                f"{tenant_id}{app_id}{app_secret}"
+                f"{dce_uri}{dcr_immutable_id}{custom_log_table_name}"
             )
-            self.logger.error(f"{validation_msg} {error_message}")
-            return ValidationResult(success=False, message=error_message)
-        elif not isinstance(tenant_id, str):
-            error_message = "Invalid Directory (tenant) ID provided."
-            self.logger.error(f"{validation_msg} {error_message}")
-            return ValidationResult(success=False, message=error_message)
-
-        app_id = configuration.get("appid", "").strip()
-        if not app_id:
-            error_message = (
-                "Application (client) ID is a required configuration parameter."
+        )
+        if auth_header and stored_config_hash == current_config_hash:
+            return auth_header, storage
+        else:
+            auth_header = monitor_client.generate_auth_token(
+                tenant_id=tenant_id,
+                app_id=app_id,
+                app_secret=app_secret,
+                is_validation=is_validation,
             )
-            self.logger.error(f"{validation_msg} {error_message}")
-            return ValidationResult(success=False, message=error_message)
-        elif not isinstance(app_id, str):
-            error_message = "Invalid Application (client) ID provided."
-            self.logger.error(f"{validation_msg} {error_message}")
-            return ValidationResult(success=False, message=error_message)
-
-        app_secret = configuration.get("appsecret")
-        if not app_secret:
-            error_message = "Client Secret is a required configuration parameter."
-            self.logger.error(f"{validation_msg} {error_message}")
-            return ValidationResult(success=False, message=error_message)
-        elif not isinstance(app_secret, str):
-            error_message = "Invalid Client Secret provided."
-            self.logger.error(f"{validation_msg} {error_message}")
-            return ValidationResult(success=False, message=error_message)
-
-        dce_uri = configuration.get("dce_uri", "").strip()
-        if not dce_uri:
-            error_message = "DCE URI is a required configuration parameter."
-            self.logger.error(f"{validation_msg} {error_message}")
-            return ValidationResult(success=False, message=error_message)
-        elif not isinstance(dce_uri, str):
-            error_message = "Invalid DCE URI provided."
-            self.logger.error(f"{validation_msg} {error_message}")
-            return ValidationResult(success=False, message=error_message)
-
-        dcr_immutable_id = configuration.get("dcr_immutable_id", "").strip()
-        if not dcr_immutable_id:
-            error_message = "DCR Immutable ID is a required configuration parameter."
-            self.logger.error(f"{validation_msg} {error_message}")
-            return ValidationResult(success=False, message=error_message)
-        elif not isinstance(dcr_immutable_id, str):
-            error_message = "Invalid DCR Immutable ID provided."
-            self.logger.error(f"{validation_msg} {error_message}")
-            return ValidationResult(success=False, message=error_message)
-
-        custom_log_table_name = configuration.get("custom_log_table_name", "").strip()
-        if not custom_log_table_name:
-            error_message = (
-                "Custom Log Table Name is a required configuration parameter."
+            storage.update(
+                {
+                    "auth_header": auth_header,
+                    "config_hash": current_config_hash,
+                }
             )
-            self.logger.error(f"{validation_msg} {error_message}")
-            return ValidationResult(success=False, message=error_message)
-        elif not isinstance(custom_log_table_name, str):
-            error_message = "Invalid Custom Log Table Name provided."
-            self.logger.error(f"{validation_msg} {error_message}")
-            return ValidationResult(success=False, message=error_message)
+            return auth_header, storage
 
-        if not custom_log_table_name.endswith("_CL"):
-            configuration["custom_log_table_name"] = custom_log_table_name + "_CL"
+    def _validate_parameters(
+        self,
+        field_name: str,
+        field_value: Union[str, List, bool, int],
+        field_type: type,
+        is_required: bool = True,
+    ) -> Union[ValidationResult, None]:
+        """
+        Validate the given configuration field value.
 
-        mappings = self.mappings.get("jsonData", None)
-        mappings = json.loads(mappings)
-        if not isinstance(mappings, dict) or not monitor_validator.validate_monitor_map(
-            mappings
+        Args:
+            field_name (str): Name of the configuration field.
+            field_value (str, List, bool, int): Value of the configuration
+                field.
+            field_type (type): Expected type of the configuration field.
+            max_value (int, optional): Maximum value for the configuration
+                field. Defaults to None.
+            min_value (int, optional): Minimum value for the configuration
+                field. Defaults to None.
+            is_required (bool, optional): Whether the field is required.
+                Defaults to True.
+            check_dollar (bool, optional): Whether to check for the dollar
+                sign in the field value. Defaults to False.
+            is_source_field_allowed (bool, optional): Whether the source field
+                is allowed. Defaults to True.
+
+        Returns:
+            ValidationResult: ValidationResult object indicating whether the
+                validation was successful or not.
+        """
+        if field_type is str and isinstance(field_value, str):
+            field_value = field_value.strip()
+        if (
+            is_required and
+            not isinstance(field_value, int) and
+            not field_value
         ):
-            err_msg = "Invalid Microsoft Azure Monitor attribute mapping provided."
-            self.logger.error(f"{validation_msg} {err_msg}")
+            err_msg = (
+                f"'{field_name}' is a required configuration parameter."
+            )
+            self.logger.error(
+                message=f"{self.log_prefix}: {VALIDATION_ERROR_MSG}{err_msg}",
+                resolution=(
+                    f"Ensure that {field_name} field value is provided."
+                ),
+            )
+            return ValidationResult(
+                success=False,
+                message=err_msg,
+            )
+        if not isinstance(field_value, field_type):
+            err_msg = (
+                f"Invalid value provided for the configuration "
+                f"parameter '{field_name}'."
+            )
+            self.logger.error(
+                message=f"{self.log_prefix}: {VALIDATION_ERROR_MSG}{err_msg}",
+                resolution=(
+                    f"Ensure that {field_name} field value is valid."
+                ),
+            )
             return ValidationResult(
                 success=False,
                 message=err_msg,
             )
 
+    def _validate_connectivity(
+        self,
+        configuration: Dict,
+        tenant_id: str,
+        app_id: str,
+        app_secret: str,
+        dce_uri: str,
+        dcr_immutable_id: str,
+        custom_log_table_name: str,
+        monitor_client: AzureMonitorClient,
+    ) -> ValidationResult:
+        """
+        Validate connectivity to Microsoft Azure Monitor.
+
+        Args:
+            configuration (Dict): Configuration.
+            tenant_id (str): Tenant ID.
+            app_id (str): App ID.
+            app_secret (str): App secret.
+            dce_uri (str): DCE URI.
+            dcr_immutable_id (str): DCR Immutable ID.
+            custom_log_table_name (str): Custom log table name.
+            monitor_client (AzureMonitorClient): Monitor client.
+
+        Returns:
+            ValidationResult: ValidationResult object indicating whether \
+                the connectivity was successful or not.
+        """
+        self.logger.debug(
+            f"{self.log_prefix}: Validating credentials "
+            f"for {PLUGIN_NAME} platform."
+        )
         try:
-            auth_token = self.generate_auth_token(
-                tenant_id, app_id, app_secret, is_validation=True
+            auth_header, storage = self.get_access_token_and_storage(
+                tenant_id=tenant_id,
+                app_id=app_id,
+                app_secret=app_secret,
+                dce_uri=dce_uri,
+                dcr_immutable_id=dcr_immutable_id,
+                custom_log_table_name=custom_log_table_name,
+                monitor_client=monitor_client,
+                is_validation=True,
             )
 
-            if auth_token is None:
-                err_msg = "Invalid Directory (tenant) ID, Application (client) ID, or Client Secret provided in configuration parameters."
-                self.logger.error(f"{validation_msg} {err_msg}")
-                return ValidationResult(
-                    success=False,
-                    message=err_msg,
-                )
-        except MicrosoftAzureMonitorPluginException as err:
+            url_endpoint = PUSH_DATA_ENDPOINT.format(
+                dce_uri=dce_uri,
+                dcr_immutable_id=dcr_immutable_id,
+                custom_log_table_name=custom_log_table_name,
+            )
+            monitor_client.api_helper(
+                logger_msg="validating credentials",
+                url=url_endpoint,
+                method="POST",
+                data=json.dumps([]),
+                headers=auth_header,
+                verify=self.ssl_validation,
+                proxies=self.proxy,
+                configuration=configuration,
+                storage=storage,
+                is_validation=True,
+            )
+            logger_msg = (
+                "Successfully validated "
+                f"credentials for {PLUGIN_NAME} platform."
+            )
+            self.logger.debug(
+                f"{self.log_prefix}: {logger_msg}"
+            )
+            return ValidationResult(
+                success=True, message=logger_msg,
+            )
+        except MicrosoftAzureMonitorPluginException as exp:
+            err_msg = f"Validation error occurred. Error: {exp}"
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg}",
+                details=str(traceback.format_exc()),
+            )
+            return ValidationResult(
+                success=False,
+                message=f"{str(exp)} Check logs for more details."
+            )
+        except Exception as exp:
+            err_msg = "Unexpected validation error occurred."
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg} Error: {exp}",
+                details=str(traceback.format_exc()),
+            )
+            return ValidationResult(
+                success=False,
+                message=f"{err_msg} Check logs for more details.",
+            )
+
+    def validate_mappings(self):
+        """Validate the Microsoft Azure Monitor mappings for all data type.
+
+        Raises:
+            MappingValidationError: When validation fails for \
+                any of the configured data_type.
+        """
+        validation_err_msg = (
+            f"{self.log_prefix}: Mapping validation error occurred."
+        )
+        err_msg = "Invalid attribute mapping provided."
+        monitor_validator = AzureMonitorValidator(self.logger, self.log_prefix)
+
+        def _validate_json_data(json_string):
+            """Validate that the jsonData should not be empty."""
+            try:
+                json_object = json.loads(json_string)
+                if not bool(json_object):
+                    raise ValueError("JSON data should not be empty.")
+            except json.decoder.JSONDecodeError as e:
+                raise ValueError(f"Invalid JSON: {e}")
+            except Exception as e:
+                raise ValueError(f"Error occurred while validating JSON: {e}.")
+            return json_object
+
+        try:
+            mappings = _validate_json_data(self.mappings.get("jsonData"))
+        except Exception as err:
             return ValidationResult(
                 success=False,
                 message=str(err),
             )
 
-        try:
-            headers = {
-                "Authorization": f"Bearer {auth_token}",
-                "Content-Type": "application/json",
-            }
-            url_endpoint = (
-                f"{dce_uri}/"
-                f"dataCollectionRules/{dcr_immutable_id}/"
-                f"streams/Custom-{custom_log_table_name}?api-version=2023-01-01"
-            )
-            self.push_data_to_monitor(
-                "validating credentials",
-                self._add_user_agent(headers),
-                url_endpoint,
-                json.dumps([]),
-                True,
-            )
-
-        except MicrosoftAzureMonitorPluginException as err:
-            err_msg = (
-                "Error occurred while validating the credentials. "
-                "Make sure that the DCE URL is correct."
-            )
-            self.logger.error(
-                message=f"{self.log_prefix}: {err_msg}",
-                details=f"{err}",
-            )
-            return ValidationResult(success=False, message=str(err))
-        except Exception as err:
-            err_msg = "Error occurred while validating the credentials."
-            self.logger.error(
-                message=f"{self.log_prefix}: {err_msg}",
-                details=f"{err}",
-            )
+        if (
+            not isinstance(mappings, dict)
+            or not monitor_validator.validate_monitor_map(mappings)
+        ):
+            self.logger.error(f"{validation_err_msg} {err_msg}")
             return ValidationResult(
-                success=False, message=err_msg + " Check Logs for more details."
+                success=False,
+                message=err_msg,
             )
 
-        return ValidationResult(success=True, message="Validation successful.")
+        for data_type in mappings.get("taxonomy", {}).keys():
+            try:
+                self.logger.info(
+                    message=(
+                        f"{self.log_prefix}: Validating the mappings for "
+                        f"monitor {data_type}."
+                    )
+                )
+                validate_monitor_mappings(mappings, data_type)
+            except MappingValidationError as mapping_validation_error:
+                self.logger.error(
+                    message=(
+                        f"{validation_err_msg} {err_msg} Error: "
+                        f"{mapping_validation_error}"
+                    ),
+                    details=str(traceback.format_exc()),
+                )
+                return ValidationResult(
+                    success=False,
+                    message=err_msg,
+                )
 
-    def _add_user_agent(self, headers) -> str:
-        """Add User-Agent in the headers of any request.
-
-        Returns:
-            str: String containing the User-Agent.
-        """
-
-        headers = add_user_agent(headers)
-        ce_added_agent = headers.get("User-Agent", "netskope-ce")
-        user_agent = "{}-{}-{}-v{}".format(
-            ce_added_agent,
-            MODULE_NAME.lower(),
-            self.plugin_name.replace(" ", "-").lower(),
-            self.plugin_version,
+        return ValidationResult(
+            success=True,
+            message="Mappings validation successful.",
         )
-        headers.update({"User-Agent": user_agent})
-        return headers
 
-    def parse_response(self, response: requests.models.Response):
-        """Parse Response will return JSON from response object.
+    def validate(self, configuration: dict) -> ValidationResult:
+        """Validate the configuration parameters dict.
 
         Args:
-            response (response): Response object.
+            configuration (dict): Configuration parameters.
 
         Returns:
-            Any: Response Json.
+            ValidationResult: ValidationResult object indicating whether the
+                validation was successful or not.
         """
-        try:
-            return response.json()
-        except json.JSONDecodeError as err:
-            err_msg = f"Invalid JSON response received from API. Error: {str(err)}"
-            self.logger.error(
-                message=f"{self.log_prefix}: {err_msg}",
-                details=f"API response: {response.text}",
-            )
-            raise MicrosoftAzureMonitorPluginException(err_msg)
-        except Exception as exp:
-            err_msg = (
-                "Unexpected error occurred while parsing"
-                f" json response. Error: {exp}"
-            )
-            self.logger.error(
-                message=f"{self.log_prefix}: {err_msg}",
-                details=f"API Response: {response.text}",
-            )
-            raise MicrosoftAzureMonitorPluginException(err_msg)
+        monitor_client = AzureMonitorClient(
+            logger=self.logger,
+            log_prefix=self.log_prefix,
+            plugin_name=self.plugin_name,
+            plugin_version=self.plugin_version,
+            verify_ssl=self.ssl_validation,
+            proxy=self.proxy,
+        )
 
-    def handle_error(self, resp: requests.models.Response, logger_msg, is_validation):
-        """Handle the different HTTP response code.
+        (
+            tenant_id,
+            app_id,
+            app_secret,
+            dce_uri,
+            dcr_immutable_id,
+            custom_log_table_name,
+            log_source_identifier,
+        ) = monitor_client.get_configuration_parameters(configuration)
 
-        Args:
-            resp (requests.models.Response): Response object
-            returned from API call.
-            logger_msg: logger message.
-            is_validation : API call from validation method or not
-        Returns:
-            dict: Returns the dictionary of response JSON
-            when the response code is 200.
-        Raises:
-            HTTPError: When the response code is not 200.
-        """
-        status_code = resp.status_code
+        # Validate Directory (tenant) ID
+        if validation_result := self._validate_parameters(
+            field_name="Directory (tenant) ID",
+            field_value=tenant_id,
+            field_type=str,
+        ):
+            return validation_result
 
-        error_dict = {
-            400: "Bad Request",
-            403: "Forbidden",
-            401: "Unauthorized",
-            404: "Not Found",
-        }
-        if status_code in [200, 201]:
-            return self.parse_response(response=resp)
-        elif status_code == 204:
-            return {}
-        elif status_code in error_dict:
-            error_response = self.parse_response(response=resp)
-            error_val = error_response.get("error")
-            err_msg = error_dict[status_code]
-            if isinstance(error_val, dict):
-                validation_msg = ". Verify the DCE URI and DCR Immutable ID provided in configuration parameters. Check logs for more details."
-                err_code = error_response.get("error", {}).get("code")
-                err_message = error_response.get("error", {}).get("message")
-                if err_code == "InvalidStream":
-                    err_msg = (
-                        err_msg
-                        + ". Invalid Custom Log Table Name found, make sure that the Table exists in your Log Analytics Workspace."
-                    )
-                elif err_code == "InvalidDcrImmutableId":
-                    err_msg = (
-                        err_msg
-                        + ". Make sure that the DCE URI and DCR Immutable Rule are in the same region."
-                    )
-                elif err_code == "OperationFailed":
-                    err_msg = err_msg + (
-                        ". Ensure that you have the correct permissions "
-                        "for your application to the DCR and the permissions "
-                        "are assigned to the same application for which the "
-                        "Application credentials are provided."
-                    )
-                elif err_message:
-                    err_msg = err_msg + ". " + err_message
-                else:
-                    err_msg = err_msg + validation_msg
-            elif isinstance(error_val, str):
-                if error_val == "unauthorized_client":
-                    err_msg = (
-                        err_msg
-                        + ". Invalid Application (client) ID provided in configuration parameters."
-                    )
-                elif error_val == "invalid_client":
-                    err_msg = (
-                        err_msg
-                        + ". Invalid Client Secret provided in configuration parameters."
-                    )
-                else:
-                    err_msg = (
-                        err_msg
-                        + ". Invalid Directory (tenant) ID, Application (client) ID, or Client Secret provided in configuration parameters. Check logs for more details."
-                    )
+        # Validate Application (client) ID
+        if validation_result := self._validate_parameters(
+            field_name="Application (client) ID",
+            field_value=app_id,
+            field_type=str,
+        ):
+            return validation_result
 
-            self.logger.error(
-                message=(
-                    f"{self.log_prefix}: Received exit code {status_code}, "
-                    f"{err_msg} while {logger_msg}."
-                ),
-                details=str(resp.text),
-            )
+        # Validate Client Secret
+        if validation_result := self._validate_parameters(
+            field_name="Client Secret",
+            field_value=app_secret,
+            field_type=str,
+        ):
+            return validation_result
 
-            raise MicrosoftAzureMonitorPluginException(err_msg)
-        else:
-            err_msg = (
-                "HTTP Server Error"
-                if (status_code >= 500 and status_code <= 600)
-                else "HTTP Error"
-            )
-            self.logger.error(
-                message=(
-                    f"{self.log_prefix}: Received exit code {status_code}, "
-                    f"{err_msg} while {logger_msg}."
-                ),
-                details=str(resp.text),
-            )
-            if is_validation:
-                err_msg = err_msg + "."
-            raise MicrosoftAzureMonitorPluginException(err_msg)
+        # Validate DCE URI
+        if validation_result := self._validate_parameters(
+            field_name="DCE URI",
+            field_value=dce_uri,
+            field_type=str,
+        ):
+            return validation_result
 
-    def api_helper(
-        self,
-        logger_msg: str,
-        url,
-        method,
-        params=None,
-        data=None,
-        headers=None,
-        verify=True,
-        proxies=None,
-        is_validation=False,
-    ):
-        """API Helper perform API request to ThirdParty platform
-        and captures all the possible errors for requests.
+        # Validate DCR Immutable ID
+        if validation_result := self._validate_parameters(
+            field_name="DCR Immutable ID",
+            field_value=dcr_immutable_id,
+            field_type=str,
+        ):
+            return validation_result
 
-        Args:
-            request (request): Requests object.
-            code is required?. Defaults to True.
-            is_validation : API call from validation method or not
+        # Validate Custom Log Table Name
+        if validation_result := self._validate_parameters(
+            field_name="Custom Log Table Name",
+            field_value=custom_log_table_name,
+            field_type=str,
+        ):
+            return validation_result
 
-        Returns:
-            dict: Response dictionary.
-        """
-        try:
-            display_headers = {
-                k: v for k, v in headers.items() if k not in {"Authorization"}
-            }
-            debuglog_msg = f"{self.log_prefix} : API Request for {logger_msg}. URL={url}, Headers={display_headers}"
-            if params:
-                debuglog_msg += f", params={params}"
+        # Validate Log Source Identifier
+        if validation_result := self._validate_parameters(
+            field_name="Log Source Identifier",
+            field_value=log_source_identifier,
+            field_type=str,
+        ):
+            return validation_result
 
-            self.logger.debug(debuglog_msg)
-            for retry_counter in range(MAX_RETRIES):
-                response = requests.request(
-                    url=url,
-                    method=method,
-                    params=params,
-                    data=data,
-                    headers=headers,
-                    verify=verify,
-                    proxies=proxies,
-                )
-                self.logger.debug(
-                    f"{self.log_prefix} : Received API Response while "
-                    f"{logger_msg}. Method={method}, "
-                    f"Status Code={response.status_code}."
-                )
-                if not is_validation and response.status_code == 429:
-                    resp_json = self.parse_response(response=response)
-                    api_err_msg = str(
-                        resp_json.get("error", {}).get("message", str(response.text)),
-                    )
-                    if retry_counter == MAX_RETRIES - 1:
-                        err_msg = (
-                            "Received exit code {}, API rate limit "
-                            "exceeded while {}. Max retries for rate limit "
-                            "handler exceeded hence returning status"
-                            " code {}.".format(
-                                response.status_code,
-                                logger_msg,
-                                response.status_code,
-                            )
-                        )
-                        self.logger.error(
-                            message=f"{self.log_prefix}: {err_msg}",
-                            details=api_err_msg,
-                        )
-                        raise MicrosoftAzureMonitorPluginException(err_msg)
-                    retry_after = response.headers.get("Retry-After")
-                    if retry_after is None:
-                        self.logger.info(
-                            "{}: No Retry-After value received from"
-                            "API hence plugin will retry after {} "
-                            "seconds.".format(self.log_prefix, RETRY_SLEEP_TIME)
-                        )
-                        time.sleep(RETRY_SLEEP_TIME)
-                        continue
-                    retry_after = int(retry_after)
-                    diff_retry_after = round(abs(retry_after - time.time()), 2)
-                    if diff_retry_after > MAX_WAIT_TIME:
-                        err_msg = (
-                            "'Retry-After' value received from "
-                            "response headers while {} is greater than {}  "
-                            "seconds hence returning status code {}.".format(
-                                logger_msg, MAX_WAIT_TIME, response.status_code
-                            )
-                        )
-                        self.logger.error(message=f"{self.log_prefix}: {err_msg}")
-                        raise MicrosoftAzureMonitorPluginException(err_msg)
-                    self.logger.error(
-                        message=(
-                            "{}: Received exit code {}, API rate limit"
-                            " exceeded while {}. Retrying after {} "
-                            "seconds. {} retries remaining.".format(
-                                self.log_prefix,
-                                response.status_code,
-                                logger_msg,
-                                diff_retry_after,
-                                MAX_RETRIES - 1 - retry_counter,
-                            )
-                        ),
-                        details=api_err_msg,
-                    )
-                    time.sleep(diff_retry_after)
+        # Validate Mapping
+        mappings_validation_result = self.validate_mappings()
+        if not mappings_validation_result.success:
+            return mappings_validation_result
 
-                elif not is_validation and (
-                    response.status_code >= 500 and response.status_code <= 600
-                ):
-                    if retry_counter == MAX_RETRIES - 1:
-                        err_msg = (
-                            "Received exit code {}, while"
-                            " {}. Max retries for rate limit "
-                            "handler exceeded hence returning status"
-                            " code {}.".format(
-                                response.status_code,
-                                logger_msg,
-                                response.status_code,
-                            )
-                        )
-                        self.logger.error(
-                            message=f"{self.log_prefix}: {err_msg}",
-                            details=str(response.text),
-                        )
-                        raise MicrosoftAzureMonitorPluginException(err_msg)
-                    self.logger.error(
-                        message=(
-                            "{}: Received exit code {}, while {}. "
-                            "Retrying after {} seconds. {} "
-                            "retries remaining.".format(
-                                self.log_prefix,
-                                response.status_code,
-                                logger_msg,
-                                RETRY_SLEEP_TIME,
-                                MAX_RETRIES - 1 - retry_counter,
-                            )
-                        ),
-                        details=str(response.text),
-                    )
-                    time.sleep(RETRY_SLEEP_TIME)
-                else:
-                    return self.handle_error(response, logger_msg, is_validation)
+        # Validate Connectivity
+        connectivity_validation_result = self._validate_connectivity(
+            configuration=configuration,
+            tenant_id=tenant_id,
+            app_id=app_id,
+            app_secret=app_secret,
+            dce_uri=dce_uri,
+            dcr_immutable_id=dcr_immutable_id,
+            custom_log_table_name=custom_log_table_name,
+            monitor_client=monitor_client,
+        )
 
-        except requests.exceptions.ProxyError as error:
-            err_msg = f"Proxy error occurred while {logger_msg}. Verify the provided proxy configuration."
-            self.logger.error(
-                message=f"{self.log_prefix}: {err_msg} Error: {error}.",
-                details=str(traceback.format_exc()),
-            )
-            raise MicrosoftAzureMonitorPluginException(err_msg)
-        except requests.exceptions.ConnectionError as error:
-            err_msg = (
-                f"Unable to establish connection with {self.plugin_name} while {logger_msg}."
-                " Check DCE URI provided in configuration parameter."
-            )
-            self.logger.error(
-                message=f"{self.log_prefix}: {err_msg} Error: {error}.",
-                details=str(traceback.format_exc()),
-            )
-            raise MicrosoftAzureMonitorPluginException(err_msg)
-        except requests.HTTPError as err:
-            err_msg = f"HTTP Error occurred while {logger_msg}."
-            self.logger.error(
-                message=f"{self.log_prefix}: {err_msg} Error: {err}.",
-                details=str(traceback.format_exc()),
-            )
-            raise MicrosoftAzureMonitorPluginException(err_msg)
-        except MicrosoftAzureMonitorPluginException:
-            raise
-        except Exception as exp:
-            err_msg = (
-                "Unexpected error occurred while requesting "
-                f"to {self.plugin_name} while {logger_msg}."
-            )
-            self.logger.error(
-                message=f"{self.log_prefix}: {err_msg} Error: {str(exp)}",
-                details=str(traceback.format_exc()),
-            )
-            raise MicrosoftAzureMonitorPluginException(err_msg)
+        return connectivity_validation_result

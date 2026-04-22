@@ -1,25 +1,48 @@
 """Microsoft File Share plugin constants file."""
 
-PLUGIN_NAME = "Microsoft File Share CFC"
+PLUGIN_NAME = "Microsoft File Share"
 MODULE_NAME = "CFC"
-PLUGIN_VERSION = "1.0.1"
-SUPPORTED_IMAGE_FILE_EXTENSIONS = [".bmp", ".dib", ".jpeg", ".jpg", ".jpe", ".jp2", ".png", ".webp", ".avif", ".pbm",
-                                   ".pgm", ".ppm", ".pxm", ".pnm", ".pfm", ".sr", ".ras",  ".tiff", ".tif", ".exr",
-                                   ".hdr", ".pic", ".zip", ".tgz"]
+PLUGIN_VERSION = "1.1.0"
+SUPPORTED_IMAGE_FILE_EXTENSIONS = [
+    ".bmp",
+    ".dib",
+    ".jpeg",
+    ".jpg",
+    ".jpe",
+    ".jp2",
+    ".png",
+    ".webp",
+    ".avif",
+    ".pbm",
+    ".pgm",
+    ".ppm",
+    ".pxm",
+    ".pnm",
+    ".pfm",
+    ".sr",
+    ".ras",
+    ".tiff",
+    ".tif",
+    ".exr",
+    ".hdr",
+    ".pic",
+    ".zip",
+    ".tgz",
+]
 ALLOWED_FILE_COUNT = 10000
-ALLOWED_FILE_SIZE = (80000 * 1024 * 1024)
+ALLOWED_FILE_SIZE = 80 * 1024 * 1024 * 1024
 MICROSOFT_FILE_SHARE_FIELDS = {
     "SMB": {
         "configuration_parameters": [
             {
-                "label": "Server IP/Hostname",
+                "label": "Server Hostname/IP",
                 "key": "smb_server_ip",
                 "type": "text",
                 "default": "",
                 "mandatory": True,
-                "placeholder": "e.g. 192.0.2.19/www.example.com",
+                "placeholder": ("e.g. fileserver.example.com or 192.0.2.19"),
                 "description": (
-                    "IP address or Hostname of the Windows machine from which "
+                    "Hostname or IP address of the server from which "
                     "the files are to be pulled."
                 ),
             },
@@ -30,7 +53,7 @@ MICROSOFT_FILE_SHARE_FIELDS = {
                 "default": "",
                 "mandatory": True,
                 "placeholder": "e.g. WIN-131CUS090LI",
-                "description": "NetBIOS machine name of the Windows server.",
+                "description": "NetBIOS machine name of the server.",
             },
             {
                 "label": "Username",
@@ -40,7 +63,7 @@ MICROSOFT_FILE_SHARE_FIELDS = {
                 "mandatory": True,
                 "placeholder": "Username",
                 "description": (
-                    "Username of the Windows machine which has read access "
+                    "Username of the remote machine which has read access "
                     "to shared directories."
                 ),
             },
@@ -51,7 +74,7 @@ MICROSOFT_FILE_SHARE_FIELDS = {
                 "default": "",
                 "mandatory": True,
                 "placeholder": "Password",
-                "description": "Password for the provided Windows username.",
+                "description": ("Password for the provided username."),
             },
         ],
         "directory_configuration": [
@@ -61,15 +84,21 @@ MICROSOFT_FILE_SHARE_FIELDS = {
                 "type": "directory_inputs",
                 "mandatory": True,
                 "placeholder": "Shared directory name",
-                "description": ("Name of the Windows shared directory. Ensure that this directory name is present "
-                                "in the Network Path of the shared directory."),
+                "description": (
+                    "Name of the shared directory. "
+                    "Ensure that this directory name is present "
+                    "in the Network Path of the shared directory."
+                ),
                 "fields": [
                     {
                         "label": "Directory Paths",
                         "key": "directory_paths",
                         "type": "directory_paths",
                         "mandatory": True,
-                        "description": "Path of the Windows directories from which the files are to be pulled.",
+                        "description": (
+                            "Path of the directories from "
+                            "which the files are to be pulled."
+                        ),
                         "fields": [
                             {
                                 "label": "Directory Path",
@@ -78,8 +107,12 @@ MICROSOFT_FILE_SHARE_FIELDS = {
                                 "default": "",
                                 "mandatory": True,
                                 "placeholder": "e.g. \\Medical Data\\Xrays",
-                                "description": ("Path of the Windows directory from which the files are to be pulled. "
-                                                "This path must be relative to the shared directory."),
+                                "description": (
+                                    "Path of the Windows directory from "
+                                    "which the files are to be pulled. This "
+                                    "path must be relative to "
+                                    "the shared directory."
+                                ),
                             },
                             {
                                 "label": "Filename Filter",
@@ -88,17 +121,18 @@ MICROSOFT_FILE_SHARE_FIELDS = {
                                 "default": "",
                                 "mandatory": False,
                                 "placeholder": "e.g. xrays_.*.jpg",
-                                "description": ("Regular expression that filters the files to be "
-                                                "pulled based on their filenames. Ensure that the "
-                                                "filter is a valid regular expression. If left empty, "
-                                                "all files from the directory will be retrieved. "
-                                                "Note that this filter is applied only to files "
-                                                "directly stored in the specified directory and does "
-                                                "not include files from sub-directories. "),
-                            }
-                        ]
+                                "description": (
+                                    "Regular expression that filters "
+                                    "the files to be pulled based on "
+                                    "their filenames. Ensure that the filter "
+                                    "is a valid regular expression. If left "
+                                    "empty, all files from the directory "
+                                    "will be retrieved."
+                                ),
+                            },
+                        ],
                     }
-                ]
+                ],
             }
         ],
         "file_results": [
@@ -108,22 +142,22 @@ MICROSOFT_FILE_SHARE_FIELDS = {
                 "type": "file_count_result",
                 "default": {},
                 "mandatory": False,
-                "description": "Preview file results."
+                "description": ("Preview file results."),
             }
-        ]
+        ],
     },
     "SFTP": {
         "configuration_parameters": [
             {
-                "label": "Server IP/Hostname",
+                "label": "Server Hostname/IP",
                 "key": "sftp_server_ip",
                 "type": "text",
                 "default": "",
                 "mandatory": True,
                 "placeholder": "e.g. 192.0.2.19/www.example.com",
                 "description": (
-                    "IP address or Hostname of the Windows machine "
-                    "from which the files are to be pulled."
+                    "Hostname or IP address of the Windows machine from which "
+                    "the files are to be pulled."
                 ),
             },
             {
@@ -145,7 +179,7 @@ MICROSOFT_FILE_SHARE_FIELDS = {
                 "default": "",
                 "mandatory": True,
                 "placeholder": "Password",
-                "description": "Password for the provided Windows username.",
+                "description": ("Password for the provided username."),
             },
             {
                 "label": "Port",
@@ -156,7 +190,7 @@ MICROSOFT_FILE_SHARE_FIELDS = {
                 "placeholder": "e.g. 22",
                 "description": (
                     "TCP port number to connect to "
-                    "the OpenSSH service on the Windows machine."
+                    "the OpenSSH service on the machine."
                 ),
             },
         ],
@@ -166,7 +200,10 @@ MICROSOFT_FILE_SHARE_FIELDS = {
                 "key": "directory_paths",
                 "type": "directory_paths",
                 "mandatory": True,
-                "description": "Path of the Windows directories from which the files are to be pulled.",
+                "description": (
+                    "Path of the directories from which the files "
+                    "are to be pulled."
+                ),
                 "fields": [
                     {
                         "label": "Directory Path",
@@ -174,8 +211,12 @@ MICROSOFT_FILE_SHARE_FIELDS = {
                         "type": "text",
                         "default": "",
                         "mandatory": True,
-                        "placeholder": "e.g. C:\\Users\\Administrator\\Hospital Data\\Medical Data\\Xrays",
-                        "description": "Path of the Windows directory from which the files are to be pulled.",
+                        "placeholder": "e.g. C:\\Users\\Administrator\\"
+                        "Hospital Data\\Medical Data\\Xrays",
+                        "description": (
+                            "Path of the directory from which the files "
+                            "are to be pulled."
+                        ),
                     },
                     {
                         "label": "Filename Filter",
@@ -184,15 +225,15 @@ MICROSOFT_FILE_SHARE_FIELDS = {
                         "default": "",
                         "mandatory": False,
                         "placeholder": "e.g. xrays_.*.jpg",
-                        "description": ("Regular expression that filters the files to be "
-                                        "pulled based on their filenames. Ensure that the "
-                                        "filter is a valid regular expression. If left empty, "
-                                        "all files from the directory will be retrieved. "
-                                        "Note that this filter is applied only to files "
-                                        "directly stored in the specified directory and does "
-                                        "not include files from sub-directories. "),
-                    }
-                ]
+                        "description": (
+                            "Regular expression that filters the files to "
+                            "be pulled based on their filenames. "
+                            "Ensure that the filter is a valid regular "
+                            "expression. If left empty, all files from "
+                            "the directory will be retrieved."
+                        ),
+                    },
+                ],
             }
         ],
         "file_results": [
@@ -202,8 +243,8 @@ MICROSOFT_FILE_SHARE_FIELDS = {
                 "type": "file_count_result",
                 "default": {},
                 "mandatory": False,
-                "description": "Preview file results."
+                "description": ("Preview file results."),
             }
-        ]
-    }
+        ],
+    },
 }

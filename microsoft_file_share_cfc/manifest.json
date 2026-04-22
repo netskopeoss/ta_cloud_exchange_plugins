@@ -1,13 +1,14 @@
 {
-    "name": "Microsoft File Share CFC",
+    "name": "Microsoft File Share",
     "id": "microsoft_file_share_cfc",
+    "version": "1.1.0",
     "module": "CFC",
-    "version": "1.0.1",
-    "description": "Microsoft File Share CFC plugin pulls the image or zip files from the directories present on the remote Windows Server.",
+    "description": "This plugin is used to pull images or zip files from provided directories present on a remote Windows server. The plugin supports both SMB protocol (version 2.0.2 to 3.1.1) and SFTP protocol for file transfer.",
     "patch_supported": false,
     "push_supported": false,
     "pull_supported": true,
-    "minimum_version": "6.0.0",
+    "pull_sample_data_on_validate": true,
+    "minimum_version": "6.1.0",
     "supported_cfc_method": [
         "cfc_image_hashes"
     ],
@@ -53,7 +54,7 @@
             "label": "Preview File Results",
             "name": "file_results",
             "type": "dynamic_step",
-            "labelInfo": "Preview the results of file scanning for Directory Configuration. Ensure that the count and size of files being pulled up by Netskope are correct and expected."
+            "labelInfo": "Preview the results of file scanning for Directory Configuration. Ensure that the count and size of files being pulled by Netskope are correct and expected."
         }
     ]
 }

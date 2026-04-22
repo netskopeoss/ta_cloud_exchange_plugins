@@ -3,8 +3,8 @@
     "id": "netskope_cfc",
     "module": "CFC",
     "netskope": true,
-    "version": "1.0.0",
-    "description": "This plugin is used to push CFC hashes of images to Netskope Tenant.",
+    "version": "1.1.0",
+    "description": "This plugin is used to push hashes of images to the Netskope Tenant.",
     "push_supported": true,
     "patch_supported": false,
     "pull_supported": false,
@@ -12,5 +12,5 @@
     ],
     "minimum_provider_version": "1.5.1",
     "provider_id": "netskope_provider",
-    "minimum_version": "6.0.0"
+    "minimum_version": "6.1.0"
 }

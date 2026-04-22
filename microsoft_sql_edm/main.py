@@ -1,43 +1,3 @@
-"""Microsoft SQL EDM Plugin.
-
-Microsoft SQL EDM Plugin is used to pull data from Microsoft SQL server, store
-it in CSV format, perform sanitization and EDM Hash Generation from the same.
-"""
-
-import csv
-import os
-import re
-import shutil
-import time
-import traceback
-from copy import deepcopy
-from typing import List
-
-# Third-party libraries
-from sqlalchemy import create_engine, text, URL
-from sqlalchemy.exc import InterfaceError, ProgrammingError
-
-from netskope.integrations.edm.models import Action, ActionWithoutParams
-from netskope.integrations.edm.plugin_base import PluginBase, ValidationResult
-from netskope.integrations.edm.utils import CONFIG_TEMPLATE, FILE_PATH
-from netskope.integrations.edm.utils import CustomException as MicrosoftSQLDLPError
-from netskope.integrations.edm.utils import run_sanitizer
-from netskope.integrations.edm.utils.constants import EDM_HASH_CONFIG
-from netskope.integrations.edm.utils.edm.hash_generator.edm_hash_generator import (
-    generate_edm_hash,
-)
-from .utils.constants import (
-    MICROSOFT_SQL_EDM_FIELDS,
-    BATCH_SIZE,
-    CONNECTION_TIMEOUT,
-    MODULE_NAME,
-    PLUGIN_NAME,
-    PLUGIN_VERSION,
-    SAMPLE_CSV_ROW_COUNT,
-    SQL_MODIFICATION_KEYWORDS,
-    SAMPLE_CSV_FILE_NAME,
-)
-
 """
 BSD 3-Clause License
 
@@ -68,44 +28,37 @@ SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
 CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+Microsoft SQL EDM Plugin
 """
 
+import csv
+import os
+import shutil
+import traceback
+from copy import deepcopy
+from typing import List
 
-# User-Defined Wrapper ##
-def retry(error_class: Exception, count: int = 3, timeout: int = 30) -> callable:
-    """Retry executing a given function a specified number of times in case of a specific error.
-
-    Args:
-        error_class (Exception): Any exception class.
-        count (int, optional): Number of retries. Defaults to 3.
-        timeout (int, optional): Time interval (in seconds)
-                        between retries. Defaults to 30.
-
-    Raises:
-        error_class: Any exception class.
-
-    Returns:
-        wrapped_function: Wrapped function.
-    """
-
-    def retry_decorator(func):
-        def wrapped_function(*args, **kwargs):
-            nonlocal count
-            while count > 0:
-                try:
-                    return func(*args, **kwargs)
-                except error_class as error:
-                    count -= 1
-                    if count > 0:
-                        time.sleep(timeout)
-                    else:
-                        raise error
-                except Exception as error:
-                    raise error
-
-        return wrapped_function
-
-    return retry_decorator
+from netskope.integrations.edm.models import Action, ActionWithoutParams
+from netskope.integrations.edm.plugin_base import PluginBase, ValidationResult
+from netskope.integrations.edm.utils import CONFIG_TEMPLATE, FILE_PATH
+from netskope.integrations.edm.utils import (
+    CustomException as MicrosoftSQLDLPError,
+)
+from netskope.integrations.edm.utils import run_sanitizer
+from netskope.integrations.edm.utils.constants import EDM_HASH_CONFIG
+from netskope.integrations.edm.utils.edm.hash_generator.edm_hash_generator import (
+    generate_edm_hash,
+)
+from .utils.constants import (
+    MICROSOFT_SQL_EDM_FIELDS,
+    MODULE_NAME,
+    PLUGIN_NAME,
+    PLUGIN_VERSION,
+    SAMPLE_CSV_ROW_COUNT,
+    SAMPLE_CSV_FILE_NAME,
+)
+from .utils.helper import MicrosoftSQLHelper
 
 
 class MSSQLPlugin(PluginBase):
@@ -133,6 +86,7 @@ class MSSQLPlugin(PluginBase):
         self.log_prefix = f"{MODULE_NAME} {self.plugin_name}"
         if name:
             self.log_prefix = f"{self.log_prefix} [{name}]"
+        self.helper = MicrosoftSQLHelper(self.logger, self.log_prefix)
 
     def _get_plugin_info(self) -> tuple:
         """Get plugin name and version from manifest.
@@ -148,10 +102,8 @@ class MSSQLPlugin(PluginBase):
         except Exception as exp:
             self.logger.error(
                 message=(
-                    "{} {}: Error occurred while"
-                    " getting plugin details. Error: {}".format(
-                        MODULE_NAME, PLUGIN_NAME, exp
-                    )
+                    f"{MODULE_NAME} {PLUGIN_NAME}: Error occurred while"
+                    f" getting plugin details. Error: {exp}"
                 ),
                 details=traceback.format_exc(),
             )
@@ -168,14 +120,19 @@ class MSSQLPlugin(PluginBase):
         """
         result = ValidationResult(
             success=False,
-            message="Step validation failed.",
+            message="Validation failed.",
         )
         if step == "configuration":
             result = self.validate(self.configuration)
         elif step == "sanity_inputs":
+            message = (
+                "Successfully validated hash generation and "
+                "sanitization parameters."
+            )
+            self.logger.debug(f"{self.log_prefix}: {message}")
             result = ValidationResult(
                 success=True,
-                message="Step validated successfully.",
+                message=message
             )
             input_path = f"{FILE_PATH}/{self.name}/{SAMPLE_CSV_FILE_NAME}"
             output_path = f"{FILE_PATH}/{self.name}"
@@ -188,157 +145,132 @@ class MSSQLPlugin(PluginBase):
                 )
                 self.sanitize(file_name="sample", sample_data=True)
             except Exception:
-                error_message = (
-                    f"Error occurred while sanitizing the sample data for configuration '{self.name}'."
-                )
+                err_msg = "Error occurred while sanitizing the sample data."
                 self.logger.error(
-                    message=f"{self.log_prefix} {error_message}",
+                    message=f"{self.log_prefix}: Validation error "
+                    f"occurred. {err_msg}",
+                    resolution="Ensure the sample data is "
+                    "valid and try again.",
                     details=traceback.format_exc(),
                 )
                 result = ValidationResult(
                     success=False,
-                    message=error_message,
+                    message=err_msg,
                 )
         elif step == "sanity_results":
+            message = "Successfully validated preview sanitization results."
+            self.logger.debug(f"{self.log_prefix}: {message}")
             result = ValidationResult(
                 success=True,
-                message="Step validated successfully.",
+                message="Successfully validated Preview Sanitization Results.",
             )
         return result
 
-    @staticmethod
-    def strip_args(data: dict):
-        """Strip arguments from left and right directions.
+    def strip_string_values(self, configuration: dict) -> None:
+        """
+        Strip leading and trailing whitespace from string values.
+
+        Values belong to the provided dictionary.
 
         Args:
-            data (dict): Dict object having all the
-            Plugin configuration parameters.
+            configuration (dict): A dictionary containing key-value pairs.
         """
-        keys = data.keys()
-        for key in keys:
-            if isinstance(data[key], str):
-                data[key] = data[key].strip()
+        for parameter, value in configuration.items():
+            if parameter == "password":
+                continue
+            if isinstance(value, str):
+                configuration[parameter] = value.strip()
 
     def create_directory(self, dir_path: str):
-        """Create a directory at the specified path, including all necessary parent directories.
+        """Create a directory at the specified path.
+
+        Include all necessary parent directories.
 
         Args:
             dir_path (string): The path of the directory to be created.
 
         Raises:
-            Exception: If there's an issue creating the directory.
+            MicrosoftSQLDLPError: If there's an issue creating the directory.
         """
         try:
             if not os.path.exists(dir_path):
                 os.makedirs(dir_path)
         except Exception as error:
+            err_msg = (
+                "Error occurred while creating nested directories to store "
+                "sanitized data or EDM hashes."
+            )
             self.logger.error(
-                message=f"{self.log_prefix} Error occurred while creating nested "
-                + "directories to store sanitized data or EDM hashes.",
+                message=f"{self.log_prefix}: {err_msg}",
+                resolution=(
+                    "Ensure the directory path is valid and has write "
+                    "permissions."
+                ),
                 details=traceback.format_exc(),
             )
-            raise error
+            raise MicrosoftSQLDLPError(value=error, message=err_msg) from error
 
-    def create_connection_string(self, config: dict) -> str:
-        """Create a Microsoft SQL database connection string based on the provided configuration.
+    def _get_column_names_only(
+        self, csv_file_path: str
+    ) -> dict:
+        """Extract column names from CSV without validation.
 
-        Args:
-            config (dict): A dictionary containing
-                        database connection configuration parameters.
-                        Requires 'username', 'password',
-                        'host', 'port', and 'dbname' keys.
-
-        Returns:
-            str: The constructed Microsoft SQL database connection string.
-        """
-        self.strip_args(config)
-
-        return URL.create(
-            "mssql+pyodbc",
-            username=config["username"],
-            password=config["password"],
-            host=config["host"],
-            port=config["port"],
-            database=config["dbname"],
-            query={"driver": "ODBC Driver 18 for SQL Server"},
-        )
-
-    def delete_old_csv(self):
-        """Delete old csv files at the start of pull method."""
-        csv_path = self.storage["csv_path"]
-        if os.path.exists(csv_path):
-            os.remove(csv_path)
-
-    def validate_port(self, port: str) -> bool:
-        """Validate Provided port.
+        This method is used by get_fields during plugin upgrade to avoid
+        strict validation issues while still providing column names.
 
         Args:
-            port (string): Provided port
+            csv_file_path (str): Path to the CSV file
 
         Returns:
-            bool: True if port is between 0 and 65536 and False otherwise.
+            dict: Dictionary containing column names
         """
-        if 0 < int(port) < 65536:
-            return True
-        return False
+        try:
+            encoding = "UTF-8"
+            with open(csv_file_path, "rb") as csv_file_object:
+                hdr_raw = csv_file_object.readline()
+                if not hdr_raw:
+                    return {"columns": []}
 
-    def validate_query_format(self, query: str) -> tuple:
-        """Validate if the query is properly formatted and exists.
+                remove_quotes = (
+                    csv.QUOTE_ALL
+                    if self.configuration.get("configuration", {}).get(
+                        "remove_quotes", False
+                    )
+                    else csv.QUOTE_NONE
+                )
 
-        Args:
-            query (str): SQL query to validate
+                header = next(
+                    csv.reader(
+                        [hdr_raw.decode(encoding)],
+                        quoting=remove_quotes,
+                    )
+                )
 
-        Returns:
-            tuple: (is_valid, error_message) where is_valid is a boolean and error_message is a string
-        """
-        if not query or not isinstance(query, str) or query.strip() == "":
-            return False, "Invalid Query provided."
-        return True, ""
-
-    def validate_no_dml_in_query(self, query: str) -> tuple:
-        """Validate that the query does not contain any DML operations.
-
-        Args:
-            query (str): SQL query to validate
-
-        Returns:
-            tuple: (is_valid, error_message) where is_valid is a boolean and error_message is a string
-        """
-        sql_query_pattern = re.compile(
-            rf"""
-            (?P<quoted_identifier> \[[^\]]+\] )
-            | \b(?:{"|" .join(map(re.escape, SQL_MODIFICATION_KEYWORDS))})\b
-        """,
-            flags=re.IGNORECASE | re.VERBOSE,
-        )
-
-        if any(
-            matched_word
-            for matched_word in sql_query_pattern.finditer(query)
-            if not matched_word.group("quoted_identifier")
-        ):
-            return False, (
-                "Error: Provided query may contain "
-                "database modification operation. Please use a read-only query."
+                return {"columns": header}
+        except Exception as error:
+            self.logger.error(
+                message=(
+                    f"{self.log_prefix}: Error occurred while "
+                    "extracting column names. Error: "
+                    f"{str(error)}"
+                ),
+                details=traceback.format_exc(),
             )
-        return True, ""
+            return {"columns": []}
 
-    def validate_column_count(self, columns: list) -> tuple:
-        """Validate that the number of columns in the query result is not more than 25.
+    @staticmethod
+    def create_csv_directory(csv_file_path: str):
+        """Create the directory for a CSV file.
 
         Args:
-            columns (list): List of column names from the query result
-
-        Returns:
-            tuple: (is_valid, error_message) where is_valid is a boolean and error_message is a string
+            csv_file_path (str): The file path to the CSV file.
         """
-        if columns and len(columns) > 25:
-            error_message = (
-                "Maximum 25 columns allowed. Please reduce the number "
-                "of columns in your query and try again."
-            )
-            return False, error_message
-        return True, ""
+        if os.path.isfile(csv_file_path):
+            os.remove(csv_file_path)
+        else:
+            directory_path = os.path.dirname(csv_file_path)
+            if not os.path.exists(directory_path):
+                os.makedirs(directory_path)
 
     def validate_csv_file_records(
         self, csv_file_path: str, record_count: int = 0
@@ -347,312 +279,213 @@ class MSSQLPlugin(PluginBase):
 
         Args:
             csv_file_path (str): The file path to the CSV file to be validated.
-            record_count (int, optional): The maximum number of records to validate. If set
-                to a positive value, only the first 'record_count' records will be validated.
-                If set to 0 (default), all records in the file will be validated.
+            record_count (int, optional): The maximum number of records to
+                validate. If set to a positive value, only the first
+                'record_count' records will be validated. If set to 0
+                (default), all records in the file will be validated.
 
         Raises:
-            MicrosoftSQLDLPError: If validation fails due to incorrect data or missing data.
+            MicrosoftSQLDLPError: If validation fails due to incorrect data or
+            missing data.
 
         Returns:
-            dict: A dictionary containing the header columns of the CSV file as a list.
+            dict: A dictionary containing the header columns of the CSV file
+                as a list.
         """
+        encoding = "UTF-8"
         row_count = 0
         header = None
-        sample_data = []
+        sample_raw_lines = []
+
+        cur_line_box = [None]
+        remove_quotes = (
+            csv.QUOTE_ALL
+            if self.configuration.get("configuration", {}).get(
+                "remove_quotes", False
+            )
+            else csv.QUOTE_NONE
+        )
+
+        def _char_encoder(binary_file):
+            while True:
+                line = binary_file.readline()
+                if not line:
+                    return
+                cur_line_box[0] = line  # raw bytes for lossless write-back
+                yield line.decode(encoding)
 
         try:
-            with open(csv_file_path, "r", encoding="UTF-8") as csv_file_object:
-                # Create a CSV reader object to iterate through the CSV file.
-                csv_reader = csv.reader(csv_file_object)
+            with open(csv_file_path, "rb") as csv_file_object:
+                hdr_raw = csv_file_object.readline()
+                if not hdr_raw:
+                    err_msg = (
+                        "Provided query should return atleast one record."
+                    )
+                    self.logger.error(
+                        message=f"{self.log_prefix}: {err_msg}",
+                        resolution=(
+                            "Ensure the query returns at least one record."
+                        ),
+                    )
+                    raise MicrosoftSQLDLPError(message=err_msg)
+
+                header = next(
+                    csv.reader(
+                        [hdr_raw.decode(encoding)],
+                        quoting=remove_quotes,
+                    )
+                )
+                if any(cell.strip() == "" for cell in header):
+                    raise ValueError(
+                        "Column name in provided file should not "
+                        "have an empty value."
+                    )
+
+                row_count = 1
+
+                csv_reader = csv.reader(
+                    _char_encoder(csv_file_object),
+                    quoting=remove_quotes,
+                )
 
                 for row in csv_reader:
                     row_count += 1
 
-                    # Check if 'record_count' is specified and if the row count exceeds the limit.
                     if record_count and row_count > record_count + 1:
                         break
 
                     if record_count:
-                        sample_data.append(row)
+                        sample_raw_lines.append(cur_line_box[0])
 
-                    # Handle the first row as the header row.
-                    if row_count == 1:
-                        header = row
-                        if any(cell.strip() == "" for cell in header):
-                            raise ValueError(
-                                "Column name in provided file should not have an empty value."
-                            )
-                        continue
-
-                    # Check if the current row has the same number of columns as the header row.
                     if len(row) != len(header):
                         raise ValueError(
-                            f"Row '{row_count}' does not contain the correct number of columns."
+                            f"Row '{row_count}' does not contain the correct "
+                            "number of columns."
                         )
 
-                # Check if at least 1 record is present in the CSV file.
                 if row_count < 2:
-                    raise ValueError("Provided query should return atleast one record.")
+                    raise ValueError(
+                        "Provided query should return atleast one record."
+                    )
 
-            # Keep only the records which has been validated
             if record_count:
-                with open(
-                    csv_file_path, "w", encoding="UTF-8", newline=""
-                ) as csv_file_object:
-                    writer = csv.writer(csv_file_object)
-                    writer.writerows(sample_data)
+                with open(csv_file_path, "wb") as csv_file_object:
+                    csv_file_object.write(hdr_raw)
+                    for raw_line in sample_raw_lines:
+                        csv_file_object.write(raw_line)
 
             return {"columns": header}
         except ValueError as error:
             self.logger.error(
-                message=f"{self.log_prefix} {str(error)} Plugin Configuration: '{self.name}'.",
-                details=traceback.format_exc(),
-            )
-            raise MicrosoftSQLDLPError(value=error, message=str(error)) from error
-
-    def store_data_to_csv(self, mssql_data: list, csv_path: str):
-        """
-        Store fetched Microsoft SQL data to csv file.
-
-        Args:
-            mssql_data (list): sql data fetched from database.
-            csv_path (string): location to store csv data file at.
-
-        Raises:
-            Exception: If any error in storing data to CSV.
-        """
-        try:
-            self.create_directory(dir_path=os.path.dirname(csv_path))
-            with open(csv_path, "a", encoding="UTF-8") as file_pointer:
-                csv_pointer = csv.writer(file_pointer)
-                for row in mssql_data:
-                    csv_pointer.writerow(row)
-        except Exception as error:
-            self.logger.error(
-                message=(
-                    f"{self.log_prefix} Error occurred while storing fetched "
-                    "Microsoft SQL data to CSV file."
+                message=f"{self.log_prefix}: {str(error)}",
+                resolution=(
+                    "Ensure to re-validate the query and try again. "
+                    "\n• The query should return at least 1 record."
+                    "\n• Column name in provided file should not "
+                    "have an empty value."
+                    "\n• Each row should contain the correct number of "
+                    "columns as the header row."
+                    "\n• Maximum 25 columns allowed."
                 ),
                 details=traceback.format_exc(),
             )
-            raise error
-
-    def pull_data(self, config: dict, fetch_only_sample_data: bool = False) -> list:
-        """Create connection and fetch data from database.
-
-        Args:
-            config (dict): plugin configuration
-            fetch_only_sample_data (bool, optional):Flag for fetching sample data. \
-                Defaults to False.
-
-        Raises:
-            InterfaceError: If there's an issue connecting to database.
-            MicrosoftSQLDLPError: If there's an issue fetching data from database.
-
-        Returns:
-            list: list of data fetched from database
-        """
-        try:
-            # Validate query format
-            is_valid_query, query_error_message = self.validate_query_format(
-                config.get("query", "")
-            )
-            if not is_valid_query:
-                self.logger.error(message=f"{self.log_prefix} {query_error_message}")
-                raise MicrosoftSQLDLPError(
-                    message=f"{self.log_prefix} {query_error_message}"
-                )
-
-            # Validate no DML operations in query
-            is_valid_dml, dml_error_message = self.validate_no_dml_in_query(
-                config["query"]
-            )
-            if not is_valid_dml:
-                self.logger.error(message=f"{self.log_prefix} {dml_error_message}")
-                raise MicrosoftSQLDLPError(
-                    message=f"{self.log_prefix} {dml_error_message}"
-                )
-
-            connection_string = self.create_connection_string(config)
-            csv_path = self.storage["csv_path"]
-            eng = create_engine(
-                connection_string,
-                connect_args={
-                    "connect_timeout": CONNECTION_TIMEOUT,
-                    "TrustServerCertificate": "yes",
-                },
-            )  # creates connection with database.
-            with eng.connect() as connection:
-                # used to stop user from executing any database modification query.
-                query = text(config["query"])
-                result = connection.execute(query)
-                columns = list(result.keys())
-
-                # Validate column count
-                is_valid_columns, column_error_message = self.validate_column_count(
-                    columns
-                )
-                if not is_valid_columns:
-                    self.logger.error(
-                        message=f"{self.log_prefix} {column_error_message}",
-                    )
-                    raise MicrosoftSQLDLPError(
-                        message=f"{self.log_prefix} {column_error_message}",
-                    )
-
-                self.store_data_to_csv([columns], csv_path)
-                if fetch_only_sample_data:
-                    rows = result.fetchmany(SAMPLE_CSV_ROW_COUNT)
-                    self.store_data_to_csv(rows, csv_path)
-                else:
-                    while True:
-                        rows = result.fetchmany(BATCH_SIZE)
-                        if not rows:
-                            break  # No more rows to fetch
-                        self.store_data_to_csv(rows, csv_path)
-            self.validate_csv_file_records(csv_path)
-            return columns
-        except InterfaceError as error:
-            self.logger.error(
-                message=(
-                    f"{self.log_prefix} InterfaceError occurred when connecting to "
-                    "Microsoft SQL Database."
-                ),
-                details=traceback.format_exc(),
-            )
-            raise error  # if there is any connection error
-        except ProgrammingError as error:  # if there is any error while executing query
-            self.logger.error(
-                message=f"{self.log_prefix} ProgrammingError occurred while executing Microsoft SQL query.",
-                details=traceback.format_exc(),
-            )
             raise MicrosoftSQLDLPError(
-                value=error,
-                message="Error occurred while executing Microsoft SQL query.",
-            ) from error
-        except MicrosoftSQLDLPError as error:
-            raise error
-        except Exception as error:
-            self.logger.error(
-                message=f"{self.log_prefix} Error occurred while fetching Microsoft SQL data.",
-                details=traceback.format_exc(),
-            )
-            raise MicrosoftSQLDLPError(
-                value=error, message="Error occurred while fetching Microsoft SQL data."
+                value=error, message=str(error)
             ) from error
 
-    @retry(error_class=InterfaceError)
-    def pull_mssql_data(self, config: dict) -> list:
-        """Define the separate method since we need to retry in case of pulling all data from Microsoft SQL.
+    def sanitize(self, file_name: str = "", sample_data: bool = False) -> None:
+        """Sanitize the data from a CSV file and store good & bad files.
 
         Args:
-            config (dict): plugin configuration
-
-        Raises:
-            Exception: If there's an issue fetching data from database.
-
-        Returns:
-            list: list of data fetched from database
-        """
-        try:
-            self.logger.info(
-                message=f"{self.log_prefix} Fetching Microsoft SQL data for configuration '{self._name}'."
-            )
-            data = self.pull_data(config=config, fetch_only_sample_data=False)
-            self.logger.info(
-                message=(
-                    f"{self.log_prefix} Microsoft SQL data fetched"
-                    + f" successfully for configuration '{self._name}'."
-                )
-            )
-            return data
-        except Exception as error:
-            raise error
-
-    def sanitize(self, file_name: str = "", sample_data: bool = False):
-        """Sanitizes csv data and store good and bad files using run_sanitizer.
-
-        Args:
-            file_name (str, optional): filename to use for generated good and bad csv. Defaults to "".
+            file_name (str): The name of the output file.
+            sample_data (bool): Flag for sample data.
 
         Raises:
             MicrosoftSQLDLPError: If an error occurs during
             the sanitization process.
         """
         try:
-            self.logger.info(
-                message=f"{self.log_prefix} Sanitizing Microsoft SQL data for configuration '{self._name}'."
-            )
-            fields = self.configuration.get("sanity_inputs", {}).get(
-                "sanitization_input", {}
-            )
+            sanitization_input = self.configuration.get(
+                "sanity_inputs", {}
+            ).get("sanitization_input", {})
 
-            exclude_stopwords = self.configuration.get("sanity_inputs", {}).get(
-                "exclude_stopwords", False
-            )
+            exclude_stopwords = self.configuration.get(
+                "sanity_inputs", {}
+            ).get("exclude_stopwords", False)
 
-            for field in fields:  # strips spaces from front and end for all values.
-                self.strip_args(field)
-
-            # Construct edm_data_config based on fields configuration
-            edm_data_config = deepcopy(CONFIG_TEMPLATE)
-            edm_data_config.update(
+            edm_input_configuration = deepcopy(CONFIG_TEMPLATE)
+            edm_input_configuration.update(
                 {
                     "names": [
-                        field.get("field", "")
-                        for field in fields
-                        if field.get("nameColumn", False)
+                        field_input.get("field", "")
+                        for field_input in sanitization_input
+                        if field_input.get("nameColumn", False)
                     ]
                 }
             )
+            if (
+                "stopwords" in edm_input_configuration
+                and not exclude_stopwords
+            ):
+                del edm_input_configuration["stopwords"]
 
-            if "stopwords" in edm_data_config and not exclude_stopwords:
-                del edm_data_config["stopwords"]
-
-            csv_path = self.storage["csv_path"]
-            output_path = self.storage["sanitization_data_path"]
-            file_path = f"{output_path}/{file_name}"
-
-            if not os.path.isfile(csv_path):
-                self.logger.error(
-                    message=f"{self.log_prefix} Error occurred while performing EDM sanitization."
-                    + "Microsoft SQL data file does not exist.",
-                )
-                raise MicrosoftSQLDLPError(
-                    message="Error occurred while performing Microsoft SQL data sanitization."
-                )
-
-            # Remove existing sanitized and non-sanitized files if they exist
-            for file_extension in ["good", "bad"]:
-                existing_file = f"{file_path}.{file_extension}"
-                if os.path.isfile(existing_file):
-                    os.remove(existing_file)
-
-            self.create_directory(dir_path=os.path.dirname(output_path))
-            run_sanitizer(csv_path, file_path, edm_data_config)
-            self.logger.info(
-                message=(
-                    f"{self.log_prefix} Microsoft SQL data sanitized successfully for "
-                    f"configuration '{self._name}'."
-                )
+            csv_file_path = self.storage.get("csv_path")
+            sanitization_output_path = self.storage.get(
+                "sanitization_data_path"
             )
+            sanitization_output_file = (
+                f"{sanitization_output_path}/{file_name}"
+            )
+
+            if not os.path.isfile(csv_file_path):
+                error_message = (
+                    f"Data file doesn't exist at {csv_file_path} "
+                    "for sanitization."
+                )
+                self.logger.error(
+                    message=f"{self.log_prefix}: {error_message}",
+                    resolution=(
+                        "Ensure to provide a valid CSV file in the "
+                        "configuration and try again."
+                    ),
+                )
+                raise MicrosoftSQLDLPError(error_message)
+
+            for file_extension in ["good", "bad"]:
+                file_path = f"{sanitization_output_file}.{file_extension}"
+                if os.path.isfile(file_path):
+                    os.remove(file_path)
+
+            if not os.path.exists(sanitization_output_path):
+                os.makedirs(sanitization_output_path)
+            edm_input_configuration["remove-quotes"] = self.configuration.get(
+                "configuration", {}
+            ).get("remove_quotes", False)
+            run_sanitizer(
+                csv_file_path,
+                sanitization_output_file,
+                edm_input_configuration,
+            )
+            self.logger.info(
+                message=f"{self.log_prefix}: Microsoft SQL data sanitized "
+                "successfully."
+                )
             if not sample_data:
-                if os.path.exists(csv_path):
-                    os.remove(csv_path)
-                if os.path.exists(f"{file_path}.bad"):
-                    os.remove(f"{file_path}.bad")
+                if os.path.exists(csv_file_path):
+                    os.remove(csv_file_path)
+                if os.path.exists(f"{sanitization_output_file}.bad"):
+                    os.remove(f"{sanitization_output_file}.bad")
         except Exception as error:
+            error_message = (
+                "Error occurred while sanitizing "
+                f"the data at {csv_file_path}."
+            )
             self.logger.error(
-                message=(
-                    f"{self.log_prefix} Error occurred while performing sanitization of "
-                    "Microsoft SQL data."
-                ),
+                message=f"{self.log_prefix}: {error_message}",
                 details=traceback.format_exc(),
             )
             raise MicrosoftSQLDLPError(
-                value=error,
-                message="Error occurred while performing sanitization of Microsoft SQL data.",
+                value=error, message=str(error)
             ) from error
 
     def get_field_indices(self, sanity_inputs: dict) -> tuple:
@@ -662,8 +495,10 @@ class MSSQLPlugin(PluginBase):
             sanity_inputs (dict): Sanitization inputs with field info.
 
         Returns:
-            tuple: A tuple containing the indices of string fields that are case-sensitive,
-            indices of string fields that are case-insensitive, and indices of number fields.
+            tuple: A tuple containing the indices of string fields
+            that are case-sensitive,
+            indices of string fields that are case-insensitive,
+            and indices of number fields.
         """
         try:
             string_case_sensitive_indices = []
@@ -672,7 +507,7 @@ class MSSQLPlugin(PluginBase):
             string_indices = []
 
             for index, field_info in enumerate(
-                sanity_inputs.get("sanitization_input", {})
+                sanity_inputs.get("sanitization_input", [])
             ):
                 if field_info.get("normalization", "") == "number":
                     number_indices.append(index)
@@ -691,9 +526,14 @@ class MSSQLPlugin(PluginBase):
 
             return string_cs, string_cins, num_norm, str_norm
         except Exception as error:
-            raise MicrosoftSQLDLPError(
+            error_message = (
                 "Error occurred while getting "
-                "indices from sanity input fields based on normalization and sensitivity."
+                "indices from sanity input fields based on "
+                "normalization and sensitivity."
+            )
+            self.logger.error(message=f"{self.log_prefix}: {error_message}")
+            raise MicrosoftSQLDLPError(
+                value=error, message=str(error)
             ) from error
 
     def remove_files(
@@ -702,18 +542,20 @@ class MSSQLPlugin(PluginBase):
         input_file_dir: str = "",
         output_path: str = "",
     ):
-        """Remove csv files and temp EDM hashes after EDM hash generation.
+        """Remove files and temp EDM hashes after EDM hash generation.
 
         Args:
             temp_edm_hash_dir_path (str): Temporary EDM Hash Path
-            input_file_dir (str): Input CSV File Path
-            output_path (str): Path where all CSV files are located
+            input_file_dir (str): Input File Path
+            output_path (str): Path where all files are located
 
         Raises:
-            Exception: If there's an issue removing files.
+            MicrosoftSQLDLPError: If there's an issue removing files.
         """
         try:
-            if temp_edm_hash_dir_path and os.path.exists(temp_edm_hash_dir_path):
+            if temp_edm_hash_dir_path and os.path.exists(
+                temp_edm_hash_dir_path
+            ):
                 shutil.rmtree(temp_edm_hash_dir_path)
             if input_file_dir and os.path.exists(input_file_dir):
                 shutil.rmtree(input_file_dir)
@@ -724,11 +566,13 @@ class MSSQLPlugin(PluginBase):
                         os.remove(file_path)
         except Exception as error:
             self.logger.error(
-                message=f"{self.log_prefix} Error occurred while removing"
-                + "csv files.",
+                message=f"{self.log_prefix}: Error occurred while removing "
+                "csv files.",
                 details=traceback.format_exc(),
             )
-            raise error
+            raise MicrosoftSQLDLPError(
+                value=error, message=str(error)
+            ) from error
 
     def generate_csv_edm_hash(self, csv_file: str):
         """Generate EDM Hashes from sanitized data.
@@ -742,10 +586,17 @@ class MSSQLPlugin(PluginBase):
         """
         try:
             self.logger.info(
-                message=f"{self.log_prefix} Generating EDM Hash "
-                + f"for configuration '{self._name}' of Microsoft SQL EDM Plugin."
+                message=f"{self.log_prefix}: Generating EDM Hashes."
             )
-            output_path = os.path.dirname(self.storage["csv_path"])
+            csv_storage_path = self.storage.get("csv_path")
+            if not csv_storage_path:
+                raise MicrosoftSQLDLPError(
+                    message=(
+                        f"{self.log_prefix}: CSV path is not available for "
+                        "EDM hash generation."
+                    )
+                )
+            output_path = os.path.dirname(csv_storage_path)
 
             good_csv_path = f"{output_path}/{csv_file}.good"
             input_file_dir = f"{output_path}/input"
@@ -755,13 +606,20 @@ class MSSQLPlugin(PluginBase):
 
             if not os.path.isfile(input_csv_file):
                 self.logger.error(
-                    message=f"{self.log_prefix} Error occurred while generating "
-                    "EDM Hash. Good file does not exist for "
-                    + f"configuration '{self._name}' of Microsoft SQL EDM Plugin.",
+                    message=(
+                        f"{self.log_prefix}: Error occurred while "
+                        "generating EDM Hash. CSV file does not exist."
+                    ),
+                    resolution=(
+                        "Ensure to provide a valid CSV file in the "
+                        "configuration and try again."
+                    ),
                 )
                 raise MicrosoftSQLDLPError(
-                    message="Error occurred while generating "
-                    "EDM Hash of Microsoft SQL EDM Plugin."
+                    message=(
+                        "Error occurred while generating "
+                        "EDM Hash of Microsoft SQL EDM Plugin."
+                    )
                 )
 
             temp_edm_hash_dir_path = f"{output_path}/temp_edm_hashes"
@@ -773,6 +631,10 @@ class MSSQLPlugin(PluginBase):
                 sanity_inputs
             )
 
+            remove_quotes = self.configuration.get("configuration", {}).get(
+                "remove_quotes", False
+            )
+
             edm_hash_config = deepcopy(EDM_HASH_CONFIG)
             edm_hash_config.update(
                 {
@@ -782,6 +644,7 @@ class MSSQLPlugin(PluginBase):
                     "norm_str": norm_str,
                     "input_csv": input_csv_file,
                     "output_dir": output_dir_path,
+                    "remove_quotes": remove_quotes,
                 }
             )
 
@@ -801,27 +664,32 @@ class MSSQLPlugin(PluginBase):
                 self.storage["edm_hash_folder"] = edm_hash_dir_path
                 self.storage["edm_hash_available"] = True
                 metadata_file = metadata_file.replace(".tgz", ".json")
-                temp_metadata_file = f"{temp_edm_hash_dir_path}/{metadata_file}"
+                temp_metadata_file = (
+                    f"{temp_edm_hash_dir_path}/{metadata_file}"
+                )
                 edm_hash_cfg = f"{edm_hash_dir_path}/{metadata_file}"
                 if os.path.exists(temp_metadata_file):
                     shutil.move(temp_metadata_file, f"{edm_hash_dir_path}/")
                 if os.path.exists(edm_hash_cfg):
                     self.storage["edm_hashes_cfg"] = edm_hash_cfg
-                self.remove_files(temp_edm_hash_dir_path, input_file_dir, output_path)
+                self.remove_files(
+                    temp_edm_hash_dir_path, input_file_dir, output_path
+                )
 
                 self.logger.info(
-                    message=f"{self.log_prefix} EDM Hash generated successfully "
-                    + f"for configuration '{self._name}' of Microsoft SQL EDM Plugin."
+                    message=(
+                        f"{self.log_prefix}: EDM Hash generated successfully."
+                    )
                 )
             else:
                 self.storage["edm_hash_available"] = False
                 raise MicrosoftSQLDLPError(
-                    message="Plugin: Microsoft SQL EDM - Error occurred while generating EDM Hash "
-                    + f"for configuration '{self._name}' of Microsoft SQL EDM Plugin."
+                    message=f"{self.log_prefix}: Error occurred while "
+                    "generating EDM Hash"
                 )
         except Exception as error:
             if self.storage.get("csv_path"):
-                output_path = os.path.dirname(self.storage["csv_path"])
+                output_path = os.path.dirname(self.storage.get("csv_path"))
                 input_file_dir = f"{output_path}/input"
                 temp_edm_hash_dir_path = f"{output_path}/temp_edm_hashes"
                 self.remove_files(
@@ -830,18 +698,23 @@ class MSSQLPlugin(PluginBase):
                     output_path=output_path,
                 )
             self.logger.error(
-                message=f"{self.log_prefix} Error occurred while generating "
-                "EDM Hash for Microsoft SQL data.",
+                message=(
+                    f"{self.log_prefix}: Error occurred while generating "
+                    "EDM Hash."
+                ),
                 details=traceback.format_exc(),
             )
             raise MicrosoftSQLDLPError(
                 value=error,
-                message="Error occurred while generating "
-                "EDM Hash of Microsoft SQL data.",
+                message=(
+                    "Error occurred while generating "
+                    "EDM Hash."
+                ),
             ) from error
 
     def pull_sample_data(self):
-        """Pull sample data from Microsoft SQL database and store it in csv file.
+        """
+        Pull sample data from Microsoft SQL database and store it in csv file.
 
         It only store records of sample size.
 
@@ -852,107 +725,164 @@ class MSSQLPlugin(PluginBase):
             list: list of column names from fetched data.
         """
         try:
-            self.logger.debug(
-                message=f"{self.log_prefix} Executing pull sample data method for Microsoft SQL EDM plugin."
-            )
+            self.logger.debug(f"{self.log_prefix}: Pulling sample data.")
             config = self.configuration.get("configuration", {})
-            _ = self.storage["csv_path"]
-            self.delete_old_csv()
-            mssql_data = self.pull_data(config=config, fetch_only_sample_data=True)
-
-            # Validate column count
-            is_valid_columns, column_error_message = self.validate_column_count(
-                mssql_data
-            )
-            if not is_valid_columns:
+            csv_path = self.storage.get("csv_path", "")
+            if not csv_path:
+                err_msg = "CSV path is not configured in storage."
                 self.logger.error(
-                    message=f"{self.log_prefix} {column_error_message}",
+                    message=f"{self.log_prefix}: {err_msg}",
+                    resolution="Ensure the CSV path is properly configured.",
                 )
-                raise MicrosoftSQLDLPError(
-                    message=f"{self.log_prefix} {column_error_message}",
-                )
+                raise MicrosoftSQLDLPError(message=err_msg)
+
+            if os.path.exists(csv_path):
+                os.remove(csv_path)
+
+            mssql_data = self.helper.pull_data(
+                config=config,
+                csv_path=csv_path,
+                fetch_only_sample_data=True,
+                sample_row_count=SAMPLE_CSV_ROW_COUNT
+            )
+
+            # Validate the CSV file records
+            self.validate_csv_file_records(
+                csv_path, record_count=SAMPLE_CSV_ROW_COUNT
+            )
 
             self.logger.debug(
-                message=f"{self.log_prefix} Executed pull sample data method for Microsoft SQL EDM plugin."
+                f"{self.log_prefix}: Successfully pulled sample data."
             )
 
             return {"columns": mssql_data}
         except MicrosoftSQLDLPError as error:
             raise error
         except Exception as error:
+            err_msg = "Error occurred while pulling sample data."
             self.logger.error(
-                message=f"{self.log_prefix} Error occurred while pulling data.",
-                details=traceback.format_exc(),
-            )
-            raise MicrosoftSQLDLPError(
-                value=error, message="Error occurred while pulling data."
-            ) from error
-
-    def pull(self):
-        """Pull data from Microsoft SQL Server and convert it to csv.
-
-        Raises:
-            MicrosoftSQLDLPError: If any error occurs while the data pulling.
-
-        Returns:
-            dict: returns success message
-        """
-        try:
-            base_name = f"{self.name}_data"
-            base_name = base_name.replace(" ", "_").replace("\t", "_").replace("-", "_")
-            csv_name = f"{base_name}.csv"
-            self.storage["csv_path"] = f"{FILE_PATH}/{self.name}/{csv_name}"
-            self.storage["file_name"] = csv_name
-            self.storage["sanitization_data_path"] = f"{FILE_PATH}/{self.name}"
-            self.delete_old_csv()
-
-            csv_file_path = self.storage["csv_path"]
-            config = self.configuration.get("configuration", {})
-            is_unsanitized_data = self.configuration.get("sanity_results", {}).get(
-                "is_unsanitized_data", True
-            )
-
-            _ = self.pull_mssql_data(config)
-            if is_unsanitized_data:
-                if os.path.exists(csv_file_path):
-                    os.rename(
-                        csv_file_path, f"{FILE_PATH}/{self.name}/{base_name}.good"
-                    )
-                    self.logger.debug(
-                        f"{self.log_prefix} Do not perform any data sanitization."
-                    )
-                else:
-                    error_message = f"Data file doesn't exist at {csv_file_path}."
-                    self.logger.error(message=f"{self.log_prefix} {error_message}")
-                    raise MicrosoftSQLDLPError(error_message)
-            else:
-                self.sanitize(base_name)
-            self.generate_csv_edm_hash(csv_file=base_name)
-            return {"message": "Data pulled and " + "EDM Hash generated successfully."}
-
-        except MicrosoftSQLDLPError as error:
-            self.logger.error(
-                message=f"{self.log_prefix} Error occurred while pulling, "
-                "sanitizing and generating EDM Hash for Microsoft SQL data."
-            )
-            raise error
-        except Exception as error:
-            self.logger.error(
-                message=f"{self.log_prefix} Error occurred while pulling, "
-                "sanitizing and generating EDM Hash for Microsoft SQL data.",
+                message=f"{self.log_prefix}: {err_msg}",
+                resolution=(
+                    "Ensure the database connection is stable and the query "
+                    "is valid."
+                ),
                 details=traceback.format_exc(),
             )
             raise MicrosoftSQLDLPError(
                 value=error,
-                message="Error occurred while pulling, "
-                "sanitizing and generating EDM Hash for Microsoft SQL data.",
+                message=err_msg,
             ) from error
+
+    def pull(self):
+        """
+        Pull and sanitize CSV from Microsoft SQL Server.
+
+        Retrieve the data, sanitize its contents, and store it locally.
+
+        Raises:
+            MicrosoftSQLDLPError: If any error occurs during
+                the data retrieval or validation.
+        """
+        try:
+            config = self.configuration.get("configuration", {})
+            is_unsanitized_data = self.configuration.get(
+                "sanity_results", {}
+            ).get("is_unsanitized_data", True)
+            self.strip_string_values(config)
+
+            csv_file_name = f"{self.name}_data"
+            csv_file_name = (
+                csv_file_name.replace(" ", "_")
+                .replace("\t", "_")
+                .replace("-", "_")
+            )
+            self.storage["csv_path"] = (
+                f"{FILE_PATH}/{self.name}/{csv_file_name}.csv"
+            )
+            self.storage["file_name"] = f"{csv_file_name}.csv"
+            self.storage["sanitization_data_path"] = f"{FILE_PATH}/{self.name}"
+            csv_file_path = self.storage.get("csv_path")
+            self.create_csv_directory(csv_file_path)
+
+            self.helper.pull_mssql_data(
+                config, csv_file_path
+            )
+        except Exception as error:
+            error_message = "Error occurred while pulling the data."
+            self.logger.error(
+                message=f"{self.log_prefix}: {error_message}",
+                details=traceback.format_exc(),
+            )
+            raise MicrosoftSQLDLPError(
+                value=error, message=str(error)
+            ) from error
+
+        try:
+            self.logger.info(f"{self.log_prefix}: Validating the data.")
+            self.validate_csv_file_records(csv_file_path)
+            self.logger.info(
+                (f"{self.log_prefix}: Successfully validated data.")
+            )
+        except Exception as error:
+            error_message = "Error occurred while validating the data. "
+            self.logger.error(
+                message=f"{self.log_prefix}: {error_message}",
+                details=traceback.format_exc(),
+            )
+            raise MicrosoftSQLDLPError(
+                value=error, message=str(error)
+            ) from error
+
+        try:
+            if is_unsanitized_data:
+                if os.path.exists(csv_file_path):
+                    os.rename(
+                        csv_file_path,
+                        f"{FILE_PATH}/{self.name}/{csv_file_name}.good",
+                    )
+                    self.logger.debug(
+                        f"{self.log_prefix}: Sanitization skipped for file"
+                        f" '{csv_file_name}' as Proceed Without Sanitization "
+                        "is enabled."
+                    )
+                else:
+                    error_message = (
+                        f"Data file doesn't exist at {csv_file_path}."
+                    )
+                    self.logger.error(
+                        message=f"{self.log_prefix}: {error_message}",
+                        resolution="Ensure to provide a valid CSV file in the "
+                        "configuration.",
+                    )
+                    raise MicrosoftSQLDLPError(error_message)
+            else:
+                self.logger.info(f"{self.log_prefix}: Sanitizing the data.")
+                self.sanitize(csv_file_name)
+                self.logger.info(
+                    (f"{self.log_prefix}: Successfully sanitized data.")
+                )
+        except Exception as error:
+            error_message = "Error occurred while sanitizing the data."
+            self.logger.error(
+                message=f"{self.log_prefix}: {error_message}",
+                details=traceback.format_exc(),
+            )
+            raise MicrosoftSQLDLPError(
+                value=error, message=str(error)
+            ) from error
+
+        self.generate_csv_edm_hash(csv_file=csv_file_name)
+        return {
+            "message": ("Data pulled and EDM Hash generated "
+                        "successfully.")
+        }
 
     def push(self, source_config_name: str = "", action_dict: dict = {}):
         """Plugin is not push supported.
 
         Args:
-            source_config_name (str, optional): Source config name. Defaults to "".
+            source_config_name (str, optional):
+            Source config name. Defaults to "".
             action_dict (dict, optional): Action dictionary. Defaults to {}.
 
         Raises:
@@ -962,149 +892,84 @@ class MSSQLPlugin(PluginBase):
 
     def validate(self, configuration: dict) -> ValidationResult:
         """
-        Validate the plugin configuration parameters.
+        Validate a connection to Microsoft SQL Server using the configuration.
 
         Args:
-            configuration (dict): Dictionary containing
-            the plugin configuration parameters.
+            configuration (dict): A dictionary containing
+            configuration parameters.
 
         Returns:
-            ValidationResult: ValidationResult
-            object with success flag and message.
+            ValidationResult: An instance of ValidationResult with either
+            success=True and a success
+            message if the connection is verified, or success=False and an
+            error message if the
+            validation fails.
         """
         self.logger.debug(
-            message=f"{self.log_prefix} Executing validate method for Microsoft SQL EDM plugin."
+            f"{self.log_prefix}: Validating configuration parameters."
         )
         try:
             db_config = configuration.get("configuration", {})
-            self.strip_args(db_config)
+            self.strip_string_values(db_config)
 
-            if (
-                ("host" not in db_config)
-                or (not db_config["host"])
-                or (not isinstance(db_config["host"], str))
-                or (db_config["host"].strip() == "")
-            ):
-                self.logger.error(
-                    f"{self.log_prefix} Validation error occurred for Microsoft SQL EDM plugin."
-                    "Error: Invalid Database Host provided."
-                )
-                return ValidationResult(
-                    success=False,
-                    message="Invalid Host provided.",
-                )
-
-            if (
-                ("username" not in db_config)
-                or (not db_config["username"])
-                or (not isinstance(db_config["username"], str))
-                or db_config["username"].strip() == ""
-            ):
-                self.logger.error(
-                    f"{self.log_prefix} Validation error occurred for Microsoft SQL EDM plugin."
-                    "Error: Invalid Database Username provided."
-                )
-                return ValidationResult(
-                    success=False,
-                    message="Invalid Username provided.",
-                )
-
-            if (
-                ("password" not in db_config)
-                or (not db_config["password"])
-                or (not isinstance(db_config["password"], str))
-                or db_config["password"].strip() == ""
-            ):
-                self.logger.error(
-                    f"{self.log_prefix} Validation error occurred for Microsoft SQL EDM plugin."
-                    "Error: Invalid Database Password provided."
-                )
-                return ValidationResult(
-                    success=False,
-                    message="Invalid Password provided.",
-                )
-
-            # Validate query format
-            is_valid_query, query_error_message = self.validate_query_format(
-                db_config.get("query", "")
+            validation_result = self.helper.validate_configuration_parameters(
+                db_config
             )
-            if not is_valid_query:
-                self.logger.error(
-                    f"{self.log_prefix} Validation error occurred for Microsoft SQL EDM plugin. "
-                    f"Error: {query_error_message}"
-                )
-                return ValidationResult(
-                    success=False,
-                    message=query_error_message,
-                )
+            if not validation_result.success:
+                return validation_result
 
-            # Validate no DML operations in query
-            is_valid_dml, dml_error_message = self.validate_no_dml_in_query(
-                db_config["query"]
-            )
-            if not is_valid_dml:
-                self.logger.error(
-                    f"{self.log_prefix} Validation error occurred for Microsoft SQL EDM plugin. "
-                    f"Error: {dml_error_message}"
-                )
-                return ValidationResult(
-                    success=False,
-                    message=dml_error_message,
-                )
+            verification_result = self.helper.verify_connection(db_config)
+            if not verification_result.success:
+                return verification_result
 
-            if (
-                ("dbname" not in db_config)
-                or (not db_config["dbname"])
-                or (not isinstance(db_config["dbname"], str))
-                or db_config["dbname"].strip() == ""
-            ):
-                self.logger.error(
-                    f"{self.log_prefix} Validation error occurred for Microsoft SQL EDM plugin."
-                    "Error: Invalid Database Name provided."
-                )
-                return ValidationResult(
-                    success=False,
-                    message="Invalid Database Name provided.",
-                )
-
-            if not self.validate_port(db_config["port"]):
-                self.logger.error(
-                    f"{self.log_prefix} Validation error occurred for Microsoft SQL EDM plugin."
-                    "Error: Invalid Port provided."
-                )
-                return ValidationResult(
-                    success=False,
-                    message="Invalid Port provided.",
-                )
             try:
                 input_path = f"{FILE_PATH}/{self.name}/{SAMPLE_CSV_FILE_NAME}"
                 self.storage.update({"csv_path": input_path})
                 self.pull_sample_data()
+                self.logger.debug(
+                    f"{self.log_prefix}: Successfully validated " 
+                    "configuration parameters."
+                )
             except Exception as error:
+                err_msg = str(error)
+                self.logger.error(
+                    message=f"{self.log_prefix}: Validation error "
+                    f"occurred. {err_msg}",
+                    resolution=(
+                        "Ensure that the database host, port, username, "
+                        "password, and database name are correct. Ensure the "
+                        "database server is reachable and the query is valid."
+                    ),
+                )
                 return ValidationResult(
                     success=False,
-                    message=str(error),
+                    message=err_msg,
                 )
 
             self.logger.debug(
-                message=(
-                    f"{self.log_prefix} Executed validate method for "
-                    "Microsoft SQL EDM plugin successfully."
+                (
+                    f"{self.log_prefix}: Successfully validated that query "
+                    "returns data from the database."
                 )
             )
-            return ValidationResult(
-                success=True,
-                message="Connection with Microsoft SQL database verified successfully.",
-            )
+
+            return verification_result
         except Exception:
+            err_msg = "Error occurred while connecting to the Microsoft "
+            "SQL database."
             self.logger.error(
-                message=f"{self.log_prefix} Couldn't establish a connection to"
-                " the database with the given parameters",
+                message=f"{self.log_prefix}: Validation error "
+                f"occurred. {err_msg}",
+                resolution=(
+                    "Ensure that the database host, port, username, password "
+                    "and database name are correct. Ensure the database "
+                    "server is reachable."
+                ),
                 details=traceback.format_exc(),
             )
             return ValidationResult(
                 success=False,
-                message="Couldn't establish a connection to the database with the given parameters.",
+                message=err_msg,
             )
 
     def get_actions(self) -> List[ActionWithoutParams]:
@@ -1137,7 +1002,9 @@ class MSSQLPlugin(PluginBase):
         """
         return ValidationResult(success=True, message="Validation successful.")
 
-    def get_fields(self, name: str, configuration: dict):
+    def get_fields(
+        self, name: str, configuration: dict
+    ):
         """Get fields configuration based on the specified protocol.
 
         Args:
@@ -1145,24 +1012,30 @@ class MSSQLPlugin(PluginBase):
             configuration (dict): Configuration parameters dictionary.
 
         Raises:
-            NotImplementedError: If a field configuration with the specified name
-                is not implemented.
+            NotImplementedError: If a field configuration with the specified
+                name is not implemented.
 
         Returns:
-            str: List of configuration parameters.
+            list: List of configuration parameters.
         """
-
         if name in MICROSOFT_SQL_EDM_FIELDS:
-            fields = MICROSOFT_SQL_EDM_FIELDS[name]
+            fields = MICROSOFT_SQL_EDM_FIELDS.get(name, [])
             if name == "sanity_inputs":
                 for field in fields:
-                    if field["type"] == "sanitization_input":
-                        input_path = f"{FILE_PATH}/{self.name}/{SAMPLE_CSV_FILE_NAME}"
+                    if field.get("type") == "sanitization_input":
+                        input_path = (
+                            f"{FILE_PATH}/{self.name}/{SAMPLE_CSV_FILE_NAME}"
+                        )
                         self.storage.update({"csv_path": input_path})
-                        field["default"] = self.pull_sample_data()
+                        # Only get column names without
+                        # validation for field config
+                        columns_data = self._get_column_names_only(
+                            input_path
+                        )
+                        field["default"] = columns_data
             elif name == "sanity_results":
                 for field in fields:
-                    if field["type"] == "sanitization_preview":
+                    if field.get("type") == "sanitization_preview":
                         field["default"] = {
                             "sanitizationStatus": True,
                             "message": "Sanitization Done Successfully",

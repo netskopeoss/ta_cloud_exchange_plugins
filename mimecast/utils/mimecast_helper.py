@@ -32,6 +32,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 CTE Mimecast  plugin helper module.
 """
 
+import hashlib
 import json
 import requests
 import time
@@ -111,6 +112,19 @@ class MimecastPluginHelper(object):
         headers.update({"User-Agent": user_agent})
         return headers
 
+    def build_url(self, endpoint: str, configuration: Dict) -> str:
+        """Build complete API URL from base URL and endpoint.
+
+        Args:
+            endpoint (str): API endpoint path.
+            configuration (Dict): Configuration containing base_url.
+
+        Returns:
+            str: Complete API URL.
+        """
+        base_url = configuration.get("base_url", BASE_URL).strip().strip("/")
+        return base_url + endpoint
+
     def api_helper(
         self,
         logger_msg: str,
@@ -124,6 +138,7 @@ class MimecastPluginHelper(object):
         verify=True,
         proxies=None,
         configuration=None,
+        storage: Dict = None,
         is_retraction: bool = False,
         is_handle_error_required=True,
         is_validation=False,
@@ -161,8 +176,6 @@ class MimecastPluginHelper(object):
             if is_retraction and RETRACTION not in self.log_prefix:
                 self.log_prefix = self.log_prefix + f" [{RETRACTION}]"
             headers = self._add_user_agent(headers)
-            base_url = configuration.get("base_url", BASE_URL).strip().strip("/")
-            url = base_url + url
             debug_log_msg = (
                 f"{self.log_prefix}: API Request for {logger_msg}. "
                 f"Endpoint: {method} {url}"
@@ -192,17 +205,22 @@ class MimecastPluginHelper(object):
                 if (
                     status_code == 401
                     and regenerate_auth_token
-                    and not is_validation
                 ):
-                    err_msg = (
-                        f"Received exit code {status_code} while"
-                        f" {logger_msg}. Hence regenerating access token."
+                    self.logger.debug(
+                        f"{self.log_prefix}: Regenerating access token."
                     )
-                    self.logger.error(
-                        message=f"{self.log_prefix}: {err_msg}",
-                        details=f"API response: {str(response.text)}",
+                    # Clear cached token to force regeneration
+                    if storage:
+                        storage.pop("auth_headers", None)
+                        storage.pop("config_hash", None)
+                    auth_header = self._get_auth_headers(
+                        proxy=proxies,
+                        verify=verify,
+                        configuration=configuration,
+                        storage=storage,
+                        is_validation=is_validation,
+                        is_retraction=is_retraction
                     )
-                    auth_header = self._get_auth_headers(configuration)
                     headers.update(auth_header)
                     return self.api_helper(
                         url=url,
@@ -217,6 +235,9 @@ class MimecastPluginHelper(object):
                         is_handle_error_required=is_handle_error_required,
                         is_validation=is_validation,
                         logger_msg=logger_msg,
+                        configuration=configuration,
+                        storage=storage,
+                        is_retraction=is_retraction,
                         regenerate_auth_token=False,
                     )
                 elif (
@@ -287,6 +308,10 @@ class MimecastPluginHelper(object):
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {error}",
                 details=str(traceback.format_exc()),
+                resolution=(
+                    "Ensure that your Mimecast platform server"
+                    " is reachable and the network connection is stable."
+                ),
             )
             raise MimecastPluginException(err_msg)
         except requests.exceptions.ProxyError as error:
@@ -302,6 +327,10 @@ class MimecastPluginHelper(object):
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {error}",
                 details=str(traceback.format_exc()),
+                resolution=(
+                    "Ensure that the proxy configuration provided is"
+                    " correct and the proxy server is reachable."
+                ),
             )
             raise MimecastPluginException(err_msg)
         except requests.exceptions.ConnectionError as error:
@@ -320,6 +349,10 @@ class MimecastPluginHelper(object):
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {error}",
                 details=str(traceback.format_exc()),
+                resolution=(
+                    "Ensure that your Mimecast platform server is reachable"
+                    " and the proxy server configuration is correct."
+                ),
             )
             raise MimecastPluginException(err_msg)
         except requests.HTTPError as err:
@@ -332,6 +365,10 @@ class MimecastPluginHelper(object):
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {err}",
                 details=str(traceback.format_exc()),
+                resolution=(
+                    "Ensure that the configuration parameters provided are"
+                    " correct and the API endpoint is valid."
+                ),
             )
             raise MimecastPluginException(err_msg)
         except MimecastPluginException as exp:
@@ -346,14 +383,23 @@ class MimecastPluginHelper(object):
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {exp}",
                 details=str(traceback.format_exc()),
+                resolution=(
+                    "Ensure that the configuration parameters provided are"
+                    " correct and check logs for more details."
+                ),
             )
             raise MimecastPluginException(err_msg)
+
+    def hash_string(self, string: str) -> str:
+        """Hash the string."""
+        return hashlib.sha256(string.encode()).hexdigest()
 
     def _get_auth_headers(
         self,
         proxy,
         verify,
         configuration: dict,
+        storage: Dict = None,
         is_validation=False,
         is_retraction: bool = False,
     ) -> str:
@@ -363,6 +409,7 @@ class MimecastPluginHelper(object):
             proxy (str): The proxy server address.
             verify (bool): Verify the SSL certificate of the server.
             configuration (dict): The plugin configuration.
+            storage (Dict, optional): Storage object. Defaults to None.
             is_validation (bool, optional): Is this called from the validation.
                 Defaults to False.
             is_retraction (bool, optional): Is this called from the retraction.
@@ -372,7 +419,18 @@ class MimecastPluginHelper(object):
             str: The authentication headers.
         """
         try:
+            if storage is None:
+                storage = {}
+
+            stored_auth_headers = storage.get("auth_headers")
+            stored_config_hash = storage.get("config_hash")
+
             client_id, client_secret = self._get_auth_params(configuration)
+            base_url = configuration.get("base_url", "").strip()
+            config_str = f"{client_id}{client_secret}{base_url}"
+            current_config_hash = self.hash_string(config_str)
+            if stored_auth_headers and stored_config_hash == current_config_hash:
+                return stored_auth_headers
 
             data = {
                 "grant_type": "client_credentials",
@@ -380,12 +438,13 @@ class MimecastPluginHelper(object):
                 "client_secret": client_secret,
             }
             headers = {
-                'Content-Type': 'application/x-www-form-urlencoded'
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Accept": "application/json",
             }
             logger_msg = f"generating authentication token from {PLUGIN_NAME}"
 
             response = self.api_helper(
-                url=GET_BEARER_TOKEN_ENDPOINT,
+                url=self.build_url(GET_BEARER_TOKEN_ENDPOINT, configuration),
                 method="POST",
                 data=data,
                 proxies=proxy,
@@ -419,7 +478,14 @@ class MimecastPluginHelper(object):
                 raise MimecastPluginException(err_msg)
             headers = {
                 "Authorization": f"Bearer {bearer_token}",
+                "Content-Type": "application/json",
             }
+            storage.update(
+                {
+                    "auth_headers": headers,
+                    "config_hash": current_config_hash,
+                }
+            )
             return headers
         except MimecastPluginException:
             raise
@@ -551,8 +617,26 @@ class MimecastPluginHelper(object):
                 404: (
                     "Received exit code 404, Resource not found, Verify "
                     "provided in the configuration parameters."
-                ),
+                ),    
             }
+        
+        resolution_dict = {
+            400: (
+                "Verify the API Base URL, Client ID and"
+                " Client Secret provided in the configuration parameters."
+            ),
+            401: (
+                "Verify Client ID and Client Secret provided in the"
+                " configuration parameters."
+            ),
+            403: (
+                "Verify permission for Client ID and Client Secret provided"
+                " in the configuration parameters."
+            ),
+            404: (
+                "Verify the resource you are trying to access is valid."
+            ),
+        }
         api_error_message = ""
         try:
             json_response = self.parse_response(resp, logger_msg)
@@ -568,18 +652,20 @@ class MimecastPluginHelper(object):
             api_error_message = resp.text
         if status_code in error_dict:
             err_msg = error_dict[status_code]
+            resolution_msg = resolution_dict.get(status_code)
             if is_validation:
                 log_err_msg = validation_msg + err_msg
                 self.logger.error(
                     message=f"{self.log_prefix}: {log_err_msg}",
                     details=f"API response: {resp.text}",
+                    resolution=resolution_msg
                 )
                 raise MimecastPluginException(err_msg)
             else:
                 err_msg = err_msg + " while " + logger_msg + "."
                 if status_code == 401:
                     err_msg = (
-                        f"{err_msg} Check API Token provided in configuration "
+                        f"{err_msg} Check Client ID and Client Secret provided in configuration "
                         "parameters is expired or not."
                     )
                 if api_error_message:
@@ -587,6 +673,7 @@ class MimecastPluginHelper(object):
                 self.logger.error(
                     message=f"{self.log_prefix}: {err_msg}",
                     details=f"API response: {resp.text}",
+                    resolution=resolution_msg
                 )
                 raise MimecastPluginException(err_msg)
         else:

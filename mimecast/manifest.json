@@ -1,8 +1,9 @@
 {
     "name": "Mimecast",
     "id": "mimecast",
-    "version": "2.0.0",
-    "description": "This plugin is used to fetch the indicators of type URL from Services > URL Protection > Logs page, SHA256 and MD5 from the Mimecast. This plugin also support sharing the URL indicators to Services > URL Protection > URL Tools > Managed URLS page using Create Managed URL action and sharing of SHA256 and MD5 indicators using Perform Operation action to the Mimecast. To access the plugin, you would need an API application on Mimecast and user credentials. Refer these Mimecast guides [here](https://developer.services.mimecast.com/api-overview#application-registration-credential-management) for detailed steps.",
+    "version": "2.0.1",
+    "minimum_version": "5.1.2",
+    "description": "This plugin is used to fetch the indicators of type URL from Email Security > URL Protection > Logs page, SHA256 and MD5 from the Mimecast. This plugin also support sharing the URL indicators to Email Security > URL Protection > URL Tools > Managed URLS page using Create Managed URL action and sharing of SHA256 and MD5 indicators using Perform Operation action to the Mimecast. To access the plugin, you would need an API application on Mimecast and user credentials. Refer these Mimecast guides [here](https://developer.services.mimecast.com/api-overview#application-registration-credential-management) for detailed steps.",
     "patch_supported": true,
     "push_supported": true,
     "fetch_retraction_info": true,
@@ -85,7 +86,7 @@
             "key": "retraction_interval",
             "type": "number",
             "mandatory": false,
-            "description": "Specify the number of days for which IoC retraction should be run for Mimecast indicators. Note: This parameter is applicable only for Netskope CE version 5.1.0 or later, and if \"IoC(s) Retraction\" is enabled in Threat Exchange Settings."
+            "description": "Specify the number of days for which IoC retraction should be run for Mimecast indicators. Note: This parameter is applicable only for Netskope CE version 5.1.0 or later, and if \"IoC(s) Retraction\" is enabled in Threat Exchange Settings. Value must be from 1 to 2^62."
         },
         {
             "label": "Initial Range (in days)",
@@ -93,7 +94,7 @@
             "type": "number",
             "mandatory": true,
             "default": 7,
-            "description": "Number of days to pull the data for the initial run."
+            "description": "Number of days to pull the data for the initial run. Value must be from 0 to 2^62."
         }
     ]
 }

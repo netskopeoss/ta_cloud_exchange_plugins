@@ -35,7 +35,7 @@ CTE SentinelOne plugin helper module.
 import json
 import time
 import traceback
-from typing import Dict, Tuple, Union
+from typing import Dict, List, Literal, Tuple, Union
 
 import requests
 from netskope.common.utils import add_user_agent
@@ -226,6 +226,10 @@ class SentinelOnePluginHelper(object):
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {error}",
                 details=str(traceback.format_exc()),
+                resolution=(
+                    "Ensure that your SentinelOne platform server"
+                    " is reachable."
+                ),
             )
             raise SentinelOnePluginException(err_msg)
         except requests.exceptions.ProxyError as error:
@@ -242,6 +246,10 @@ class SentinelOnePluginHelper(object):
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {error}",
                 details=traceback.format_exc(),
+                resolution=(
+                    "Ensure that the proxy configuration provided is"
+                    " correct and the proxy server is reachable."
+                ),
             )
             raise SentinelOnePluginException(err_msg)
         except requests.exceptions.ConnectionError as error:
@@ -260,6 +268,10 @@ class SentinelOnePluginHelper(object):
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {error}",
                 details=traceback.format_exc(),
+                resolution=(
+                    "Ensure that your SentinelOne platform server is"
+                    " reachable."
+                ),
             )
             raise SentinelOnePluginException(err_msg)
         except requests.HTTPError as err:
@@ -272,6 +284,10 @@ class SentinelOnePluginHelper(object):
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {err}",
                 details=traceback.format_exc(),
+                resolution=(
+                    "Ensure that the configuration parameters provided are"
+                    " correct."
+                ),
             )
             raise SentinelOnePluginException(err_msg)
         except Exception as exp:
@@ -284,6 +300,10 @@ class SentinelOnePluginHelper(object):
                 self.logger.error(
                     message=f"{self.log_prefix}: {err_msg} Error: {exp}",
                     details=traceback.format_exc(),
+                    resolution=(
+                        "Ensure that the configuration parameters provided are"
+                        " correct."
+                    )
                 )
                 raise SentinelOnePluginException(
                     f"{err_msg} Check logs for more details."
@@ -291,6 +311,10 @@ class SentinelOnePluginHelper(object):
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {exp}",
                 details=traceback.format_exc(),
+                resolution=(
+                    "Ensure that the configuration parameters provided are"
+                    " correct."
+                )
             )
             raise SentinelOnePluginException(err_msg)
 
@@ -369,6 +393,23 @@ class SentinelOnePluginHelper(object):
             401: "Received exit code 401, Unauthorized access",
             404: "Received exit code 404, Resource not found",
         }
+        resolution_dict = {
+            400: (
+                "Verify the Management URL and API Token provided"
+                " in the configuration parameters."
+            ),
+            401: (
+                "Verify Management URL and API Token provided in the"
+                " configuration parameters."
+            ),
+            403: (
+                "Verify permission for API Token provided in the"
+                " configuration parameters."
+            ),
+            404: (
+                "Verify the resource you are trying to access is valid."
+            ),
+        }
         if is_validation:
             error_dict = {
                 400: (
@@ -401,11 +442,13 @@ class SentinelOnePluginHelper(object):
             return {}
         elif status_code in error_dict:
             err_msg = error_dict[status_code]
+            resolution_msg = resolution_dict[status_code]
             if is_validation:
                 log_err_msg = validation_msg + err_msg
                 self.logger.error(
                     message=f"{self.log_prefix}: {log_err_msg}",
                     details=f"API response: {resp.text}",
+                    resolution=resolution_msg,
                 )
                 raise SentinelOnePluginException(err_msg)
             else:
@@ -431,17 +474,54 @@ class SentinelOnePluginHelper(object):
             )
             raise SentinelOnePluginException(err_msg)
 
-    def get_config_params(self, configuration: Dict) -> Tuple[str, str, str]:
+    def get_config_params(
+        self,
+        configuration: Dict,
+    ) -> Tuple[
+        str,
+        str,
+        str,
+        str,
+        List[str],
+        Union[int, None],
+        Literal["yes", "no"],
+        int,
+    ]:
         """Get configuration parameters.
 
         Args:
             configuration (Dict): Configuration parameters dictionary.
 
         Returns:
-            Tuple[str, str, str]: Tuple of URL, Token, Site.
+            Tuple[str, str, str, str, List[str], Union[int, None],
+                Literal["yes", "no"], int]: Tuple of URL, Token, Site,
+                User Type, Analyst Verdict, Retraction Interval and Initial
+                Range.
         """
         return (
             configuration.get("url").strip().strip("/"),
             configuration.get("token"),
             configuration.get("site").strip(),
+            configuration.get("user_type", "account"),
+            configuration.get("analyst_verdict", []),
+            configuration.get("retraction_interval"),
+            configuration.get("enable_tagging"),
+            configuration.get("days")
         )
+
+    def get_headers(
+        self,
+        api_token: str,
+        include_content_type: bool = False,
+    ) -> Dict[str, str]:
+        headers = {
+            "Authorization": f"ApiToken {api_token}",
+            "Accept": "application/json",
+        }
+        if include_content_type:
+            headers.update(
+                {
+                    "Content-Type": "application/json",
+                }
+            )
+        return headers

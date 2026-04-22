@@ -37,7 +37,7 @@ PUSH_PAGE_SIZE = 2500
 MODULE_NAME = "CTE"
 PLUGIN_NAME = "SentinelOne"
 PLATFORM_NAME = "SentinelOne"
-PLUGIN_VERSION = "1.3.0"
+PLUGIN_VERSION = "1.4.0"
 MAX_API_CALLS = 4
 DEFAULT_WAIT_TIME = 60
 MAX_WAIT_TIME = 300
@@ -48,4 +48,18 @@ INTEGER_THRESHOLD = 4611686018427387904
 API_VERSION = "/web/api/v2.1"
 PREFIX_IOC_SOURCE = "Netskope CE"
 RETRACTION = "Retraction"
-USER_TYPE_OPTIONS = ["global", "account"]
+USER_TYPE_OPTIONS = {
+    "global": "Global User",
+    "account": "Account User",
+}
+ANALYST_VERDICT_OPTIONS = {
+    "false_positive": "False Positive",
+    "suspicious": "Suspicious",
+    "true_positive": "True Positive",
+    "undefined": "Undefined",
+}
+ENABLE_TAGGING_OPTIONS = {
+    "yes": "Yes",
+    "no": "No",
+}
+MAXIMUM_CE_VERSION = "5.1.2"

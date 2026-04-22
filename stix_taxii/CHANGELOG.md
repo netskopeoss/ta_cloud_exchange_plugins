@@ -1,3 +1,9 @@
+# 3.2.0
+## Added
+- Added support for IOC Retraction for STIX/TAXII version 1.x and 2.x.
+- Added support for Batch Size configuration parameter for 2.x.
+- Added support for fetching dynamic configuration parameters based on the version selected. To use the dynamic field population feature update your CE version to 6.0.0.
+
 # 3.1.0
 ## Added
 - Added support for pulling ipv4 and ipv6 and Domain for STIX/TAXII version 2.x.
@@ -23,7 +29,7 @@
 ## Added
 - Added log statements for better understanding.
 
-# 2.0.1-beta
+# 2.0.1
 ## Fixed
 - Fixed an issue related to the SSL verification.
 

@@ -35,9 +35,7 @@
             ],
             "default": "deployed_on_aws",
             "has_api_call": true,
-            "payload_fields": [
-                "authentication_method"
-            ],
+            "payload_fields": ["authentication_method"],
             "mandatory": true,
             "description": "Select the method to be used for AWS client authentication."
         }

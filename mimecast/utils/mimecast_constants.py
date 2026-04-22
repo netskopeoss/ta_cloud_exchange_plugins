@@ -34,7 +34,7 @@ CTE Mimecast plugin constants.
 
 PLUGIN_NAME = "Mimecast"
 MODULE_NAME = "CTE"
-PLUGIN_VERSION = "2.0.0"
+PLUGIN_VERSION = "2.0.1"
 MAX_REQUEST_URL = 25
 MAX_CREATE_URL = 20
 DEFAULT_WAIT_TIME = 60000
@@ -54,6 +54,8 @@ DECODE_URL_ENDPOINT = "/api/ttp/url/decode-url"
 PUSH_URL_ENDPOINT = "/api/ttp/url/create-managed-url"
 GET_URL_ENDPOINT = "/api/ttp/url/get-all-managed-urls"
 DELETE_URL_ENDPOINT = "/api/ttp/url/delete-managed-url"
+MAXIMUM_CE_VERSION = "5.1.2"
+VALIDATION_ERROR_MSG = "Validation error occurred. "
 
 HASH_OPERATION_TYPE = {
     "ALLOW": "ALLOW",
@@ -82,6 +84,11 @@ FEED_TYPES = {
     "malsite": "Malsite"
 }
 
+ACTION_TYPES = {
+    "operation": "Perform Operation",
+    "managed_url": "Create Managed URL"
+}
+
 MALWARE_TYPES = [
     "MD5",
     "SHA256"
@@ -96,3 +103,6 @@ SEPARATOR = "|"
 
 # Retraction Constant
 RETRACTION = "Retraction"
+
+# Maximum number of failure messages to store (to prevent MongoDB BSON size errors)
+MAX_FAILURE_COUNT_THRESHOLD = 50000

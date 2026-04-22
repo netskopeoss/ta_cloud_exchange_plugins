@@ -34,9 +34,10 @@ Mimecast Plugin implementation to push and pull the data from Mimecast."""
 import csv
 import traceback
 from dateutil import parser
-from typing import Dict, Generator, List, Union
+from typing import Dict, Generator, List, Tuple, Union
 from datetime import datetime, timedelta
 from pydantic import ValidationError
+from urllib.parse import urlparse
 
 from netskope.integrations.cte.models import Indicator, IndicatorType
 from netskope.integrations.cte.plugin_base import (
@@ -48,7 +49,8 @@ from netskope.integrations.cte.models.business_rule import (
     Action,
     ActionWithoutParams,
 )
-
+from netskope.common.api import __version__ as CE_VERSION
+from packaging import version
 from .utils.mimecast_constants import (
     GET_ACCOUNT_ENDPOINT,
     MAX_REQUEST_URL,
@@ -77,6 +79,10 @@ from .utils.mimecast_constants import (
     SEPARATOR,
     RETRACTION_BATCH,
     QUOTA_ERROR,
+    MAXIMUM_CE_VERSION,
+    VALIDATION_ERROR_MSG,
+    ACTION_TYPES,
+    MAX_FAILURE_COUNT_THRESHOLD
 )
 
 from .utils.mimecast_helper import (
@@ -105,6 +111,10 @@ class MimecastPlugin(PluginBase):
             *args,
             **kwargs,
         )
+        self._is_ce_post_v512 = self._check_ce_version()
+        # Method to decide which logger to use with or without
+        # resolutions based on the CE version
+        self._patch_error_logger()
         self.plugin_name, self.plugin_version = self._get_plugin_info()
         self.log_prefix = f"{MODULE_NAME} {self.plugin_name}"
         self.retraction_batch = RETRACTION_BATCH
@@ -117,6 +127,97 @@ class MimecastPlugin(PluginBase):
             plugin_name=self.plugin_name,
             plugin_version=self.plugin_version,
         )
+        self.total_invalid_hashes = 0
+
+    def _validate_url(self, url: str) -> bool:
+        """Validate URL using urlparse.
+        
+        Args:
+            url (str): URL to validate
+            
+        Returns:
+            bool: True if URL is valid, False otherwise
+        """
+        if not url or not isinstance(url, str):
+            return False
+        try:
+            parsed = urlparse(url.strip())
+            return (
+                parsed.scheme.strip() != ""
+                and parsed.netloc.strip() != ""
+            )
+        except Exception:
+            return False
+
+    def _check_ce_version(self):
+        """Check if CE version is greater than v5.1.2.
+
+        Returns:
+            bool: True if CE version is greater than v5.1.2, False otherwise.
+        """
+        return version.parse(CE_VERSION) > version.parse(MAXIMUM_CE_VERSION)
+
+    def _patch_error_logger(self):
+        """Monkey patch logger methods to handle resolution parameter
+        compatibility.
+        """
+        # Store original methods
+        original_error = self.logger.error
+
+        def patched_error(
+            message=None,
+            details=None,
+            resolution=None,
+            **kwargs,
+        ):
+            """Patched error method that handles resolution compatibility."""
+            log_kwargs = {"message": message}
+            if details:
+                log_kwargs["details"] = details
+            if resolution and self._is_ce_post_v512:
+                log_kwargs["resolution"] = resolution
+            log_kwargs.update(kwargs)
+            return original_error(**log_kwargs)
+
+        # Replace logger methods with patched versions
+        self.logger.error = patched_error
+
+    def _get_storage(self) -> Dict:
+        """Get storage object.
+
+        Returns:
+            Dict: Storage object.
+        """
+        return self.storage if self.storage is not None else {}
+
+    def get_bearer_token_and_storage(
+        self,
+        configuration: Dict,
+        is_validation: bool = False,
+        is_retraction: bool = False,
+    ) -> Tuple[Dict, Dict]:
+        """Get headers with bearer token and storage.
+
+        Args:
+            configuration (Dict): Configuration.
+            is_validation (bool, optional): Is validation. Defaults to False.
+            is_retraction (bool, optional): Is retraction. Defaults to False.
+
+        Returns:
+            Tuple[Dict, Dict]: Headers with Authorization and storage.
+        """
+        storage = self._get_storage()
+
+        # Get auth headers which will handle token caching internally
+        auth_headers = self.mimecast_helper._get_auth_headers(
+            proxy=self.proxy,
+            verify=self.ssl_validation,
+            configuration=configuration,
+            storage=storage,
+            is_validation=is_validation,
+            is_retraction=is_retraction,
+        )
+        return auth_headers, storage
 
     def _get_plugin_info(self) -> tuple:
         """Get plugin name and version from manifest.
@@ -139,7 +240,7 @@ class MimecastPlugin(PluginBase):
             )
         return PLUGIN_NAME, PLUGIN_VERSION
 
-    def _parse_errors(self, failures: List[Dict]) -> List[str]:
+    def _parse_errors(self, failures: List[Dict]) -> set:
         """Parse the error messages from Mimecast response.
 
         Args:
@@ -147,24 +248,25 @@ class MimecastPlugin(PluginBase):
                 containing error messages.
 
         Returns:
-            List[str]: List of error messages.
+            set: Set of unique error messages.
         """
-        messages = []
+        messages = set()
         for failure in failures:
             for error in failure.get("errors", []):
-                messages.append(error.get("message", ""))
-
-        if messages and QUOTA_ERROR in messages[-1]:
-            err_msg = (
-                "Quota not available error occurred"
-                f" while making request to {PLUGIN_NAME}"
-                f" platform. Error: {messages[-1]}"
-            )
-            self.logger.error(
-                message=f"{self.log_prefix}: {err_msg}",
-                details=str(messages),
-            )
-            raise QuotaNotAvailableException(err_msg)
+                error_msg = error.get("message", "")
+                if error_msg:
+                    messages.add(error_msg)
+                    if QUOTA_ERROR in error_msg:
+                        err_msg = (
+                            "Quota not available error occurred"
+                            f" while making request to {PLUGIN_NAME}"
+                            f" platform. Error: {error_msg}"
+                        )
+                        self.logger.error(
+                            message=f"{self.log_prefix}: {err_msg}",
+                            details=str(list(messages)),
+                        )
+                        raise QuotaNotAvailableException(err_msg)
         return messages
     
     def get_rewritten_urls(
@@ -194,12 +296,11 @@ class MimecastPlugin(PluginBase):
             f"{self.log_prefix}: Pulling URL indicator(s) from "
             f"{PLUGIN_NAME} platform using checkpoint: {start_time}"
         )
-        # REWRITTEN URL
-        headers = self.mimecast_helper._get_auth_headers(
-            proxy=self.proxy,
-            verify=self.ssl_validation,
+        # Get headers and storage once
+        headers, storage = self.get_bearer_token_and_storage(
             configuration=self.configuration,
-            is_retraction=is_retraction
+            is_validation=False,
+            is_retraction=is_retraction,
         )
 
         page_token = ""
@@ -220,31 +321,34 @@ class MimecastPlugin(PluginBase):
             ],
         }
         page_count = 1
+        fetch_url_endpoint = self.mimecast_helper.build_url(
+            FETCH_URL_ENDPOINT, self.configuration
+        )
         try:
             while True:
                 log_msg = f"pulling rewritten URLs of page {page_count}"
                 response = self.mimecast_helper.api_helper(
-                    url=FETCH_URL_ENDPOINT,
+                    url=fetch_url_endpoint,
                     method="POST",
                     headers=headers,
                     json=body,
                     verify=self.ssl_validation,
                     proxies=self.proxy,
                     configuration=self.configuration,
+                    storage=storage,
                     logger_msg=log_msg,
                     is_retraction=is_retraction
                 )
                 if failures := response.get("fail", []):
-                    error_msg = (
-                        f"Error occurred while {log_msg}."
-                    )
+                    error_msg = f"Error occurred while {log_msg}."
+                    parsed_errors = self._parse_errors(failures)
+                    error_details = ", ".join(list(parsed_errors)) if parsed_errors else "No error details available"
+                    
                     self.logger.error(
-                        f"{self.log_prefix}: {error_msg} "
-                        "Error: " + ",".join(self._parse_errors(failures))
+                        message=f"{self.log_prefix}: {error_msg}",
+                        details=error_details
                     )
-                    raise MimecastPluginException(
-                        error_msg
-                    )
+                    raise MimecastPluginException(error_msg)
                 elif response.get("data", []):
                     url_json_list = response.get("data", [{}])[0].get(
                         "clickLogs", []
@@ -305,11 +409,11 @@ class MimecastPlugin(PluginBase):
         try:
             if is_retraction and RETRACTION not in self.log_prefix:
                 self.log_prefix = self.log_prefix + f" [{RETRACTION}]"
-            indicators = set() if is_retraction else []
             total_invalid_iocs = 0
             total_valid_iocs = 0
             batch = 0
             for index in range(0, len(rewritten_urls), MAX_REQUEST_URL):
+                indicators = set() if is_retraction else []
                 invalid_ioc_for_batch = 0
                 valid_ioc_for_batch = 0
                 url_batch = rewritten_urls[index: index + MAX_REQUEST_URL]
@@ -320,14 +424,18 @@ class MimecastPlugin(PluginBase):
                     "data": batch_indicators_data
                 }
                 batch += 1
+                decode_url_endpoint = self.mimecast_helper.build_url(
+                    DECODE_URL_ENDPOINT, self.configuration
+                )
                 response = self.mimecast_helper.api_helper(
-                    url=DECODE_URL_ENDPOINT,
+                    url=decode_url_endpoint,
                     method="POST",
                     headers=headers,
                     json=body,
                     verify=self.ssl_validation,
                     proxies=self.proxy,
                     configuration=self.configuration,
+                    storage=storage,
                     logger_msg=(
                         f"decoding URLs for batch {batch}, page {page_number}"
                     ),
@@ -438,7 +546,7 @@ class MimecastPlugin(PluginBase):
                         yield indicators
             if total_invalid_iocs > 0:
                 self.logger.info(
-                    f"{self.log_prefix}: Skipped {total_invalid_iocs} "
+                    f"{self.log_prefix}: Skipped pulling {total_invalid_iocs} "
                     "record(s) as URL value might be a empty string."
                 )
             self.logger.info(
@@ -454,7 +562,7 @@ class MimecastPlugin(PluginBase):
             ):
                 yield indicators
             else:
-                raise MimecastPluginException(err_msg)
+                raise MimecastPluginException(str(err))
         except Exception as err:
             err_msg = (
                 "Unexpected error occurred while decoding the URLs "
@@ -504,11 +612,11 @@ class MimecastPlugin(PluginBase):
             f"{hash_type_msg} from {PLUGIN_NAME} platform "
             f"using checkpoint: {start_time}"
         )
-        headers = self.mimecast_helper._get_auth_headers(
-            proxy=self.proxy,
-            verify=self.ssl_validation,
+        # Get headers and storage once
+        headers, storage = self.get_bearer_token_and_storage(
             configuration=self.configuration,
-            is_retraction=is_retraction
+            is_validation=False,
+            is_retraction=is_retraction,
         )
         start_time = start_time.replace(microsecond=0)
         body = {
@@ -524,25 +632,30 @@ class MimecastPlugin(PluginBase):
         total_indicators = 0
         total_skip_count = 0
         next_page = True
+        fetch_hashes_endpoint = self.mimecast_helper.build_url(
+            FETCH_HASHES_ENDPOINT, self.configuration
+        )
         try:
             while next_page:
                 page_count += 1
                 md5_count = 0
                 sha256_count = 0
                 current_page_skip_count = 0
+                current_page_invalid_count = 0
                 page_indicators = set() if is_retraction else []
                 logger_msg = (
                     f"pulling file hash for page {page_count} "
                     f"from {pull_location}"
                 )
                 response = self.mimecast_helper.api_helper(
-                    url=FETCH_HASHES_ENDPOINT,
+                    url=fetch_hashes_endpoint,
                     method="POST",
                     headers=headers,
                     json=body,
                     verify=self.ssl_validation,
                     proxies=self.proxy,
                     configuration=self.configuration,
+                    storage=storage,
                     logger_msg=logger_msg,
                     is_retraction=is_retraction
                 )
@@ -579,6 +692,8 @@ class MimecastPlugin(PluginBase):
                                                 )
                                             )
                                             md5_count += 1
+                                    else:
+                                        current_page_invalid_count += 1
                                 if "SHA256" in file_hash_types:
                                     indicator = row.get("SHA256", "")
                                     timestamp = row.get("Timestamp", "")
@@ -599,6 +714,8 @@ class MimecastPlugin(PluginBase):
                                                 )
                                             )
                                             sha256_count += 1
+                                    else:
+                                        current_page_invalid_count += 1
                             except (ValidationError, Exception) as error:
                                 current_page_skip_count += 1
                                 error_message = (
@@ -616,6 +733,7 @@ class MimecastPlugin(PluginBase):
                                 )
                         total_indicators += len(page_indicators)
                         total_skip_count += current_page_skip_count
+                        self.total_invalid_hashes += current_page_invalid_count
                         self.logger.info(
                             f"{self.log_prefix}: Successfully pulled "
                             f"{len(page_indicators)} file hash indicator(s) "
@@ -689,7 +807,7 @@ class MimecastPlugin(PluginBase):
             ):
                 yield page_indicators
             else:
-                raise MimecastPluginException(err_msg)
+                raise MimecastPluginException(str(ex))
         except Exception as ex:
             err_msg = (
                 "Unexpected error occurred while pulling "
@@ -773,6 +891,12 @@ class MimecastPlugin(PluginBase):
                 storage=storage
             )
 
+        if self.total_invalid_hashes > 0:
+            self.logger.info(
+                f"{self.log_prefix}: Skipped pulling {self.total_invalid_hashes} "
+                "record(s) as hash value might be empty or null."
+            )
+
     def pull(self) -> List[Indicator]:
         """Pull the Threat IoCs from Mimecast platform.
 
@@ -815,17 +939,21 @@ class MimecastPlugin(PluginBase):
                 }
             ]
         }
-        headers = self.mimecast_helper._get_auth_headers(
-            proxy=self.proxy,
-            verify=self.ssl_validation,
+        # Get headers and storage once
+        headers, storage = self.get_bearer_token_and_storage(
             configuration=self.configuration,
+            is_validation=False,
             is_retraction=is_retraction
         )
         # Mimecast only supports "push" in batch of 1000 indicators at a time
         push_page_count = 0
         successful_push_count = 0
         failures_count = 0
-        failure_msg_list = []
+        failure_msg_list = set()
+        failure_msg_count = 0
+        push_hash_endpoint = self.mimecast_helper.build_url(
+            PUSH_HASH_ENDPOINT, self.configuration
+        )
         for pos in range(0, len(hashes), PUSH_HASH_BATCH_SIZE):
             try:
                 successful_batch_push_count = 0
@@ -842,15 +970,16 @@ class MimecastPlugin(PluginBase):
                         f"retracting batch {push_page_count} of hash list"
                     )
                 response = self.mimecast_helper.api_helper(
-                    url=PUSH_HASH_ENDPOINT,
+                    url=push_hash_endpoint,
                     method="POST",
                     headers=headers,
                     json=body,
                     verify=self.ssl_validation,
                     proxies=self.proxy,
                     configuration=self.configuration,
+                    storage=storage,
                     logger_msg=logger_msg,
-                    is_retraction=is_retraction
+                    is_retraction=is_retraction,
                 )
                 failures = response.get("fail", [])
                 data = response.get("data", [])
@@ -858,9 +987,9 @@ class MimecastPlugin(PluginBase):
                     successful_batch_push_count += data[0].get("hashCount", 0)
                 if failures:
                     failures_batch_count += len(failures)
-                    failure_msg_list.extend(
-                        self._parse_errors(failures)
-                    )
+                    if len(failure_msg_list) < MAX_FAILURE_COUNT_THRESHOLD: 
+                        failure_msg_list.update(self._parse_errors(failures))
+                        failure_msg_count = len(failure_msg_list)
                     if is_retraction:
                         self.logger.error(
                             message=(
@@ -912,10 +1041,19 @@ class MimecastPlugin(PluginBase):
                 f"Hash indicator(s) to {PLUGIN_NAME}"
             )
             if failures_count:
-                self.logger.info(
-                    f"{self.log_prefix}: Failed to share {failures_count} "
-                    f"Hash indicator(s) to {PLUGIN_NAME}. "
-                    f"Error List: {failure_msg_list}"
+                # Log with failure messages in details parameter
+                details_msg = ""
+                if failure_msg_list:
+                    details_msg = str(list(failure_msg_list))
+                    if failure_msg_count >= MAX_FAILURE_COUNT_THRESHOLD:
+                        details_msg += f" Only first {MAX_FAILURE_COUNT_THRESHOLD} failure messages shown."
+                
+                self.logger.error(
+                    message=(
+                        f"{self.log_prefix}: Failed to share {failures_count} "
+                        f"Hash indicator(s) to {PLUGIN_NAME}."
+                    ),
+                    details=details_msg if details_msg else None
                 )
         self.logger.info(
             f"{self.log_prefix}: {log_msg}."
@@ -933,31 +1071,35 @@ class MimecastPlugin(PluginBase):
         invalid_urls = 0
         already_exists = 0
         unknown_error = 0
-        headers = self.mimecast_helper._get_auth_headers(
-            proxy=self.proxy,
-            verify=self.ssl_validation,
-            configuration=self.configuration
+        # Get headers and storage once
+        headers, storage = self.get_bearer_token_and_storage(
+            configuration=self.configuration, is_validation=False
         )
         batch_count_url = 0
         successful_push_count = 0
         failures_count = 0
-        failure_msg_list = []
+        failure_msg_list = set()
+        failure_msg_count = 0
+        push_url_endpoint = self.mimecast_helper.build_url(
+            PUSH_URL_ENDPOINT, self.configuration
+        )
         for index in range(0, len(indicators_data), MAX_CREATE_URL):
             try:
                 successful_batch_push_count = 0
                 failures_batch_count = 0
                 batch_count_url += 1
                 json_data = {
-                    "data": indicators_data[index: index + MAX_CREATE_URL]
+                    "data": indicators_data[index:index + MAX_CREATE_URL]
                 }
                 response = self.mimecast_helper.api_helper(
-                    url=PUSH_URL_ENDPOINT,
+                    url=push_url_endpoint,
                     method="POST",
                     headers=headers,
                     json=json_data,
                     verify=self.ssl_validation,
                     proxies=self.proxy,
                     configuration=self.configuration,
+                    storage=storage,
                     logger_msg=f"pushing URL batch {batch_count_url}",
                 )
                 data = response.get("data", [])
@@ -975,15 +1117,15 @@ class MimecastPlugin(PluginBase):
                         ):
                             invalid_urls += 1
                         elif (
-                            errors[0].get("code", " ") ==
-                            "err_managed_url_exists_code"
+                            errors[0].get("code", " ")
+                            == "err_managed_url_exists_code"
                         ):
                             already_exists += 1
                         else:
                             unknown_error += 1
-                            failure_msg_list.extend(
-                                self._parse_errors(failures)
-                            )
+                            if len(failure_msg_list) < MAX_FAILURE_COUNT_THRESHOLD: 
+                                failure_msg_list.update(self._parse_errors(failures))
+                                failure_msg_count = len(failure_msg_list)
                 successful_push_count += successful_batch_push_count
                 failures_count += failures_batch_count
                 self.logger.info(
@@ -1021,11 +1163,19 @@ class MimecastPlugin(PluginBase):
             if unknown_error:
                 log_msg += (
                     f" Failed to create {unknown_error} URL(s) on "
-                    f"{PLUGIN_NAME} - please check with Mimecast Admin "
-                    f"for details. Failure message list: {failure_msg_list}."
+                    f"{PLUGIN_NAME} - please check with Mimecast "
+                    f"Admin for details."
                 )
+            # Log with failure messages in details parameter
+            details_msg = ""
+            if failure_msg_list:
+                details_msg = str(list(failure_msg_list))
+                if failure_msg_count >= MAX_FAILURE_COUNT_THRESHOLD:
+                    details_msg += f" Only first {MAX_FAILURE_COUNT_THRESHOLD} failure messages shown"
+            
             self.logger.error(
-                f"{self.log_prefix}: {log_msg}"
+                message=f"{self.log_prefix}: {log_msg}",
+                details=details_msg if details_msg else None
             )
 
     def push(
@@ -1040,10 +1190,14 @@ class MimecastPlugin(PluginBase):
 
         Args:
             indicators (List[Indicator]): A list of indicators to push.
-            action_dict (Dict): A dictionary containing information about the action.
-            source (str, optional): The source of the indicators. Defaults to None.
-            business_rule (str, optional): The name of the business rule triggering the push.
-            plugin_name (str, optional): The name of the plugin performing the push.
+            action_dict (Dict): A dictionary containing information about
+                the action.
+            source (str, optional): The source of the indicators.
+                Defaults to None.
+            business_rule (str, optional): The name of the business rule
+                triggering the push.
+            plugin_name (str, optional): The name of the plugin
+                performing the push.
 
         Returns:
             PushResult: The result of the push operation.
@@ -1055,10 +1209,13 @@ class MimecastPlugin(PluginBase):
         operation_type = action_parameters.get("operation_type", "")
         source_label = PREFIX_IOC_SOURCE
         if plugin_name:
-            source_label = f"{PREFIX_IOC_SOURCE} {SEPARATOR} {plugin_name}"
+            source_label = (
+                f"{PREFIX_IOC_SOURCE} {SEPARATOR} {plugin_name}"
+            )
         if action_value == "operation":
             # Prepare list of only file hashes
             hashes = []
+            skipped_hashes = 0
             for indicator in indicators:
                 if indicator.type in [IndicatorType.MD5, IndicatorType.SHA256]:
                     hashes.append(
@@ -1072,6 +1229,15 @@ class MimecastPlugin(PluginBase):
                             else "",
                         }
                     )
+                else:
+                    skipped_hashes += 1
+
+            if skipped_hashes > 0:
+                self.logger.info(
+                    f"{self.log_prefix}: Skipped sharing "
+                    f"{skipped_hashes} indicator(s) to "
+                    f"{PLUGIN_NAME} due to invalid values while executing {ACTION_TYPES.get(action_value, '')}."
+                )
 
             # If all the indicators are of type other than file hash, skip.
             if len(hashes) == 0:
@@ -1103,28 +1269,42 @@ class MimecastPlugin(PluginBase):
         elif action_value == "managed_url":
             indicators_data = []
             total_ioc_to_push = 0
+            skipped_urls = 0
             for indicator in indicators:
                 if indicator.type == IndicatorType.URL and len(
                     indicator.value
                 ):
-                    total_ioc_to_push += 1
-                    indicators_data.append(
-                        {
-                            "url": indicator.value,
-                            "action": action_dict.get("parameters").get(
-                                "action_type"
-                            ),
-                            "comment": source_label,
-                            "matchType": action_dict.get("parameters").get(
-                                "match_type"
-                            ),
-                        }
-                    )
+                    if self._validate_url(indicator.value):
+                        total_ioc_to_push += 1
+                        indicators_data.append(
+                            {
+                                "url": indicator.value,
+                                "action": action_dict.get("parameters").get(
+                                    "action_type"
+                                ),
+                                "comment": source_label,
+                                "matchType": action_dict.get("parameters").get(
+                                    "match_type"
+                                ),
+                            }
+                        )
+                    else:
+                        skipped_urls += 1
+                else:
+                    skipped_urls += 1
+
+            if skipped_urls > 0:
+                self.logger.info(
+                    f"{self.log_prefix}: Skipped sharing "
+                    f"{skipped_urls} indicator(s) to "
+                    f"{PLUGIN_NAME} due to invalid values while executing {ACTION_TYPES.get(action_value, '')}."
+                )
             if not total_ioc_to_push:
                 log_msg = (
-                    f"{self.log_prefix}: Found no indicators eligible for "
-                    f"pushing to {PLUGIN_NAME}. Only URLs are supported for "
-                    f"action '{action_label}' hence action will be skipped."
+                    f"{self.log_prefix}: Found no indicators eligible "
+                    f"for pushing to {PLUGIN_NAME}. Only URLs are "
+                    f"supported for action '{action_label}' hence action "
+                    "will be skipped."
                 )
                 self.logger.info(
                     f"{self.log_prefix}: {log_msg}"
@@ -1163,25 +1343,22 @@ class MimecastPlugin(PluginBase):
             ValidationResult: ValidationResult object with validation result.
         """
         try:
-            logger_msg = (
-                f"validating credentials of {PLUGIN_NAME} account"
-            )
+            logger_msg = f"validating credentials of {PLUGIN_NAME} account"
             if reason:
                 logger_msg += f" for {reason}"
             self.logger.debug(
                 f"{self.log_prefix}: {logger_msg.capitalize()}."
             )
-            headers = self.mimecast_helper._get_auth_headers(
-                proxy=self.proxy,
-                verify=self.ssl_validation,
-                configuration=configuration,
-                is_validation=True,
+            # Get headers and storage once
+            headers, storage = self.get_bearer_token_and_storage(
+                configuration=configuration, is_validation=True
             )
             response = self.mimecast_helper.api_helper(
-                url=GET_ACCOUNT_ENDPOINT,
+                url=self.mimecast_helper.build_url(GET_ACCOUNT_ENDPOINT, configuration),
                 method="POST",
                 headers=headers,
                 configuration=configuration,
+                storage=storage,
                 proxies=self.proxy,
                 verify=self.ssl_validation,
                 is_validation=True,
@@ -1206,17 +1383,18 @@ class MimecastPlugin(PluginBase):
                             message=logger_msg
                         )
                     return packages
-                api_error = ', '.join(self._parse_errors(failures))
+                parsed_errors = self._parse_errors(failures)
+                api_error = ", ".join(list(parsed_errors)) if parsed_errors else "No error details available"
+                
                 error_msg = (
                     f"Error occurred while {logger_msg}. "
                     "Check the Client ID and Client Secret "
                     "provided in the configuration."
                 )
-                if api_error:
-                    error_msg += f" API error message: {api_error}"
+                
                 self.logger.error(
                     message=f"{self.log_prefix}: {error_msg}",
-                    details=str(failures)
+                    details=api_error
                 )
                 raise MimecastPluginException(error_msg)
         except QuotaNotAvailableException as err:
@@ -1268,6 +1446,154 @@ class MimecastPlugin(PluginBase):
             )
             raise MimecastPluginException(error_msg)
 
+    def _validate_configuration_parameters(
+        self,
+        field_name: str,
+        field_value: Union[str, int, list],
+        field_type: type,
+        allowed_values: list = None,
+        allowed_values_display: list = None,
+        is_required: bool = False,
+        range_validation: bool = False,
+        range_values: Tuple[int, int] = None,
+        custom_validation_func: callable = None,
+    ) -> Union[ValidationResult, None]:
+        """
+        Validate the given configuration field value.
+
+        Args:
+            field_name (str): Name of the configuration field.
+            field_value (str, int, list): Value of the configuration field.
+            field_type (type): Expected type of the configuration field.
+            allowed_values (list, optional): List of allowed values for
+                the configuration field. Defaults to None.
+            allowed_values_display (list, optional): List of user-friendly 
+                display names for allowed values. Defaults to None.
+            is_required (bool, optional): Whether the field is required.
+                Defaults to False.
+            range_validation (bool, optional): Whether to validate range.
+                Defaults to False.
+            range_values (Tuple[int, int], optional): Range values for
+                validation. Defaults to None.
+            custom_validation_func (callable, optional): Custom validation
+                function to be applied. Defaults to None.
+
+        Returns:
+            ValidationResult: ValidationResult object indicating whether the
+                validation was successful or not, or None if validation passes.
+        """
+        if field_type is str and isinstance(field_value, str):
+            field_value = field_value.strip()
+        if (
+            is_required
+            and not isinstance(field_value, int)
+            and not field_value
+        ):
+            err_msg = f"{field_name} is a required configuration parameter."
+            self.logger.error(
+                message=f"{self.log_prefix}: {VALIDATION_ERROR_MSG}{err_msg}",
+                resolution=(
+                    f"Please provide some value for field {field_name}."
+                ),
+            )
+            return ValidationResult(
+                success=False,
+                message=err_msg,
+            )
+        
+        # Handle empty strings for optional integer fields
+        if field_type is int and isinstance(field_value, str) and not field_value.strip():
+            if not is_required:
+                return None
+            else:
+                err_msg = f"{field_name} is a required configuration parameter."
+                self.logger.error(
+                    message=f"{self.log_prefix}: {VALIDATION_ERROR_MSG}{err_msg}",
+                    resolution=(
+                        f"Please provide a valid integer value for {field_name} field."
+                    ),
+                )
+                return ValidationResult(
+                    success=False,
+                    message=err_msg,
+                )
+        if (field_value and not isinstance(field_value, field_type)) or (
+            custom_validation_func and not custom_validation_func(field_value)
+        ):
+            err_msg = (
+                f"Invalid value provided for the configuration"
+                f" parameter '{field_name}'."
+            )
+            self.logger.error(
+                message=f"{self.log_prefix}: {VALIDATION_ERROR_MSG}{err_msg}",
+                resolution=(
+                    f"Please provide a valid value for {field_name} field."
+                ),
+            )
+            return ValidationResult(
+                success=False,
+                message=err_msg,
+            )
+        if range_validation and range_values:
+            if not (range_values[0] <= field_value <= range_values[1]):
+                err_msg = (
+                    f"Invalid value provided for the configuration"
+                    f" parameter '{field_name}'. It should be in range"
+                    f" {range_values[0]} to 2^62."
+                )
+                self.logger.error(
+                    message=f"{self.log_prefix}: {VALIDATION_ERROR_MSG}{err_msg}",
+                    resolution=(
+                        f"Please provide a value for {field_name} in the range {range_values[0]} to 2^62."
+                    ),
+                )
+                return ValidationResult(
+                    success=False,
+                    message=err_msg,
+                )
+        if allowed_values:
+            display_values = allowed_values_display if allowed_values_display else allowed_values
+            err_msg = (
+                f"Invalid value provided for the configuration"
+                f" parameter '{field_name}'. "
+            )
+            if field_type is str and field_value not in allowed_values:
+                self.logger.error(
+                    message=(
+                        f"{self.log_prefix}: {VALIDATION_ERROR_MSG}{err_msg}"
+                    ),
+                    details=(
+                        f"Allowed values are: "
+                        f"{', '.join(str(value) for value in display_values)}."
+                    ),
+                    resolution=(
+                        "Please provide a valid value from the allowed values."
+                    ),
+                )
+                return ValidationResult(
+                    success=False,
+                    message=err_msg,
+                )
+            elif field_type is list:
+                if not all(item in allowed_values for item in field_value):
+                    self.logger.error(
+                        message=(
+                            f"{self.log_prefix}: {VALIDATION_ERROR_MSG}{err_msg}"
+                        ),
+                        details=(
+                            f"Allowed values are: "
+                            f"{', '.join(str(value) for value in display_values)}."
+                        ),
+                        resolution=(
+                            "Please provide valid values from the allowed values."
+                        ),
+                    )
+                    return ValidationResult(
+                        success=False,
+                        message=err_msg,
+                    )
+        return None
+
     def validate(self, configuration: dict) -> ValidationResult:
         """Validate the plugin configurations.
 
@@ -1277,210 +1603,70 @@ class MimecastPlugin(PluginBase):
         Returns:
             ValidationResult: ValidationResult object with validation result.
         """
-        validation_msg = "Validation error occurred,"
-
-        # Validate API Base URL.
         base_url = configuration.get("base_url", "")
-        if not base_url:
-            err_msg = "API Base URL is a required configuration parameter."
-            self.logger.error(
-                f"{self.log_prefix}: {validation_msg} {err_msg}"
-            )
-            return ValidationResult(success=False, message=err_msg)
-        elif not (isinstance(base_url, str)):
-            err_msg = (
-                "Invalid API Base URL provided in the "
-                "configuration parameters."
-            )
-            self.logger.error(
-                f"{self.log_prefix}: {validation_msg} {err_msg}"
-            )
-            return ValidationResult(success=False, message=err_msg)
-
-        # Validate Client ID.
         client_id = configuration.get("client_id", "")
-        if not client_id:
-            err_msg = "Client ID is a required configuration parameter."
-            self.logger.error(
-                f"{self.log_prefix}: {validation_msg} {err_msg}"
-            )
-            return ValidationResult(success=False, message=err_msg)
-        elif not (isinstance(client_id, str)):
-            err_msg = (
-                "Invalid Client ID provided in the configuration parameters."
-            )
-            self.logger.error(
-                f"{self.log_prefix}: {validation_msg} {err_msg}"
-            )
-            return ValidationResult(success=False, message=err_msg)
-
-        # Validate Client Secret Key.
         client_secret = configuration.get("client_secret", "")
-        if not client_secret:
-            err_msg = "Client Secret is a required configuration parameter."
-            self.logger.error(
-                f"{self.log_prefix}: {validation_msg} {err_msg}"
-            )
-            return ValidationResult(success=False, message=err_msg)
-        elif not isinstance(client_secret, str):
-            err_msg = (
-                "Invalid Client Secret provided in "
-                "the configuration parameters."
-            )
-            self.logger.error(
-                f"{self.log_prefix}: {validation_msg} {err_msg}"
-            )
-            return ValidationResult(success=False, message=err_msg)
-
-        # Validate Indicator Feed Type
         feed_type = configuration.get("feed_type", [])
-        if not feed_type:
-            error_msg = (
-                "Indicator Feed Type is a required configuration parameter."
-            )
-            self.logger.error(
-                f"{self.log_prefix}: {validation_msg} {error_msg}"
-            )
-            return ValidationResult(
-                success=False,
-                message=error_msg
-            )
-        elif not isinstance(feed_type, list) or not (
-            all(
-                feed in FEED_TYPES.keys()
-                for feed in feed_type
-            )
-        ):
-            error_msg = (
-                "Invalid Indicator Feed Type found in the configuration "
-                f"parameter. Allowed values are: "
-                f"{', '.join(FEED_TYPES.values())}."
-            )
-            self.logger.error(
-                f"{self.log_prefix}: {validation_msg} {error_msg}"
-            )
-            return ValidationResult(
-                success=False,
-                message=error_msg
-            )
-
-        # Validate Malware Types
-        if ("malware_customer" in feed_type) or ("malware_grid" in feed_type):
-            indicator_type = configuration.get("indicator_type", [])
-            if not indicator_type:
-                error_msg = (
-                    "'Types of Malware to Pull' is a required "
-                    "configuration parameter if 'Malware Customer' "
-                    "or 'Malware Grid' is selected in the "
-                    "Indicator Feed Type."
-                )
-                self.logger.error(
-                    f"{self.log_prefix}: {validation_msg} {error_msg}"
-                )
-                return ValidationResult(
-                    success=False,
-                    message=error_msg
-                )
-            elif not isinstance(indicator_type, list) or not (
-                all(
-                    malware_type in MALWARE_TYPES
-                    for malware_type in indicator_type
-                )
-            ):
-                error_msg = (
-                    "Invalid value for 'Type of Malware to Pull' "
-                    "found in the configuration parameter. "
-                    f"Allowed values are: {', '.join(MALWARE_TYPES)}."
-                )
-                self.logger.error(
-                    f"{self.log_prefix}: {validation_msg} {error_msg}"
-                )
-                return ValidationResult(
-                    success=False,
-                    message=error_msg
-                )
-
-        # Validate Retraction Interval
+        indicator_type = configuration.get("indicator_type", [])
         retraction_days = configuration.get("retraction_interval")
-        if isinstance(retraction_days, int) and retraction_days is not None:
-            if int(retraction_days) <= 0:
-                err_msg = (
-                    "Invalid Retraction Interval provided in configuration"
-                    " parameters. Valid value should be an integer "
-                    "greater than 0."
-                )
-                self.logger.error(
-                    f"{self.log_prefix}: {validation_msg} {err_msg}"
-                )
-                return ValidationResult(
-                    success=False,
-                    message=err_msg,
-                )
-            elif int(retraction_days) > INTEGER_THRESHOLD:
-                err_msg = (
-                    "Invalid Retraction Interval provided in configuration"
-                    " parameters. Valid value should be an integer "
-                    "greater than 0 and less than 2^62."
-                )
-                self.logger.error(
-                    f"{self.log_prefix}: {validation_msg} {err_msg}"
-                )
-                return ValidationResult(
-                    success=False,
-                    message=err_msg,
-                )
-        elif retraction_days:
-            err_msg = (
-                "Invalid Retraction Interval provided in the "
-                "configuration parameters. Provide a valid integer value"
-                " for the Retraction Interval."
-            )
-            self.logger.error(
-                message=f"{self.log_prefix}: {validation_msg} {err_msg}",
-                details=(
-                    f"Retraction Interval: {retraction_days}, "
-                    f"Retraction Interval type: {type(retraction_days)}"
-                ),
-            )
-            return ValidationResult(
-                success=False,
-                message=err_msg,
-            )
-
-        # Validate Initial Range
         initial_range = configuration.get("days", 0)
-        if initial_range is None:
-            err_msg = (
-                "Initial Range (in days) is a required "
-                "configuration parameter."
-            )
-            self.logger.error(
-                f"{self.log_prefix}: {validation_msg} {err_msg}"
-            )
-            return ValidationResult(
-                success=False,
-                message=err_msg,
-            )
-        elif not isinstance(initial_range, int):
-            err_msg = (
-                "Invalid value provided in Initial Range (in days) "
-                "in configuration parameter. Initial Range (in days) "
-                "should be positive integer value."
-            )
-            self.logger.error(
-                f"{self.log_prefix}: {validation_msg} {err_msg}"
-            )
-            return ValidationResult(success=False, message=err_msg)
-        elif initial_range <= 0 or initial_range > INTEGER_THRESHOLD:
-            err_msg = (
-                "Invalid value for Initial Range (in days) provided. "
-                "Select a value between 1 to 2^62."
-            )
-            self.logger.error(
-                f"{self.log_prefix}: {validation_msg} {err_msg}"
-            )
-            return ValidationResult(success=False, message=err_msg)
-
+        if base_url_validation := self._validate_configuration_parameters(
+            field_name="API Base URL",
+            field_value=base_url,
+            field_type=str,
+            is_required=True,
+        ):
+            return base_url_validation
+        if client_id_validation := self._validate_configuration_parameters(
+            field_name="Client ID",
+            field_value=client_id,
+            field_type=str,
+            is_required=True,
+        ):
+            return client_id_validation
+        if client_secret_validation := self._validate_configuration_parameters(
+            field_name="Client Secret",
+            field_value=client_secret,
+            field_type=str,
+            is_required=True,
+        ):
+            return client_secret_validation
+        if feed_type_validation := self._validate_configuration_parameters(
+            field_name="Indicator Feed Type",
+            field_value=feed_type,
+            field_type=list,
+            is_required=True,
+            allowed_values=list(FEED_TYPES.keys()),
+            allowed_values_display=list(FEED_TYPES.values()),
+        ):
+            return feed_type_validation
+        if ("malware_customer" in feed_type) or ("malware_grid" in feed_type):
+            if indicator_type_validation := self._validate_configuration_parameters(
+                field_name="Types of Malware to Pull",
+                field_value=indicator_type,
+                field_type=list,
+                is_required=True,
+                allowed_values=MALWARE_TYPES,
+            ):
+                return indicator_type_validation
+        if retraction_days is not None:
+            if retraction_validation := self._validate_configuration_parameters(
+                field_name="Retraction Interval",
+                field_value=retraction_days,
+                field_type=int,
+                range_validation=True,
+                range_values=(1, INTEGER_THRESHOLD),
+            ):
+                return retraction_validation
+        if initial_range_validation := self._validate_configuration_parameters(
+            field_name="Initial Range (in days)",
+            field_value=initial_range,
+            field_type=int,
+            is_required=True,
+            range_validation=True,
+            range_values=(0, INTEGER_THRESHOLD),
+        ):
+            return initial_range_validation
         return self._validate_credentials(
             configuration=configuration,
             is_validation=True
@@ -1740,8 +1926,36 @@ class MimecastPlugin(PluginBase):
         start_time = datetime.now() - timedelta(days=retraction_interval)
         feed_types = self.configuration.get("feed_type", [])
 
-        for source_ioc_list in source_indicators:
-            try:
+        modified_customer_hashes = set()
+        modified_grid_hashes = set()
+        modified_urls = set()
+
+        try:
+            if "malware_customer" in feed_types:
+                for indicator in self.pull_hashes(
+                    start_time=start_time,
+                    pull_location="Malware Customer",
+                    storage={},
+                    is_retraction=True,
+                ):
+                    modified_customer_hashes.update(indicator)
+
+            if "malware_grid" in feed_types:
+                for indicator in self.pull_hashes(
+                    start_time=start_time,
+                    pull_location="Malware Grid",
+                    storage={},
+                    is_retraction=True,
+                ):
+                    modified_grid_hashes.update(indicator)
+
+            if "malsite" in feed_types:
+                for indicator in self.get_rewritten_urls(
+                    start_time=start_time, storage={}, is_retraction=True
+                ):
+                    modified_urls.update(indicator)
+
+            for source_ioc_list in source_indicators:
                 hash_iocs = set()
                 url_iocs = set()
                 for ioc in source_ioc_list:
@@ -1749,39 +1963,10 @@ class MimecastPlugin(PluginBase):
                         url_iocs.add(ioc.value)
                     if ioc.type in [IndicatorType.MD5, IndicatorType.SHA256]:
                         hash_iocs.add(ioc.value)
-                if (
-                    hash_iocs and "malware_customer" in feed_types
-                ):
-                    modified_customer = self.pull_hashes(
-                        start_time=start_time,
-                        pull_location="Malware Customer",
-                        storage={},
-                        is_retraction=True
-                    )
-                    for indicator in modified_customer:
-                        hash_iocs -= indicator
-                if (
-                    hash_iocs and "malware_grid" in feed_types
-                ):
-                    modified_grid = self.pull_hashes(
-                        start_time=start_time,
-                        pull_location="Malware Grid",
-                        storage={},
-                        is_retraction=True
-                    )
-                    for indicator in modified_grid:
-                        hash_iocs -= indicator
 
-                if (
-                    url_iocs and "malsite" in feed_types
-                ):
-                    modified_url = self.get_rewritten_urls(
-                        start_time=start_time,
-                        storage={},
-                        is_retraction=True
-                    )
-                    for indicator in modified_url:
-                        url_iocs -= indicator
+                hash_iocs -= modified_customer_hashes
+                hash_iocs -= modified_grid_hashes
+                url_iocs -= modified_urls
 
                 combined_ioc = url_iocs.union(hash_iocs)
                 self.logger.info(
@@ -1792,16 +1977,16 @@ class MimecastPlugin(PluginBase):
                 )
 
                 yield list(combined_ioc), False
-            except Exception as err:
-                err_msg = (
-                    f"Error while pulling modified indicators from"
-                    f" {PLUGIN_NAME}."
-                )
-                self.logger.error(
-                    message=(f"{self.log_prefix}: {err_msg} Error: {err}"),
-                    details=str(traceback.format_exc()),
-                )
-                raise MimecastPluginException(err_msg)
+        except Exception as err:
+            err_msg = (
+                f"Error while pulling modified indicators from"
+                f" {PLUGIN_NAME}."
+            )
+            self.logger.error(
+                message=(f"{self.log_prefix}: {err_msg} Error: {err}"),
+                details=str(traceback.format_exc()),
+            )
+            raise MimecastPluginException(err_msg)
 
     def retract_indicators(
         self,
@@ -1820,25 +2005,9 @@ class MimecastPlugin(PluginBase):
         """
         if RETRACTION not in self.log_prefix:
             self.log_prefix = self.log_prefix + f" [{RETRACTION}]"
-        retraction_interval = self.configuration.get("retraction_interval")
-        if not (retraction_interval and isinstance(retraction_interval, int)):
-            log_msg = (
-                "Retraction Interval is not available for the configuration "
-                f'"{self.config_name}". Skipping retraction of IoC(s) '
-                f"from {PLUGIN_NAME}."
-            )
-            self.logger.info(f"{self.log_prefix}: {log_msg}")
-            yield ValidationResult(
-                success=False,
-                disabled=True,
-                message=log_msg,
-            )
-
-        end_time = datetime.now()
-        start_time = end_time - timedelta(days=int(retraction_interval))
         self.logger.info(
-            f"{self.log_prefix}: Start time for this retract "
-            f"indicators cycle is '{start_time}'."
+            f"{self.log_prefix}: Starting retraction of indicator(s) "
+            f"from {PLUGIN_NAME}."
         )
         retraction_batch_count = 1
         retracted_hash_count = 0
@@ -1901,13 +2070,19 @@ class MimecastPlugin(PluginBase):
         """
         if RETRACTION not in self.log_prefix:
             self.log_prefix = self.log_prefix + f" [{RETRACTION}]"
-        headers = self.mimecast_helper._get_auth_headers(
-            proxy=self.proxy,
-            verify=self.ssl_validation,
+        # Get headers and storage once
+        headers, storage = self.get_bearer_token_and_storage(
             configuration=self.configuration,
-            is_retraction=True
+            is_validation=False,
+            is_retraction=True,
         )
         retracted_count = 0
+        get_url_endpoint = self.mimecast_helper.build_url(
+            GET_URL_ENDPOINT, self.configuration
+        )
+        delete_url_endpoint = self.mimecast_helper.build_url(
+            DELETE_URL_ENDPOINT, self.configuration
+        )
         for url_value in url_iocs:
             try:
                 get_url_payload = {
@@ -1919,13 +2094,14 @@ class MimecastPlugin(PluginBase):
                     ]
                 }
                 response = self.mimecast_helper.api_helper(
-                    url=GET_URL_ENDPOINT,
+                    url=get_url_endpoint,
                     method="POST",
                     headers=headers,
                     json=get_url_payload,
                     verify=self.ssl_validation,
                     proxies=self.proxy,
                     configuration=self.configuration,
+                    storage=storage,
                     logger_msg=f"getting URL id for {url_value}",
                     is_retraction=True
                 )
@@ -1940,13 +2116,14 @@ class MimecastPlugin(PluginBase):
                         ]
                     }
                     del_res = self.mimecast_helper.api_helper(
-                        url=DELETE_URL_ENDPOINT,
+                        url=delete_url_endpoint,
                         method="POST",
                         headers=headers,
                         json=delete_url_payload,
                         verify=self.ssl_validation,
                         proxies=self.proxy,
                         configuration=self.configuration,
+                        storage=storage,
                         logger_msg=f"retracting URL {url_value}",
                         is_retraction=True
                     )

@@ -1,3 +1,8 @@
+# 4.1.0
+## Added
+- Added support for skipping the timestamp and log source identifier fields in JSON-formatted data.
+- Updated the mappings for Network events and Audit events.
+
 # 4.0.1
 ## Fixed
 - Fixed CEF transformation for nested JSON fields in data.

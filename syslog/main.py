@@ -32,13 +32,12 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 Syslog Plugin."""
 
 import logging
-import logging.handlers
 import threading
 import socket
 import json
 import traceback
 import time
-from typing import List
+from typing import List, Union, Tuple
 from jsonpath import jsonpath
 from packaging import version
 from netskope.common.api import __version__ as CE_VERSION
@@ -54,6 +53,8 @@ from .utils.syslog_constants import (
     PLATFORM_NAME,
     PLUGIN_VERSION,
     SYSLOG_PROTOCOLS,
+    IDENTIFIER_ALLOWED_VALUES,
+    VALIDATION_ERROR_MESSAGE,
 )
 from .utils.syslog_validator import SyslogValidator
 from .utils.syslog_helper import get_syslog_mappings, validate_syslog_mappings
@@ -104,6 +105,24 @@ class SyslogPlugin(PluginBase):
                 details=str(traceback.format_exc()),
             )
         return (PLATFORM_NAME, PLUGIN_VERSION)
+
+    def _transformation_compatibility_check(self, configuration: dict) -> bool:
+        """Check whether JSON transformation is enabled."""
+        transform_data_json = False
+        if version.parse(CE_VERSION) <= version.parse(MAXIMUM_CORE_VERSION):
+            if not configuration.get("transformData", True):
+                transform_data_json = True
+        else:
+            if configuration.get("transformData", "json") == "json":
+                transform_data_json = True
+        return transform_data_json
+
+    def _get_skip_flag_value(self, configuration: dict, key: str) -> str:
+        """Fetch and normalize skip flag value from configuration."""
+        value = configuration.get(key, "no")
+        if isinstance(value, str):
+            return value.strip().lower()
+        return str(value).strip().lower()
 
     def get_mapping_value_from_json_path(self, data, json_path):
         """To Fetch the value from given JSON object using given JSON path.
@@ -440,7 +459,9 @@ class SyslogPlugin(PluginBase):
             not isinstance(mappings, dict)
             or not syslog_validator.validate_syslog_map(mappings)
         ):
-            self.logger.error(f"{validation_err_msg} {err_msg}")
+            self.logger.error(
+                f"{validation_err_msg} {err_msg}",
+            )
             return ValidationResult(
                 success=False,
                 message=err_msg,
@@ -480,13 +501,19 @@ class SyslogPlugin(PluginBase):
         log_source_identifier = self.configuration.get(
             "log_source_identifier", "netskopece"
         )
-        transform_data_json = False
-        if version.parse(CE_VERSION) <= version.parse(MAXIMUM_CORE_VERSION):
-            if not self.configuration.get("transformData", True):
-                transform_data_json = True
-        else:
-            if self.configuration.get("transformData", "json") == "json":
-                transform_data_json = True
+        transform_data_json = self._transformation_compatibility_check(
+            self.configuration
+        )
+        skip_timestamp_field = self._get_skip_flag_value(
+            self.configuration, "skip_timestamp_field"
+        )
+        if skip_timestamp_field not in ("yes", "no"):
+            skip_timestamp_field = "no"
+        skip_log_source_identifier_field = self._get_skip_flag_value(
+            self.configuration, "skip_log_source_identifier_field"
+        )
+        if skip_log_source_identifier_field not in ("yes", "no"):
+            skip_log_source_identifier_field = "no"
         if transform_data_json:
             try:
                 if (
@@ -541,14 +568,34 @@ class SyslogPlugin(PluginBase):
                     transformed_data = []
                     for data in raw_data:
                         if data:
-                            result = "{} {} {}".format(
-                                time.strftime(
-                                    "%b %d %H:%M:%S",
-                                    time.localtime(time.time()),
-                                ),
-                                log_source_identifier,
-                                json.dumps(data),
-                            )
+                            payload = json.dumps(data)
+                            if (
+                                skip_timestamp_field == "yes"
+                                and skip_log_source_identifier_field == "yes"
+                            ):
+                                result = payload
+                            elif skip_timestamp_field == "yes":
+                                result = "{} {}".format(
+                                    log_source_identifier,
+                                    payload,
+                                )
+                            elif skip_log_source_identifier_field == "yes":
+                                result = "{} {}".format(
+                                    time.strftime(
+                                        "%b %d %H:%M:%S",
+                                        time.localtime(time.time()),
+                                    ),
+                                    payload,
+                                )
+                            else:
+                                result = "{} {} {}".format(
+                                    time.strftime(
+                                        "%b %d %H:%M:%S",
+                                        time.localtime(time.time()),
+                                    ),
+                                    log_source_identifier,
+                                    payload,
+                                )
                             transformed_data.append(result)
                         else:
                             count += 1
@@ -571,13 +618,32 @@ class SyslogPlugin(PluginBase):
             for data in raw_data:
                 mapped_dict = self.map_json_data(subtype_mapping, data)
                 if mapped_dict:
-                    result = "{} {} {}".format(
-                        time.strftime(
-                            "%b %d %H:%M:%S", time.localtime(time.time())
-                        ),
-                        log_source_identifier,
-                        json.dumps(mapped_dict),
-                    )
+                    payload = json.dumps(mapped_dict)
+                    if (
+                        skip_timestamp_field == "yes"
+                        and skip_log_source_identifier_field == "yes"
+                    ):
+                        result = payload
+                    elif skip_timestamp_field == "yes":
+                        result = "{} {}".format(
+                            log_source_identifier,
+                            payload,
+                        )
+                    elif skip_log_source_identifier_field == "yes":
+                        result = "{} {}".format(
+                            time.strftime(
+                                "%b %d %H:%M:%S", time.localtime(time.time())
+                            ),
+                            payload,
+                        )
+                    else:
+                        result = "{} {} {}".format(
+                            time.strftime(
+                                "%b %d %H:%M:%S", time.localtime(time.time())
+                            ),
+                            log_source_identifier,
+                            payload,
+                        )
                     transformed_data.append(result)
                 else:
                     count += 1
@@ -918,6 +984,7 @@ class SyslogPlugin(PluginBase):
             )
             self.logger.error(
                 message=(f"{self.log_prefix}: {error_msg} Error: {err}"),
+                resolution="Make sure you have provided correct syslog server and port.",
                 details=str(traceback.format_exc()),
             )
             raise SyslogPluginError(error_msg)
@@ -928,144 +995,261 @@ class SyslogPlugin(PluginBase):
             del syslogger.handlers[:]
             del syslogger
 
-    def validate(self, configuration: dict) -> ValidationResult:
-        """Validate the configuration parameters dict."""
-        syslog_validator = SyslogValidator(self.logger, self.log_prefix)
-        validation_err_msg = f"{self.log_prefix}: Validation error occurred."
-        syslog_server = configuration.get("syslog_server", "").strip()
-        if not syslog_server:
-            err_msg = "Syslog Server is a required configuration parameter."
-            self.logger.error(f"{validation_err_msg} {err_msg}")
-            return ValidationResult(
-                success=False,
-                message=err_msg,
-            )
-        elif not isinstance(syslog_server, str):
-            err_msg = (
-                "Invalid Syslog Server provided in configuration parameters."
-            )
-            self.logger.error(f"{validation_err_msg} {err_msg}")
-            return ValidationResult(
-                success=False,
-                message=err_msg,
-            )
+    def  _validate_configuration_parameters(
+        self,
+        field_name: str,
+        field_value: Union[str, List, bool, int],
+        field_type: type,
+        is_required: bool = True,
+        allowed_values: list = None,
+        validation_err_msg: str = VALIDATION_ERROR_MESSAGE,
+        range_validation: bool = False,
+        range_values: Tuple[int, int] = None,
+        required_field_message: str = None,
+    ) -> Union[ValidationResult, None]:
+        """Validate a configuration field.
 
-        syslog_protocol = configuration.get("syslog_protocol", "").strip()
-        if not syslog_protocol:
-            err_msg = "Syslog Protocol is a required configuration parameter."
-            self.logger.error(f"{validation_err_msg} {err_msg}")
-            return ValidationResult(
-                success=False,
-                message=err_msg,
-            )
-        elif (
-            not isinstance(syslog_protocol, str)
-            or syslog_protocol not in SYSLOG_PROTOCOLS
+        Args:
+            field_name: Name of the field to validate
+            field_value: Value of the field to validate
+            field_type: Expected type of the field
+            is_required: Whether the field is required
+            allowed_values: List of allowed values for the field
+            validation_err_msg: Base validation error message
+            range_validation: Whether to validate range for numeric fields
+            range_values: Tuple of (min, max) values for range validation
+            required_field_message: Custom error message when field is
+                required but empty. Defaults to generic message.
+
+        Returns:
+            ValidationResult on failure, None on success
+        """
+
+        if field_type is str and isinstance(field_value, str):
+            field_value = field_value.strip()
+        if (
+            is_required
+            and not isinstance(field_value, int)
+            and not field_value
         ):
             err_msg = (
-                "Invalid Syslog Protocol provided in configuration parameters."
+                required_field_message
+                if required_field_message
+                else f"{field_name} is a required configuration parameter."
             )
-            self.logger.error(f"{validation_err_msg} {err_msg}")
-            return ValidationResult(
-                success=False,
-                message=err_msg,
-            )
-
-        syslog_port = configuration.get("syslog_port")
-        if not syslog_port:
-            err_msg = "Syslog Port is a required configuration parameter."
-            self.logger.error(f"{validation_err_msg} {err_msg}")
-            return ValidationResult(
-                success=False,
-                message=err_msg,
-            )
-        elif not isinstance(syslog_port, int):
-            err_msg = (
-                "Invalid Syslog Port provided in configuration parameters."
-            )
-            self.logger.error(f"{validation_err_msg} {err_msg}")
-            return ValidationResult(
-                success=False,
-                message=err_msg,
-            )
-        elif not syslog_validator.validate_syslog_port(syslog_port):
-            err_msg = (
-                "Invalid Syslog Port provided in configuration "
-                "parameters. it should be in range 0-65535."
-            )
-            self.logger.error(f"{validation_err_msg} {err_msg}")
-            return ValidationResult(
-                success=False,
-                message=err_msg,
-            )
-
-        syslog_certificate = configuration.get(
-            "syslog_certificate", ""
-        ).strip()
-        if syslog_protocol.upper() == "TLS":
-            if not syslog_certificate:
-                err_msg = (
-                    "Syslog Certificate is a required configuration "
-                    "parameter when TLS is provided in the "
+            self.logger.error(
+                message=f"{self.log_prefix}: {validation_err_msg}{err_msg}",
+                resolution=(
+                    f"Ensure that {field_name} value is provided in the "
                     "configuration parameters."
-                )
-                self.logger.error(f"{validation_err_msg} {err_msg}")
-                return ValidationResult(
-                    success=False,
-                    message=err_msg,
-                )
-            elif not isinstance(syslog_certificate, str):
+                ),
+            )
+            return ValidationResult(
+                success=False,
+                message=err_msg,
+            )
+
+        # Type check
+        if field_value and not isinstance(field_value, field_type):
+            err_msg = (
+                f"Invalid value provided for the configuration"
+                f" parameter '{field_name}'."
+            )
+            self.logger.error(
+                message=f"{self.log_prefix}: {validation_err_msg}{err_msg}",
+                resolution=(
+                    f"Ensure that valid value for {field_name} is "
+                    "provided in the configuration parameters."
+                ),
+            )
+            return ValidationResult(success=False, message=err_msg)
+
+        # Range validation for numeric fields
+        if range_validation and range_values:
+            if not (range_values[0] <= field_value <= range_values[1]):
                 err_msg = (
-                    "Invalid Syslog Certificate provided in"
-                    " configuration parameters."
+                    f"Invalid value provided for the configuration"
+                    f" parameter '{field_name}'. It should be in range"
+                    f" {str(range_values[0])} to {str(range_values[1])}."
                 )
-                self.logger.error(f"{validation_err_msg} {err_msg}")
+                self.logger.error(
+                    message=f"{self.log_prefix}: {validation_err_msg}{err_msg}",
+                    resolution=(
+                        f"Ensure that valid value for {field_name} is "
+                        "provided in the configuration parameters "
+                        "and it should be in range "
+                        f"{str(range_values[0])} to {str(range_values[1])}."
+                    ),
+                )
                 return ValidationResult(
                     success=False,
                     message=err_msg,
                 )
 
-        log_source_identifier = configuration.get(
-            "log_source_identifier", ""
-        ).strip()
-        if not log_source_identifier:
+        # Allowed values check
+        if allowed_values and field_type is str and field_value not in allowed_values:
             err_msg = (
-                "Log Source Identifier is a required configuration parameter."
+                f"Invalid value provided for the configuration"
+                f" parameter '{field_name}'. Allowed values are"
+                f" {', '.join(value for value in allowed_values)}."
             )
-            self.logger.error(f"{validation_err_msg} {err_msg}")
+            self.logger.error(
+                message=(
+                    f"{self.log_prefix}: {validation_err_msg}{err_msg}"
+                ),
+                resolution=(
+                    f"Ensure that valid value for {field_name} is "
+                    "provided in the configuration parameters "
+                    "and it should be one of "
+                    f"{', '.join(value for value in allowed_values)}."
+                ),
+            )
             return ValidationResult(
                 success=False,
                 message=err_msg,
             )
-        elif not isinstance(log_source_identifier, str):
-            err_msg = (
-                "Invalid Log Source Identifier provided in"
-                " configuration parameters."
-            )
-            self.logger.error(f"{validation_err_msg} {err_msg}")
-            return ValidationResult(
-                success=False,
-                message=err_msg,
-            )
-        # Validate Server connection.
+
+    def _get_config_params(self, configurations: dict, params_to_get: List[str] = None):
+        """Get the required configuration parameters."""
+        all_params = {
+            "syslog_server": configurations.get("syslog_server", "").strip(),
+            "syslog_protocol": configurations.get("syslog_protocol", "").strip(),
+            "syslog_port": configurations.get("syslog_port"),
+            "syslog_certificate": configurations.get("syslog_certificate", "").strip(),
+            "log_source_identifier": configurations.get("log_source_identifier", ""),
+            "skip_timestamp_field": self._get_skip_flag_value(
+                configurations, "skip_timestamp_field"
+            ),
+            "skip_log_source_identifier_field": self._get_skip_flag_value(
+                configurations, "skip_log_source_identifier_field"
+            ),
+            "transform_data_json": self._transformation_compatibility_check(configurations),
+        }
+
+        if not params_to_get:
+            return tuple(all_params.values())
+
+        result = [all_params.get(param) for param in params_to_get]
+        return result[0] if len(result) == 1 else tuple(result)
+
+
+    def validate(self, configuration: dict) -> ValidationResult:
+        """Validate the configuration parameters dict."""
+        validation_err_msg = VALIDATION_ERROR_MESSAGE
+
+        # Get all configuration parameters
+        (
+            syslog_server,
+            syslog_protocol,
+            syslog_port,
+            syslog_certificate,
+            log_source_identifier,
+            skip_timestamp_field,
+            skip_log_source_identifier_field,
+            transform_data_json,
+        ) = self._get_config_params(configuration)
+
+        # Validate Syslog Server
+        if server_result := self._validate_configuration_parameters(
+            field_name="Syslog Server",
+            field_value=syslog_server,
+            field_type=str,
+            is_required=True,
+            validation_err_msg=validation_err_msg
+        ):
+            return server_result
+
+        # Validate Syslog Protocol
+        if protocol_result := self._validate_configuration_parameters(
+            field_name="Syslog Protocol",
+            field_value=syslog_protocol,
+            field_type=str,
+            is_required=True,
+            allowed_values=SYSLOG_PROTOCOLS,
+            validation_err_msg=validation_err_msg
+        ):
+            return protocol_result
+
+        # Validate Syslog Port
+        if port_result := self._validate_configuration_parameters(
+            field_name="Syslog Port",
+            field_value=syslog_port,
+            field_type=int,
+            is_required=True,
+            range_validation=True,
+            range_values=(0, 65535),
+            validation_err_msg=validation_err_msg
+        ):
+            return port_result
+
+        # Validate Syslog Certificate for TLS
+        if syslog_protocol == "TLS":
+            if certificate_result := self._validate_configuration_parameters(
+                field_name="Syslog Certificate",
+                field_value=syslog_certificate,
+                field_type=str,
+                is_required=True,
+                validation_err_msg=validation_err_msg
+            ):
+                return certificate_result
+        
+        # Validate Exclude Timestamp Field
+        if timestamp_field := self._validate_configuration_parameters(
+            field_name="Exclude Timestamp Field",
+            field_value=skip_timestamp_field,
+            field_type=str,
+            allowed_values=IDENTIFIER_ALLOWED_VALUES,
+            validation_err_msg=validation_err_msg,
+        ):
+            return timestamp_field
+
+        # Validate Exclude Log Source Identifier Field
+        if log_source_identifier_field := self._validate_configuration_parameters(
+            field_name="Exclude Log Source Identifier Field",
+            field_value=skip_log_source_identifier_field,
+            field_type=str,
+            allowed_values=IDENTIFIER_ALLOWED_VALUES,
+            validation_err_msg=validation_err_msg,
+        ):
+            return log_source_identifier_field
+        
+        # Determine if Log Source Identifier is required based on format
+        require_log_source_identifier = (
+            not transform_data_json or skip_log_source_identifier_field == "no"
+        )
+
+        # Validate Log Source Identifier
+        if log_source := self._validate_configuration_parameters(
+            field_name="Log Source Identifier",
+            field_value=log_source_identifier,
+            field_type=str,
+            is_required=require_log_source_identifier,
+            validation_err_msg=validation_err_msg,
+            required_field_message=(
+                "Log Source Identifier is a required configuration"
+                " parameter, for the selected format."
+            ),
+        ):
+            return log_source
+
+        # Validate Server Connectivity
         try:
             self.test_server_connectivity(configuration)
         except SyslogPluginError as err:
-            return ValidationResult(
-                success=False,
-                message=str(err),
-            )
+            return ValidationResult(success=False, message=str(err))
         except Exception:
             err_msg = (
-                "Error occurred while establishing connection with"
-                " Syslog Server. Make sure you have provided correct "
-                "Syslog Server, Port and Syslog Certificate(if required)."
+                "Error occurred while establishing connection with Syslog Server. "
+                "Make sure you have provided correct Syslog Server, Port and "
+                "Syslog Certificate(if required)."
             )
-            self.logger.error(f"{validation_err_msg} {err_msg}")
-            return ValidationResult(
-                success=False,
-                message=err_msg,
+            self.logger.error(
+                f"{validation_err_msg} {err_msg}",
+                resolution="Make sure you have provided correct syslog server and port."
             )
+            return ValidationResult(success=False, message=err_msg)
+
+        # Validate Mappings
         mappings_validation_result = self.validate_mappings()
 
         if not mappings_validation_result.success:

@@ -33,11 +33,13 @@ Syslog Plugin constants."""
 
 PLATFORM_NAME = "Syslog"
 MODULE_NAME = "CLS"
-PLUGIN_VERSION = "4.0.1"
+PLUGIN_VERSION = "4.1.0"
 
 MAXIMUM_CORE_VERSION = "5.1.2"
 
 SYSLOG_PROTOCOLS = ["UDP", "TCP", "TLS"]
+IDENTIFIER_ALLOWED_VALUES = ["yes", "no"]
+VALIDATION_ERROR_MESSAGE = "Validation error occurred."
 
 SEVERITY_LOW = "Low"
 SEVERITY_MEDIUM = "Medium"

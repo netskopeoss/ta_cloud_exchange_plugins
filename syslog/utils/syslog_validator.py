@@ -36,6 +36,10 @@ import csv
 import traceback
 from jsonschema import validate
 from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
+from netskope.common.api import __version__ as CE_VERSION
+from packaging import version
+
+from .syslog_constants import MAXIMUM_CORE_VERSION
 
 
 class SyslogValidator(object):
@@ -46,32 +50,27 @@ class SyslogValidator(object):
         super().__init__()
         self.logger = logger
         self.log_prefix = log_prefix
+        self.resolution_support = version.parse(CE_VERSION) > version.parse(
+            MAXIMUM_CORE_VERSION
+        )
+        self.is_ce_version_greater_than_512 = self.resolution_support
+        self._patch_logger_methods()
 
-    def validate_syslog_port(self, syslog_port):
-        """Validate syslog port.
+    def _patch_logger_methods(self):
+        """Patch logger.error to keep resolution backward compatible."""
+        original_error = self.logger.error
 
-        Args:
-            syslog_port: the syslog port to be validated
+        def patched_error(message=None, details=None, resolution=None, **kwargs):
+            log_kwargs = {"message": message}
+            if details:
+                log_kwargs["details"] = details
+            if resolution and self.resolution_support:
+                log_kwargs["resolution"] = resolution
+            log_kwargs.update(kwargs)
+            return original_error(**log_kwargs)
 
-        Returns:
-            Whether the provided value is valid or not.
-            True in case of valid value, False otherwise
-        """
-        if syslog_port or syslog_port == 0:
-            try:
-                syslog_port = int(syslog_port)
-                if not (0 <= syslog_port <= 65535):
-                    return False
-                return True
-            except ValueError:
-                err_msg = "Validation error occurred."
-                self.logger.error(
-                    message=f"{self.log_prefix}: {err_msg}",
-                    details=str(traceback.format_exc()),
-                )
-                return False
-        else:
-            return False
+        self.logger.error = patched_error
+
 
     def validate_taxonomy(self, instance):
         """Validate the schema of given taxonomy JSON.
@@ -155,6 +154,7 @@ class SyslogValidator(object):
                         self.log_prefix, err
                     )
                 ),
+                resolution="Ensure that the valid mapping is provided for the mapping configuration.",
                 details=str(traceback.format_exc()),
             )
             return False

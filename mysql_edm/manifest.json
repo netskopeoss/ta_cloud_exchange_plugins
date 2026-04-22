@@ -1,14 +1,14 @@
 {
-    "name": "MySQL EDM",
+    "name": "MySQL",
     "id": "mysql_edm",
-    "version": "1.0.1",
+    "version": "1.1.0",
     "module": "EDM",
-    "description": "MySQL EDM Plugin is used to pull raw data from configured MySQL server to generate EDM hashes.",
+    "description": "This plugin is used to pull raw data from configured MySQL server to generate EDM hashes.",
     "patch_supported": false,
     "push_supported": false,
     "pull_supported": true,
     "pull_sample_data_on_validate": true,
-    "minimum_version": "6.0.0",
+    "minimum_version": "6.1.0",
     "supported_edm_method": [
         "edm_file_hashes"
     ],
@@ -19,7 +19,7 @@
             "type": "step",
             "fields": [
                 {
-                    "label": "Server IP/Hostname",
+                    "label": "Server Hostname/IP",
                     "key": "host",
                     "type": "text",
                     "default": "",
@@ -71,7 +71,16 @@
                     "mandatory": true,
                     "placeholder": "e.g. SELECT * FROM table_name",
                     "description": "MySQL query for which the data is to be retrieved to generate the EDM hashes. Ensure that the query is validated and read-only.",
-                    "helperText": "Note: Maximum 25 columns can be present in the query result."
+                    "helperText": "Maximum 25 columns can be present in the query result."
+                },
+                {
+                    "label": "Remove Quotes",
+                    "key": "remove_quotes",
+                    "type": "boolean",
+                    "default": false,
+                    "mandatory": false,
+                    "description": "Enable this if your data file encloses fields in double quotes, especially when values contain commas. Quoted fields will be parsed as single columns. Improper quote placement may cause rows to be skipped. Helpful for CSVs exported from databases.",
+                    "helperText": "Example: “123 Main St, Apt 4B” stays in one column instead of splitting. Enable this if your data file encloses fields in double quotes, especially when values contain commas and file comes directly from a database export."
                 }
             ]
         },

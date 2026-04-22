@@ -1,43 +1,3 @@
-"""Linux File Share EDM Plugin.
-
-Linux File Share EDM Plugin is used to pull the CSV file from the Linux server
-and it perform sanitization on the pulled data.
-"""
-
-# Built-in libraries
-import csv
-import os
-import io
-import shutil
-import stat
-import traceback
-
-from copy import deepcopy
-from typing import List
-
-# Third-party libraries
-from .lib import paramiko
-from .lib.paramiko.ssh_exception import AuthenticationException, SSHException
-
-# Local imports
-from netskope.integrations.edm.models import Action, ActionWithoutParams
-from netskope.integrations.edm.plugin_base import PluginBase, ValidationResult
-from netskope.integrations.edm.utils import CONFIG_TEMPLATE, FILE_PATH
-from netskope.integrations.edm.utils import CustomException as LinuxFileShareEDM
-from netskope.integrations.edm.utils import run_sanitizer
-from netskope.integrations.edm.utils.constants import EDM_HASH_CONFIG
-from netskope.integrations.edm.utils.edm.hash_generator.edm_hash_generator import (
-    generate_edm_hash,
-)
-from .utils.constants import (
-    LINUX_FILE_SHARE_FIELDS,
-    MODULE_NAME,
-    PLUGIN_NAME,
-    PLUGIN_VERSION,
-    SAMPLE_DATA_RECORD_COUNT,
-    SAMPLE_CSV_FILE_NAME,
-)
-
 """
 BSD 3-Clause License
 
@@ -68,13 +28,46 @@ SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
 CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+Linux File Share EDM Plugin is used to pull the CSV/TXT file from the
+Linux server and it perform sanitization on the pulled data.
 """
+
+# Built-in libraries
+import csv
+import os
+import shutil
+import traceback
+from copy import deepcopy
+from typing import List
+
+# Local imports
+from .utils.constants import (
+    LINUX_FILE_SHARE_FIELDS,
+    MODULE_NAME,
+    PLUGIN_NAME,
+    PLUGIN_VERSION,
+    SAMPLE_DATA_RECORD_COUNT,
+    SAMPLE_CSV_FILE_NAME,
+)
+from .utils.helper import LinuxProtocolFileShareEDMPlugin
+from netskope.integrations.edm.models import Action, ActionWithoutParams
+from netskope.integrations.edm.plugin_base import PluginBase, ValidationResult
+from netskope.integrations.edm.utils import CONFIG_TEMPLATE, FILE_PATH
+from netskope.integrations.edm.utils import (
+    CustomException as LinuxFileShareEDM,
+)
+from netskope.integrations.edm.utils import run_sanitizer
+from netskope.integrations.edm.utils.constants import EDM_HASH_CONFIG
+from netskope.integrations.edm.utils.edm.hash_generator.edm_hash_generator import (  # noqa: E501
+    generate_edm_hash,
+)
 
 
 class LinuxFileShareEDMPlugin(PluginBase):
     """Linux File Share Plugin Class.
 
-    This plugin is used to pull the CSV file from the Linux server
+    This plugin is used to pull the CSV/TXT file from the Linux server
     and perform sanitization on the pulled data.
     """
 
@@ -98,6 +91,9 @@ class LinuxFileShareEDMPlugin(PluginBase):
         self.log_prefix = f"{MODULE_NAME} {self.plugin_name}"
         if name:
             self.log_prefix = f"{self.log_prefix} [{name}]"
+        self.protocol_object = LinuxProtocolFileShareEDMPlugin(
+            self.logger, self.log_prefix
+        )
 
     def _get_plugin_info(self) -> tuple:
         """Get plugin name and version from manifest.
@@ -123,233 +119,108 @@ class LinuxFileShareEDMPlugin(PluginBase):
         return (PLUGIN_NAME, PLUGIN_VERSION)
 
     def strip_string_values(self, configuration: dict) -> None:
-        """Strip leading and trailing whitespace from string values in the provided dictionary.
+        """
+        Strip leading and trailing whitespace from string values.
+
+        Values belong to the provided dictionary.
 
         Args:
             configuration (dict): A dictionary containing key-value pairs.
         """
         for parameter, value in configuration.items():
+            if parameter == "password":
+                continue
             if isinstance(value, str):
                 configuration[parameter] = value.strip()
 
-    def validate_configuration_parameters(self, configuration):
-        """Validate configuration parameters.
-
-        Args:
-            configuration (dict): plugin configuration
-
-        Returns:
-            ValidationResult: validate result of configuration
-        """
-        server_ip = "server_ip"
-        if server_ip in configuration:
-            if (
-                isinstance(configuration[server_ip], str)
-                and configuration[server_ip].strip()
-            ):
-                pass
-            else:
-                return ValidationResult(
-                    success=False,
-                    message="Linux Server IP/Hostname should be a non-empty string value.",
-                )
-        else:
-            return ValidationResult(
-                success=False, message="Server IP/Hostname is required field."
-            )
-
-        username = "username"
-        if username in configuration:
-            if (
-                isinstance(configuration[username], str)
-                and configuration[username].strip()
-            ):
-                pass
-            else:
-                return ValidationResult(
-                    success=False,
-                    message="Username should be a non-empty string value.",
-                )
-        else:
-            return ValidationResult(
-                success=False, message="Username is required field."
-            )
-
-        password = "password"
-        if password in configuration:
-            if (
-                isinstance(configuration[password], str)
-                and configuration[password].strip()
-            ):
-                pass
-            else:
-                return ValidationResult(
-                    success=False,
-                    message="Password should be a non-empty string value.",
-                )
-        else:
-            return ValidationResult(
-                success=False, message="Password is required field."
-            )
-
-        port = "port"
-        if port in configuration:
-            if isinstance(configuration[port], int) and 0 < configuration[port] < 65536:
-                pass
-            else:
-                return ValidationResult(
-                    success=False,
-                    message="Port number should be an integer value ranging between 1 to 65535.",
-                )
-        else:
-            return ValidationResult(
-                success=False, message="Port number is required field."
-            )
-
-        filepath = "filepath"
-        if filepath in configuration:
-            if (
-                isinstance(configuration[filepath], str)
-                and configuration[filepath].strip()
-            ):
-                pass
-            else:
-                return ValidationResult(
-                    success=False,
-                    message="File path should be a non-empty string value.",
-                )
-        else:
-            return ValidationResult(
-                success=False, message="File path is required field."
-            )
-
-        return ValidationResult(
-            success=True, message="Basic validation completed successfully."
-        )
-
-    def get_ssh_connection_object(self, configuration) -> paramiko.SSHClient:
-        """Establish an SSH connection to a remote server using the provided configuration.
-
-        Args:
-            configuration: parameter configuration dictionary.
-
-        Raises:
-            LinuxFileShareEDM: If any errors occur during the SSH connection establishment,
-                including AuthenticationException or SSHException.
-
-        Returns:
-            paramiko.SSHClient: An SSHClient object representing the SSH connection.
-        """
-        try:
-            ssh_connection = paramiko.SSHClient()
-            ssh_connection.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-            ssh_connection.connect(
-                hostname=configuration["server_ip"],
-                username=configuration["username"],
-                password=configuration["password"],
-                port=configuration["port"],
-            )
-            return ssh_connection
-        except AuthenticationException as error:
-            error_message = (
-                f"Authentication failed while connecting to "
-                f"the Linux server'{configuration['server_ip']}'."
-            )
-            self.logger.error(
-                message=f"{self.log_prefix} {error_message}",
-                details=traceback.format_exc(),
-            )
-            raise LinuxFileShareEDM(value=error, message=error_message) from error
-        except SSHException as error:
-            error_message = (
-                "Error occurred in establishing SSH session with "
-                f"the Linux server'{configuration['server_ip']}'."
-            )
-            self.logger.error(
-                message=f"{self.log_prefix} {error_message}",
-                details=traceback.format_exc(),
-            )
-            raise LinuxFileShareEDM(value=error, message=str(error)) from error
-
-    def verify_connection(self, configuration) -> ValidationResult:
-        """Verify the connection with a Linux server using SFTP protocol.
-
-        Args:
-            configuration: parameter configuration dictionary.
-
-        Returns:
-            ValidationResult: An object indicating the result of the validation.
-            - success (bool): True if all parameters are valid, False otherwise.
-            - message (str): A message describing the validation result.
-        """
-        server_ip = configuration["server_ip"]
-        ssh_connection = self.get_ssh_connection_object(configuration)
-        ssh_connection.close()
-        return ValidationResult(
-            success=True,
-            message=(
-                "Connection with the Linux server "
-                f"{server_ip} verified successfully."
-            ),
-        )
-
     def validate(self, configuration: dict) -> ValidationResult:
-        """Validate a connection to a Linux server using the provided configuration.
+        """
+        Validate a connection to a Linux server using the configuration.
 
         Args:
-            configuration (dict): A dictionary containing configuration parameters.
+            configuration (dict): A dictionary containing
+            configuration parameters.
 
         Returns:
-            ValidationResult: An instance of ValidationResult with either success=True and a success
-            message if the connection is verified, or success=False and an error message if the
+            ValidationResult: An instance of ValidationResult with either
+            success=True and a success
+            message if the connection is verified, or success=False and an
+            error message if the
             validation fails.
         """
         self.logger.debug(
-            f"{self.log_prefix} Executing validate method for Linux File Share EDM plugin."
+            f"{self.log_prefix}: Validating configuration parameters."
         )
         try:
             server_configuration = configuration.get("configuration", {})
             self.strip_string_values(server_configuration)
 
-            validation_result = self.validate_configuration_parameters(
-                server_configuration
+            validation_result = (
+                self.protocol_object.validate_configuration_parameters(
+                    server_configuration
+                )
             )
-
             if not validation_result.success:
                 return validation_result
 
-            verification_result = self.verify_connection(server_configuration)
+            verification_result = self.protocol_object.verify_connection(
+                server_configuration
+            )
+            if not verification_result.success:
+                return verification_result
 
-            # Validate that the file exists and is accessible on the remote server
+            # Validate that the file exists and is
+            # accessible on the remote server
             try:
                 input_path = f"{FILE_PATH}/{self.name}/{SAMPLE_CSV_FILE_NAME}"
                 self.storage.update({"csv_path": input_path})
                 self.pull_sample_data()
+                self.logger.debug(
+                    f"{self.log_prefix}: Successfully validated "
+                    "configuration parameters."
+                )
             except Exception as error:
+                err_msg = str(error)
+                self.logger.error(
+                    message=(
+                        f"{self.log_prefix}: Validation error "
+                        f"occurred. {err_msg}"
+                    ),
+                    resolution=(
+                        "Ensure the file exists and is accessible on the "
+                        "remote server."
+                    ),
+                )
                 return ValidationResult(
                     success=False,
-                    message=str(error),
+                    message=err_msg,
                 )
 
             self.logger.debug(
                 (
-                    f"{self.log_prefix} Successfully executed validate method for "
-                    f"Linux File Share EDM plugin."
+                    f"{self.log_prefix}: Successfully validated that file "
+                    "exists and accessible on the remote server."
                 )
             )
 
             return verification_result
-        except Exception as error:
-            error_message = (
-                f"Error: '{error}' occurred while connecting to the Linux server."
-            )
+        except Exception:
+            err_msg = "Error occurred while connecting to the Linux server."
             self.logger.error(
-                message=f"{self.log_prefix} {error_message}",
+                message=(
+                        f"{self.log_prefix}: Validation error "
+                        f"occurred. {err_msg}"
+                    ),
+                resolution=(
+                    "Ensure that Linux server hostname/IP, port, username "
+                    "and password are correct and the Linux server is "
+                    "reachable."
+                ),
                 details=traceback.format_exc(),
             )
             return ValidationResult(
                 success=False,
-                message=str(error),
+                message=err_msg,
             )
 
     @staticmethod
@@ -366,196 +237,218 @@ class LinuxFileShareEDMPlugin(PluginBase):
             if not os.path.exists(directory_path):
                 os.makedirs(directory_path)
 
-    def validate_remote_file(
-        self, ssh_connection: paramiko.SSHClient, configuration: dict
-    ) -> None:
-        """Validate that the file exists and is accessible on the remote server.
-
-        Args:
-            ssh_connection: SSH connection object.
-            configuration: parameter configuration dictionary.
-
-        Raises:
-            LinuxFileShareEDM: If the file does not exist, is not accessible, or is not a regular file.
-        """
-        remote_file_path = configuration["filepath"]
-        try:
-            with ssh_connection.open_sftp() as sftp_session:
-                try:
-                    # Check if file exists
-                    file_attributes = sftp_session.stat(remote_file_path)
-
-                    # Check if it's a regular file (not a directory or special file)
-                    if not stat.S_ISREG(file_attributes.st_mode):
-                        error_message = f"Path '{remote_file_path}' exists but is not a regular file on the remote server."
-                        raise LinuxFileShareEDM(message=error_message)
-
-                    # Check if file is readable by attempting to open it
-                    try:
-                        with sftp_session.file(remote_file_path, "r") as remote_file:
-                            file_content = remote_file.readline()
-                            if isinstance(file_content, bytes):
-                                file_content = file_content.decode("utf-8")
-                            # Convert the file content to a file-like object (string buffer)
-                            file_like_object = io.StringIO(
-                                file_content
-                            )  # Decode from bytes to string
-
-                            # Use CSV reader to read the file
-                            csv_reader = csv.reader(file_like_object)
-
-                            # Get the first row as column names
-                            column_names = next(csv_reader)
-
-                            if len(column_names) > 25:
-                                error_message = (
-                                    "Maximum 25 columns allowed. Please reduce "
-                                    "columns from the source file and try again."
-                                )
-                                raise LinuxFileShareEDM(message=error_message)
-                            return column_names
-                    except UnicodeDecodeError as error:
-                        error_message = (
-                            "Only CSV file is supported. Please provide a valid CSV file."
-                        )
-                        raise LinuxFileShareEDM(
-                            value=error, message=error_message
-                        ) from error
-                    except PermissionError as error:
-                        error_message = f"File '{remote_file_path}' exists but is not readable on the remote server."
-                        raise LinuxFileShareEDM(
-                            value=error, message=error_message
-                        ) from error
-
-                except LinuxFileShareEDM:
-                    raise
-                except FileNotFoundError as error:
-                    error_message = f"File '{remote_file_path}' does not exist on the remote server."
-                    raise LinuxFileShareEDM(
-                        value=error, message=error_message
-                    ) from error
-                except Exception as error:
-                    raise LinuxFileShareEDM(
-                        value=error, message=str(error)
-                    ) from error
-        except Exception as error:
-            error_message = (
-                f"Error validating remote file: {str(error)}"
-            )
-            self.logger.error(
-                message=f"{self.log_prefix} {error_message}",
-                details=traceback.format_exc(),
-            )
-            raise LinuxFileShareEDM(value=error, message=error_message) from error
-
-    def pull_csv_file_records(
-        self, configuration: dict, csv_file_path: str, record_count: int = 0
-    ) -> None:
-        """Pull CSV file records from a remote location and save them locally.
-
-        Args:
-            configuration: parameter configuration dictionary.
-            csv_file_path (str): The local file path where the pulled records will be saved.
-            record_count (int, optional): The number of records to pull from the CSV file
-                (default is 0).
-
-        Raises:
-            LinuxFileShareEDM: If the operation to retrieve the CSV data fails.
-                The exception includes details about the failure.
-        """
-        ssh_connection = self.get_ssh_connection_object(configuration)
-        # Validate that the file exists and is accessible on the remote server
-        self.validate_remote_file(ssh_connection, configuration)
-        remote_file_path = configuration["filepath"]
-        with ssh_connection.open_sftp() as sftp_session:
-            if record_count:
-                file_content = []
-                with sftp_session.file(remote_file_path, "r") as remote_file:
-                    for _ in range(record_count + 1):
-                        record = remote_file.readline()
-                        if not record:
-                            break
-                        file_content.append(record)
-                with open(
-                    csv_file_path, "w", encoding="utf-8", newline="\n"
-                ) as local_file:
-                    local_file.writelines(file_content)
-            else:
-                sftp_session.get(remote_file_path, csv_file_path)
-        ssh_connection.close()
-
-    def validate_csv_file_records(
-        self, csv_file_path: str, record_count: int = 0
-    ) -> dict:
-        """Validate the content of a CSV file.
-
-        Args:
-            csv_file_path (str): The file path to the CSV file to be validated.
-            record_count (int, optional): The maximum number of records to validate. If set
-                to a positive value, only the first 'record_count' records will be validated.
-                If set to 0 (default), all records in the file will be validated.
-
-        Raises:
-            LinuxFileShareEDM: If validation fails due to incorrect data or missing data.
+    def get_delimiter(self):
+        """Get the delimiter from the configuration.
 
         Returns:
-            dict: A dictionary containing the header columns of the CSV file as a list.
+            str: The delimiter.
         """
+        delimiter = self.configuration.get("configuration", {}).get(
+            "delimiter", ","
+        )
+        if not delimiter:
+            error_message = "Ensure that a valid Delimiter is provided."
+            self.logger.error(message=f"{self.log_prefix}: {error_message}")
+            raise LinuxFileShareEDM(message=error_message)
+        if len(delimiter) > 1:
+            error_message = "Delimiter should be a single character."
+            self.logger.error(message=f"{self.log_prefix}: {error_message}")
+            raise LinuxFileShareEDM(message=error_message)
+        return delimiter
+
+    def _get_column_names_only(
+        self, csv_file_path: str, delimiter: str = ","
+    ) -> dict:
+        """Extract column names from CSV without validation.
+
+        This method is used by get_fields during plugin upgrade to avoid
+        strict validation issues while still providing column names.
+
+        Args:
+            csv_file_path (str): Path to the CSV file
+            delimiter (str): CSV delimiter (default: ",")
+
+        Returns:
+            dict: Dictionary containing column names
+        """
+        try:
+            encoding = "UTF-8"
+            with open(csv_file_path, "rb") as csv_file_object:
+                # Read header and parse with proper
+                # quoting to handle quoted fields
+                hdr_raw = csv_file_object.readline()
+                if not hdr_raw:
+                    return {"columns": []}
+
+                # Remove quotes from column names if remove_quotes is enabled
+                remove_quotes = (
+                    csv.QUOTE_ALL
+                    if self.configuration.get("configuration", {}).get(
+                        "remove_quotes", False
+                    )
+                    else csv.QUOTE_NONE
+                )
+
+                header = next(
+                    csv.reader(
+                        [hdr_raw.decode(encoding)],
+                        delimiter=delimiter,
+                        quoting=remove_quotes,
+                    )
+                )
+
+                return {"columns": header}
+        except Exception as error:
+            self.logger.error(
+                message=(
+                    f"{self.log_prefix}: Error occurred while "
+                    "extracting column names. Error: "
+                    f"{str(error)}"
+                ),
+                details=traceback.format_exc(),
+            )
+            # Return empty columns on error to allow plugin upgrade to continue
+            return {"columns": []}
+
+    def validate_csv_file_records(
+        self, csv_file_path: str, record_count: int = 0, delimiter: str = ","
+    ) -> dict:
+        """Validate the content of a CSV/TXT file.
+
+        Opens the file in binary mode (rb/wb) so the write-back of the
+        truncated sample is never re-quoted or modified by a csv.writer —
+        mirroring EdmDataSanitizer.py's parseCSV approach.
+
+        Args:
+            csv_file_path (str): The file path to the
+            CSV/TXT file to be validated.
+            record_count (int, optional): The maximum number of
+            records to validate. If set
+                to a positive value, only the first 'record_count' records
+                will be validated.
+                If set to 0 (default), all records in the file
+                will be validated.
+
+        Raises:
+            LinuxFileShareEDM: If validation fails due to incorrect
+            data or missing data.
+
+        Returns:
+            dict: A dictionary containing the header columns of the
+            CSV/TXT file as a list.
+        """
+        encoding = "UTF-8"
         row_count = 0
         header = None
-        sample_data = []
+        # Stores (raw_bytes_line, parsed_row) tuples for the sample write-back.
+        sample_raw_lines = []
+
+        # Local generator: yields decoded text lines to csv.reader while
+        # capturing each raw bytes line — mirrors EdmDataSanitizer.py's
+        # char_encoder + CURLINE pattern.  Defined here so it is available
+        # to both the read pass and (conceptually) the write-back.
+        cur_line_box = [None]
+        remove_quotes = (
+            csv.QUOTE_ALL
+            if self.configuration.get("configuration", {}).get(
+                "remove_quotes", False
+            )
+            else csv.QUOTE_NONE
+        )
+
+        def _char_encoder(binary_file):
+            while True:
+                line = binary_file.readline()
+                if not line:
+                    return
+                cur_line_box[0] = line  # raw bytes for lossless write-back
+                yield line.decode(encoding)
 
         try:
-            with open(csv_file_path, "r", encoding="UTF-8") as csv_file_object:
-                # Create a CSV reader object to iterate through the CSV file.
-                csv_reader = csv.reader(csv_file_object)
+            with open(csv_file_path, "rb") as csv_file_object:
+                # Read and store header raw bytes separately
+                # (written back first).
+                hdr_raw = csv_file_object.readline()
+                if not hdr_raw:
+                    raise ValueError(
+                        "At least 1 record must be present in the CSV/TXT file"
+                        " in addition to header row."
+                    )
+
+                # Parse header fields for validation.
+                header = next(
+                    csv.reader(
+                        [hdr_raw.decode(encoding)],
+                        delimiter=delimiter,
+                        quoting=remove_quotes,
+                    )
+                )
+                if any(cell.strip() == "" for cell in header):
+                    raise ValueError(
+                        "Column name in provided file should not "
+                        "have an empty value."
+                    )
+
+                row_count = 1  # header counted
+
+                # Stream data rows through csv.reader.
+                csv_reader = csv.reader(
+                    _char_encoder(csv_file_object),
+                    delimiter=delimiter,
+                    quoting=remove_quotes,
+                )
 
                 for row in csv_reader:
                     row_count += 1
 
-                    # Check if 'record_count' is specified and if the row count exceeds the limit.
+                    # Check if 'record_count' is specified and if the row
+                    # count exceeds the limit.
                     if record_count and row_count > record_count + 1:
                         break
 
                     if record_count:
-                        sample_data.append(row)
+                        # Store raw bytes snapshot captured by _char_encoder.
+                        sample_raw_lines.append(cur_line_box[0])
 
-                    # Handle the first row as the header row.
-                    if row_count == 1:
-                        header = row
-                        if any(cell.strip() == "" for cell in header):
-                            raise ValueError(
-                                "Column name in provided file should not have an empty value."
-                            )
-                        continue
-
-                    # Check if the current row has the same number of columns as the header row.
+                    # Check if the current row has the same number of columns
+                    # as the header row.
                     if len(row) != len(header):
                         raise ValueError(
-                            f"Row '{row_count}' does not contain the correct number of columns."
+                            f"Row '{row_count}' does not contain the correct "
+                            "number of columns."
                         )
 
-                # Check if at least 1 record is present in the CSV file.
+                # Check if at least 1 record is present in the CSV/TXT file.
                 if row_count < 2:
                     raise ValueError(
-                        (
-                            "At least 1 record must be present in the CSV file "
-                            "in addition to header row."
-                        )
+                        "At least 1 record must be present in the CSV/TXT file"
+                        " in addition to header row."
                     )
 
-            # Keep only the records which has been validated
+            # Write back only the validated sample rows
+            # (header + truncated data).
+            # Uses raw bytes so quoting in the original file is never altered.
             if record_count:
-                with open(
-                    csv_file_path, "w", encoding="UTF-8", newline=""
-                ) as csv_file_object:
-                    writer = csv.writer(csv_file_object)
-                    writer.writerows(sample_data)
+                with open(csv_file_path, "wb") as csv_file_object:
+                    csv_file_object.write(hdr_raw)
+                    for raw_line in sample_raw_lines:
+                        csv_file_object.write(raw_line)
 
             return {"columns": header}
         except ValueError as error:
             self.logger.error(
-                message=f"{self.log_prefix} {str(error)} Plugin Configuration: '{self.name}'.",
+                message=f"{self.log_prefix}: {str(error)}",
+                resolution=(
+                    "Ensure to re-validate the CSV file provided in "
+                    "configuration. "
+                    "\n• The file should contain at least 1 record in "
+                    "addition to header row."
+                    "\n• Column name in provided file should not "
+                    "have an empty value."
+                    "\n• Each row should contain the correct number of "
+                    "columns as the header row."
+                    "\n• Maximum 25 columns allowed."
+                ),
                 details=traceback.format_exc(),
             )
             raise LinuxFileShareEDM(value=error, message=str(error)) from error
@@ -571,14 +464,19 @@ class LinuxFileShareEDMPlugin(PluginBase):
         """
         result = ValidationResult(
             success=False,
-            message="Step validation failed.",
+            message="Validation failed.",
         )
         if step == "configuration":
             result = self.validate(self.configuration)
         elif step == "sanity_inputs":
+            message = (
+                "Successfully validated hash generation and "
+                "sanitization parameters."
+            )
+            self.logger.debug(f"{self.log_prefix}: {message}")
             result = ValidationResult(
                 success=True,
-                message="Step validated successfully.",
+                message=message,
             )
             input_path = f"{FILE_PATH}/{self.name}/{SAMPLE_CSV_FILE_NAME}"
             output_path = f"{FILE_PATH}/{self.name}"
@@ -591,21 +489,25 @@ class LinuxFileShareEDMPlugin(PluginBase):
                 )
                 self.sanitize(file_name="sample", sample_data=True)
             except Exception:
-                error_message = (
-                    f"Error occurred while sanitizing the sample data for configuration '{self.name}'."
-                )
+                err_msg = "Error occurred while sanitizing the sample data."
                 self.logger.error(
-                    message=f"{self.log_prefix} {error_message}",
+                    message=(
+                        f"{self.log_prefix}: Validation error "
+                        f"occurred. {err_msg}"
+                    ),
+                    resolution=("Ensure the sample data is valid."),
                     details=traceback.format_exc(),
                 )
                 result = ValidationResult(
                     success=False,
-                    message=error_message,
+                    message=err_msg,
                 )
         elif step == "sanity_results":
+            message = "Successfully validated preview sanitization results."
+            self.logger.debug(f"{self.log_prefix}: {message}")
             result = ValidationResult(
                 success=True,
-                message="Step validated successfully.",
+                message=message,
             )
         return result
 
@@ -613,161 +515,188 @@ class LinuxFileShareEDMPlugin(PluginBase):
         """Pull sample data from a remote server and validate it.
 
         Raises:
-            LinuxFileShareEDM: If any error occurs during the sample data retrieval
-                or validation.
+            LinuxFileShareEDM: If any error occurs during the
+                sample data retrieval or validation.
 
         Returns:
             dict: contains csv validate result
         """
-        self.logger.debug(
-            f"{self.log_prefix} Executing pull sample data method for configuration '{self.name}'."
-        )
+        self.logger.debug(f"{self.log_prefix}: Pulling sample data.")
         try:
             server_configuration = self.configuration.get("configuration", {})
             self.strip_string_values(server_configuration)
 
-            csv_file_path = self.storage["csv_path"].strip()
+            csv_file_path = (self.storage.get("csv_path") or "").strip()
+            if not csv_file_path:
+                raise LinuxFileShareEDM(
+                    message="CSV path is not configured in storage."
+                )
             self.create_csv_directory(csv_file_path)
 
-            self.pull_csv_file_records(
+            # Get delimiter from configuration
+            delimiter = self.get_delimiter()
+
+            self.protocol_object.validate_remote_file(
+                server_configuration, delimiter
+            )
+            self.protocol_object.pull_csv_file_records(
                 server_configuration, csv_file_path, SAMPLE_DATA_RECORD_COUNT
             )
+        except LinuxFileShareEDM:
+            raise
         except Exception as error:
-            error_message = f"Error: '{error}' occurred while pulling the sample data for configuration '{self.name}'."
+            error_message = "Error occurred while pulling the sample data."
             self.logger.error(
-                message=f"{self.log_prefix} {error_message}",
+                message=f"{self.log_prefix}: {error_message}",
                 details=traceback.format_exc(),
             )
             raise LinuxFileShareEDM(value=error, message=str(error)) from error
 
         try:
             columns_data = self.validate_csv_file_records(
-                csv_file_path, SAMPLE_DATA_RECORD_COUNT
+                csv_file_path, SAMPLE_DATA_RECORD_COUNT, delimiter=delimiter
             )
             columns = columns_data.get("columns", [])
             if len(columns) > 25:
                 error_message = (
-                    "Maximum 25 columns allowed. Please reduce "
-                    "columns from the source file and try again."
+                    "Maximum 25 columns allowed. Reduce "
+                    "columns from the source file."
                 )
                 self.logger.error(
-                    message=f"{self.log_prefix} {error_message}",
+                    message=f"{self.log_prefix}: {error_message}",
+                    resolution=(
+                        f"The source file contains {len(columns)} columns, "
+                        "which exceeds the maximum allowed limit of 25 "
+                        "columns. Ensure the number of columns in the source "
+                        "file is reduced."
+                    ),
                 )
                 raise LinuxFileShareEDM(
-                    message=f"{self.log_prefix} {error_message}",
+                    message=f"{self.log_prefix}: {error_message}",
                 )
             self.logger.debug(
-                (
-                    f"{self.log_prefix} Successfully executed pull sample data method for "
-                    f"configuration '{self.name}'."
-                )
+                f"{self.log_prefix}: Successfully pulled sample data."
             )
             return columns_data
+        except LinuxFileShareEDM:
+            raise
         except Exception as error:
-            error_message = (
-                f"Error: '{error}' occurred while validating the sample data. "
-                f"Plugin Configuration: '{self.name}'."
-            )
+            error_message = "Error occurred while validating the sample data."
             self.logger.error(
-                message=f"{self.log_prefix} {error_message}",
+                message=f"{self.log_prefix}: {error_message}",
                 details=traceback.format_exc(),
             )
             raise LinuxFileShareEDM(value=error, message=str(error)) from error
 
     def pull(self):
-        """Pull CSV from a remote location of Linux machine, sanitize it and save it locally.
+        """
+        Pull and sanitize CSV/TXT from a Linux server.
+
+        Retrieve the remote file, sanitize its contents, and store it locally.
 
         Raises:
-            LinuxFileShareEDM: If any error occurs during the data retrieval or validation.
+            LinuxFileShareEDM: If any error occurs during
+                the data retrieval or validation.
         """
         try:
             server_configuration = self.configuration.get("configuration", {})
-            is_unsanitized_data = self.configuration.get("sanity_results", {}).get(
-                "is_unsanitized_data", True
-            )
+            is_unsanitized_data = self.configuration.get(
+                "sanity_results", {}
+            ).get("is_unsanitized_data", True)
             self.strip_string_values(server_configuration)
+            filepath = server_configuration.get("filepath", "")
+            if not filepath:
+                raise LinuxFileShareEDM(
+                    message="Ensure that a valid File path is provided."
+                    )
+            file_extension = filepath.split(".")[-1]
 
             csv_file_name = f"{self.name}_data"
             csv_file_name = (
-                csv_file_name.replace(" ", "_").replace("\t", "_").replace("-", "_")
+                csv_file_name.replace(" ", "_")
+                .replace("\t", "_")
+                .replace("-", "_")
             )
-            self.storage["csv_path"] = f"{FILE_PATH}/{self.name}/{csv_file_name}.csv"
-            self.storage["file_name"] = f"{csv_file_name}.csv"
+            self.storage["csv_path"] = (
+                f"{FILE_PATH}/{self.name}/{csv_file_name}.{file_extension}"
+            )
+            self.storage["file_name"] = f"{csv_file_name}.{file_extension}"
             self.storage["sanitization_data_path"] = f"{FILE_PATH}/{self.name}"
-            csv_file_path = self.storage["csv_path"]
+            csv_file_path = self.storage.get("csv_path")
             self.create_csv_directory(csv_file_path)
 
+            delimiter = self.get_delimiter()
             self.logger.info(
-                (
-                    f"{self.log_prefix} Fetching the CSV file from the Linux server for "
-                    f"configuration '{self.name}'."
-                )
+                f"{self.log_prefix}: Pulling the file from the Linux server."
             )
-            self.pull_csv_file_records(server_configuration, csv_file_path)
+            self.protocol_object.validate_remote_file(
+                server_configuration, delimiter
+            )
+            self.protocol_object.pull_csv_file_records(
+                server_configuration, csv_file_path
+            )
             self.logger.info(
-                (
-                    (
-                        f"{self.log_prefix} The CSV file fetched successfully from "
-                        f"the Linux server for configuration '{self.name}'."
-                    )
-                )
+                f"{self.log_prefix}: Successfully pulled file "
+                "from the Linux server."
             )
+        except LinuxFileShareEDM:
+            raise
         except Exception as error:
-            error_message = f"Error: '{error}' occurred while pulling the data for configuration '{self.name}'."
+            error_message = "Error occurred while pulling the data."
             self.logger.error(
-                message=f"{self.log_prefix} {error_message}",
+                message=f"{self.log_prefix}: {error_message}",
                 details=traceback.format_exc(),
             )
             raise LinuxFileShareEDM(value=error, message=str(error)) from error
 
         try:
+            self.logger.info(f"{self.log_prefix}: Validating the file.")
+            self.validate_csv_file_records(csv_file_path, delimiter=delimiter)
             self.logger.info(
-                f"{self.log_prefix} Validating the CSV file for configuration '{self.name}'."
+                (f"{self.log_prefix}: Successfully validated file.")
             )
-            self.validate_csv_file_records(csv_file_path)
-            self.logger.info(
-                (
-                    f"{self.log_prefix} The CSV file validated successfully for "
-                    f"configuration '{self.name}'."
-                )
-            )
+        except LinuxFileShareEDM:
+            raise
         except Exception as error:
-            error_message = (
-                f"Error: '{error}' occurred while validating the data. "
-                f"Plugin Configuration: '{self.name}'."
-            )
+            error_message = "Error occurred while validating the data."
             self.logger.error(
-                message=f"{self.log_prefix} {error_message}",
+                message=f"{self.log_prefix}: {error_message}",
                 details=traceback.format_exc(),
             )
-            raise LinuxFileShareEDM(value=error, message=str(error))
+            raise LinuxFileShareEDM(value=error, message=str(error)) from error
+
         if is_unsanitized_data:
             if os.path.exists(csv_file_path):
                 os.rename(
-                    csv_file_path, f"{FILE_PATH}/{self.name}/{csv_file_name}.good"
+                    csv_file_path,
+                    f"{FILE_PATH}/{self.name}/{csv_file_name}.good",
                 )
                 self.logger.debug(
-                    f"{self.log_prefix} Do not perform any data sanitization."
+                    f"{self.log_prefix}: Sanitization skipped for file"
+                    f" '{csv_file_name}' as Proceed Without Sanitization "
+                    "is enabled."
                 )
             else:
                 error_message = f"Data file doesn't exist at {csv_file_path}."
-                self.logger.error(message=f"{self.log_prefix} {error_message}")
+                self.logger.error(
+                    message=f"{self.log_prefix}: {error_message}",
+                    resolution=(
+                        "Ensure to provide a valid CSV/TXT file "
+                        "in the configuration."
+                    ),
+                )
                 raise LinuxFileShareEDM(error_message)
         else:
-            self.logger.info(
-                f"{self.log_prefix} Sanitizing the CSV file for configuration '{self.name}'."
-            )
+            self.logger.info(f"{self.log_prefix}: Sanitizing the data.")
             self.sanitize(csv_file_name)
             self.logger.info(
-                (
-                    f"{self.log_prefix} The CSV file sanitized successfully for "
-                    f"configuration '{self.name}'."
-                )
+                (f"{self.log_prefix}: Successfully sanitized data.")
             )
         self.generate_csv_edm_hash(csv_file=csv_file_name)
         return {
-            "message": "Remote CSV File pulled and "
-            + "EDM Hash generated successfully."
+            "message": (
+                "Remote File pulled and EDM Hash generated " "successfully."
+            )
         }
 
     def push(self):
@@ -779,25 +708,24 @@ class LinuxFileShareEDMPlugin(PluginBase):
         raise NotImplementedError()
 
     def sanitize(self, file_name: str = "", sample_data: bool = False) -> None:
-        """Sanitize the data from a CSV file and store good & bad files.
+        """Sanitize the data from a CSV/TXT file and store good & bad files.
 
         Args:
             file_name (str): The name of the output file.
 
         Raises:
-            LinuxFileShareEDM: If an error occurs during the sanitization process.
+            LinuxFileShareEDM: If an error occurs during the
+            sanitization process.
         """
         try:
-            sanitization_input = self.configuration.get("sanity_inputs", {}).get(
-                "sanitization_input", {}
-            )
+            delimiter = self.get_delimiter()
+            sanitization_input = self.configuration.get(
+                "sanity_inputs", {}
+            ).get("sanitization_input", {})
 
-            exclude_stopwords = self.configuration.get("sanity_inputs", {}).get(
-                "exclude_stopwords", False
-            )
-
-            for field_input in sanitization_input:
-                self.strip_string_values(field_input)
+            exclude_stopwords = self.configuration.get(
+                "sanity_inputs", {}
+            ).get("exclude_stopwords", False)
 
             # Prepare EDM input configuration based on sanitization input.
             edm_input_configuration = deepcopy(CONFIG_TEMPLATE)
@@ -810,19 +738,34 @@ class LinuxFileShareEDMPlugin(PluginBase):
                     ]
                 }
             )
-            if "stopwords" in edm_input_configuration and not exclude_stopwords:
+            edm_input_configuration.update({"delimiter": delimiter})
+            if (
+                "stopwords" in edm_input_configuration
+                and not exclude_stopwords
+            ):
                 del edm_input_configuration["stopwords"]
 
-            csv_file_path = self.storage["csv_path"]
-            sanitization_output_path = self.storage["sanitization_data_path"]
-            sanitization_output_file = f"{sanitization_output_path}/{file_name}"
+            csv_file_path = self.storage.get("csv_path")
+            sanitization_output_path = self.storage.get(
+                "sanitization_data_path"
+            )
+            sanitization_output_file = (
+                f"{sanitization_output_path}/{file_name}"
+            )
 
             # Check if the CSV data file exists
             if not os.path.isfile(csv_file_path):
                 error_message = (
-                    f"Data file doesn't exist at {csv_file_path} for sanitization."
+                    f"Data file doesn't exist at {csv_file_path} "
+                    "for sanitization."
                 )
-                self.logger.error(message=f"{self.log_prefix} {error_message}")
+                self.logger.error(
+                    message=f"{self.log_prefix}: {error_message}",
+                    resolution=(
+                        "Ensure to provide a valid CSV/TXT file in the "
+                        "configuration."
+                    ),
+                )
                 raise LinuxFileShareEDM(error_message)
 
             for file_extension in ["good", "bad"]:
@@ -833,9 +776,13 @@ class LinuxFileShareEDMPlugin(PluginBase):
             # Create the output directory if it doesn't exist.
             if not os.path.exists(sanitization_output_path):
                 os.makedirs(sanitization_output_path)
-
+            edm_input_configuration["remove-quotes"] = self.configuration.get(
+                "configuration", {}
+            ).get("remove_quotes", False)
             run_sanitizer(
-                csv_file_path, sanitization_output_file, edm_input_configuration
+                csv_file_path,
+                sanitization_output_file,
+                edm_input_configuration,
             )
             if not sample_data:
                 if os.path.exists(csv_file_path):
@@ -844,10 +791,11 @@ class LinuxFileShareEDMPlugin(PluginBase):
                     os.remove(f"{sanitization_output_file}.bad")
         except Exception as error:
             error_message = (
-                f"Error: {error} occurred while sanitizing the data at {csv_file_path}"
+                "Error occurred while sanitizing "
+                f"the data at {csv_file_path}."
             )
             self.logger.error(
-                message=f"{self.log_prefix} {error_message}",
+                message=f"{self.log_prefix}: {error_message}",
                 details=traceback.format_exc(),
             )
             raise LinuxFileShareEDM(value=error, message=str(error)) from error
@@ -898,11 +846,14 @@ class LinuxFileShareEDMPlugin(PluginBase):
                 os.makedirs(dir_path)
         except Exception as error:
             self.logger.error(
-                message=f"{self.log_prefix} Error occurred while creating nested "
-                + "directories to store sanitized data or EDM hashes.",
+                message=(
+                    f"{self.log_prefix}: Error occurred while creating "
+                    "nested directories to store sanitized data or EDM "
+                    "hashes."
+                ),
                 details=traceback.format_exc(),
             )
-            raise error
+            raise LinuxFileShareEDM(value=error, message=str(error)) from error
 
     def get_field_indices(self, sanity_inputs):
         """Get the indices of fields based on normalization and sensitivity.
@@ -923,7 +874,7 @@ class LinuxFileShareEDMPlugin(PluginBase):
             string_indices = []
 
             for index, field_info in enumerate(
-                sanity_inputs.get("sanitization_input", {})
+                sanity_inputs.get("sanitization_input", [])
             ):
                 if field_info.get("normalization", "") == "number":
                     number_indices.append(index)
@@ -941,18 +892,23 @@ class LinuxFileShareEDMPlugin(PluginBase):
 
             return string_cs, string_cins, num_norm, str_norm
         except Exception as error:
-            raise LinuxFileShareEDM(
-                f"Error occurred while getting "
-                "indices from sanity input fields based on normalization and sensitivity."
-            ) from error
+            error_message = (
+                "Error occurred while getting "
+                "indices from sanity input fields based on "
+                "normalization and sensitivity."
+            )
+            self.logger.error(message=f"{self.log_prefix}: {error_message}")
+            raise LinuxFileShareEDM(value=error, message=str(error)) from error
 
-    def remove_files(self, temp_edm_hash_dir_path, input_file_dir, output_path):
-        """Remove csv files and temp EDM hashes after EDM hash generation.
+    def remove_files(
+        self, temp_edm_hash_dir_path, input_file_dir, output_path
+    ):
+        """Remove files and temp EDM hashes after EDM hash generation.
 
         Args:
             temp_edm_hash_dir_path (str): Temporary EDM Hash Path
-            input_file_dir (str): Input CSV File Path
-            output_path (str): Path where all CSV files are located
+            input_file_dir (str): Input File Path
+            output_path (str): Path where all files are located
 
         Raises:
             error: If there's an issue removing files.
@@ -968,11 +924,12 @@ class LinuxFileShareEDMPlugin(PluginBase):
                     os.remove(file_path)
         except Exception as error:
             self.logger.error(
-                message=f"{self.log_prefix} Error occurred while removing"
-                + "csv files.",
+                message=(f"{self.log_prefix}: Error occurred while removing "
+                         "files."
+                         ),
                 details=traceback.format_exc(),
             )
-            raise error
+            raise LinuxFileShareEDM(value=error, message=str(error)) from error
 
     def generate_csv_edm_hash(self, csv_file):
         """Generate EDM Hashes from sanitized data.
@@ -983,11 +940,17 @@ class LinuxFileShareEDMPlugin(PluginBase):
         """
         try:
             self.logger.info(
-                message=f"{self.log_prefix} Generating EDM Hash "
-                + f"for configuration '{self._name}' of "
-                + "Linux File Share EDM Plugin."
+                message=f"{self.log_prefix}: Generating EDM Hashes."
             )
-            output_path = os.path.dirname(self.storage["csv_path"])
+            csv_storage_path = self.storage.get("csv_path")
+            if not csv_storage_path:
+                raise LinuxFileShareEDM(
+                    message=(
+                        f"{self.log_prefix}: CSV path is not available for "
+                        "EDM hash generation."
+                    )
+                )
+            output_path = os.path.dirname(csv_storage_path)
 
             good_csv_path = f"{output_path}/{csv_file}.good"
             input_file_dir = f"{output_path}/input"
@@ -997,14 +960,17 @@ class LinuxFileShareEDMPlugin(PluginBase):
 
             if not os.path.isfile(input_csv_file):
                 self.logger.error(
-                    message=f"{self.log_prefix} Error occurred while generating"
-                    " EDM Hash. '.csv' file does not exist for "
-                    + f"configuration '{self._name}' of "
-                    + "Linux File Share EDM Plugin.",
+                    message=(
+                        f"{self.log_prefix}: Error occurred while "
+                        "generating EDM Hash. CSV/TXT file does not exist."
+                    ),
+                    resolution=(
+                        "Ensure to provide a valid CSV/TXT file in the "
+                        "configuration."
+                    ),
                 )
                 raise LinuxFileShareEDM(
-                    message="Error occurred while generating "
-                    "EDM Hash of Linux File Share EDM Plugin."
+                    message="Error occurred while generating EDM Hash."
                 )
 
             temp_edm_hash_dir_path = f"{output_path}/temp_edm_hashes"
@@ -1015,16 +981,24 @@ class LinuxFileShareEDMPlugin(PluginBase):
             dict_cs, dict_cins, norm_num, norm_str = self.get_field_indices(
                 sanity_inputs
             )
+            delimiter = self.get_delimiter()
+
+            # Get remove_quotes flag from configuration (default to False)
+            remove_quotes = self.configuration.get("configuration", {}).get(
+                "remove_quotes", False
+            )
 
             edm_hash_config = deepcopy(EDM_HASH_CONFIG)
             edm_hash_config.update(
                 {
+                    "delimiter": delimiter,
                     "dict_cs": dict_cs,
                     "dict_cins": dict_cins,
                     "norm_num": norm_num,
                     "norm_str": norm_str,
                     "input_csv": input_csv_file,
                     "output_dir": output_dir_path,
+                    "remove_quotes": remove_quotes,
                 }
             )
 
@@ -1044,29 +1018,31 @@ class LinuxFileShareEDMPlugin(PluginBase):
                 self.storage["edm_hash_folder"] = edm_hash_dir_path
                 self.storage["edm_hash_available"] = True
                 metadata_file = metadata_file.replace(".tgz", ".json")
-                temp_metadata_file = f"{temp_edm_hash_dir_path}/{metadata_file}"
+                temp_metadata_file = (
+                    f"{temp_edm_hash_dir_path}/{metadata_file}"
+                )
                 edm_hash_cfg = f"{edm_hash_dir_path}/{metadata_file}"
                 if os.path.exists(temp_metadata_file):
                     shutil.move(temp_metadata_file, f"{edm_hash_dir_path}/")
                 if os.path.exists(edm_hash_cfg):
                     self.storage["edm_hashes_cfg"] = edm_hash_cfg
-                self.remove_files(temp_edm_hash_dir_path, input_file_dir, output_path)
+                self.remove_files(
+                    temp_edm_hash_dir_path, input_file_dir, output_path
+                )
 
                 self.logger.info(
-                    message=f"{self.log_prefix} EDM Hash generated successfully"
-                    + f" for configuration '{self._name}' of "
-                    + "Linux File Share EDM Plugin."
+                    message=f"{self.log_prefix}: EDM Hash generated "
+                    "successfully."
                 )
             else:
                 self.storage["edm_hash_available"] = False
                 raise LinuxFileShareEDM(
-                    message=f"{self.log_prefix} Error occurred while generating EDM Hash "
-                    + f"for configuration '{self._name}' of "
-                    + "Linux File Share EDM Plugin."
+                    message=f"{self.log_prefix}: Error occurred while "
+                    "generating EDM Hash"
                 )
         except Exception as error:
             if self.storage.get("csv_path"):
-                output_path = os.path.dirname(self.storage["csv_path"])
+                output_path = os.path.dirname(self.storage.get("csv_path"))
                 input_file_dir = f"{output_path}/input"
                 temp_edm_hash_dir_path = f"{output_path}/temp_edm_hashes"
                 self.remove_files(
@@ -1075,15 +1051,13 @@ class LinuxFileShareEDMPlugin(PluginBase):
                     output_path=output_path,
                 )
             self.logger.error(
-                message=f"{self.log_prefix} Error occurred while generating "
-                "EDM Hash for Linux File Share EDM data.",
+                message=(
+                    f"{self.log_prefix}: Error occurred while generating "
+                    "EDM Hash."
+                ),
                 details=traceback.format_exc(),
             )
-            raise LinuxFileShareEDM(
-                value=error,
-                message="Error occurred while generating "
-                "EDM Hash of Linux File Share EDM data.",
-            ) from error
+            raise LinuxFileShareEDM(value=error, message=str(error)) from error
 
     def get_fields(self, name: str, configuration: dict):
         """Get fields configuration based on the specified protocol.
@@ -1093,24 +1067,35 @@ class LinuxFileShareEDMPlugin(PluginBase):
             configuration (dict): Configuration parameters dictionary.
 
         Raises:
-            ValueError: If the specified protocol in the configuration is not supported.
-            NotImplementedError: If a field configuration with the specified name
+            ValueError: If the specified protocol in the configuration
+            is not supported.
+            NotImplementedError: If a field configuration with
+            the specified name
                 is not implemented.
 
         Returns:
             list: List of configuration parameters.
         """
         if name in LINUX_FILE_SHARE_FIELDS:
-            fields = LINUX_FILE_SHARE_FIELDS[name]
+            fields = LINUX_FILE_SHARE_FIELDS.get(name, [])
             if name == "sanity_inputs":
                 for field in fields:
-                    if field["type"] == "sanitization_input":
-                        input_path = f"{FILE_PATH}/{self.name}/{SAMPLE_CSV_FILE_NAME}"
+                    if field.get("type") == "sanitization_input":
+                        input_path = (
+                            f"{FILE_PATH}/{self.name}/{SAMPLE_CSV_FILE_NAME}"
+                        )
                         self.storage.update({"csv_path": input_path})
-                        field["default"] = self.pull_sample_data()
+                        # Get delimiter from configuration
+                        delimiter = self.get_delimiter()
+                        # Only get column names without
+                        # validation for field config
+                        columns_data = self._get_column_names_only(
+                            input_path, delimiter
+                        )
+                        field["default"] = columns_data
             elif name == "sanity_results":
                 for field in fields:
-                    if field["type"] == "sanitization_preview":
+                    if field.get("type") == "sanitization_preview":
                         field["default"] = {
                             "sanitizationStatus": True,
                             "message": "Sanitization Done Successfully",

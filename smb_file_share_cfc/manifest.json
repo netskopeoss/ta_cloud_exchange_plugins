@@ -1,0 +1,34 @@
+{
+    "name": "SMB File Share",
+    "id": "smb_file_share_cfc",
+    "version": "1.0.0",
+    "module": "CFC",
+    "description": "This plugin is used to pull images or zip files from provided directories present on a remote SMB server. The plugin supports SMB protocol version from SMB 2.0.2 to SMB 3.1.1.",
+    "patch_supported": false,
+    "push_supported": false,
+    "pull_supported": true,
+    "pull_sample_data_on_validate": true,
+    "minimum_version": "6.1.0",
+    "supported_cfc_method": [
+        "cfc_image_hashes"
+    ],
+    "configuration": [
+        {
+            "label": "Configuration Parameters",
+            "name": "configuration_parameters",
+            "type": "dynamic_step"
+        },
+        {
+            "label": "Directory Configuration",
+            "name": "directory_configuration",
+            "type": "dynamic_step",
+            "labelInfo": "Provide a valid Directory Path and Filename Filter to pull the image or zip files from the remote server. Use regular expression in Filename Filter to filter the files, empty value will pull all files from the directory. Please note that files from sub-directories will not be pulled, therefore ensure to mention the full path to a directory where the file is present."
+        },
+        {
+            "label": "Preview File Results",
+            "name": "file_results",
+            "type": "dynamic_step",
+            "labelInfo": "Preview the results of file scanning for Directory Configuration. Ensure that the count and size of files being pulled by Netskope are correct and expected."
+        }
+    ]
+}

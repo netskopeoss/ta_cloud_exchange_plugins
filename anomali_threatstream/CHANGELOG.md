@@ -1,3 +1,7 @@
+# 1.3.2
+## Fixed
+- Fixed IOC filtering issue while pulling data.
+
 # 1.3.1
 ## Fixed
 - Bug fixes.

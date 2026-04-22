@@ -750,11 +750,11 @@ class AnomaliThreatstreamPlugin(PluginBase):
             query_params["hash$subtype"] = "SHA256"
 
         if confidence:
-            query_params["confidence_gte"] = confidence
+            query_params["confidence__gte"] = confidence
         if status:
             query_params["status"] = ",".join(status)
         if severity:
-            query_params["severity"] = ",".join(severity)
+            query_params["meta.severity"] = ",".join(severity)
 
         tags = self.configuration.get("tags", "").strip()
         if tags:

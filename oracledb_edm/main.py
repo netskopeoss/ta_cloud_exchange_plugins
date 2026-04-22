@@ -1,44 +1,3 @@
-"""OracleDB EDM Plugin.
-
-OracleDB Plugin is used to pull data from OracleDB server, store
-it in CSV format, perform sanitization and EDM Hash Generation from the same.
-"""
-
-import csv
-import os
-import re
-import shutil
-import time
-import traceback
-import urllib
-from copy import deepcopy
-from typing import List
-
-# Third-party libraries
-from sqlalchemy import create_engine, text
-from sqlalchemy.exc import InterfaceError, ProgrammingError
-
-
-from netskope.integrations.edm.models import Action, ActionWithoutParams
-from netskope.integrations.edm.plugin_base import PluginBase, ValidationResult
-from netskope.integrations.edm.utils import CONFIG_TEMPLATE, FILE_PATH
-from netskope.integrations.edm.utils import CustomException as OracleDLPError
-from netskope.integrations.edm.utils import run_sanitizer
-from netskope.integrations.edm.utils.constants import EDM_HASH_CONFIG
-from netskope.integrations.edm.utils.edm.hash_generator.edm_hash_generator import (
-    generate_edm_hash,
-)
-from .utils.constants import (
-    MODULE_NAME,
-    ORACLE_EDM_FIELDS,
-    PLUGIN_NAME,
-    PLUGIN_VERSION,
-    SAMPLE_CSV_ROW_COUNT,
-    SQL_KEYWORDS_TO_CHECK,
-    BATCH_SIZE,
-    SAMPLE_CSV_FILE_NAME,
-)
-
 """
 BSD 3-Clause License
 
@@ -69,45 +28,40 @@ SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
 CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+OracleDB Plugin is used to pull data from OracleDB server, store
+it in CSV format, perform sanitization and EDM Hash Generation from the same.
 """
 
-# User-Defined Wrapper ##
-
-
-def retry(error_class, count=3, timeout=30):
-    """
-    Retry decorator used to retry a method if a specific exception is raised.
-
-    Args:
-        error_class (Exception): Any exception class.
-        count (int, optional): Number of retries. Defaults to 3.
-        timeout (int, optional): Time interval (in seconds)
-                        between retries. Defaults to 30.
-    """
-
-    def retry_decorator(func):
-        def wrapped_function(*args, **kwargs):
-            nonlocal count
-            while count > 0:
-                try:
-                    return func(*args, **kwargs)
-                except error_class as error:
-                    count -= 1
-                    if count > 0:
-                        time.sleep(timeout)
-                    else:
-                        raise error
-                except Exception as error:
-                    raise error
-
-        return wrapped_function
-
-    return retry_decorator
+import csv
+import os
+import shutil
+import traceback
+from copy import deepcopy
+from typing import List
+from netskope.integrations.edm.models import Action, ActionWithoutParams
+from netskope.integrations.edm.plugin_base import PluginBase, ValidationResult
+from netskope.integrations.edm.utils import CONFIG_TEMPLATE, FILE_PATH
+from netskope.integrations.edm.utils import CustomException as OracleDLPError
+from netskope.integrations.edm.utils import run_sanitizer
+from netskope.integrations.edm.utils.constants import EDM_HASH_CONFIG
+from netskope.integrations.edm.utils.edm.hash_generator.edm_hash_generator import (  # noqa = E501
+    generate_edm_hash,
+)
+from .utils.constants import (
+    MODULE_NAME,
+    ORACLE_EDM_FIELDS,
+    PLUGIN_NAME,
+    PLUGIN_VERSION,
+    SAMPLE_CSV_FILE_NAME,
+    SAMPLE_CSV_ROW_COUNT,
+)
+from .utils.helper import OracleDBHelper
 
 
 class OracleDBPlugin(PluginBase):
-    """OracleDB EDM plugin is used to pull data from configured OracleDB server, \
-    store it in CSV format to perform sanitization sanitization \
+    """OracleDB EDM plugin is used to pull data from configured \
+    OracleDB server, store it in CSV format to perform sanitization \
     and EDM Hash Generation on pulled data."""
 
     def __init__(
@@ -130,6 +84,7 @@ class OracleDBPlugin(PluginBase):
         self.log_prefix = f"{MODULE_NAME} {self.plugin_name}"
         if name:
             self.log_prefix = f"{self.log_prefix} [{name}]"
+        self.helper = OracleDBHelper(self.logger, self.log_prefix)
 
     def _get_plugin_info(self) -> tuple:
         """Get plugin name and version from manifest.
@@ -145,153 +100,85 @@ class OracleDBPlugin(PluginBase):
         except Exception as exp:
             self.logger.error(
                 message=(
-                    "{} {}: Error occurred while"
-                    " getting plugin details. Error: {}".format(
-                        MODULE_NAME, PLUGIN_NAME, exp
-                    )
+                    f"{MODULE_NAME} {PLUGIN_NAME}: Error occurred while"
+                    f" getting plugin details. Error: {exp}"
                 ),
                 details=traceback.format_exc(),
             )
         return (PLUGIN_NAME, PLUGIN_VERSION)
 
-    @staticmethod
-    def strip_args(data):
-        """Strip arguments from left and right directions.
-
-        Args:
-            data (dict): Dict object having all the
-            Plugin configuration parameters.
-        """
-        keys = data.keys()
-        for key in keys:
-            if isinstance(data[key], str):
-                data[key] = data[key].strip()
-
     def create_directory(self, dir_path):
-        """Create a directory at the specified path, \
+        """Create a directory at the specified path,
         including all necessary parent directories.
 
         Args:
             dir_path (string): The path of the directory to be created.
 
         Raises:
-            Error: If there's an issue creating the directory.
+            OracleDLPError: If there's an issue creating the directory.
         """
         try:
             if not os.path.exists(dir_path):
                 os.makedirs(dir_path)
         except Exception as error:
+            err_msg = (
+                f"Failed to create directory '{dir_path}'. Ensure the path is "
+                "valid and you have write permissions."
+            )
             self.logger.error(
-                message=f"{self.log_prefix} Error occurred while creating nested "
-                + "directories to store sanitized data or EDM hashes.",
+                message=f"{self.log_prefix}: {err_msg}",
                 details=traceback.format_exc(),
             )
-            raise error
+            raise OracleDLPError(value=error, message=err_msg) from error
 
-    def create_connection_string(self, config):
-        """Create a OracleDB database connection string \
-        based on the provided configuration.
+    def _get_column_names_only(
+        self, csv_file_path: str
+    ) -> dict:
+        """Extract column names from CSV without validation.
 
-        Args:
-            config (dict): A dictionary containing
-                        database connection configuration parameters.
-                        Requires 'username', 'password',
-                        'host', 'port', and 'SID'.
-
-        Returns:
-            str: The constructed OracleDB database connection string.
-        """
-        self.strip_args(config)
-        if config["port"]:
-            port = f":{config['port']}"
-        else:
-            port = ""
-        # extract domain from host if user enters url
-        host = re.findall(
-            pattern=r"^(?:https?:\/\/)?(?:[^@\/\n]+@)?(?:www\.)?([^:\/?\n]+)",
-            string=config["host"],
-        )[0]
-        # parsing special characters like '@' , ':' in username and password.
-        username = urllib.parse.quote_plus(config["username"])
-        password = urllib.parse.quote_plus(config["password"])
-
-        conn_str = (
-            f"oracle+oracledb://{username}:"
-            f"{password}@{host}"
-            f"{port}/{config['dbname']}"
-        )
-        return conn_str
-
-    def validate_query_format(self, query):
-        """Validate if the query is properly formatted and exists.
+        This method is used by get_fields during plugin upgrade to avoid
+        strict validation issues while still providing column names.
 
         Args:
-            query (str): SQL query to validate
+            csv_file_path (str): Path to the CSV file
 
         Returns:
-            tuple: (is_valid, error_message) where is_valid is a boolean and error_message is a string
+            dict: Dictionary containing column names
         """
-        if not query or not isinstance(query, str) or query.strip() == "":
-            return False, "Invalid Query provided."
-        return True, ""
+        try:
+            encoding = "UTF-8"
+            with open(csv_file_path, "rb") as csv_file_object:
+                # Read header and parse with proper
+                # quoting to handle quoted fields
+                hdr_raw = csv_file_object.readline()
+                if not hdr_raw:
+                    return {"columns": []}
 
-    def validate_no_dml_in_query(self, query):
-        """Validate that the query does not contain any DML operations.
+                # Remove quotes from column names if remove_quotes is enabled
+                remove_quotes = (
+                    csv.QUOTE_ALL
+                    if self.configuration.get("configuration", {}).get(
+                        "remove_quotes", False
+                    )
+                    else csv.QUOTE_NONE
+                )
 
-        Args:
-            query (str): SQL query to validate
+                header = next(
+                    csv.reader(
+                        [hdr_raw.decode(encoding)],
+                        quoting=remove_quotes,
+                    )
+                )
 
-        Returns:
-            tuple: (is_valid, error_message) where is_valid is a boolean and error_message is a string
-        """
-        sql_query_pattern = re.compile(
-            rf"""
-            (?P<quoted_identifier> "[^"]+" )
-            | \b(?:{"|" .join(map(re.escape, SQL_KEYWORDS_TO_CHECK))})\b
-        """,
-            flags=re.IGNORECASE | re.VERBOSE,
-        )
-
-        if any(
-            matched_word
-            for matched_word in sql_query_pattern.finditer(query)
-            if not matched_word.group("quoted_identifier")
-        ):
-            return False, (
-                "Error: Provided query may contain "
-                "database modification operation. Please use a read-only query."
+                return {"columns": header}
+        except Exception as error:
+            self.logger.error(
+                message=f"{self.log_prefix}: Error extracting column names: "
+                f"{str(error)}",
+                details=traceback.format_exc(),
             )
-        return True, ""
-
-    def validate_column_count(self, columns):
-        """Validate that the number of columns in the query result is not more than 25.
-
-        Args:
-            columns (list): List of column names from the query result
-
-        Returns:
-            tuple: (is_valid, error_message) where is_valid is a boolean and error_message is a string
-        """
-        if columns and len(columns) > 25:
-            error_message = (
-                "Maximum 25 columns allowed. Please reduce the number "
-                "of columns in your query and try again."
-            )
-            return False, error_message
-        return True, ""
-
-    def validate_port(self, port):
-        """Validate Provided port.
-
-        Args:
-            port (string): Provided port
-
-        Returns:
-            bool: True if port is between 0 and 65536 and False otherwise.
-        """
-        if port is None or port == "" or 0 < int(port) < 65536:
-            return True
-        return False
+            # Return empty columns on error to allow plugin upgrade to continue
+            return {"columns": []}
 
     def validate_csv_file_records(
         self, csv_file_path: str, record_count: int = 0
@@ -300,225 +187,171 @@ class OracleDBPlugin(PluginBase):
 
         Args:
             csv_file_path (str): The file path to the CSV file to be validated.
-            record_count (int, optional): The maximum number of records to validate. If set
-                to a positive value, only the first 'record_count' records will be validated.
-                If set to 0 (default), all records in the file will be validated.
+            record_count (int, optional): The maximum number of records to
+                validate. If set to a positive value, only the first
+                'record_count' records will be validated. If set to 0
+                (default), all records in the file will be validated.
 
         Raises:
-            OracleDLPError: If validation fails due to incorrect data or missing data.
+            OracleDLPError: If validation fails due to incorrect data or
+            missing data.
 
         Returns:
-            dict: A dictionary containing the header columns of the CSV file as a list.
+            dict: A dictionary containing the header columns of the CSV file
+                as a list.
         """
+        encoding = "UTF-8"
         row_count = 0
         header = None
-        sample_data = []
+        sample_raw_lines = []
+
+        cur_line_box = [None]
+        remove_quotes = (
+            csv.QUOTE_ALL
+            if self.configuration.get("configuration", {}).get(
+                "remove_quotes", False
+            )
+            else csv.QUOTE_NONE
+        )
+
+        def _char_encoder(binary_file):
+            while True:
+                line = binary_file.readline()
+                if not line:
+                    return
+                cur_line_box[0] = line
+                yield line.decode(encoding)
 
         try:
-            with open(csv_file_path, "r", encoding="UTF-8") as csv_file_object:
-                # Create a CSV reader object to iterate through the CSV file.
-                csv_reader = csv.reader(csv_file_object)
+            with open(csv_file_path, "rb") as csv_file_object:
+                hdr_raw = csv_file_object.readline()
+                if not hdr_raw:
+                    raise ValueError(
+                        "Provided query should return at least one record."
+                    )
+
+                header = next(
+                    csv.reader(
+                        [hdr_raw.decode(encoding)],
+                        quoting=remove_quotes,
+                    )
+                )
+                if any(cell.strip() == "" for cell in header):
+                    raise ValueError(
+                        "Column name in provided file should not "
+                        "have an empty value."
+                    )
+
+                row_count = 1
+
+                csv_reader = csv.reader(
+                    _char_encoder(csv_file_object),
+                    quoting=remove_quotes,
+                )
 
                 for row in csv_reader:
                     row_count += 1
 
-                    # Check if 'record_count' is specified and if the row count exceeds the limit.
                     if record_count and row_count > record_count + 1:
                         break
 
                     if record_count:
-                        sample_data.append(row)
+                        sample_raw_lines.append(cur_line_box[0])
 
-                    # Handle the first row as the header row.
-                    if row_count == 1:
-                        header = row
-                        if any(cell.strip() == "" for cell in header):
-                            raise ValueError(
-                                "Column name in provided file should not have an empty value."
-                            )
-                        continue
-
-                    # Check if the current row has the same number of columns as the header row.
                     if len(row) != len(header):
                         raise ValueError(
-                            f"Row '{row_count}' does not contain the correct number of columns."
+                            f"Row '{row_count}' does not contain the correct "
+                            f"number of columns."
                         )
 
-                # Check if at least 1 record is present in the CSV file.
                 if row_count < 2:
-                    raise ValueError("Provided query should return atleast one record.")
+                    raise ValueError(
+                        "Provided query should return at least one record."
+                    )
 
-            # Keep only the records which has been validated
             if record_count:
-                with open(
-                    csv_file_path, "w", encoding="UTF-8", newline=""
-                ) as csv_file_object:
-                    writer = csv.writer(csv_file_object)
-                    writer.writerows(sample_data)
+                with open(csv_file_path, "wb") as csv_file_object:
+                    csv_file_object.write(hdr_raw)
+                    for raw_line in sample_raw_lines:
+                        csv_file_object.write(raw_line)
 
             return {"columns": header}
         except ValueError as error:
             self.logger.error(
-                message=f"{self.log_prefix} {str(error)} Plugin Configuration: '{self.name}'.",
+                message=(
+                    f"{self.log_prefix}: {str(error)}"
+                ),
+                resolution=(
+                    "Ensure to re-validate the query and try again. "
+                    "\n• The query should return at least 1 record."
+                    "\n• Column name in provided file should not "
+                    "have an empty value."
+                    "\n• Each row should contain the correct number of "
+                    "columns as the header row."
+                    "\n• Maximum 25 columns allowed."
+                ),
                 details=traceback.format_exc(),
             )
             raise OracleDLPError(value=error, message=str(error)) from error
 
-    def store_data_to_csv(self, oracledb_data, csv_path, replace=True):
-        """
-        Store fetched OracleDB data to csv file.
-
-        Args:
-            oracledb_data (list): data fetched from Oracle database.
-            csv_path (string): path where csv data file will be stored.
-        """
-        try:
-            if replace and os.path.isfile(csv_path):
-                os.remove(csv_path)
-            self.create_directory(dir_path=os.path.dirname(csv_path))
-            with open(csv_path, "w" if replace else "a+", encoding="UTF-8") as file_pointer:
-                csv_pointer = csv.writer(file_pointer)
-                for row in oracledb_data:
-                    csv_pointer.writerow(row)
-        except Exception as error:
-            self.logger.error(
-                message=f"{self.log_prefix} Error occurred while storing fetched"
-                " OracleDB data to CSV file.",
-                details=traceback.format_exc(),
-            )
-            raise error
-
-    def pull_data(self, config, fetch_only_sample_data=False) -> list:
-        """Create connection and fetch data from database.
-
-        Args:
-            config (dict): plugin configuration
-            fetch_only_sample_data (bool, optional):
-            Flag for fetching sample data. Defaults to False.
+    def pull_sample_data(self):
+        """Pull sample data from OracleDB database and store it in csv file.
 
         Raises:
-            error: If any error in connection
-            OracleDLPError: If any error occurs while fetching data or
-            executing query.
+            OracleDLPError: If any error occurs in sample data pulling
 
         Returns:
-            list: list of data fetched from database
+            dict: dictionary containing column names from fetched data.
         """
         try:
-            # Validate query format
-            is_valid_query, query_error_message = self.validate_query_format(
-                config.get("query", "")
+            self.logger.debug(
+                message=f"{self.log_prefix}: Pulling sample data."
             )
-            if not is_valid_query:
-                self.logger.error(message=f"{self.log_prefix} {query_error_message}")
-                raise OracleDLPError(message=f"{self.log_prefix} {query_error_message}")
-
-            # Validate no DML operations in query
-            is_valid_dml, dml_error_message = self.validate_no_dml_in_query(
-                config["query"]
-            )
-            if not is_valid_dml:
-                self.logger.error(message=f"{self.log_prefix} {dml_error_message}")
-                raise OracleDLPError(message=f"{self.log_prefix} {dml_error_message}")
-
-            connection_string = self.create_connection_string(config)
-            csv_path = self.storage["csv_path"]
-
-            eng = create_engine(connection_string)
-            # creates connection with database.
-            with eng.connect() as connection:
-                # User is only able to execute read only queries
-                result = connection.execute(text("SET TRANSACTION READ ONLY"))
-                query = text(config["query"].strip(";"))
-                result = connection.execute(query)
-                columns = list(result.keys())
-
-                # Validate column count
-                is_valid_columns, column_error_message = self.validate_column_count(
-                    columns
+            config = self.configuration.get("configuration", {})
+            csv_path = self.storage.get("csv_path", "")
+            if not csv_path:
+                err_msg = "CSV path is not configured in storage."
+                self.logger.error(
+                    message=f"{self.log_prefix}: {err_msg}",
+                    resolution="Ensure the CSV path is properly configured.",
                 )
-                if not is_valid_columns:
-                    self.logger.error(
-                        message=f"{self.log_prefix} {column_error_message}",
-                    )
-                    raise OracleDLPError(
-                        message=f"{self.log_prefix} {column_error_message}",
-                    )
+                raise OracleDLPError(message=err_msg)
 
-                self.store_data_to_csv([columns], csv_path)
-                if fetch_only_sample_data:
-                    rows = result.fetchmany(SAMPLE_CSV_ROW_COUNT)
-                else:
-                    rows = result.yield_per(BATCH_SIZE)
-                self.store_data_to_csv(rows, csv_path, replace=False)
-                self.validate_csv_file_records(csv_path)
-                return [columns]
-        except InterfaceError as error:
-            self.logger.error(
-                message=f"{self.log_prefix} InterfaceError occurred when "
-                "connecting to Oracle Database.",
-                details=traceback.format_exc(),
+            if os.path.exists(csv_path):
+                os.remove(csv_path)
+
+            columns = self.helper.pull_data(
+                config=config,
+                csv_path=csv_path,
+                fetch_only_sample_data=True
             )
-            raise error  # If there is any connection error
-        # If there is any error while executing query
-        except ProgrammingError as error:
+
+            # Validate the CSV file records
+            self.validate_csv_file_records(
+                csv_path, record_count=SAMPLE_CSV_ROW_COUNT
+            )
+
+            self.logger.debug(
+                f"{self.log_prefix}: Successfully pulled sample data."
+            )
+
+            return {"columns": columns}
+        except OracleDLPError as error:
+            raise error
+        except Exception as error:
+            err_msg = "Error occurred while pulling sample data."
             self.logger.error(
-                message=f"{self.log_prefix} ProgrammingError occurred while "
-                "executing OracleDB query.",
+                message=f"{self.log_prefix}: {err_msg}",
+                resolution=(
+                    "Ensure the database connection is stable and the query "
+                    "is valid."
+                ),
                 details=traceback.format_exc(),
             )
             raise OracleDLPError(
                 value=error,
-                message="Error occurred while executing OracleDB query.",
+                message=err_msg,
             ) from error
-        except Exception as error:
-            self.logger.error(
-                message=f"{self.log_prefix} Error occurred while fetching "
-                + "OracleDB data.",
-                details=traceback.format_exc(),
-            )
-            raise OracleDLPError(
-                value=error, message="Error occurred while fetching " + "OracleDB data."
-            ) from error
-
-    @retry(error_class=InterfaceError)
-    def pull_oracledb_data(self, config) -> list:
-        """Define the separate method since we need to retry \
-        in case of pulling all data from OracleDB.
-
-        Args:
-            config (dict): plugin configuration
-
-        Returns:
-            list: list of data fetched from database
-        """
-        try:
-            self.logger.info(
-                message=f"{self.log_prefix} Fetching OracleDB data "
-                + f"for configuration '{self._name}'."
-            )
-            data = self.pull_data(config=config, fetch_only_sample_data=False)
-            self.logger.info(
-                message=(
-                    f"{self.log_prefix} OracleDB data fetched"
-                    + f" successfully for configuration '{self._name}'."
-                )
-            )
-            return data
-        except Exception as error:
-            raise error
-
-    def get_column_names(self, data) -> list:
-        """Get column names from data.
-
-        Args:
-            data (list): data fetched from database.
-
-        Returns:
-            list: list of column names from fetched data from database.
-        """
-        columns = list(data[0])
-        return columns
 
     def sanitize(self, file_name="", sample_data: bool = False):
         """Sanitize CSV data and store good and bad files using run_sanitizer.
@@ -532,20 +365,20 @@ class OracleDBPlugin(PluginBase):
         """
         try:
             self.logger.info(
-                message=f"{self.log_prefix} Sanitizing OracleDB data"
-                + f" for configuration '{self._name}'."
+                message=f"{self.log_prefix}: Sanitizing OracleDB data "
+                f"for configuration '{self._name}'."
             )
             fields = self.configuration.get("sanity_inputs", {}).get(
                 "sanitization_input", {}
             )
 
-            exclude_stopwords = self.configuration.get("sanity_inputs", {}).get(
-                "exclude_stopwords", False
-            )
+            exclude_stopwords = self.configuration.get(
+                "sanity_inputs", {}
+            ).get("exclude_stopwords", False)
 
             for field in fields:
                 # strips spaces from front and end for all values.
-                self.strip_args(field)
+                self.helper.strip_args(field)
 
             # Construct edm_data_config based on fields configuration
             edm_data_config = deepcopy(CONFIG_TEMPLATE)
@@ -562,19 +395,23 @@ class OracleDBPlugin(PluginBase):
             if "stopwords" in edm_data_config and not exclude_stopwords:
                 del edm_data_config["stopwords"]
 
-            csv_path = self.storage["csv_path"]
-            output_path = self.storage["sanitization_data_path"]
+            csv_path = self.storage.get("csv_path")
+            output_path = self.storage.get("sanitization_data_path")
             file_path = f"{output_path}/{file_name}"
 
             if not os.path.isfile(csv_path):
                 self.logger.error(
-                    message=f"{self.log_prefix} Error occurred while performing "
-                    "EDM sanitization."
-                    "OracleDB data file does not exist.",
+                    message=(
+                        f"{self.log_prefix}: Error occurred while performing "
+                        "EDM sanitization. "
+                        "OracleDB data file does not exist."
+                    )
                 )
                 raise OracleDLPError(
-                    message="Error occurred while performing "
-                    "OracleDB data sanitization."
+                    message=(
+                        "Error occurred while performing "
+                        "OracleDB data sanitization."
+                    )
                 )
 
             # Remove existing sanitized and non-sanitized files if they exist
@@ -584,10 +421,14 @@ class OracleDBPlugin(PluginBase):
                     os.remove(existing_file)
 
             self.create_directory(dir_path=os.path.dirname(output_path))
+            edm_data_config["remove-quotes"] = self.configuration.get(
+                "configuration", {}
+            ).get("remove_quotes", False)
             run_sanitizer(csv_path, file_path, edm_data_config)
             self.logger.info(
-                message=f"{self.log_prefix} OracleDB data sanitized successfully "
-                + f"for configuration '{self._name}'."
+                message=(
+                    f"{self.log_prefix}: Successfully sanitized OracleDB data."
+                )
             )
             if not sample_data:
                 if os.path.exists(csv_path):
@@ -596,14 +437,18 @@ class OracleDBPlugin(PluginBase):
                     os.remove(f"{file_path}.bad")
         except Exception as error:
             self.logger.error(
-                message=f"{self.log_prefix} Error occurred while performing "
-                "sanitization of OracleDB data.",
+                message=(
+                    f"{self.log_prefix}: Error occurred while performing "
+                    "sanitization of OracleDB data."
+                ),
                 details=traceback.format_exc(),
             )
             raise OracleDLPError(
                 value=error,
-                message="Error occurred while performing "
-                "sanitization of OracleDB data.",
+                message=(
+                    "Error occurred while performing "
+                    "sanitization of OracleDB data."
+                ),
             ) from error
 
     def get_field_indices(self, sanity_inputs):
@@ -644,11 +489,16 @@ class OracleDBPlugin(PluginBase):
             return string_cs, string_cins, num_norm, str_norm
         except Exception as error:
             raise OracleDLPError(
-                "Error occurred while getting "
-                "indices from sanity input fields based on normalization and sensitivity."
+                message=(
+                    "Error occurred while getting "
+                    "indices from sanity input fields "
+                    "based on normalization and sensitivity."
+                )
             ) from error
 
-    def remove_files(self, temp_edm_hash_dir_path, input_file_dir, output_path):
+    def remove_files(
+        self, temp_edm_hash_dir_path, input_file_dir, output_path
+    ):
         """Remove csv files and temp EDM hashes after EDM hash generation.
 
         Args:
@@ -657,7 +507,7 @@ class OracleDBPlugin(PluginBase):
             output_path (str): Path where all CSV files are located
 
         Raises:
-            error: If there's an issue removing files.
+            OracleDLPError: If there's an issue removing files.
         """
         try:
             if os.path.exists(temp_edm_hash_dir_path):
@@ -669,12 +519,16 @@ class OracleDBPlugin(PluginBase):
                 if os.path.isfile(file_path):
                     os.remove(file_path)
         except Exception as error:
+            err_msg = (
+                "Error occurred while cleaning up temporary EDM hash and "
+                "CSV files. Ensure the paths are accessible and have "
+                "appropriate permissions."
+            )
             self.logger.error(
-                message=f"{self.log_prefix} Error occurred while removing"
-                + "csv files.",
+                message=f"{self.log_prefix}: {err_msg}",
                 details=traceback.format_exc(),
             )
-            raise error
+            raise OracleDLPError(value=error, message=err_msg) from error
 
     def generate_csv_edm_hash(self, csv_file):
         """Generate EDM Hashes from sanitized data.
@@ -685,10 +539,11 @@ class OracleDBPlugin(PluginBase):
         """
         try:
             self.logger.info(
-                message=f"{self.log_prefix} Generating EDM Hash "
-                + f"for configuration '{self._name}' of OracleDB EDM Plugin."
+                message=(
+                    f"{self.log_prefix}: Generating EDM Hashes."
+                )
             )
-            output_path = os.path.dirname(self.storage["csv_path"])
+            output_path = os.path.dirname(self.storage.get("csv_path"))
 
             good_csv_path = f"{output_path}/{csv_file}.good"
             input_file_dir = f"{output_path}/input"
@@ -698,13 +553,16 @@ class OracleDBPlugin(PluginBase):
 
             if not os.path.isfile(input_csv_file):
                 self.logger.error(
-                    message=f"{self.log_prefix} Error occurred while generating "
-                    f"EDM Hash. '.csv' file does not exist for "
-                    + f"configuration '{self._name}' of OracleDB EDM Plugin.",
+                    message=(
+                        f"{self.log_prefix}: Error occurred while generating "
+                        f"EDM Hash. '.csv' file does not exist."
+                    )
                 )
                 raise OracleDLPError(
-                    message="Error occurred while generating "
-                    "EDM Hash of OracleDB EDM Plugin."
+                    message=(
+                        "Error occurred while generating "
+                        "EDM Hash of OracleDB EDM Plugin."
+                    )
                 )
 
             temp_edm_hash_dir_path = f"{output_path}/temp_edm_hashes"
@@ -716,6 +574,11 @@ class OracleDBPlugin(PluginBase):
                 sanity_inputs
             )
 
+            # Get remove_quotes flag from configuration (default to False)
+            remove_quotes = self.configuration.get("configuration", {}).get(
+                "remove_quotes", False
+            )
+
             edm_hash_config = deepcopy(EDM_HASH_CONFIG)
             edm_hash_config.update(
                 {
@@ -725,6 +588,7 @@ class OracleDBPlugin(PluginBase):
                     "norm_str": norm_str,
                     "input_csv": input_csv_file,
                     "output_dir": output_dir_path,
+                    "remove_quotes": remove_quotes,
                 }
             )
 
@@ -744,23 +608,30 @@ class OracleDBPlugin(PluginBase):
                 self.storage["edm_hash_folder"] = edm_hash_dir_path
                 self.storage["edm_hash_available"] = True
                 metadata_file = metadata_file.replace(".tgz", ".json")
-                temp_metadata_file = f"{temp_edm_hash_dir_path}/{metadata_file}"
+                temp_metadata_file = (
+                    f"{temp_edm_hash_dir_path}/{metadata_file}"
+                )
                 edm_hash_cfg = f"{edm_hash_dir_path}/{metadata_file}"
                 if os.path.exists(temp_metadata_file):
                     shutil.move(temp_metadata_file, f"{edm_hash_dir_path}/")
                 if os.path.exists(edm_hash_cfg):
                     self.storage["edm_hashes_cfg"] = edm_hash_cfg
-                self.remove_files(temp_edm_hash_dir_path, input_file_dir, output_path)
+                self.remove_files(
+                    temp_edm_hash_dir_path, input_file_dir, output_path
+                )
 
                 self.logger.info(
-                    message=f"{self.log_prefix} EDM Hash generated successfully "
-                    + f"for configuration '{self._name}' of OracleDB EDM Plugin."
+                    message=(
+                        f"{self.log_prefix}: Successfully generated EDM Hash."
+                    )
                 )
             else:
                 self.storage["edm_hash_available"] = False
                 raise OracleDLPError(
-                    message=f"{self.log_prefix} Error occurred while generating EDM Hash "
-                    + f"for configuration '{self._name}' of OracleDB EDM Plugin."
+                    message=(
+                        f"{self.log_prefix}: Error occurred while generating "
+                        "EDM Hash."
+                    )
                 )
         except Exception as error:
             if self.storage.get("csv_path"):
@@ -773,60 +644,18 @@ class OracleDBPlugin(PluginBase):
                     output_path=output_path,
                 )
             self.logger.error(
-                message=f"{self.log_prefix} Error occurred while generating "
-                "EDM Hash for OracleDB data.",
+                message=(
+                    f"{self.log_prefix}: Error occurred while generating "
+                    "EDM Hash for OracleDB data."
+                ),
                 details=traceback.format_exc(),
             )
             raise OracleDLPError(
                 value=error,
-                message="Error occurred while generating " "EDM Hash of OracleDB data.",
-            ) from error
-
-    def pull_sample_data(self):
-        """Pull sample data from OracleDB database and store it in csv file.
-
-        Raises:
-            OracleDLPError: If any error occurs in sample data pulling
-
-        Returns:
-            list: list of column names from fetched data.
-        """
-        try:
-            self.logger.debug(
-                message=f"{self.log_prefix} Executing pull sample data method "
-                + "for OracleDB EDM plugin."
-            )
-            config = self.configuration.get("configuration", {})
-            csv_path = self.storage["csv_path"]
-
-            oracledb_data = self.pull_data(config=config, fetch_only_sample_data=True)
-            columns = self.get_column_names(oracledb_data)
-
-            # Validate column count - this is now handled in pull_data, but keeping as a safeguard
-            is_valid_columns, column_error_message = self.validate_column_count(columns)
-            if not is_valid_columns:
-                self.logger.error(
-                    message=f"{self.log_prefix} {column_error_message}",
-                )
-                raise OracleDLPError(
-                    message=f"{self.log_prefix} {column_error_message}",
-                )
-
-            self.logger.debug(
-                message=f"{self.log_prefix} Executed pull sample data method "
-                + "for OracleDB EDM plugin."
-            )
-
-            return {"columns": columns}
-        except OracleDLPError as error:
-            raise error
-        except Exception as error:
-            self.logger.error(
-                message=f"{self.log_prefix} Error occurred while pulling data.",
-                details=traceback.format_exc(),
-            )
-            raise OracleDLPError(
-                value=error, message="Error occurred while pulling data."
+                message=(
+                    "Error occurred while generating "
+                    "EDM Hash of OracleDB data."
+                ),
             ) from error
 
     def delete_old_csv(self):
@@ -844,6 +673,10 @@ class OracleDBPlugin(PluginBase):
         Returns:
             dict: returns success message
         """
+        err_msg = (
+            "Error occurred while pulling, sanitizing and generating "
+            "EDM Hashes for OracleDB data."
+        )
         try:
             base_name = f"{self.name}_data"
             base_name = (
@@ -859,56 +692,61 @@ class OracleDBPlugin(PluginBase):
             self.delete_old_csv()
 
             config = self.configuration.get("configuration", {})
-            is_unsanitized_data = self.configuration.get("sanity_results", {}).get(
-                "is_unsanitized_data", True
+            is_unsanitized_data = self.configuration.get(
+                "sanity_results", {}
+            ).get("is_unsanitized_data", True)
+
+            csv_path = self.storage.get("csv_path")
+            columns = self.helper.pull_oracledb_data(config, csv_path)
+            # Validate column count - this is now handled in pull_data,
+            # but keeping as a safeguard
+            is_valid_columns, column_error_message = (
+                self.helper.validate_column_count(columns)
             )
-
-            csv_path = self.storage["csv_path"]
-            oracledb_data = self.pull_oracledb_data(config)
-            columns = self.get_column_names(oracledb_data)
-
-            # Validate column count - this is now handled in pull_data, but keeping as a safeguard
-            is_valid_columns, column_error_message = self.validate_column_count(columns)
             if not is_valid_columns:
                 self.logger.error(
-                    message=f"{self.log_prefix} {column_error_message}",
+                    message=f"{self.log_prefix}: {column_error_message}",
                 )
                 raise OracleDLPError(
-                    message=f"{self.log_prefix} {column_error_message}",
+                    message=f"{self.log_prefix}: {column_error_message}",
                 )
 
             self.validate_csv_file_records(csv_path)
             if is_unsanitized_data:
                 if os.path.exists(csv_path):
-                    os.rename(csv_path, f"{FILE_PATH}/{self.name}/{base_name}.good")
-                    self.logger.debug(
-                        f"{self.log_prefix} Do not perform any data sanitization."
+                    os.rename(
+                        csv_path, f"{FILE_PATH}/{self.name}/{base_name}.good"
                     )
+                    f"{self.log_prefix}: Sanitization skipped for file"
+                    f" '{csv_name}' as Proceed Without Sanitization "
+                    "is enabled."
                 else:
                     error_message = f"Data file doesn't exist at {csv_path}."
-                    self.logger.error(message=f"{self.log_prefix} {error_message}")
+                    self.logger.error(
+                        message=f"{self.log_prefix}: {error_message}"
+                    )
                     raise OracleDLPError(error_message)
             else:
                 self.sanitize(file_name=base_name)
             self.generate_csv_edm_hash(csv_file=base_name)
-            return {"message": "Data pulled and " + "EDM Hash generated successfully."}
+            return {
+                "message": "Data pulled and "
+                "EDM Hashes successfully generated."
+            }
 
         except OracleDLPError as error:
             self.logger.error(
-                message=f"{self.log_prefix} Error occurred while pulling, "
-                "sanitizing and generating EDM Hash for OracleDB data."
+                message=err_msg
             )
             raise error
         except Exception as error:
             self.logger.error(
-                message=f"{self.log_prefix} Error occurred while pulling, "
-                "sanitizing and generating EDM Hash for OracleDB data.",
+                message=f"{self.log_prefix}: {err_msg}",
                 details=traceback.format_exc(),
             )
             raise OracleDLPError(
                 value=error,
-                message="Error occurred while pulling, "
-                + "sanitizing and generating EDM Hash for OracleDB data.",
+                message=err_msg,
             ) from error
 
     def push(self, indicators=None, action_dict=None):
@@ -931,137 +769,78 @@ class OracleDBPlugin(PluginBase):
             object with success flag and message.
         """
         self.logger.debug(
-            message=f"{self.log_prefix} Executing validate method for OracleDB EDM plugin."
+            message=(
+                f"{self.log_prefix}: Validating plugin configuration "
+                "parameters."
+            )
         )
         try:
             db_config = configuration.get("configuration", {})
-            self.strip_args(db_config)
+            self.helper.strip_args(db_config)
 
-            if (
-                ("host" not in db_config)
-                or (not db_config["host"])
-                or (not isinstance(db_config["host"], str))
-                or (db_config["host"].strip() == "")
-            ):
-                self.logger.error(
-                    f"{self.log_prefix} Validation error occurred for OracleDB EDM plugin."
-                    "Error: Invalid Database Host provided."
-                )
-                return ValidationResult(
-                    success=False,
-                    message="Invalid Host provided.",
-                )
-
-            if (
-                ("username" not in db_config)
-                or (not db_config["username"])
-                or (not isinstance(db_config["username"], str))
-                or db_config["username"].strip() == ""
-            ):
-                self.logger.error(
-                    f"{self.log_prefix} Validation error occurred for OracleDB EDM plugin."
-                    "Error: Invalid Database Username provided."
-                )
-                return ValidationResult(
-                    success=False,
-                    message="Invalid Username provided.",
-                )
-
-            if (
-                ("password" not in db_config)
-                or (not db_config["password"])
-                or (not isinstance(db_config["password"], str))
-                or db_config["password"].strip() == ""
-            ):
-                self.logger.error(
-                    f"{self.log_prefix} Validation error occurred for OracleDB EDM plugin."
-                    "Error: Invalid Database Password provided."
-                )
-                return ValidationResult(
-                    success=False,
-                    message="Invalid Password provided.",
-                )
-
-            # Validate query format
-            is_valid_query, query_error_message = self.validate_query_format(
-                db_config.get("query", "")
+            validation_result = self.helper.validate_configuration_parameters(
+                db_config
             )
-            if not is_valid_query:
-                self.logger.error(
-                    f"{self.log_prefix} Validation error occurred for OracleDB EDM plugin. "
-                    f"Error: {query_error_message}"
-                )
-                return ValidationResult(
-                    success=False,
-                    message=query_error_message,
-                )
+            if not validation_result.success:
+                return validation_result
 
-            # Validate no DML operations in query
-            is_valid_dml, dml_error_message = self.validate_no_dml_in_query(
-                db_config["query"]
-            )
-            if not is_valid_dml:
-                self.logger.error(
-                    f"{self.log_prefix} Validation error occurred for OracleDB EDM plugin. "
-                    f"Error: {dml_error_message}"
-                )
-                return ValidationResult(
-                    success=False,
-                    message=dml_error_message,
-                )
-
-            if (
-                ("dbname" not in db_config)
-                or (not db_config["dbname"])
-                or (not isinstance(db_config["dbname"], str))
-                or db_config["dbname"].strip() == ""
-            ):
-                self.logger.error(
-                    f"{self.log_prefix} Validation error occurred for OracleDB EDM plugin."
-                    "Error: Invalid Database Name provided."
-                )
-                return ValidationResult(
-                    success=False,
-                    message="Invalid Database Name provided.",
-                )
-
-            if not self.validate_port(db_config["port"]):
-                self.logger.error(
-                    f"{self.log_prefix} Validation error occurred for OracleDB EDM plugin."
-                    "Error: Invalid Port provided."
-                )
-                return ValidationResult(
-                    success=False,
-                    message="Invalid Port provided.",
-                )
+            verification_result = self.helper.verify_connection(db_config)
+            if not verification_result.success:
+                return verification_result
 
             try:
                 input_path = f"{FILE_PATH}/{self.name}/{SAMPLE_CSV_FILE_NAME}"
                 self.storage.update({"csv_path": input_path})
                 self.pull_sample_data()
+                self.logger.debug(
+                    f"{self.log_prefix}: Successfully validated "
+                    "configuration parameters."
+                )
             except Exception as error:
+                err_msg = str(error)
+                self.logger.error(
+                    message=(
+                        f"{self.log_prefix}: Validation error occurred. "
+                        f"{err_msg}"
+                        ),
+                    resolution=(
+                        "Ensure that the database host, port, username, "
+                        "password, and database name are correct. Ensure the "
+                        "database server is reachable and the query is valid."
+                    ),
+                )
                 return ValidationResult(
                     success=False,
-                    message=str(error),
+                    message=err_msg,
                 )
 
             self.logger.debug(
-                message=f"{self.log_prefix} Executed validate method for OracleDB EDM plugin successfully."
+                (
+                    f"{self.log_prefix}: Successfully validated "
+                    "configuration parameters."
+                )
             )
-            return ValidationResult(
-                success=True,
-                message="Connection with OracleDB database verified successfully.",
-            )
+
+            return verification_result
         except Exception:
+            err_msg = (
+                "Error occurred while connecting to the "
+                "OracleDB database."
+            )
             self.logger.error(
-                message=f"{self.log_prefix} Couldn't establish a connection "
-                + "to the database with the given parameters",
+                message=(
+                    f"{self.log_prefix}: Validation error occurred. {err_msg}"
+                    ),
+                resolution=(
+                    "Ensure that the database host, port, username, password, "
+                    "and database name are correct. Ensure the database "
+                    "server is reachable."
+                ),
                 details=traceback.format_exc(),
             )
             return ValidationResult(
                 success=False,
-                message="Couldn't establish a connection to "
-                + "the database with the given parameters.",
+                message=err_msg,
             )
 
     def get_actions(self) -> List[ActionWithoutParams]:
@@ -1105,29 +884,38 @@ class OracleDBPlugin(PluginBase):
         """
         result = ValidationResult(
             success=False,
-            message="Step validation failed.",
+            message="Validation failed.",
         )
         if step == "configuration":
             result = self.validate(self.configuration)
         elif step == "sanity_inputs":
+            message = (
+                "Successfully validated hash generation and "
+                "sanitization parameters."
+            )
+            self.logger.debug(
+                f"{self.log_prefix}: {message}"
+            )
             result = ValidationResult(
                 success=True,
-                message="Step validated successfully.",
+                message=message
             )
             input_path = f"{FILE_PATH}/{self.name}/{SAMPLE_CSV_FILE_NAME}"
             output_path = f"{FILE_PATH}/{self.name}"
             try:
-                self.storage.update({
-                    "csv_path": input_path,
-                    "sanitization_data_path": output_path
-                })
+                self.storage.update(
+                    {
+                        "csv_path": input_path,
+                        "sanitization_data_path": output_path,
+                    }
+                )
                 self.sanitize(file_name="sample", sample_data=True)
             except Exception:
                 error_message = (
-                    f"Error occurred while sanitizing the sample data for configuration '{self.name}'."
+                    "Error occurred while sanitizing the sample data."
                 )
                 self.logger.error(
-                    message=f"{self.log_prefix} {error_message}",
+                    message=f"{self.log_prefix}: {error_message}",
                     details=traceback.format_exc(),
                 )
                 result = ValidationResult(
@@ -1135,9 +923,13 @@ class OracleDBPlugin(PluginBase):
                     message=error_message,
                 )
         elif step == "sanity_results":
+            message = "Successfully validated Preview Sanitization Results."
+            self.logger.debug(
+                f"{self.log_prefix}: {message}"
+            )
             result = ValidationResult(
                 success=True,
-                message="Step validated successfully.",
+                message=message
             )
         return result
 
@@ -1149,8 +941,8 @@ class OracleDBPlugin(PluginBase):
             configuration (dict): The configuration dictionary.
 
         Raises:
-            NotImplementedError: If a field configuration with the specified name
-                is not implemented.
+            NotImplementedError: If a field configuration with the specified
+                name is not implemented.
 
         Returns:
             list: List of configuration parameters.
@@ -1159,15 +951,22 @@ class OracleDBPlugin(PluginBase):
             fields = ORACLE_EDM_FIELDS[name]
             if name == "sanity_inputs":
                 for field in fields:
-                    if field["type"] == "sanitization_input":
-                        input_path = f"{FILE_PATH}/{self.name}/{SAMPLE_CSV_FILE_NAME}"
+                    if field.get("type") == "sanitization_input":
+                        input_path = (
+                            f"{FILE_PATH}/{self.name}/{SAMPLE_CSV_FILE_NAME}"
+                        )
                         self.storage.update({
                             "csv_path": input_path
                         })
-                        field["default"] = self.pull_sample_data()
+                        # Only get column names without
+                        # validation for field config
+                        columns_data = self._get_column_names_only(
+                            input_path
+                        )
+                        field["default"] = columns_data
             elif name == "sanity_results":
                 for field in fields:
-                    if field["type"] == "sanitization_preview":
+                    if field.get("type") == "sanitization_preview":
                         field["default"] = {
                             "sanitizationStatus": True,
                             "message": "Sanitization Done Successfully",

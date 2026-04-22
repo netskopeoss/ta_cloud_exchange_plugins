@@ -33,11 +33,16 @@ SentinelOne CTE Plugin implementation to push and pull the data from
 SentinelOne Platform.
 """
 
+import ast
+import json
 import traceback
 from datetime import datetime, timedelta
-from typing import Dict, List, Tuple
+from typing import Any, Callable, Dict, List, Set, Tuple, Union
 from urllib.parse import urlparse
 
+from requests import Response
+
+from netskope.common.api import __version__ as CE_VERSION
 from netskope.integrations.cte.models import Indicator
 from netskope.integrations.cte.models.business_rule import (
     Action,
@@ -48,11 +53,17 @@ from netskope.integrations.cte.plugin_base import (
     PushResult,
     ValidationResult,
 )
+from netskope.integrations.cte.utils import TagUtils
+from netskope.integrations.cte.models.tags import TagIn
+from packaging import version
 
 from .utils.constants import (
+    ANALYST_VERDICT_OPTIONS,
     API_VERSION,
     DATE_FORMAT,
+    ENABLE_TAGGING_OPTIONS,
     INTEGER_THRESHOLD,
+    MAXIMUM_CE_VERSION,
     MODULE_NAME,
     PLATFORM_NAME,
     PLUGIN_NAME,
@@ -86,6 +97,11 @@ class SentinelOnePlugin(PluginBase):
             *args,
             **kwargs,
         )
+        # Flag to check if CE version is more than v5.1.2
+        self._is_ce_post_v512 = self._check_ce_version()
+        # Method to decide which logger to use with or without
+        # resolutions based on the CE version
+        self._patch_error_logger()
         self.plugin_name, self.plugin_version = self._get_plugin_info()
         self.log_prefix = f"{MODULE_NAME} {self.plugin_name}"
         self.config_name = name
@@ -119,6 +135,39 @@ class SentinelOnePlugin(PluginBase):
             )
         return PLUGIN_NAME, PLUGIN_VERSION
 
+    def _check_ce_version(self) -> bool:
+        """Check if CE version is greater than v5.1.2.
+
+        Returns:
+            bool: True if CE version is greater than v5.1.2, False otherwise.
+        """
+        return version.parse(CE_VERSION) > version.parse(MAXIMUM_CE_VERSION)
+
+    def _patch_error_logger(self):
+        """Monkey patch logger methods to handle resolution parameter
+        compatibility.
+        """
+        # Store original methods
+        original_error = self.logger.error
+
+        def patched_error(
+            message=None,
+            details=None,
+            resolution=None,
+            **kwargs,
+        ):
+            """Patched error method that handles resolution compatibility."""
+            log_kwargs = {"message": message}
+            if details:
+                log_kwargs["details"] = details
+            if resolution and self._is_ce_post_v512:
+                log_kwargs["resolution"] = resolution
+            log_kwargs.update(kwargs)
+            return original_error(**log_kwargs)
+
+        # Replace logger methods with patched versions
+        self.logger.error = patched_error
+
     def _get_site_id(
         self,
         name: str,
@@ -135,7 +184,7 @@ class SentinelOnePlugin(PluginBase):
             token (str, optional): API Token. Defaults to None.
             is_validate (bool, optional): Is this validate call?
               Defaults to False.
-            is_retraction (bool, optional): Is this an retractoin call?
+            is_retraction (bool, optional): Is this an retraction call?
               Defaults to False.
 
         Returns:
@@ -145,7 +194,7 @@ class SentinelOnePlugin(PluginBase):
             method="GET",
             url=f"{url}{API_VERSION}/sites",
             params={"name": name},
-            headers={"Authorization": f"ApiToken {token}"},
+            headers=self.sentinelone_helper.get_headers(api_token=token),
             is_validation=is_validate,
             logger_msg=f'getting site id for site "{name}"',
             proxies=self.proxy,
@@ -197,8 +246,54 @@ class SentinelOnePlugin(PluginBase):
             )
             return indicators
 
+    def _create_tags(
+        self, tags: List, enable_tagging: str
+    ) -> Tuple[List, List]:
+        """Create Tags.
+
+        Args:
+            tags (List): Tags list from API Response.
+
+        Returns:
+            tuple: Tuple of created tags and skipped tags.
+        """
+        if enable_tagging == "no":
+            return [], []
+        tag_utils = TagUtils()
+        created_tags, skipped_tags = set(), set()
+
+        for tag in tags:
+            tag_name = tag.strip()
+            try:
+                if not tag_utils.exists(tag_name):
+                    tag_utils.create_tag(TagIn(name=tag_name, color="#ED3347"))
+                created_tags.add(tag_name)
+            except ValueError:
+                skipped_tags.add(tag_name)
+            except Exception as exp:
+                self.logger.error(
+                    message=(
+                        f"{self.log_prefix}: Unexpected error occurred"
+                        f" while creating tag {tag_name}. Error: {exp}"
+                    ),
+                    details=str(traceback.format_exc()),
+                )
+                skipped_tags.add(tag_name)
+
+        return list(created_tags), list(skipped_tags)
+
+    def _create_ioc_comment(self, alert: Dict) -> str:
+        classification = alert.get("classification", "")
+        detection_engine = ", ".join(alert.get("engines", []))
+        confidence_level = alert.get("confidenceLevel", "")
+        comment = (
+            f"Classification: {classification} | Detection Engine:"
+            f" {detection_engine} | Confidence Level: {confidence_level}"
+        )
+        return comment
+
     def _create_indicators(
-        self, ioc_type: str, alert: Dict, url: str
+        self, ioc_type: str, alert: Dict, url: str, enable_tagging: str
     ) -> Indicator:
         """Create indicators.
 
@@ -206,6 +301,7 @@ class SentinelOnePlugin(PluginBase):
             ioc_type (str): IOC Type.
             alert (Dict): Alert Dictionary.
             url (str): URL.
+            enable_tagging (str): Enable Tagging.
 
         Returns:
             Indicator: Create indicator.
@@ -218,14 +314,17 @@ class SentinelOnePlugin(PluginBase):
 
         alert_id = alert.get("id", "")
         last_seen = self._str_to_datetime(threatInfo.get("updatedAt", ""))
+        analyst_verdict = threatInfo.get("analystVerdictDescription")
+        created_tags, skipped_tags = [], []
+        if analyst_verdict:
+            created_tags, skipped_tags = self._create_tags(
+                tags=[analyst_verdict], enable_tagging=enable_tagging
+            )
         return (
             Indicator(
                 value=ioc_value,
                 type=ioc_type,
-                comments=(
-                    "Classification: "
-                    f"{threatInfo.get('classification', '')}"
-                ),
+                comments=self._create_ioc_comment(threatInfo),
                 firstSeen=self._str_to_datetime(
                     threatInfo.get("createdAt", "")
                 ),
@@ -233,6 +332,7 @@ class SentinelOnePlugin(PluginBase):
                 extendedInformation=(
                     f"{url}/analyze/threats/{alert_id}/overview"
                 ),
+                tags=created_tags,
             ),
             f"{last_seen.isoformat()}Z",
         )
@@ -253,9 +353,16 @@ class SentinelOnePlugin(PluginBase):
         if is_retraction and RETRACTION not in self.log_prefix:
             self.log_prefix = self.log_prefix + f" [{RETRACTION}] "
         end_time = datetime.now()
-        url, token, site_name = self.sentinelone_helper.get_config_params(
-            self.configuration
-        )
+        (
+            url,
+            token,
+            site_name,
+            user_type,
+            analyst_verdict,
+            _,
+            enable_tagging,
+            initial_range,
+        ) = self.sentinelone_helper.get_config_params(self.configuration)
         sub_checkpoint = getattr(self, "sub_checkpoint", None)
         if is_retraction and retraction_time:
             start_time = retraction_time
@@ -263,7 +370,7 @@ class SentinelOnePlugin(PluginBase):
             start_time = sub_checkpoint.get("checkpoint")
         elif not self.last_run_at:
             start_time = datetime.now() - timedelta(
-                days=int(self.configuration["days"])
+                days=int(initial_range)
             )
             start_time = f"{start_time.isoformat()}Z"
         else:
@@ -280,9 +387,10 @@ class SentinelOnePlugin(PluginBase):
             "limit": PULL_PAGE_SIZE,
         }
 
-        user_type = self.configuration.get("user_type", "account")
         if user_type == "global":
             params["tenant"] = True
+        if analyst_verdict:
+            params["analystVerdicts"] = ','.join(analyst_verdict)
 
         cursor = None
         if site_name:
@@ -298,10 +406,17 @@ class SentinelOnePlugin(PluginBase):
                     f" Validate Site Name provided in configuration "
                     "parameters."
                 )
-                self.logger.error(f"{self.log_prefix}: {err_msg}")
+                self.logger.error(
+                    message=f"{self.log_prefix}: {err_msg}",
+                    resolution=(
+                        "Ensure Site Name provided in configuration "
+                        "parameters is correct."
+                    )
+                )
                 raise SentinelOnePluginException(err_msg)
             params["siteIds"] = site_id
         api_endpoint = f"{url}{API_VERSION}/threats"
+        headers = self.sentinelone_helper.get_headers(api_token=token)
         page = 1
         checkpoint = start_time
         skip_count = 0
@@ -317,7 +432,7 @@ class SentinelOnePlugin(PluginBase):
                     method="GET",
                     url=api_endpoint,
                     params=params,
-                    headers={"Authorization": f"ApiToken {token}"},
+                    headers=headers,
                     logger_msg=f"pulling threats for page {page}",
                     proxies=self.proxy,
                     verify=self.ssl_validation,
@@ -335,7 +450,7 @@ class SentinelOnePlugin(PluginBase):
                             else:
                                 sha256_indicator, checkpoint = (
                                     self._create_indicators(
-                                        "sha256", alert, url
+                                        "sha256", alert, url, enable_tagging
                                     )
                                 )
                                 page_indicators.append(sha256_indicator)
@@ -357,7 +472,9 @@ class SentinelOnePlugin(PluginBase):
                                 page_indicators.add(threatInfo.get("md5"))
                             else:
                                 md5_indicator, checkpoint = (
-                                    self._create_indicators("md5", alert, url)
+                                    self._create_indicators(
+                                        "md5", alert, url, enable_tagging
+                                    )
                                 )
                                 page_indicators.append(md5_indicator)
                             ioc_counts["md5"] += 1
@@ -456,11 +573,13 @@ class SentinelOnePlugin(PluginBase):
             )
 
         indicators_data = []
-        url, token, _ = self.sentinelone_helper.get_config_params(
-            self.configuration
+        url, token, _, user_type, *_ = (
+            self.sentinelone_helper.get_config_params(self.configuration)
         )
-        headers = {"Authorization": f"ApiToken {token}"}
-        ioc_url = f"{url}/{API_VERSION}/threat-intelligence/iocs"
+        headers = self.sentinelone_helper.get_headers(
+            api_token=token, include_content_type=True
+        )
+        url = f"{url}/{API_VERSION}/threat-intelligence/iocs"
 
         # Threat IoCs
         self.logger.info(
@@ -507,7 +626,6 @@ class SentinelOnePlugin(PluginBase):
         total_success_count = 0
         total_failed_count = 0
 
-        user_type = self.configuration.get("user_type", "account")
         filters = {}
         if user_type == "global":
             filters = {"tenant": True}
@@ -515,42 +633,17 @@ class SentinelOnePlugin(PluginBase):
         for chunked_list in self.divide_in_chunks(
             indicators_data, PUSH_PAGE_SIZE
         ):
-            indicator_json_data = {
-                "data": chunked_list,
-                "filter": filters,
-            }
-            try:
-                self.sentinelone_helper.api_helper(
-                    method="POST",
-                    url=ioc_url,
-                    headers=headers,
-                    json=indicator_json_data,
-                    proxies=self.proxy,
-                    verify=self.ssl_validation,
-                    logger_msg=(
-                        f"sharing indicators for batch {batch}"
-                        f" to {PLATFORM_NAME}."
-                    ),
-                )
-
-                total_success_count += len(chunked_list)
-                self.logger.info(
-                    f"{self.log_prefix}: Successfully shared "
-                    f"{len(chunked_list)} indicator(s) in batch {batch}"
-                    f" to {PLATFORM_NAME}. Total indicator(s) shared:"
-                    f" {total_success_count}."
-                )
-            except SentinelOnePluginException:
-                total_failed_count += len(chunked_list)
-            except Exception as exp:
-                self.logger.error(
-                    f"{self.log_prefix}: Unexpected error occurred while "
-                    f"sharing {len(chunked_list)} indicator(s) in batch "
-                    f"{batch} to {PLATFORM_NAME}. Error: {exp}",
-                    details=traceback.format_exc(),
-                )
-                total_failed_count += len(chunked_list)
-
+            batch_failed_count = 0
+            total_success_count, total_failed_count = self._push(
+                chunked_list=chunked_list,
+                filters=filters,
+                headers=headers,
+                url=url,
+                batch=batch,
+                total_success_count=total_success_count,
+                total_failed_count=total_failed_count,
+                batch_failed_count=batch_failed_count,
+            )
             batch += 1
         log_msg = (
             f"Successfully shared {total_success_count} indicator(s) to "
@@ -558,13 +651,210 @@ class SentinelOnePlugin(PluginBase):
         )
         if total_failed_count > 0:
             log_msg += (
-                f" {total_failed_count} indicator(s) were failed to share."
+                f" skipped sharing {total_failed_count} indicator(s)."
             )
         self.logger.info(f"{self.log_prefix}: {log_msg}")
         return PushResult(
             success=True,
             message=log_msg,
         )
+
+    def _push(
+        self,
+        chunked_list: List[Dict],
+        filters: Dict,
+        headers: Dict,
+        url: str,
+        batch: int,
+        total_success_count: int,
+        total_failed_count: int,
+        batch_failed_count: int,
+        is_retry: bool = False,
+    ):
+        logger_msg = (
+            f"sharing indicators for batch {batch}"
+            f" to {PLATFORM_NAME}"
+        )
+        chunked_list_len = len(chunked_list)
+        request_body = {
+            "data": chunked_list,
+            "filter": filters,
+        }
+        try:
+            response = self.sentinelone_helper.api_helper(
+                method="POST",
+                url=url,
+                headers=headers,
+                json=request_body,
+                proxies=self.proxy,
+                verify=self.ssl_validation,
+                logger_msg=logger_msg,
+                is_handle_error_required=False,
+            )
+            status_code = response.status_code
+            if status_code == 200:
+                total_success_count += chunked_list_len
+                count_log = (
+                    f"Successfully shared {chunked_list_len} indicator(s)"
+                )
+                if batch_failed_count > 0:
+                    count_log += (
+                        f", skipped sharing {batch_failed_count} indicator(s)"
+                    )
+                self.logger.info(
+                    f"{self.log_prefix}: {count_log} in batch {batch} to"
+                    f" platform {PLATFORM_NAME}. Total indicator(s) shared:"
+                    f" {total_success_count}."
+                )
+            elif status_code == 400 and not is_retry:
+                total_success_count, total_failed_count, batch_failed_count = (
+                    self._remove_failed_ioc_and_retry_push(
+                        response=response,
+                        chunked_list=chunked_list,
+                        filters=filters,
+                        headers=headers,
+                        url=url,
+                        batch=batch,
+                        total_success_count=total_success_count,
+                        total_failed_count=total_failed_count,
+                        batch_failed_count=batch_failed_count,
+                    )
+                )
+            else:
+                self.sentinelone_helper.handle_error(
+                    resp=response,
+                    logger_msg=logger_msg,
+                    is_validation=False,
+                )
+        except SentinelOnePluginException as err:
+            err_msg = (
+                f"Error occurred while {logger_msg}. Error: {err}."
+            )
+            self.logger.error(
+                f"{self.log_prefix}: {err_msg}"
+            )
+            total_failed_count += chunked_list_len
+        except Exception as exp:
+            self.logger.error(
+                f"{self.log_prefix}: Unexpected error occurred while "
+                f"sharing {chunked_list_len} indicator(s) in batch "
+                f"{batch} to {PLATFORM_NAME}. Error: {exp}",
+                details=traceback.format_exc(),
+            )
+            total_failed_count += chunked_list_len
+        return total_success_count, total_failed_count
+
+    def _remove_failed_ioc_and_retry_push(
+        self,
+        response: Response,
+        chunked_list: List[Dict],
+        filters: Dict,
+        headers: Dict,
+        url: str,
+        batch: int,
+        total_success_count: int,
+        total_failed_count: int,
+        batch_failed_count: int,
+    ):
+        chunked_list_len = len(chunked_list)
+        try:
+            response_json = response.json()
+        except Exception:
+            err_msg = (
+                "Could not parse API response hence skipping sharing"
+                f" of indicator batch {batch}"
+            )
+            self.logger.error(
+                f"{self.log_prefix}: {err_msg}."
+            )
+            raise SentinelOnePluginException(err_msg)
+        errors = response_json.get("errors", [])
+        invalid_iocs = set()
+        for error in errors:
+            if error_details := error.get("detail"):
+                try:
+                    error_details_json = self._parse_error_details(error_details)
+                    if not error_details_json:
+                        continue
+                    for invalid_ioc in error_details_json.get("errors", []):
+                        invalid_iocs.add(
+                            (invalid_ioc.get("value"), invalid_ioc.get("type"))
+                        )
+                except Exception:
+                    continue
+        invalid_iocs_len = len(invalid_iocs)
+        if invalid_iocs and chunked_list_len - invalid_iocs_len > 0:
+            debug_log = (
+                f"Skipped sharing of {invalid_iocs_len} indicator(s) to"
+                f" {PLATFORM_NAME} as they were of invalid type. Retrying"
+                f" sharing for {chunked_list_len - invalid_iocs_len}"
+                f" valid indicator(s) for batch {batch}."
+            )
+            self.logger.debug(
+                f"{self.log_prefix}: {debug_log}",
+                details=(
+                    "Invalid indicator(s): "
+                    f"{','.join([value for value, _ in invalid_iocs])}"
+                )
+            )
+            total_failed_count += invalid_iocs_len
+            batch_failed_count += invalid_iocs_len
+            chunked_list = self._remove_invalid_iocs(
+                chunked_list=chunked_list,
+                invalid_iocs=invalid_iocs,
+            )
+            total_success_count, total_failed_count = self._push(
+                chunked_list=chunked_list,
+                filters=filters,
+                headers=headers,
+                url=url,
+                batch=batch,
+                total_success_count=total_success_count,
+                total_failed_count=total_failed_count,
+                batch_failed_count=batch_failed_count,
+                is_retry=True,
+            )
+        else:
+            err_msg = (
+                f"Received exit code 400, HTTP client error while sharing"
+                f" {chunked_list_len} indicator(s) in batch {batch} to"
+                f" {PLATFORM_NAME}"
+            )
+            raise SentinelOnePluginException(err_msg)
+        return total_success_count, total_failed_count, batch_failed_count
+
+    def _remove_invalid_iocs(
+        self,
+        chunked_list: List[Dict],
+        invalid_iocs: Set[Tuple[str, str]],
+    ) -> List[Dict]:
+        return [
+            ioc
+            for ioc in chunked_list
+            if (ioc.get("value"), ioc.get("type")) not in invalid_iocs
+        ]
+
+    def _parse_error_details(
+        self, error_details: Union[str, Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """Safely parse error detail payload regardless of quoting style."""
+        if isinstance(error_details, dict):
+            return error_details
+        if isinstance(error_details, str):
+            try:
+                return json.loads(error_details)
+            except json.JSONDecodeError:
+                try:
+                    # literal_eval (Caution: A complex expression can overflow
+                    # the C stack and cause a crash.)
+                    parsed_details = ast.literal_eval(error_details)
+                    if isinstance(parsed_details, dict):
+                        return parsed_details
+                except (ValueError, SyntaxError):
+                    raise
+                except Exception:
+                    raise
+        return {}
 
     def _validate_credentials(
         self, url: str, token: str, site: str, user_type: str
@@ -591,7 +881,13 @@ class SentinelOnePlugin(PluginBase):
                         f" on {PLATFORM_NAME}. Verify Site Name "
                         "provided in configuration parameters."
                     )
-                    self.logger.error(f"{self.log_prefix}: {err_msg}")
+                    self.logger.error(
+                        message=f"{self.log_prefix}: {err_msg}",
+                        resolution=(
+                            "Ensure Site Name provided in "
+                            "configuration parameters is correct."
+                        )
+                    )
                     return ValidationResult(
                         success=False,
                         message=err_msg,
@@ -602,7 +898,7 @@ class SentinelOnePlugin(PluginBase):
                 method="GET",
                 url=f"{url}{API_VERSION}/threats",
                 params=params,
-                headers={"Authorization": f"ApiToken {token}"},
+                headers=self.sentinelone_helper.get_headers(api_token=token),
                 is_validation=True,
                 logger_msg="validating API credentials",
                 proxies=self.proxy,
@@ -653,126 +949,96 @@ class SentinelOnePlugin(PluginBase):
         Returns:
             ValidationResult: Validation Result.
         """
-        validation_err_msg = "Validation error occurred"
-        url, token, site = self.sentinelone_helper.get_config_params(
-            configuration
-        )
-        if not url:
-            err_msg = "Management URL is a required configuration parameter."
-            self.logger.error(
-                f"{self.log_prefix}: {validation_err_msg}. {err_msg}"
-            )
-            return ValidationResult(success=False, message=err_msg)
-        elif not isinstance(url, str) or not self._validate_url(url):
-            err_msg = (
-                "Invalid Management URL provided in configuration parameters."
-            )
-            self.logger.error(
-                f"{self.log_prefix}: {validation_err_msg}. {err_msg}"
-            )
-            return ValidationResult(success=False, message=err_msg)
+        (
+            url,
+            token,
+            site,
+            user_type,
+            analyst_verdict,
+            retraction_interval,
+            enable_tagging,
+            initial_range,
+        ) = self.sentinelone_helper.get_config_params(configuration)
 
-        if not token:
-            err_msg = "API Token is a required configuration parameter."
-            self.logger.error(
-                f"{self.log_prefix}: {validation_err_msg}. {err_msg}"
-            )
-            return ValidationResult(success=False, message=err_msg)
-        elif not isinstance(token, str):
-            err_msg = "Invalid API Token provided in configuration parameters."
-            self.logger.error(
-                f"{self.log_prefix}: {validation_err_msg}. {err_msg}"
-            )
-            return ValidationResult(success=False, message=err_msg)
+        # Validate Management URL
+        if validation_error := self._validate_parameters(
+            field_name="Management URL",
+            field_value=url,
+            field_type=str,
+            custom_validation_func=self._validate_url,
+            is_required=True
+        ):
+            return validation_error
 
-        if site and (not isinstance(site, str)):
-            err_msg = "Invalid Site Name provided in configuration parameters."
-            self.logger.error(
-                f"{self.log_prefix}: {validation_err_msg}. {err_msg}"
-            )
-            return ValidationResult(success=False, message=err_msg)
+        # Validate API Token
+        if validation_error := self._validate_parameters(
+            field_name="API Token",
+            field_value=token,
+            field_type=str,
+            is_required=True
+        ):
+            return validation_error
 
-        user_type = configuration.get("user_type")
-        if not user_type:
-            err_msg = "User Type is a required configuration parameter."
-            self.logger.error(
-                f"{self.log_prefix}: {validation_err_msg}. {err_msg}"
-            )
-            return ValidationResult(success=False, message=err_msg)
-        if not isinstance(user_type, str):
-            err_msg = "Invalid User Type provided in configuration parameters."
-            self.logger.error(
-                f"{self.log_prefix}: {validation_err_msg}. {err_msg}"
-            )
-            return ValidationResult(success=False, message=err_msg)
-        if user_type not in USER_TYPE_OPTIONS:
-            err_msg = (
-                "Invalid User Type value provided in configuration parameters."
-                " Valid values are 'Global User' and 'Account User'."
-            )
-            self.logger.error(
-                f"{self.log_prefix}: {validation_err_msg}. {err_msg}"
-            )
-            return ValidationResult(success=False, message=err_msg)
+        # Validate Site Name
+        if validation_error := self._validate_parameters(
+            field_name="Site Name",
+            field_value=site,
+            field_type=str,
+            is_required=False,
+        ):
+            return validation_error
 
-        days = configuration.get("days")
-        if days is None:
-            err_msg = "Initial Range is a required configuration parameter."
-            self.logger.error(f"{self.log_prefix}: {err_msg}")
-            return ValidationResult(
-                success=False,
-                message=err_msg,
-            )
-        elif not isinstance(days, int) or days < 0:
-            err_msg = (
-                "Invalid Initial Range provided in configuration parameters."
-                " Valid value should be an integer greater than or equal to "
-                "0."
-            )
-            self.logger.error(f"{self.log_prefix}: {err_msg}")
-            return ValidationResult(
-                success=False,
-                message=err_msg,
-            )
-        elif days > INTEGER_THRESHOLD:
-            err_msg = (
-                "Invalid Initial Range provided in configuration parameters."
-                " Valid value should be an integer in range 0 to 2^62."
-            )
-            self.logger.error(f"{self.log_prefix}: {err_msg}")
-            return ValidationResult(
-                success=False,
-                message=err_msg,
-            )
+        # Validate User Type
+        if validation_error := self._validate_parameters(
+            field_name="User Type",
+            field_value=user_type,
+            field_type=str,
+            allowed_values=USER_TYPE_OPTIONS,
+            is_required=True,
+        ):
+            return validation_error
 
-        retraction_days = configuration.get("retraction_interval")
-        if isinstance(retraction_days, int) and retraction_days is not None:
-            if int(retraction_days) <= 0:
-                err_msg = (
-                    "Invalid Retraction Interval provided in configuration"
-                    " parameters. Valid value should be an integer "
-                    "greater than 0."
-                )
-                self.logger.error(
-                    f"{self.log_prefix}: {validation_err_msg}. {err_msg}"
-                )
-                return ValidationResult(
-                    success=False,
-                    message=err_msg,
-                )
-            elif int(retraction_days) > INTEGER_THRESHOLD:
-                err_msg = (
-                    "Invalid Retraction Interval provided in configuration"
-                    " parameters. Valid value should be an integer "
-                    "greater than 0 and less than 2^62."
-                )
-                self.logger.error(
-                    f"{self.log_prefix}: {validation_err_msg}. {err_msg}"
-                )
-                return ValidationResult(
-                    success=False,
-                    message=err_msg,
-                )
+        # Validate Analyst Verdict
+        if validation_error := self._validate_parameters(
+            field_name="Analyst Verdict",
+            field_value=analyst_verdict,
+            field_type=List,
+            allowed_values=ANALYST_VERDICT_OPTIONS,
+            is_required=True
+        ):
+            return validation_error
+
+        # Validate Initial Range
+        if validation_error := self._validate_parameters(
+            field_name="Initial Range (in days)",
+            field_type=int,
+            field_value=initial_range,
+            min_value=0,
+            max_value=INTEGER_THRESHOLD,
+            is_required=True,
+        ):
+            return validation_error
+
+        # Validate Enable Tagging
+        if validation_error := self._validate_parameters(
+            field_name="Enable Tagging",
+            field_type=str,
+            field_value=enable_tagging,
+            allowed_values=ENABLE_TAGGING_OPTIONS,
+            is_required=True
+        ):
+            return validation_error
+
+        # Validate Retraction Interval
+        if validation_error := self._validate_parameters(
+            field_name="Retraction Interval",
+            field_type=int,
+            field_value=retraction_interval,
+            min_value=1,
+            max_value=INTEGER_THRESHOLD,
+            is_required=False,
+        ):
+            return validation_error
 
         return self._validate_credentials(
             url=url,
@@ -780,6 +1046,135 @@ class SentinelOnePlugin(PluginBase):
             site=site,
             user_type=user_type,
         )
+
+    def _validate_parameters(
+        self,
+        field_name: str,
+        field_value: Union[str, List, bool, int],
+        field_type: type,
+        allowed_values: Dict = None,
+        min_value: int = None,
+        max_value: int = None,
+        custom_validation_func: Callable = None,
+        is_required: bool = True,
+    ) -> Union[ValidationResult, None]:
+        """
+        Validate the given configuration field value.
+
+        Args:
+            field_name (str): Name of the configuration field.
+            field_value (str, List, bool, int): Value of the configuration
+                field.
+            field_type (type): Expected type of the configuration field.
+            allowed_values (Dict, optional): Dictionary of allowed values for
+                the configuration field. Defaults to None.
+            min_value (int, optional): Minimum allowed value for the
+                configuration field. Defaults to None.
+            max_value (int, optional): Maximum allowed value for the
+                configuration field. Defaults to None.
+            custom_validation_func (Callable, optional): Custom validation
+                function to be applied. Defaults to None.
+            is_required (bool, optional): Whether the field is required.
+                Defaults to True.
+
+        Returns:
+            ValidationResult: ValidationResult object indicating whether the
+                validation was successful or not.
+        """
+        validation_err_msg = "Validation error occurred. "
+        if isinstance(field_value, str):
+            field_value = field_value.strip()
+        if is_required and not isinstance(field_value, int) and not field_value:
+            err_msg = f"{field_name} is a required configuration parameter."
+            self.logger.error(
+                message=f"{self.log_prefix}: {validation_err_msg}{err_msg}",
+                resolution=(
+                    f"Ensure you provide a value for the field {field_name}."
+                )
+            )
+            return ValidationResult(
+                success=False,
+                message=err_msg,
+            )
+        if is_required and not isinstance(field_value, field_type) or (
+            custom_validation_func and not custom_validation_func(field_value)
+        ):
+            err_msg = (
+                "Invalid value provided for the configuration"
+                f" parameter '{field_name}'."
+            )
+            self.logger.error(
+                message=f"{self.log_prefix}: {validation_err_msg}{err_msg}",
+                resolution=(
+                    "Ensure a valid value is provided for the field"
+                    f" {field_name}."
+                )
+            )
+            return ValidationResult(
+                success=False,
+                message=err_msg,
+            )
+        if allowed_values:
+            err_msg = (
+                f"Invalid value provided for the configuration"
+                f" parameter '{field_name}'."
+            )
+            allowed_values_str = ", ".join(allowed_values.values())
+            if field_type is str and field_value not in allowed_values.keys():
+                self.logger.error(
+                    message=(
+                        f"{self.log_prefix}: {validation_err_msg}{err_msg}"
+                    ),
+                    details=f"Allowed values are: {allowed_values_str}.",
+                    resolution=(
+                        "Ensure the value selected is from the allowed values."
+                    )
+                )
+                return ValidationResult(
+                    success=False,
+                    message=err_msg,
+                )
+            elif field_type == List:
+                for value in field_value:
+                    if value not in allowed_values.keys():
+                        self.logger.error(
+                            message=(
+                                f"{self.log_prefix}: {validation_err_msg}"
+                                f"{err_msg}"
+                            ),
+                            details=(
+                                f"Allowed values are: {allowed_values_str}."
+                            ),
+                            resolution=(
+                                "Ensure the values selected are from the"
+                                " allowed values."
+                            )
+                        )
+                        return ValidationResult(
+                            success=False,
+                            message=err_msg,
+                        )
+        if max_value and isinstance(field_value, int) and (
+            field_value > max_value or field_value < min_value
+        ):
+            if max_value == INTEGER_THRESHOLD:
+                max_value = "2^62"
+            err_msg = (
+                f"Invalid {field_name} provided in configuration"
+                " parameters. Valid value should be an integer "
+                f"greater than {min_value} and less than {max_value}."
+            )
+            self.logger.error(
+                f"{self.log_prefix}: {validation_err_msg}{err_msg}",
+                resolution=(
+                    f"Ensure the value provided is between {min_value}"
+                    f" and {max_value}."
+                )
+            )
+            return ValidationResult(
+                success=False,
+                message=err_msg,
+            )
 
     def get_actions(self):
         """Get available actions."""
@@ -800,11 +1195,13 @@ class SentinelOnePlugin(PluginBase):
         """Get fields required for an action."""
         return []
 
-    def get_modified_indicators(self, source_indicators: List[List[Dict]]):
+    def get_modified_indicators(
+        self, source_indicators: List[List[Indicator]]
+    ):
         """Get all modified indicators status.
 
         Args:
-            source_indicators (List[List[Dict]]): Source Indicators.
+            source_indicators (List[List[Indicator]]): Source Indicators.
 
         Yields:
             tuple: Modified Indicators and Status.
@@ -818,7 +1215,7 @@ class SentinelOnePlugin(PluginBase):
         if not (retraction_interval and isinstance(retraction_interval, int)):
             log_msg = (
                 "Retraction Interval is not available for the configuration"
-                f' "{self.config_name}". Skipping retraction of IoC(s)'
+                f' "{self.config_name}". Skipping retraction of indicator(s)'
                 f" for {PLATFORM_NAME}."
             )
             self.logger.info(f"{self.log_prefix}: {log_msg}")
@@ -827,19 +1224,25 @@ class SentinelOnePlugin(PluginBase):
         end_time = datetime.now()
         start_time = end_time - timedelta(days=int(retraction_interval))
         start_time = f"{start_time.isoformat()}Z"
+        modified_indicators = set()
+        for modified_indicator in self._pull(
+            is_retraction=True, retraction_time=start_time
+        ):
+            modified_indicators.update(modified_indicator)
         for source_ioc_list in source_indicators:
             try:
                 iocs = set()
                 for ioc in source_ioc_list:
                     if ioc:
                         iocs.add(ioc.value)
-                modified_indicators = self._pull(
-                    is_retraction=True, retraction_time=start_time
+                retracted_iocs = iocs - modified_indicators
+                self.logger.info(
+                    f"{self.log_prefix}: {len(retracted_iocs)} indicator(s) "
+                    f"will be marked as retracted from {len(iocs)} total "
+                    "indicator(s) present in cloud exchange for"
+                    f" {PLATFORM_NAME}."
                 )
-                for indicator in modified_indicators:
-                    iocs -= indicator
-
-                yield list(iocs), False
+                yield list(retracted_iocs), False
             except Exception as err:
                 err_msg = (
                     f"Error while fetching modified indicators from"
@@ -867,35 +1270,24 @@ class SentinelOnePlugin(PluginBase):
             ValidationResult: Validation result.
         """
         self.log_prefix = self.log_prefix + f" [{RETRACTION}]"
-        end_time = datetime.now()
-        retraction_interval = self.configuration.get("retraction_interval")
-        if not (retraction_interval and isinstance(retraction_interval, int)):
-            log_msg = (
-                "Retraction Interval is not available for the configuration"
-                f' "{self.config_name}". Skipping retraction of IoC(s)'
-                f" for {PLATFORM_NAME}."
-            )
-            self.logger.info(f"{self.log_prefix}: {log_msg}")
-            yield ValidationResult(
-                success=False,
-                disabled=True,
-                message=log_msg,
-            )
+        (
+            url,
+            token,
+            _,
+            user_type,
+            *_,
+        ) = self.sentinelone_helper.get_config_params(self.configuration)
 
-        retraction_interval = int(retraction_interval)
-        start_time = end_time - timedelta(days=int(retraction_interval))
-        start_time = f"{start_time.isoformat()}Z"
         self.logger.info(
-            f"{self.log_prefix}: Start time for this retract"
-            f' indicators cycle is "{start_time}".'
-        )
-        url, token, _ = self.sentinelone_helper.get_config_params(
-            self.configuration
+            f"{self.log_prefix}: Starting retraction of indicator(s) from"
+            f" {PLATFORM_NAME} platform."
         )
 
-        user_type = self.configuration.get("user_type", "account")
         filters = {}
         api_endpoint = f"{url}/{API_VERSION}/threat-intelligence/iocs"
+        headers = self.sentinelone_helper.get_headers(
+            api_token=token, include_content_type=True
+        )
         batch = 1
         for retraction_batch in retracted_indicators_lists:
             retraction_count = 0
@@ -915,7 +1307,7 @@ class SentinelOnePlugin(PluginBase):
                         method="DELETE",
                         url=api_endpoint,
                         json=filters,
-                        headers={"Authorization": f"ApiToken {token}"},
+                        headers=headers,
                         verify=self.ssl_validation,
                         proxies=self.proxy,
                         logger_msg=(

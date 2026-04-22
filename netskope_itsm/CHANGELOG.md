@@ -1,3 +1,7 @@
+# 2.5.0
+## Added
+- Added support to resolve incidents on Netskope Tenant.
+
 # 2.4.1
 ## Fixed
 - Fixed handling of "Is empty" filters in alert/event queries.

@@ -43,14 +43,12 @@ from netskope.common.utils.plugin_provider_helper import PluginProviderHelper
 from .utils.netskope_itsm_constants import (
     MODULE_NAME,
     PLUGIN_NAME,
-    PLATFORM_NAME,
     MAX_API_CALLS,
     PLUGIN_VERSION,
     IGNORED_RAW_KEYS,
     INCIDENT_BATCH_SIZE,
     INCIDENT_UPDATE_API,
     VALID_SEVERITY_VALUES,
-    INCIDENT_DETAILS_LINK,
     REQUEST_RATE_LIMIT_DELAY,
 )
 
@@ -406,7 +404,6 @@ class NetskopePlugin(PluginBase):
 
     def _get_raw_dict(self, data):
         """Get raw dict."""
-
         data_item = {
             k: (
                 str(v)
@@ -492,12 +489,162 @@ class NetskopePlugin(PluginBase):
             )
 
             results = _filter_data_items(results, json.dumps(query))
-            self.logger.info(
-                f"{self.log_prefix}: Storing {len(results)} alert(s)/event(s) "
-                f"out of {len(all_data)} alert(s)/event(s) "
-                f"based on Alert/Event query for configuration {self.name}."
-            )
         return results
+
+    def create_task(
+        self,
+        alert: Alert,
+        mappings: Dict,
+        queue: Queue
+    ) -> Task:
+        """Create a new incident."""
+        try:
+            self.logger.info(
+                f"{self.log_prefix}: Resolve Incident action triggered"
+                ", creating ticket."
+            )
+            event_type = "Alert"
+            is_incident = False
+            if "eventType" in alert.model_dump():
+                event_type = "Event"
+                if getattr(alert, "eventType", "") == "incident":
+                    is_incident = True
+
+            if event_type == "Alert" or not is_incident:
+                err_msg = (
+                    "Resolving incidents is only "
+                    "supported for incident events, skipping ticket creation."
+                )
+                raise Exception(err_msg)
+
+            raw_data = getattr(alert, "rawData", {})
+            dlp_incident_id = raw_data.get("dlp_incident_id")
+            task = Task(
+                id=str(dlp_incident_id),
+                dataItem=alert,
+            )
+
+            status = raw_data.get("status")
+            status = status if status else TaskStatus.OTHER.value
+            severity = raw_data.get("severity")
+            severity = severity if severity else Severity.OTHER.value
+
+            task.status = status
+            task.severity = severity
+            task.updatedValues = UpdatedTaskValues(
+                status=status,
+                severity=severity
+            )
+
+            # task = self._update_task_details(task, raw_data)
+            self.logger.info(
+                f"{self.log_prefix}: Successfully created a ticket for "
+                f"incident ID '{dlp_incident_id}' for event '{alert.id}'."
+            )
+            return task
+        except Exception as e:
+            self.logger.error(
+                message=(
+                    f"{self.log_prefix}: Error during create task: {e} \n"
+                    "Check details for more info."
+                ),
+                details=str(traceback.format_exc())
+            )
+            raise e
+
+    def _update_task_details(self, task: Task, data: dict):
+        """Update task fields with ServiceNow data.
+
+        Args:
+            task (Task): CE task.
+            jira_data (dict): Updated data from Jira.
+        """
+        severity = data.get("severity")
+        severity = severity if severity else Severity.OTHER.value
+
+        if task.updatedValues:
+            task.updatedValues.status = TaskStatus.CLOSED.value
+        else:
+            # Status and Severity are managed from core
+            task.updatedValues = UpdatedTaskValues(
+                status=TaskStatus.CLOSED.value,
+            )
+
+        task.updatedValues.severity = severity
+
+        task.status = TaskStatus.CLOSED.value
+        task.severity = severity
+        return task
+
+    def update_task(
+        self,
+        task: Task,
+        alert: Alert,
+        mappings: Dict,
+        queue: Queue,
+        upsert_task=False
+    ):
+        """Update existing incident."""
+        try:
+            if upsert_task:
+                raw_data = getattr(alert, "rawData", {})
+                dlp_incident_id = raw_data.get("dlp_incident_id")
+                self.logger.info(
+                    f"{self.log_prefix}: Updating ticket details for incident with "
+                    f"incident id '{dlp_incident_id}'."
+                )
+                status = raw_data.get("status")
+                status = status if status else TaskStatus.OTHER.value
+                severity = raw_data.get("severity")
+                severity = severity if severity else Severity.OTHER.value
+
+                task.status = status
+                task.severity = severity
+                if task.updatedValues:
+                    task.updatedValues.status = status
+                    task.updatedValues.severity = severity
+                else:
+                    task.updatedValues = UpdatedTaskValues(
+                        status=status,
+                        severity=severity
+                    )
+                # task = self._update_task_details(task, raw_data)
+
+                self.logger.info(
+                    f"{self.log_prefix}: Successfully updated a ticket for "
+                    f"incident ID '{dlp_incident_id}' for event '{alert.id}'."
+                )
+
+                return task
+            else:
+                return task
+        except Exception as e:
+            self.logger.error(
+                message=(
+                    f"{self.log_prefix}: Error during update task: {e} \n"
+                    "Check details for more info."
+                ),
+                details=str(traceback.format_exc())
+            )
+            raise e
+
+    def sync_states(self, tasks: List[Task]) -> List[Task]:
+        """Sync States.
+
+        Args:
+            tasks (List[Task]): Task list received from Core.
+
+        Returns:
+            List[Task]: Task List with updated status.
+        """
+        for task in tasks:
+            task.status = TaskStatus.CLOSED.value
+            task.updatedValues.status = TaskStatus.CLOSED.value
+
+        self.logger.info(
+            f"{self.log_prefix}: Successfully synced {len(tasks)} ticket(s)."
+        )
+        return tasks
 
     def handle_update_incident_api_call(self, url, data, field, batch_no):
         """Call and Handle update incident API call."""
@@ -547,9 +694,11 @@ class NetskopePlugin(PluginBase):
                     if not incident.updatedValues.status:
                         continue
                     new_value = incident.updatedValues.status
-
-                    old_value = incident.updatedValues.oldStatus if incident.updatedValues.oldStatus else TaskStatus.OTHER
-
+                    old_value = (
+                        incident.updatedValues.oldStatus
+                        if incident.updatedValues.oldStatus
+                        else TaskStatus.OTHER
+                    )
                     payload.append({
                         "field": "status",
                         "new_value": new_value,
@@ -757,7 +906,7 @@ class NetskopePlugin(PluginBase):
         )
 
     def cleanup(self, action_type: str):
-        """Unsert Incident option"""
+        """Unsert Incident option."""
         tenant_name = helper.get_tenant_itsm(self.name).name
         provider = plugin_provider_helper.get_provider(
             tenant_name=tenant_name

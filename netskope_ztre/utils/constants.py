@@ -33,6 +33,7 @@ Netskope CRE plugin Constants."""
 
 MAX_RETRY_COUNT = 4
 DEFAULT_WAIT_TIME = 60
+DEVICE_BULK_TAG_INTER_BATCH_SLEEP = 12
 PAGE_SIZE = 100
 MAX_HOSTS_PER_PRIVATE_APP = 500
 USERS_BATCH_SIZE = 512
@@ -45,7 +46,7 @@ REGEX_EMAIL = r"[^@]+@[^@]+\.[^@]+"
 REGEX_TAG = r"^[a-zA-Z0-9- ]*$"
 MODULE_NAME = "CRE"
 PLUGIN = "Netskope Risk Exchange"
-PLUGIN_VERSION = "1.6.0"
+PLUGIN_VERSION = "1.7.0"
 URLS = {
     "V2_PRIVATE_APP": "/api/v2/steering/apps/private",
     "V2_PRIVATE_APP_PATCH": "/api/v2/steering/apps/private/{}",
@@ -82,7 +83,7 @@ APP_INSTANCE_BATCH_SIZE = 500
 TAG_APP_BATCH_SIZE = 100
 TAG_APP_TAG_LENGTH = 75
 TAG_DEVICE_TAG_LENGTH = 80
-TAG_DEVICE_BATCH_SIZE = 100
+TAG_DEVICE_BATCH_SIZE = 1000
 MAX_TAGS_PER_DEVICE = 5
 TAG_CACHE_PAGE_SIZE = 10
 DEVICE_FIELD_MAPPING = {
@@ -125,4 +126,9 @@ USER_FIELD_MAPPING = {
     "sourceIP": {"key": "srcip"},
     "userIP": {"key": "userip"},
     "policyID": {"key": "policy_id"}
+}
+
+TAG_ACTION_LABEL_MAP = {
+    "append": "Add",
+    "remove": "Remove"
 }

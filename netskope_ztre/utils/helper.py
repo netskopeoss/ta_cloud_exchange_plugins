@@ -77,6 +77,18 @@ class NetskopePluginHelper(object):
         self.log_prefix = log_prefix
         self.logger = logger
 
+    def _get_retry_after(self, headers) -> int:
+        """
+        Get the retry after value from the headers.
+
+        Args:
+            headers (Dict): Headers.
+
+        Returns:
+            int: Retry after value.
+        """
+        return int(headers.get("Retry-After", DEFAULT_WAIT_TIME))
+
     def _api_call_helper(
         self,
         url: str,
@@ -146,18 +158,23 @@ class NetskopePluginHelper(object):
                         log_err_msg = "API rate limit exceeded"
                     else:
                         log_err_msg = "HTTP server error occurred"
+                    retry_after = DEFAULT_WAIT_TIME
+                    try:
+                        retry_after = self._get_retry_after(response.headers)
+                    except Exception:
+                        pass
                     self.logger.error(
                         message=(
                             f"{self.log_prefix}: Received exit code "
                             f"{status_code}, "
                             f"{log_err_msg} while {logger_msg}. "
-                            f"Retrying after {DEFAULT_WAIT_TIME} seconds. "
+                            f"Retrying after {retry_after} seconds. "
                             f"{MAX_RETRY_COUNT - 1 - attempt} "
                             "retries remaining."
                         ),
                         details=api_err_msg,
                     )
-                    time.sleep(DEFAULT_WAIT_TIME)
+                    time.sleep(retry_after)
                 else:
                     if is_handle_error_required:
                         response = handle_status_code(

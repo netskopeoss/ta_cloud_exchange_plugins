@@ -83,6 +83,8 @@ from .utils.constants import (
     DEVICE_FIELD_MAPPING,
     MAX_TAGS_PER_DEVICE,
     TAG_CACHE_PAGE_SIZE,
+    DEVICE_BULK_TAG_INTER_BATCH_SLEEP,
+    TAG_ACTION_LABEL_MAP,
 )
 from .utils.helper import NetskopePluginHelper, NetskopeException
 
@@ -229,7 +231,8 @@ class NetskopePlugin(PluginBase):
                     ),
                     EntityField(
                         name="Hostname",
-                        type=EntityFieldType.STRING
+                        type=EntityFieldType.STRING,
+                        required=True,
                     ),
                     EntityField(
                         name="Netskope Device UID",
@@ -1019,18 +1022,21 @@ class NetskopePlugin(PluginBase):
         }
         total_updated_record_counter = 0
         updated_records = []
+        update_skip_count = 0
         for record in records:
             # Make a copy to avoid modifying the original record in case of failure
             updated_record = {}
 
             device_uid = record.get("Netskope Device UID")
             user_key = record.get("User Key")
+            hostname = record.get("Hostname")
             updated_record["Device Serial Number"] = record.get(
                 "Device Serial Number"
             )
             updated_record["Device ID"] = record.get("Device ID")
             updated_record["Netskope Device UID"] = device_uid
             updated_record["User Key"] = user_key
+            updated_record["Hostname"] = hostname
 
             # Handle User Key as list (multi-user scenario)
             user_keys = user_key
@@ -1041,14 +1047,13 @@ class NetskopePlugin(PluginBase):
 
             unique_user_keys = set()
             for uk in user_keys:
-                unique_user_keys.add(uk)
+                if uk:
+                    unique_user_keys.add(uk)
+                else:
+                    update_skip_count += 1
 
-            if not device_uid or not unique_user_keys:
-                self.logger.info(
-                    f"{self.log_prefix}: Missing Netskope Device UID or "
-                    f"User Key for device '{record.get('Device ID')}'. "
-                    "Skipping update."
-                )
+            if not device_uid or not unique_user_keys or not hostname:
+                update_skip_count += 1
                 continue
 
             user_keys_list = list(unique_user_keys)
@@ -1077,7 +1082,11 @@ class NetskopePlugin(PluginBase):
                 user_keys_batch = user_keys_list[start_idx:end_idx]
 
                 devices_payload = [
-                    {"nsdeviceuid": device_uid, "userkey": user_key}
+                    {
+                        "nsdeviceuid": device_uid,
+                        "userkey": user_key,
+                        "hostname": hostname
+                    }
                     for user_key in user_keys_batch
                 ]
                 payload = {"devices": devices_payload}
@@ -1157,11 +1166,16 @@ class NetskopePlugin(PluginBase):
 
             if list(all_tags):
                 total_updated_record_counter += 1
-
+        skip_msg = "."
+        if update_skip_count > 0:
+            skip_msg += (
+                f" Skipped {update_skip_count} records due to missing "
+                f"Netskope Device UID, User Key, or Hostname."
+            )
         self.logger.info(
             f"{self.log_prefix}: Successfully updated {len(updated_records)}"
             f" record(s). Fetched tag(s) for {total_updated_record_counter} out "
-            f"of {len(records)} record(s)."
+            f"of {len(records)} record(s){skip_msg}"
         )
         return updated_records
 
@@ -1921,6 +1935,18 @@ class NetskopePlugin(PluginBase):
                 success=False,
                 message=err_msg,
             )
+
+        # Validate required fields in entity mappings
+        is_valid, err_msg = self._validate_required_field_in_entity_mappings()
+        if not is_valid:
+            self.logger.error(
+                message=(
+                        f"{self.log_prefix}: Validation error occurred. "
+                        f"{err_msg}"
+                    )
+            )
+            return ValidationResult(success=False, message=err_msg)
+
         try:
             helper = AlertsHelper()
             self.tenant = helper.get_tenant(configuration.get("tenant", ""))
@@ -2006,6 +2032,58 @@ class NetskopePlugin(PluginBase):
                 success=False,
                 message=f"{err_msg} Check logs for more details.",
             )
+
+    def _validate_required_field_in_entity_mappings(self):
+        """Validate if required fields are present in entity mappings."""
+        mapped_entities = (
+            self.mappedEntities if hasattr(self, "mappedEntities") else []
+        )
+
+        required_fields_by_entity = {
+            "Users": ["email"],
+            "Applications": ["applicationName"],
+            "Devices": [
+                "Device ID",
+                "Hostname",
+                "Netskope Device UID",
+                "Device Serial Number",
+                "User Key",
+            ],
+        }
+
+        error_messages = []
+
+        if mapped_entities:
+            for mapped_entity in mapped_entities:
+                entity_name = mapped_entity.get("entity")
+                if entity_name not in required_fields_by_entity:
+                    continue
+
+                mapped_source_fields = set()
+                for field in mapped_entity.get("fields", []):
+                    mapped_source_field = field.get("source", "")
+                    if mapped_source_field:
+                        mapped_source_fields.add(mapped_source_field)
+
+                missing_fields = [
+                    field
+                    for field in required_fields_by_entity[entity_name]
+                    if field not in mapped_source_fields
+                ]
+
+                if missing_fields:
+                    formatted_fields = ", ".join(
+                        f"'{field}'" for field in missing_fields
+                    )
+                    error_messages.append(
+                        f"Missing required fields {formatted_fields}"
+                        f" in entity mappings for {entity_name}."
+                    )
+
+        if error_messages:
+            return False, " ".join(error_messages)
+
+        return True, ""
 
     def _validate_port(self, port):
         """Validate the port or port range.
@@ -2935,6 +3013,19 @@ class NetskopePlugin(PluginBase):
                         "provide a static value."
                     ),
                 },
+                {
+                    "label": "Hostname",
+                    "key": "hostname",
+                    "type": "text",
+                    "default": "",
+                    "placeholder": "e.g. device-hostname",
+                    "mandatory": True,
+                    "description": (
+                        "The hostname of the device on which the tag "
+                        "action should be performed. Select a source "
+                        "field or provide a static value."
+                    ),
+                },
             ]
         elif action.value == "app_instance":
             return [
@@ -3500,7 +3591,7 @@ class NetskopePlugin(PluginBase):
                     )
                     self.logger.error(
                         message=(
-                            f"{self.log_prefix}: {err_msg}."
+                            f"{self.log_prefix}: {err_msg}"
                         ),
                         details=str(response.get("error", {}))
                     )
@@ -3590,9 +3681,9 @@ class NetskopePlugin(PluginBase):
                 err_msg = (
                     f"Invalid tag '{tag}' provided. Tag name must contain "
                     "only alphanumeric characters, hyphens, and spaces. This"
-                    f"tag will be skipped for {str(action)} action"
+                    f" tag will be skipped for {str(action)} action"
                 )
-                self.logger.info(f"{self.log_prefix}: {err_msg}")
+                self.logger.info(f"{self.log_prefix}: {err_msg}.")
                 failed_tags.append(tag)
                 continue
 
@@ -3602,7 +3693,7 @@ class NetskopePlugin(PluginBase):
                     f"exceed {TAG_DEVICE_TAG_LENGTH} characters. This"
                     f"tag will be skipped for {str(action)} action"
                 )
-                self.logger.info(f"{self.log_prefix}: {err_msg}")
+                self.logger.info(f"{self.log_prefix}: {err_msg}.")
                 failed_tags.append(tag)
                 continue
 
@@ -3636,7 +3727,7 @@ class NetskopePlugin(PluginBase):
                             f"tag will be skipped for {str(action)} action"
                         )
                         self.logger.error(
-                            message=f"{self.log_prefix}: {err_msg}",
+                            message=f"{self.log_prefix}: {err_msg}.",
                             details=json.dumps(create_response.get("error", {}))
                         )
                         failed_tags.append(tag)
@@ -3772,7 +3863,7 @@ class NetskopePlugin(PluginBase):
             raise NetskopeException(err_msg)
 
         log_msg = (
-            f"Successfully {'added' if cci_tag_action == 'append' else 'removed'} "
+            f"Successfully {'added' if cci_tag_action == 'append' else 'removed'} "     # noqa
             f"tags for {len(devices)} device record(s) on the Netskope Tenant."
         )
         self.logger.debug(
@@ -4358,7 +4449,8 @@ class NetskopePlugin(PluginBase):
             static_input_len_validation: bool = False,
             field_name: str = "",
             is_validation: bool = False,
-            action_name: str = ""
+            action_name: str = "",
+            action_label: str = ""
         ) -> list[str]:
             """Convert to list.
 
@@ -4377,16 +4469,22 @@ class NetskopePlugin(PluginBase):
                     is_validation and any(not v for v in list_values)
                 ):
                     log_and_raise = False
-                    if action_name == "replace" and len(list_values) > 1:
-                        log_and_raise = True
-                    elif action_name != "replace":
+                    if (
+                        action_name == "replace" and len(list_values) > 1
+                    ) or action_name != "replace":
                         log_and_raise = True
 
                     if log_and_raise:
-                        err_msg = (
-                            f"Static field '{field_name}' "
-                            "can not have empty comma separated values."
-                        )
+                        if (len(list_values) == 1) and (not list_values[0]):
+                            err_msg = (
+                                f"Invalid value for tags provided. Tags cannot be empty for "
+                                f"'{action_label}' action."
+                            )
+                        else:
+                            err_msg = (
+                                f"Static field '{field_name}' "
+                                "can not have empty comma separated values."
+                            )
                         raise NetskopeException(err_msg)
                 if is_validation and static_input_len_validation and len(list_values) > 1:
                     err_msg = (
@@ -4398,13 +4496,14 @@ class NetskopePlugin(PluginBase):
 
         tags = params.get("tags") or ""
         tag_action = params.get("tag_device_action") or "append"
-
+        tag_action_label = TAG_ACTION_LABEL_MAP.get(tag_action, "Replace")
         skip_tag_validation = isinstance(tags, str) and tags.startswith("$")
         tags = convert_to_list(
             action_name=tag_action,
             value=tags,
             field_name="Tags",
-            is_validation=is_validation
+            is_validation=is_validation,
+            action_label=tag_action_label
         )
 
         device_id = params.get("device_id") or ""
@@ -4421,6 +4520,15 @@ class NetskopePlugin(PluginBase):
         device_user_key = convert_to_list(
             value=device_user_key,
             field_name="User Key",
+            is_validation=is_validation
+        )
+
+        hostname = params.get("hostname") or ""
+        skip_hostname_validation = isinstance(hostname, str) and hostname.startswith("$")   # noqa
+        convert_to_list(
+            value=hostname,
+            field_name="Hostname",
+            static_input_len_validation=True,
             is_validation=is_validation
         )
 
@@ -4441,7 +4549,7 @@ class NetskopePlugin(PluginBase):
         if not tags and not skip_tag_validation and tag_action in ["append", "remove"]:
             err_msg = (
                 f"Invalid value for tags provided. Tags cannot be empty for "
-                f"'{tag_action}' action."
+                f"'{tag_action_label}' action."
             )
             self.logger.error(f"{self.log_prefix}: {err_msg}")
             raise NetskopeException(err_msg)
@@ -4464,17 +4572,29 @@ class NetskopePlugin(PluginBase):
                     self.logger.error(f"{self.log_prefix}: {err_msg}")
                     raise NetskopeException(err_msg)
 
-        if (not device_id and not device_user_key) and not (
-            skip_device_id_validation or skip_device_user_key_validation
-        ):
+        if not device_id and not skip_device_id_validation:
             err_msg = (
-                "Invalid value for Netskope Device UID/User Key provided. "
-                "Provide either Netskope Device UID or User Key."
+                "Netskope Device UID is a required parameter "
+                f"for {tag_action_label} action."
+            )
+            self.logger.error(f"{self.log_prefix}: {err_msg}")
+            raise NetskopeException(err_msg)
+        if not device_user_key and not skip_device_user_key_validation:
+            err_msg = (
+                "User Key is a required parameter "
+                f"for {tag_action_label} action."
+            )
+            self.logger.error(f"{self.log_prefix}: {err_msg}")
+            raise NetskopeException(err_msg)
+        if not hostname and not skip_hostname_validation:
+            err_msg = (
+                "Hostname is a required parameter "
+                f"for {tag_action_label} action."
             )
             self.logger.error(f"{self.log_prefix}: {err_msg}")
             raise NetskopeException(err_msg)
 
-        return tags, device_id, device_user_key, tag_action
+        return tags, device_id, device_user_key, hostname, tag_action
 
     def revert_action(self, action: Action):
         """Revert the action.
@@ -4718,7 +4838,9 @@ class NetskopePlugin(PluginBase):
             )
             raise NetskopeException(error_message)
 
-    def _bulk_add_remove_tag_device(self, actions: List[Action], action_label: str) -> List[str]:
+    def _bulk_add_remove_tag_device(
+            self, actions: List[Action], action_label: str
+    ) -> List[str]:
         """Tag devices in bulk.
 
         Args:
@@ -4733,7 +4855,11 @@ class NetskopePlugin(PluginBase):
             failed_action_ids = []
             tag_groups = {}
             tag_cache = self._fetch_all_tags()
-            action_value = None
+            action_value = (
+                actions[0].get("params").parameters.get("tag_device_action")
+            )
+            action_value = "Add" if action_value == "append" else "Remove"
+            device_bulk_call_count = 0
             for action_dict in actions:
                 action_id, action = action_dict.get("id"), action_dict.get("params")
                 try:
@@ -4741,6 +4867,7 @@ class NetskopePlugin(PluginBase):
                         tags,
                         device_id,
                         device_user_key,
+                        hostname,
                         cci_tag_action,
                     ) = self._process_params_for_tag_device_action(
                         action.parameters, True
@@ -4758,12 +4885,16 @@ class NetskopePlugin(PluginBase):
                         if uk:
                             unique_user_keys.add(uk)
 
-                    if not unique_user_keys or not device_id:
+                    if not unique_user_keys or not device_id or not hostname:
                         failed_action_ids.append(action_id)
                         continue
 
                     for user_key in unique_user_keys:
-                        device = {"nsdeviceuid": device_id, "userkey": user_key}
+                        device = {
+                            "nsdeviceuid": device_id,
+                            "userkey": user_key,
+                            "hostname": hostname
+                        }
 
                         for tag in tags:
                             tag_key = (tag, cci_tag_action)
@@ -4787,8 +4918,8 @@ class NetskopePlugin(PluginBase):
                 except Exception as e:
                     self.logger.error(
                         f"{self.log_prefix}: Error occurred while processing "
-                        f"action '{action_label}' for record with ID '{action_id}'. "
-                        f"Error: {e}."
+                        f"action '{action_label}' for record with ID '{action_id}'. "   # noqa
+                        f"Error: {e}"
                     )
                     failed_action_ids.append(action_id)
             log_msg = ""
@@ -4797,42 +4928,43 @@ class NetskopePlugin(PluginBase):
                 log_msg = (
                     f" {skipped_records} record(s) will be skipped "
                     "either due to being invalid or missing "
-                    "'Netskope Device UID' or 'User Key' field values."
+                    "'Netskope Device UID', 'User Key' or"
+                    " 'Hostname' field values."
                 )
             self.logger.info(
                 f"{self.log_prefix}: Performing '{action_value}' Tag(s)"
                 f" action on {len(actions)-skipped_records} "
                 f"record(s).{log_msg if log_msg else ''}"
             )
-            for (tag, cci_tag_action), group_data in tag_groups.items():
+            for (tag, cci_tag_action), group_data in tag_groups.items():  # noqa
                 devices = group_data['devices']
                 action_id_to_devices = group_data['action_id_to_devices']
 
                 try:
-                    tag_ids, tag_cache = self._query_and_create_tags_with_cache(
+                    tag_ids, tag_cache = self._query_and_create_tags_with_cache(  # noqa
                         [tag], action=cci_tag_action, tag_cache=tag_cache
                     )
 
                     unique_devices = []
                     seen_devices = set()
                     for device in devices:
-                        device_key = (device.get("nsdeviceuid"), device.get("userkey"))
+                        device_key = (device.get("nsdeviceuid"), device.get("userkey"))  # noqa
                         if device_key not in seen_devices:
                             unique_devices.append(device)
                             seen_devices.add(device_key)
 
-                    total_batches = (len(unique_devices) + TAG_DEVICE_BATCH_SIZE - 1) // TAG_DEVICE_BATCH_SIZE
+                    total_batches = (len(unique_devices) + TAG_DEVICE_BATCH_SIZE - 1) // TAG_DEVICE_BATCH_SIZE    # noqa  
                     for batch_num in range(total_batches):
                         start_idx = batch_num * TAG_DEVICE_BATCH_SIZE
-                        end_idx = min(start_idx + TAG_DEVICE_BATCH_SIZE, len(unique_devices))
+                        end_idx = min(start_idx + TAG_DEVICE_BATCH_SIZE, len(unique_devices))   # noqa
                         device_batch = unique_devices[start_idx:end_idx]
                         
                         batch_action_ids = []
                         batch_device_keys = set(
-                            (d.get("nsdeviceuid"), d.get("userkey"))
+                            (d.get("nsdeviceuid"), d.get("userkey"))  # noqa
                             for d in device_batch
                         )
-                        for action_id, action_devices in action_id_to_devices.items():
+                        for action_id, action_devices in action_id_to_devices.items():   # noqa
                             for action_device in action_devices:
                                 action_device_key = (
                                     action_device.get("nsdeviceuid"),
@@ -4844,28 +4976,37 @@ class NetskopePlugin(PluginBase):
                         
                         try:
                             self.logger.info(
-                                f"{self.log_prefix}: Processing batch {batch_num + 1}/{total_batches} "
+                                f"{self.log_prefix}: Processing batch {batch_num + 1}/{total_batches} "     # noqa
                                 f"of {len(device_batch)} device record(s) for tag '{tag}'."
                             )
-                            self._tag_devices(tag_ids, device_batch, cci_tag_action)
-                            
+                            if device_bulk_call_count > 0:
+                                self.logger.debug(
+                                    f"{self.log_prefix}: Sleeping "
+                                    f"{DEVICE_BULK_TAG_INTER_BATCH_SLEEP}s before next "
+                                    "device bulk tag API call to respect rate limit."
+                                )
+                                time.sleep(DEVICE_BULK_TAG_INTER_BATCH_SLEEP)
+                            device_bulk_call_count += 1
+                            self._tag_devices(tag_ids, device_batch, cci_tag_action)    # noqa
+
                             self.logger.info(
-                                f"{self.log_prefix}: Successfully {'tagged' if cci_tag_action == 'append' else 'untagged'} "
-                                f"batch {batch_num + 1}/{total_batches} ({len(device_batch)} device record(s)) with tag '{tag}'."
+                                f"{self.log_prefix}: Successfully {'tagged' if cci_tag_action == 'append' else 'untagged'} "    # noqa
+                                f"batch {batch_num + 1}/{total_batches} ({len(device_batch)} device record(s)) with tag '{tag}'."   # noqa
                             )
-                        
+
                         except Exception as batch_e:
+                            device_bulk_call_count += 1
                             self.logger.error(
-                                f"{self.log_prefix}: Failed to {'tag' if cci_tag_action == 'append' else 'untag'} "
-                                f"batch {batch_num + 1}/{total_batches} ({len(device_batch)} device record(s)) with tag '{tag}'. "
+                                f"{self.log_prefix}: Failed to {'tag' if cci_tag_action == 'append' else 'untag'} "     # noqa
+                                f"batch {batch_num + 1}/{total_batches} ({len(device_batch)} device record(s)) with tag '{tag}'. "      # noqa
                                 f"Error: {batch_e}"
                             )
                             failed_action_ids.extend(batch_action_ids)
 
                 except Exception as group_e:
                     self.logger.error(
-                        f"{self.log_prefix}: Failed to execute action '{action_label}' for tag '{tag}'. "
-                        f"Error: {group_e}"
+                        f"{self.log_prefix}: Failed to execute action "
+                        f"'{action_label}' for tag '{tag}'. Error: {group_e}"
                     )
                     failed_action_ids.extend(list(action_id_to_devices.keys()))
         except Exception as group_e:
@@ -4903,6 +5044,7 @@ class NetskopePlugin(PluginBase):
         failed_action_ids = []
         device_to_tags = {}
         tag_cache = self._fetch_all_tags()
+        device_bulk_call_count = 0
         for action_dict in actions:
             action_id = action_dict.get("id")
             action = action_dict.get("params")
@@ -4911,6 +5053,7 @@ class NetskopePlugin(PluginBase):
                     tags,
                     device_id,
                     device_user_key,
+                    hostname,
                     _,
                 ) = self._process_params_for_tag_device_action(
                     action.parameters, True
@@ -4927,12 +5070,12 @@ class NetskopePlugin(PluginBase):
                     if uk:
                         unique_user_keys.add(uk)
 
-                if not unique_user_keys or not device_id:
+                if not unique_user_keys or not device_id or not hostname:
                     failed_action_ids.append(action_id)
                     continue
 
                 for user_key in unique_user_keys:
-                    device_key = (device_id, user_key)
+                    device_key = (device_id, user_key, hostname)
                     if device_key not in device_to_tags:
                         device_to_tags[device_key] = {
                             'tags': set(),
@@ -4945,7 +5088,7 @@ class NetskopePlugin(PluginBase):
                 self.logger.error(
                     f"{self.log_prefix}: Error occurred while processing "
                     f"action '{action_label}' for record with ID '{action_id}'. "
-                    f"Error: {e}."
+                    f"Error: {e}"
                 )
                 failed_action_ids.append(action_id)
         log_msg = ""
@@ -4954,7 +5097,8 @@ class NetskopePlugin(PluginBase):
             log_msg = (
                 f" {skipped_records} record(s) will be skipped "
                 "either due to being invalid or missing "
-                "'Netskope Device UID' or 'User Key' field values."
+                "'Netskope Device UID', 'User Key' or "
+                "'Hostname' field values."
             )
         self.logger.info(
             f"{self.log_prefix}: Performing 'Replace' Tag(s) "
@@ -4964,7 +5108,7 @@ class NetskopePlugin(PluginBase):
 
         tag_set_groups = {}
 
-        for (device_id, user_key), group_data in device_to_tags.items():
+        for (device_id, user_key, hostname), group_data in device_to_tags.items():
             tags = sorted(list(group_data['tags']))  # Sort for consistent grouping
             action_ids = group_data['action_ids']
 
@@ -4974,7 +5118,7 @@ class NetskopePlugin(PluginBase):
                 tags = tags[:MAX_TAGS_PER_DEVICE]
                 self.logger.info(
                     f"{self.log_prefix}: Device '{device_id}' (userkey: "
-                    f"'{user_key}') has more than {MAX_TAGS_PER_DEVICE} tags. "
+                    f"'{user_key}', Hostname: '{hostname}') has more than {MAX_TAGS_PER_DEVICE} tags. "
                     f"Only the first {MAX_TAGS_PER_DEVICE} sorted tags will be "
                     f"applied: {tags}. Skipped tags: {skipped_tags}"
                 )
@@ -4986,13 +5130,17 @@ class NetskopePlugin(PluginBase):
                     'action_ids': set()
                 }
 
-            device = {"nsdeviceuid": device_id, "userkey": user_key}
+            device = {
+                "nsdeviceuid": device_id,
+                "userkey": user_key,
+                "hostname": hostname
+            }
             tag_set_groups[tag_set_key]['devices'].append(device)
             tag_set_groups[tag_set_key]['action_ids'].update(action_ids)
 
         self.logger.debug(
-            f"{self.log_prefix}: Grouped {len(device_to_tags)} device record(s) into "
-            f"{len(tag_set_groups)} tag set group(s)."
+            f"{self.log_prefix}: Grouped {len(device_to_tags)} device "
+            f"record(s) into {len(tag_set_groups)} tag set group(s)."
         )
 
         for tags_tuple, group_data in tag_set_groups.items():
@@ -5012,7 +5160,8 @@ class NetskopePlugin(PluginBase):
 
                 self.logger.info(
                     f"{self.log_prefix}: Replacing tags {tags} on "
-                    f"{len(devices)} device record(s) in {total_batches} batch(es)."
+                    f"{len(devices)} device record(s) in "
+                    f"{total_batches} batch(es)."
                 )
 
                 for batch_num in range(total_batches):
@@ -5028,7 +5177,14 @@ class NetskopePlugin(PluginBase):
                             f"{batch_num + 1}/{total_batches} with "
                             f"{len(device_batch)} device records(s) for tags {tags}."
                         )
-
+                        if device_bulk_call_count > 0:
+                            self.logger.debug(
+                                f"{self.log_prefix}: Sleeping "
+                                f"{DEVICE_BULK_TAG_INTER_BATCH_SLEEP}s before next "
+                                "device bulk tag API call to respect rate limit."
+                            )
+                            time.sleep(DEVICE_BULK_TAG_INTER_BATCH_SLEEP)
+                        device_bulk_call_count += 1
                         self._replace_device_tags(tag_ids, device_batch)
 
                         self.logger.info(
@@ -5038,6 +5194,7 @@ class NetskopePlugin(PluginBase):
                         )
 
                     except Exception as batch_e:
+                        device_bulk_call_count += 1
                         self.logger.error(
                             message=(
                                 f"{self.log_prefix}: Failed to replace tags on "
@@ -5065,7 +5222,7 @@ class NetskopePlugin(PluginBase):
 
         return failed_action_ids
 
-    def execute_action(self, action: Action):
+    def execute_action(self, action: Action, revert: bool = False):
         """Execute action on the user.
 
         Args:
@@ -5078,8 +5235,32 @@ class NetskopePlugin(PluginBase):
             exclude_keys=["host", "tags", "protocol", "publishers"],
         )
         self.logger.info(
-            f"{self.log_prefix}: Executing '{action.label}' action."
+            f"{self.log_prefix}: Executing '{action.label}' "
+            f"{'revert action.' if revert else 'action'}."
         )
+        if revert:
+            if action.value == "impact":
+                anomaly_id = action.parameters.get("anomaly_id", "")
+                if not anomaly_id:
+                    err_msg = (
+                        "Unable to find the Anomaly ID, hence "
+                        "Revert UCI Impact action will be skipped."
+                    )
+                    self.logger.error(f"{self.log_prefix}: {err_msg}")
+                    raise NetskopeException(err_msg)
+                self.revert_uci_update_impact(anomaly_id)
+                self.logger.info(
+                    f"{self.log_prefix}: Successfully executed revert action"
+                    f" for '{action.label}' and marked Anomaly ID "
+                    f"'{anomaly_id}' as allowed."
+                )
+                return
+
+            raise NotImplementedError(
+                f"Revert action is not supported for "
+                f"'{action.value}' action in Netskope Risk Exchange plugin."
+            )
+
         if action.value == "generate":
             self.logger.info(
                 f"{self.log_prefix}: Successfully executed '{action.label}' "
@@ -5088,22 +5269,6 @@ class NetskopePlugin(PluginBase):
             )
             return
         elif action.value == "impact":
-            if 'performRevert' in Action.model_fields and action.performRevert:
-                anomaly_id = action.parameters.get("anomaly_id", "")
-                if not anomaly_id:
-                    err_msg = (
-                        "Unable to find the Anomaly ID, hence "
-                        "Revert UCI Impact Action will be skipped."
-                    )
-                    self.logger.error(f"{self.log_prefix}: {err_msg}")
-                    raise NetskopeException(err_msg)
-                self.revert_uci_update_impact(anomaly_id)
-                self.logger.info(
-                    f"{self.log_prefix}: Successfully marked anomaly ID "
-                    f"{anomaly_id} as allowed."
-                )
-                return
-
             user, score, source, reason = (
                 self._process_params_for_impact_action(action.parameters)
             )
@@ -5241,7 +5406,7 @@ class NetskopePlugin(PluginBase):
                 f"{instance_name} successfully."
             )
 
-    def execute_actions(self, actions):
+    def execute_actions(self, actions, revert: bool = False):
         """Execute actions in bulk.
 
         Args:
@@ -5251,10 +5416,20 @@ class NetskopePlugin(PluginBase):
         self.tenant = helper.get_tenant_crev2(self.name)
         first_action = actions[0].get("params")
         action_label = first_action.label
-        self.logger.info(
-            f"{self.log_prefix}: Executing '{action_label}' action "
-            f"for {len(actions)} records."
-        )
+        if revert:
+            err_msg = ""
+            if first_action.value != "impact":
+                err_msg = (
+                    f"Batch revert action for '{action_label}' is not "
+                    f"supported in the Netskope Risk Exchange plugin."
+                )
+                self.logger.error(f"{self.log_prefix}: {err_msg}")
+            raise NotImplementedError(err_msg)
+        if first_action.value != "impact":
+            self.logger.info(
+                f"{self.log_prefix}: Executing '{action_label}' action "
+                f"for {len(actions)} record(s)."
+            )
         failed_action_ids = []
         if first_action.value == "private_app":
             private_apps = {}
@@ -5380,7 +5555,7 @@ class NetskopePlugin(PluginBase):
                                 f"{self.log_prefix}: Failed to add "
                                 f"{len(batch_users)} user(s) to the group "
                                 f"with ID '{group_id}' for batch {batch}. "
-                                f"Error: {e}. Continuing with next batch."
+                                f"Error: {e} Continuing with next batch."
                             )
                             batch += 1
 
@@ -5459,7 +5634,7 @@ class NetskopePlugin(PluginBase):
                                 f"{self.log_prefix}: Failed to remove "
                                 f"{len(batch_users)} user(s) from the group "
                                 f"with ID '{group_id}' for batch {batch}. "
-                                f"Error: {e}. Continuing with next batch."
+                                f"Error: {e} Continuing with next batch."
                             )
                             batch += 1
 
@@ -5519,7 +5694,7 @@ class NetskopePlugin(PluginBase):
                     self.logger.error(
                         f"{self.log_prefix}: Error occurred while processing "
                         f"action '{action_label}' for record with ID '{id}'. "
-                        f"Error: {e}."
+                        f"Error: {e}"
                     )
                     failed_action_ids.append(id)
 

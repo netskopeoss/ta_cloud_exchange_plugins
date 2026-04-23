@@ -1,3 +1,14 @@
+# 1.7.0
+## Added
+- Added the required `hostname` parameter to the device payload for device tagging APIs.
+- Added validation for required fields in entity mappings.
+## Changed
+- Updated rate limit handling to retry based on the `Retry-After` header value, with a 12-second delay between each device tagging API call.
+- Increased the batch size for device tagging to `1000` devices per API call.
+## Fixed
+- Fixed an issue to ensure the revert action is executed only for supported action types.
+
+
 # 1.6.0
 ## Added
 - Added support for 'Tag/Untag Device' action on Netskope.

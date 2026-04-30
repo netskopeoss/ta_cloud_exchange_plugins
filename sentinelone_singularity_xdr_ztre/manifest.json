@@ -1,0 +1,35 @@
+{
+    "name": "SentinelOne Singularity XDR",
+    "description": "This plugin is used to fetch Devices (Endpoints) from the Inventory > Endpoints page, Users (Identity) from the Inventory > Identity page, and Applications from the Vulnerabilities page from the SentinelOne Singularity XDR platform. The plugin supports performing Manage Device Tags, Move Device to Group, Isolate/Undo Isolate, Update Asset Criticality, Run Scan and Reboot Device actions on Devices. The plugin supports performing Update Asset Criticality action on Users.",
+    "minimum_version": "6.1.0",
+    "id": "sentinelone_singularity_xdr_ztre",
+    "version": "1.0.0",
+    "module": "CRE",
+    "configuration": [
+        {
+            "label": "Base URL",
+            "key": "base_url",
+            "type": "text",
+            "default": "",
+            "placeholder": "https://your-tenant.sentinelone.net",
+            "mandatory": true,
+            "description": "Base URL of the SentinelOne instance. e.g. https://your-tenant.sentinelone.net"
+        },
+        {
+            "label": "API Token",
+            "key": "api_token",
+            "type": "password",
+            "default": "",
+            "mandatory": true,
+            "description": "API token to authenticate SentinelOne. API Token can be generated from 'My Profile > Actions > API Token Operations > Generate API Token'."
+        },
+        {
+            "label": "Site Name",
+            "key": "site_name",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "Name of the SentinelOne site to fetch assets from. Navigate to 'Policies and settings > Scopes > Sites' page to get the Site Name. Only one Site Name value is allowed."
+        }
+    ]
+}

@@ -1,0 +1,30 @@
+{
+    "name": "AWS Inspector",
+    "description": "This plugin is used to fetch Workloads from the AWS Inspector > Inventory > Findings for EC2 instance resources. This plugin also supports Create Suppression Rule action on AWS Inspector.",
+    "id": "aws_inspector_ztre",
+    "minimum_version": "6.0.0",
+    "version": "1.0.0",
+    "module": "CRE",
+    "configuration": [
+        {
+            "label": "Authentication Method",
+            "key": "authentication_method",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Deployed on AWS",
+                    "value": "deployed_on_aws"
+                },
+                {
+                    "key": "AWS IAM Roles Anywhere",
+                    "value": "aws_iam_roles_anywhere"
+                }
+            ],
+            "default": "deployed_on_aws",
+            "has_api_call": true,
+            "payload_fields": ["authentication_method"],
+            "mandatory": true,
+            "description": "Method to be used for AWS client authentication."
+        }
+    ]
+}

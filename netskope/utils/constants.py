@@ -39,7 +39,6 @@ REGEX_HOST = (
     r"^(?!:\/\/)([a-z0-9-]{1,63}\.)?[a-z0-9-]{1,63}(?:\.[a-z]{2,})?$|"
     r"^(?:(?:25[0-5]|(2[0-4]|1\d|[1-9]|)\d)\.){3}(?:25[0-5]|(?:2[0-4]|1\d|[1-9]|)\d)$"  # noqa
 )
-REGEX_FOR_DOMAIN = r"^(?!.{254})(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+(?:[a-zA-Z]{2,63})$"
 DESTINATION_PROFILE_EXACT_MATCH_PATTERN = (
     r'^'
     r'(?:'
@@ -70,10 +69,6 @@ URLS = {
         "{}/api/v2/profiles/destinations/{}/values"
     ),
     "V2_DESTINATION_PROFILE_DEPLOY": "{}/api/v2/profiles/destinations/deploy",
-    "V2_DNS_PROFILE": "{}/api/v2/profiles/dns",
-    "V2_DNS_PROFILE_BY_ID": "{}/api/v2/profiles/dns/{}",
-    "V2_DNS_DOMAIN_CATEGORIES": "{}/api/v2/profiles/dns/domaincategories",
-    "V2_DNS_RECORD_TYPES": "{}/api/v2/profiles/dns/recordtypes",
     "V2_PRIVATE_APP": "{}/api/v2/steering/apps/private",
     "V2_PRIVATE_APP_PATCH": "{}/api/v2/steering/apps/private/{}",
     "V2_PUBLISHER": "{}/api/v2/infrastructure/publishers",
@@ -81,7 +76,7 @@ URLS = {
 }
 MODULE_NAME = "CTE"
 PLUGIN_NAME = "Netskope Threat Exchange"
-PLUGIN_VERSION = "2.5.0"
+PLUGIN_VERSION = "2.4.0"
 BYTES_TO_MB = 1024 * 1024
 # Retraction Constant
 RETRACTION = "Retraction"
@@ -90,17 +85,8 @@ MAX_RETRIES = 4
 DEFAULT_SLEEP_TIME = 60
 MAX_INITIAL_RANGE = 365
 MAXIMUM_CE_VERSION = "5.1.2"
-PRIVATE_APP_TAG_MAX_LENGTH = 30
 MAX_PROFILE_NAME_LENGTH = 100
 MAX_PROFILE_DESC_LENGTH = 200
-MAX_DNS_PROFILE_NAME_LENGTH = 255
-MAX_DNS_PROFILE_DESC_LENGTH = 255
-DNS_PROFILE_PAYLOAD_LIMIT = 16 * 1024 * 1024
-# Validated against the API: bodies up to 16,776,706 bytes are
-# accepted and bodies at 16,777,572 are rejected. 1 KiB of margin
-# below the empirically proven-good size leaves room for any small
-# client/server byte-counting variance without giving up capacity.
-DNS_PROFILE_PAYLOAD_SAFETY_BUFFER = 1024
 DESTINATION_PROFILE_BATCH_SIZE = 10
 
 # Destination Profile Limits
@@ -159,12 +145,3 @@ MATCH_TYPE_OPTIONS = {
     "sensitive": "Exact (Case Sensitive)",
     "regex": "RegEx"
 }
-DNS_PROFILE_ACTION_TYPE_OPTIONS = {
-    "add_to_allow_list": "Add to Domain Allowlist",
-    "add_to_block_list": "Add to Domain Blocklist",
-}
-BLOCK_ALL_EXCEPT_ALLOW_LIST_OPTIONS = {
-    "True": "Yes",
-    "False": "No",
-}
-CUSTOM_SEPARATOR = "()"

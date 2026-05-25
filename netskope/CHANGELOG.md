@@ -1,3 +1,8 @@
+# 2.5.0
+## Added
+- Added support for DNS Profile sharing and push retraction.
+- Added logic for skipping tags longer than 30 characters for Private App sharing action.
+
 # 2.4.0
 ## Added
 - Added support for Destination Profile sharing and delete retraction.

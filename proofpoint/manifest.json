@@ -1,18 +1,22 @@
 {
     "name": "Proofpoint",
     "id": "proofpoint",
-    "version": "1.0.0",
-    "description": "The Proofpoint plugin fetches malicious file hashes and URLs from several types of TAP (Targeted Attack Protection) events. This plugin does not support sharing of Indicators to Proofpoint. To access the plugin, you would need Proofpoint username and password having Proofpoint API access.",
+    "version": "2.0.0",
+    "minimum_version": "5.1.2",
+    "description": "This plugin is used to pull IOCs of type URL, SHA256, Domain, and FQDN from the Proofpoint TAP (Targeted Attack Protection) Dashboard under Threats. The plugin supports pull retraction of indicators from Proofpoint. This plugin does not support sharing of indicators to Proofpoint platform.",
     "patch_supported": false,
     "push_supported": false,
+    "fetch_retraction_info": true,
+    "module": "CTE",
     "configuration": [
         {
-            "label": "Proofpoint Base URL",
+            "label": "Base URL",
             "key": "base_url",
             "type": "text",
             "mandatory": true,
             "default": "https://tap-api-v2.proofpoint.com",
-            "description": "Proofpoint Base URL for REST APIs."
+            "placeholder": "https://tap-api-v2.proofpoint.com",
+            "description": "Proofpoint TAP API Base URL. e.g. https://tap-api-v2.proofpoint.com"
         },
         {
             "label": "Username",
@@ -20,7 +24,8 @@
             "type": "text",
             "mandatory": true,
             "default": "",
-            "description": "Proofpoint username."
+            "placeholder": "service_principal_username",
+            "description": "Proofpoint API username can be generated from the 'TAP Dashboard > Settings > Connected Applications > Create New Credential'."
         },
         {
             "label": "Password",
@@ -28,7 +33,7 @@
             "type": "password",
             "mandatory": true,
             "default": "",
-            "description": "Proofpoint password."
+            "description": "Proofpoint API password can be generated from the 'TAP Dashboard > Settings > Connected Applications > Create New Credential'."
         },
         {
             "label": "Event Type(s)",
@@ -58,8 +63,8 @@
                 "messagesDelivered",
                 "messagesBlocked"
             ],
-            "mandatory": true,
-            "description": "Only indicators with matching TAP event type(s) will be saved."
+            "mandatory": false,
+            "description": "Select event types to pull threat indicators (URL, SHA256, Domain, and FQDN) from Proofpoint. If no event types are selected, all event types will be included by default."
         },
         {
             "label": "Enable Tagging",
@@ -77,7 +82,14 @@
             ],
             "default": "yes",
             "mandatory": true,
-            "description": "Enable/Disable tagging functionality. If enabled, IoCs will be tagged based on Proofpoint event type."
+            "description": "Enable/Disable tagging functionality."
+        },
+        {
+            "label": "Retraction Interval (in hours)",
+            "key": "retraction_interval",
+            "type": "number",
+            "mandatory": false,
+            "description": "Number of hours to use as the retraction interval for Proofpoint IoC(s) retraction. Valid values are in range from 1 to 168 hours. This parameter will only be considered if \"IoC(s) Retraction\" is enabled in Threat Exchange Settings."
         },
         {
             "label": "Initial Range (in hours)",
@@ -85,7 +97,7 @@
             "type": "number",
             "mandatory": true,
             "default": 12,
-            "description": "Number of hours to pull the data for the initial run."
+            "description": "Number of hours Threat IoCs to pull in the initial run. Valid values are in range from 1 to 168 hours."
         }
     ]
 }

@@ -1,7 +1,7 @@
 {
     "name": "Abnormal Security",
     "id": "abnormal_security",
-    "version": "1.1.0",
+    "version": "1.1.1",
     "description": "This plugin is used to pull IOCs of type SHA256, MD5, URL, Domain, IPv4 and IPv6 from Threat Log page of Abnormal Security platform. This plugin supports retraction of IOCs pulled from Abnormal Security platform. This plugin does not support sharing of indicators to Abnormal Security platform.",
     "minimum_version": "5.1.0",
     "patch_supported": false,
@@ -37,7 +37,7 @@
             "type": "password",
             "default": "",
             "mandatory": true,
-            "description": "Provide the API Token from Settings > Integrations > Abnormal REST API"
+            "description": "Provide the API Token from Settings > Integrations > API Token Management > Create New Token."
         },
         {
             "label": "Type of Threat data to pull",
@@ -85,7 +85,7 @@
             "key": "retraction_interval",
             "type": "number",
             "mandatory": false,
-            "description": "Specify the number of days for which IoC retraction should be run for Abnormal Security indicators. Note: This parameter is applicable only for Netskope CE version 5.1.0 or later, and if \"IoC(s) Retraction\" is enabled in Threat Exchange Settings. Value must be between 1 and 2^62."
+            "description": "Specify the number of days for which IoC retraction should be run for Abnormal Security indicators. Note: This parameter is applicable only for Netskope CE version 5.1.0 or later, and if \"IoC(s) Retraction\" is enabled in Threat Exchange Settings. Value must be between 1 and 100k."
         },
         {
             "label": "Enable Tagging",
@@ -111,7 +111,7 @@
             "type": "number",
             "mandatory": true,
             "default": 7,
-            "description": "Number of days to pull the data for the initial run. Value must be between 0 and 2^62."
+            "description": "Number of days to pull the data for the initial run. Value must be between 0 and 100k."
         }
     ]
 }

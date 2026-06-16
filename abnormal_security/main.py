@@ -337,9 +337,25 @@ class AbnormalSecurityPlugin(PluginBase):
         headers = self.abnormal_security_helper.get_auth_headers(api_key)
         try:
             for attachment_name in attachment_names:
+                try:
+                    encoded_attachment_name = (
+                        self.abnormal_security_helper._percent_encode_string(
+                            attachment_name
+                        )
+                    )
+                except Exception as err:
+                    err_msg = (
+                        "Unexpected error occurred while percent encoding"
+                        f" attachment name {attachment_name}, hence skipped"
+                        " fetching attachment details."
+                    )
+                    self.logger.error(
+                        f"{self.log_prefix}: {err_msg}. Error: {err}."
+                    )
+                    continue
                 fetch_message_attachment_url = (
                     f"{base_url}/messages/{message_id}"
-                    f"/attachment/{attachment_name}"
+                    f"/attachment/{encoded_attachment_name}"
                 )
                 logger_msg = (
                     f"fetching attachment data for {attachment_name} "
@@ -467,12 +483,11 @@ class AbnormalSecurityPlugin(PluginBase):
         extended_information: str,
         successfully_created_ioc: Dict,
         skipped_ioc: int,
-        skipped_ioc_values: List[str],
         first_seen=None,
         last_seen=None,
         comments: str = "",
         iocs_to_be_pulled: List[str] = INDICATOR_TYPE_LIST,
-    ) -> Tuple[Union[List[Indicator], Indicator, None], Dict, int, List[str]]:
+    ) -> Tuple[Union[List[Indicator], Indicator, None], Dict, int]:
         """
         Create Indicator object(s) from given indicator value, type, tags and
             extended information.
@@ -485,7 +500,6 @@ class AbnormalSecurityPlugin(PluginBase):
             successfully_created_ioc (Dict): Dictionary to store the count of
                 successfully created IOC.
             skipped_ioc (int): Count of skipped IOC.
-            skipped_ioc_values (List[str]): List of skipped IOC values.
             first_seen (datetime, optional): First seen datetime for the
                 indicator. Defaults to None.
             last_seen (datetime, optional): Last seen datetime for the
@@ -494,19 +508,17 @@ class AbnormalSecurityPlugin(PluginBase):
                 pulled. Defaults to ["sha256", "md5", "url", "domain", "ipv4"].
 
         Returns:
-            Tuple[Union[List[Indicator], Indicator, None], Dict, int, List[str]]:
+            Tuple[Union[List[Indicator], Indicator, None], Dict, int]:
                 - List of Indicator objects if indicator_type is "url" else a
                     single Indicator object.
                 - Dictionary of successfully created IOC.
                 - Count of skipped IOC.
-                - List of skipped IOC values.
         """
         if indicator_type not in iocs_to_be_pulled:
             return (
                 None,
                 successfully_created_ioc,
                 skipped_ioc,
-                skipped_ioc_values,
             )
         try:
             # Check if the indicator value is empty
@@ -518,7 +530,6 @@ class AbnormalSecurityPlugin(PluginBase):
                     None,
                     successfully_created_ioc,
                     skipped_ioc,
-                    skipped_ioc_values,
                 )
             elif indicator_type == "url":
                 url_indicator_list = []
@@ -555,19 +566,16 @@ class AbnormalSecurityPlugin(PluginBase):
                     url_indicator_list,
                     successfully_created_ioc,
                     skipped_ioc,
-                    skipped_ioc_values,
                 )
             else:
                 if indicator_type == "domain" and not self._is_valid_domain(
                     indicator_value
                 ):
-                    skipped_ioc_values.append(indicator_value)
                     skipped_ioc += 1
                     return (
                         None,
                         successfully_created_ioc,
                         skipped_ioc,
-                        skipped_ioc_values,
                     )
                 indicator_object = Indicator(
                     value=indicator_value,
@@ -585,7 +593,6 @@ class AbnormalSecurityPlugin(PluginBase):
                     indicator_object,
                     successfully_created_ioc,
                     skipped_ioc,
-                    skipped_ioc_values
                 )
         except (ValidationError, Exception) as e:
             error_msg = (
@@ -603,15 +610,12 @@ class AbnormalSecurityPlugin(PluginBase):
             )
             if indicator_type == "url" and isinstance(indicator_value, list):
                 skipped_ioc += len(indicator_value)
-                skipped_ioc_values.extend(indicator_value)
             else:
-                skipped_ioc_values.append(indicator_value)
                 skipped_ioc += 1
             return (
                 None,
                 successfully_created_ioc,
                 skipped_ioc,
-                skipped_ioc_values
             )
 
     def _pull(self) -> Generator[Tuple[List[Indicator], Dict], None, None]:
@@ -651,7 +655,6 @@ class AbnormalSecurityPlugin(PluginBase):
                 f" {initial_pull_range} days."
             )
         total_skipped_iocs = 0
-        skipped_ioc_values = []
         total_skipped_tags = []
         tag_utils = TagUtils()
         total_fetched_iocs = 0
@@ -697,7 +700,6 @@ class AbnormalSecurityPlugin(PluginBase):
                                 indicator_object,
                                 successfully_extracted_ioc_count,
                                 skipped_ioc,
-                                skipped_ioc_values,
                             ) = self._create_indicator_object(
                                 indicator_value=threat_detail.get(
                                     "domain", ""
@@ -712,7 +714,6 @@ class AbnormalSecurityPlugin(PluginBase):
                                     successfully_extracted_ioc_count
                                 ),
                                 skipped_ioc=skipped_ioc,
-                                skipped_ioc_values=skipped_ioc_values,
                                 iocs_to_be_pulled=iocs_to_be_pulled,
                                 comments=threat_detail.get("comments"),
                             )
@@ -728,7 +729,6 @@ class AbnormalSecurityPlugin(PluginBase):
                                     indicator_object,
                                     successfully_extracted_ioc_count,
                                     skipped_ioc,
-                                    skipped_ioc_values,
                                 ) = self._create_indicator_object(
                                     indicator_value=ip_ioc_value,
                                     indicator_type=ip_version,
@@ -743,14 +743,12 @@ class AbnormalSecurityPlugin(PluginBase):
                                         successfully_extracted_ioc_count
                                     ),
                                     skipped_ioc=skipped_ioc,
-                                    skipped_ioc_values=skipped_ioc_values,
                                     iocs_to_be_pulled=iocs_to_be_pulled,
                                     comments=threat_detail.get("comments"),
                                 )
                                 if indicator_object:
                                     indicators_list.append(indicator_object)
                             else:
-                                skipped_ioc_values.append(ip_ioc_value)
                                 skipped_ioc += 1
                             # Append IoC type URL extracted from email
                             # body in the Indicators List
@@ -758,7 +756,6 @@ class AbnormalSecurityPlugin(PluginBase):
                                 url_indicator_list,
                                 successfully_extracted_ioc_count,
                                 skipped_ioc,
-                                skipped_ioc_values,
                             ) = self._create_indicator_object(
                                 indicator_value=threat_detail.get("urls"),
                                 indicator_type="url",
@@ -771,7 +768,6 @@ class AbnormalSecurityPlugin(PluginBase):
                                     successfully_extracted_ioc_count
                                 ),
                                 skipped_ioc=skipped_ioc,
-                                skipped_ioc_values=skipped_ioc_values,
                                 iocs_to_be_pulled=iocs_to_be_pulled,
                                 comments=threat_detail.get("comments"),
                             )
@@ -793,7 +789,6 @@ class AbnormalSecurityPlugin(PluginBase):
                                     indicator_object,
                                     successfully_extracted_ioc_count,
                                     skipped_ioc,
-                                    skipped_ioc_values,
                                 ) = self._create_indicator_object(
                                     indicator_value=(
                                         message_attachment_details.get(
@@ -809,7 +804,6 @@ class AbnormalSecurityPlugin(PluginBase):
                                         successfully_extracted_ioc_count
                                     ),
                                     skipped_ioc=skipped_ioc,
-                                    skipped_ioc_values=skipped_ioc_values,
                                     iocs_to_be_pulled=iocs_to_be_pulled,
                                     comments=threat_detail.get("comments"),
                                 )
@@ -820,7 +814,6 @@ class AbnormalSecurityPlugin(PluginBase):
                                     indicator_object,
                                     successfully_extracted_ioc_count,
                                     skipped_ioc,
-                                    skipped_ioc_values,
                                 ) = self._create_indicator_object(
                                     indicator_value=(
                                         message_attachment_details.get(
@@ -836,7 +829,6 @@ class AbnormalSecurityPlugin(PluginBase):
                                         successfully_extracted_ioc_count
                                     ),
                                     skipped_ioc=skipped_ioc,
-                                    skipped_ioc_values=skipped_ioc_values,
                                     iocs_to_be_pulled=iocs_to_be_pulled,
                                     comments=threat_detail.get("comments"),
                                 )
@@ -849,7 +841,6 @@ class AbnormalSecurityPlugin(PluginBase):
                                     url_indicator_list,
                                     successfully_extracted_ioc_count,
                                     skipped_ioc,
-                                    skipped_ioc_values,
                                 ) = self._create_indicator_object(
                                     indicator_value=(
                                         message_attachment_details.get(
@@ -865,7 +856,6 @@ class AbnormalSecurityPlugin(PluginBase):
                                         successfully_extracted_ioc_count
                                     ),
                                     skipped_ioc=skipped_ioc,
-                                    skipped_ioc_values=skipped_ioc_values,
                                     iocs_to_be_pulled=iocs_to_be_pulled,
                                     comments=threat_detail.get("comments"),
                                 )
@@ -902,8 +892,7 @@ class AbnormalSecurityPlugin(PluginBase):
                 self.logger.info(
                     f"{self.log_prefix}: Skipped pulling {total_skipped_iocs}"
                     f" IoC(s) from {PLATFORM_NAME} as they were empty or of"
-                    " invalid type.",
-                    details=f"Skipped IoC(s): {', '.join(skipped_ioc_values)}",
+                    " invalid type."
                 )
             self.logger.info(
                 f"{self.log_prefix}: Successfully fetched "
@@ -1337,7 +1326,7 @@ class AbnormalSecurityPlugin(PluginBase):
                 field_value > max_value or zero_condition
             ):
                 if max_value == INTEGER_THRESHOLD:
-                    max_value = "2^62"
+                    max_value = "100k"
                 err_msg = (
                     f"Invalid value for {field_name} provided in configuration"
                     " parameters. Valid value should be an integer "

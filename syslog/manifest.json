@@ -1,7 +1,7 @@
 {
     "name": "Syslog",
     "id": "syslog",
-    "version": "4.1.0",
+    "version": "4.1.1",
     "module": "CLS",
     "mapping": "Syslog Default Mappings",
     "format_options": [
@@ -111,6 +111,24 @@
             "default": "no",
             "mandatory": false,
             "description": "Select 'Yes' to ingest the data without the Log Source Identifier field. This option is only applicable to JSON-formatted data."
+        },
+        {
+            "label": "Exclude Priority Field",
+            "key": "skip_priority_field",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Yes",
+                    "value": "yes"
+                },
+                {
+                    "key": "No",
+                    "value": "no"
+                }
+            ],
+            "default": "no",
+            "mandatory": false,
+            "description": "Select 'Yes' to ingest the data without the priority field in the syslog message. This option is only applicable to JSON-formatted data."
         }
     ]
 }

@@ -139,9 +139,11 @@ class SSLSysLogHandler(logging.handlers.SysLogHandler):
         certs=None,
         facility=LOG_USER,
         socktype=None,
+        skip_priority=False,
     ):
         """Init method."""
         self.protocol = protocol
+        self.skip_priority = skip_priority
         if protocol == "TLS":
             logging.Handler.__init__(self)
 
@@ -177,14 +179,15 @@ class SSLSysLogHandler(logging.handlers.SysLogHandler):
         """Emit Method."""
         if self.protocol == "TLS":
             msg = self.format(record) + "\n"
-            prio = "<%d>" % self.encodePriority(
-                self.facility, self.mapPriority(record.levelname)
-            )
             if type(msg) == "unicode":
                 msg = msg.encode("utf-8")
                 if codecs:
                     msg = codecs.BOM_UTF8 + msg
-            msg = prio + msg
+            if not self.skip_priority:
+                prio = "<%d>" % self.encodePriority(
+                    self.facility, self.mapPriority(record.levelname)
+                )
+                msg = prio + msg
             try:
                 self.socket.write(str.encode(msg))
             except (KeyboardInterrupt, SystemExit):
@@ -202,12 +205,16 @@ class SSLSysLogHandler(logging.handlers.SysLogHandler):
 
                 # We need to convert record level to lowercase, maybe this will
                 # change in the future.
-                prio = "<%d>" % self.encodePriority(
-                    self.facility, self.mapPriority(record.levelname)
-                )
-                prio = prio.encode("utf-8")
-                # Message is a string. Convert to bytes as required by RFC 5424
-                msg = prio + msg.encode("utf-8")
+                if not self.skip_priority:
+                    prio = "<%d>" % self.encodePriority(
+                        self.facility, self.mapPriority(record.levelname)
+                    )
+                    prio = prio.encode("utf-8")
+                    # Message is a string. Convert to bytes as
+                    # required by RFC 5424
+                    msg = prio + msg.encode("utf-8")
+                else:
+                    msg = msg.encode("utf-8")
                 if self.unixsocket:
                     try:
                         self.socket.send(msg)

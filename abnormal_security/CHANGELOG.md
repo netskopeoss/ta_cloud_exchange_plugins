@@ -1,3 +1,9 @@
+# 1.1.1
+## Changed
+- URL encode the attachment name before making API call for attachment details.
+- Removed skipped IOC values from logger message, due to None values.
+- Updated maximum allowed value for Initial Range and Retraction Interval to 100k days.
+
 # 1.1.0
 ## Added
 - Added support for fetching IoCs of type IPv6.

@@ -36,6 +36,7 @@ import json
 import time
 import traceback
 from typing import Dict, List, Tuple, Union
+from urllib.parse import quote
 
 import requests
 from netskope.common.utils import add_user_agent
@@ -479,3 +480,14 @@ class AbnormalSecurityPluginHelper(object):
             "Content-Type": "application/json",
             "Authorization": f"Bearer {api_key}",
         }
+
+    def _percent_encode_string(self, string: str) -> str:
+        """Percent-encode a string for safe use as a URL path segment.
+
+        Args:
+            string (str): String to encode.
+
+        Returns:
+            str: Percent-encoded string with all reserved characters escaped.
+        """
+        return quote(string, safe="")

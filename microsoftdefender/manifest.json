@@ -1,101 +1,101 @@
 {
-    "name": "Microsoft Defender for Endpoint",
-    "id": "microsoftdefenderv2",
-    "version": "1.4.0",
-    "module": "CTE",
-    "minimum_version": "5.1.2",
-    "description": "This plugin is used to pull indicators of type URL, IPv4, IPv6, Domain, MD5 and SHA256 from System > Settings > Endpoints > Indicators page of Microsoft Defender for Endpoint platform. This plugin supports sharing indicators of type URL, IPv4, IPv6, Domain, MD5 and SHA256 to System > Settings > Endpoints > Indicators page of Microsoft Defender for Endpoint platform. This plugin also supports pull and push retraction of indicators from Microsoft Defender for Endpoint platform.",
-    "push_supported": true,
-    "patch_supported": true,
-    "delete_supported": true,
-    "fetch_retraction_info": true,
-    "configuration": [
-        {
-            "label": "Base URL",
-            "key": "base_url",
-            "type": "choice",
-            "choices": [
-                {
-                    "key": "api.securitycenter.microsoft.com",
-                    "value": "https://api.securitycenter.microsoft.com"
-                },
-                {
-                    "key": "us.api.security.microsoft.com",
-                    "value": "https://us.api.security.microsoft.com"
-                },
-                {
-                    "key": "eu.api.security.microsoft.com",
-                    "value": "https://eu.api.security.microsoft.com"
-                },
-                {
-                    "key": "uk.api.security.microsoft.com",
-                    "value": "https://uk.api.security.microsoft.com"
-                },
-                {
-                    "key": "au.api.security.microsoft.com",
-                    "value": "https://au.api.security.microsoft.com"
-                },
-                {
-                    "key": "swa.api.security.microsoft.com",
-                    "value": "https://swa.api.security.microsoft.com"
-                },
-                {
-                    "key": "ina.api.security.microsoft.com",
-                    "value": "https://ina.api.security.microsoft.com"
-                },
-                {
-                    "key": "aea.api.security.microsoft.com",
-                    "value": "https://aea.api.security.microsoft.com"
-                },
-                {
-                    "key": "api-gcc.securitycenter.microsoft.us",
-                    "value": "https://api-gcc.securitycenter.microsoft.us"
-                },
-                {
-                    "key": "api-gov.securitycenter.microsoft.us",
-                    "value": "https://api-gov.securitycenter.microsoft.us"
-                }
-            ],
-            "default": "https://api.securitycenter.microsoft.com",
-            "mandatory": true,
-            "description": "Base URL of the Microsoft Defender for Endpoint platform."
-        },
-        {
-            "label": "Tenant ID",
-            "key": "tenantid",
-            "type": "text",
-            "mandatory": true,
-            "default": "",
-            "placeholder": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
-            "description": "Directory (Tenant) ID of the Microsoft Entra ID application. Navigate to Microsoft Entra Portal > App Registrations > [Your App] > Overview."
-        },
-        {
-            "label": "Application ID",
-            "key": "appid",
-            "type": "text",
-            "mandatory": true,
-            "default": "",
-            "placeholder": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
-            "description": "Application (Client) ID of the Microsoft Entra ID application. Navigate to Microsoft Entra Portal > App Registrations > [Your App] > Overview."
-        },
-        {
-            "label": "Application Secret",
-            "key": "appsecret",
-            "type": "password",
-            "mandatory": true,
-            "default": "",
-            "description": "Client Secret of the Microsoft Entra ID application. Navigate to Microsoft Entra Portal > App Registrations > [Your App] > Certificates & secrets."
-        },
-        {
-            "label": "IOC Source (Applicable only while sharing indicators)",
-            "key": "source",
-            "type": "text",
-            "mandatory": false,
-            "default": "Netskope - Cloud Threat Exchange",
-            "placeholder": "Netskope - Cloud Threat Exchange",
-            "description": "The source where this indicator originated. This can be used for tracking where this indicator was defined. Limit 200 characters."
-        },
-        {
+	"name": "Microsoft Defender for Endpoint",
+	"id": "microsoftdefenderv2",
+	"version": "1.4.0",
+	"module": "CTE",
+	"minimum_version": "5.1.2",
+	"description": "This plugin is used to pull indicators of type URL, IPv4, IPv6, Domain, MD5 and SHA256 from System > Settings > Endpoints > Indicators page of Microsoft Defender for Endpoint platform. This plugin supports sharing indicators of type URL, IPv4, IPv6, Domain, MD5 and SHA256 to System > Settings > Endpoints > Indicators page of Microsoft Defender for Endpoint platform. This plugin also supports pull and push retraction of indicators from Microsoft Defender for Endpoint platform.",
+	"push_supported": true,
+	"patch_supported": true,
+	"delete_supported": true,
+	"fetch_retraction_info": true,
+	"configuration": [
+		{
+			"label": "Base URL",
+			"key": "base_url",
+			"type": "choice",
+			"choices": [
+				{
+					"key": "api.securitycenter.microsoft.com",
+					"value": "https://api.securitycenter.microsoft.com"
+				},
+				{
+					"key": "us.api.security.microsoft.com",
+					"value": "https://us.api.security.microsoft.com"
+				},
+				{
+					"key": "eu.api.security.microsoft.com",
+					"value": "https://eu.api.security.microsoft.com"
+				},
+				{
+					"key": "uk.api.security.microsoft.com",
+					"value": "https://uk.api.security.microsoft.com"
+				},
+				{
+					"key": "au.api.security.microsoft.com",
+					"value": "https://au.api.security.microsoft.com"
+				},
+				{
+					"key": "swa.api.security.microsoft.com",
+					"value": "https://swa.api.security.microsoft.com"
+				},
+				{
+					"key": "ina.api.security.microsoft.com",
+					"value": "https://ina.api.security.microsoft.com"
+				},
+				{
+					"key": "aea.api.security.microsoft.com",
+					"value": "https://aea.api.security.microsoft.com"
+				},
+				{
+					"key": "api-gcc.securitycenter.microsoft.us",
+					"value": "https://api-gcc.securitycenter.microsoft.us"
+				},
+				{
+					"key": "api-gov.securitycenter.microsoft.us",
+					"value": "https://api-gov.securitycenter.microsoft.us"
+				}
+			],
+			"default": "https://api.securitycenter.microsoft.com",
+			"mandatory": true,
+			"description": "Base URL of the Microsoft Defender for Endpoint platform."
+		},
+		{
+			"label": "Tenant ID",
+			"key": "tenantid",
+			"type": "text",
+			"mandatory": true,
+			"default": "",
+			"placeholder": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+			"description": "Directory (Tenant) ID of the Microsoft Entra ID application. Navigate to Microsoft Entra Portal > App Registrations > [Your App] > Overview."
+		},
+		{
+			"label": "Application ID",
+			"key": "appid",
+			"type": "text",
+			"mandatory": true,
+			"default": "",
+			"placeholder": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+			"description": "Application (Client) ID of the Microsoft Entra ID application. Navigate to Microsoft Entra Portal > App Registrations > [Your App] > Overview."
+		},
+		{
+			"label": "Application Secret",
+			"key": "appsecret",
+			"type": "password",
+			"mandatory": true,
+			"default": "",
+			"description": "Client Secret of the Microsoft Entra ID application. Navigate to Microsoft Entra Portal > App Registrations > [Your App] > Certificates & secrets."
+		},
+		{
+			"label": "IOC Source (Applicable only while sharing indicators)",
+			"key": "source",
+			"type": "text",
+			"mandatory": false,
+			"default": "Netskope - Cloud Threat Exchange",
+			"placeholder": "Netskope - Cloud Threat Exchange",
+			"description": "The source where this indicator originated. This can be used for tracking where this indicator was defined. Limit 200 characters."
+		},
+		{
             "label": "Type of Threat data to pull",
             "key": "threat_data_type",
             "type": "multichoice",
@@ -112,10 +112,10 @@
                     "key": "Domain",
                     "value": "DomainName"
                 },
-                {
-                    "key": "URL",
+				{
+					"key": "URL",
                     "value": "Url"
-                },
+				},
                 {
                     "key": "IPv4",
                     "value": "IpAddressV4"
@@ -128,7 +128,7 @@
             "default": [
                 "FileSha256",
                 "FileMd5",
-                "Url",
+				"Url",
                 "DomainName",
                 "IpAddressV4",
                 "IpAddressV6"
@@ -136,65 +136,65 @@
             "mandatory": false,
             "description": "Type of Threat data to pull. If no threat type is selected, all threat type indicators will be pulled."
         },
-        {
-            "label": "Actions",
-            "key": "actions_to_be_pulled",
-            "type": "multichoice",
-            "choices": [
-                {
-                    "key": "Allowed",
-                    "value": "Allowed"
-                },
-                {
-                    "key": "Audit",
-                    "value": "Audit"
-                },
-                {
-                    "key": "Block",
-                    "value": "Block"
-                },
-                {
-                    "key": "Block And Remediate",
-                    "value": "BlockAndRemediate"
-                },
-                {
-                    "key": "Warn",
-                    "value": "Warn"
-                }
-            ],
-            "mandatory": false,
-            "default": [
-                "Allowed",
-                "Audit",
-                "Block",
-                "BlockAndRemediate",
-                "Warn"
-            ],
-            "description": "Select the action(s) to filter the pulled indicators. If no action is selected, all indicators will be pulled regardless of their action."
-        },
-        {
-            "label": "Indicators with Generated Alert",
-            "key": "generate_alert",
-            "type": "choice",
-            "choices": [
-                {
-                    "key": "True",
-                    "value": true
-                },
-                {
-                    "key": "False",
-                    "value": false
-                },
-                {
-                    "key": "Both",
-                    "value": "Both"
-                }
-            ],
-            "default": "Both",
-            "mandatory": true,
-            "description": "Select whether to pull indicators based on their 'Generate Alert' flag. 'Both' pulls all indicators regardless of this flag."
-        },
-        {
+		{
+			"label": "Actions",
+			"key": "actions_to_be_pulled",
+			"type": "multichoice",
+			"choices": [
+				{
+					"key": "Allowed",
+					"value": "Allowed"
+				},
+				{
+					"key": "Audit",
+					"value": "Audit"
+				},
+				{
+					"key": "Block",
+					"value": "Block"
+				},
+				{
+					"key": "Block And Remediate",
+					"value": "BlockAndRemediate"
+				},
+				{
+					"key": "Warn",
+					"value": "Warn"
+				}
+			],
+			"mandatory": false,
+			"default": [
+				"Allowed",
+				"Audit",
+				"Block",
+				"BlockAndRemediate",
+				"Warn"
+			],
+			"description": "Select the action(s) to filter the pulled indicators. If no action is selected, all indicators will be pulled regardless of their action."
+		},
+		{
+			"label": "Indicators with Generated Alert",
+			"key": "generate_alert",
+			"type": "choice",
+			"choices": [
+				{
+					"key": "True",
+					"value": true
+				},
+				{
+					"key": "False",
+					"value": false
+				},
+				{
+					"key": "Both",
+					"value": "Both"
+				}
+			],
+			"default": "Both",
+			"mandatory": true,
+			"description": "Select whether to pull indicators based on their 'Generate Alert' flag. 'Both' pulls all indicators regardless of this flag."
+		},
+		{
             "label": "Enable Polling",
             "key": "is_pull_required",
             "type": "choice",
@@ -212,20 +212,20 @@
             "mandatory": true,
             "description": "Enable/Disable polling data from Microsoft Defender for Endpoint. Disable if you only need to push indicators to Microsoft Defender for Endpoint."
         },
-        {
+		{
             "label": "Retraction Interval (in days)",
             "key": "retraction_interval",
             "type": "number",
             "mandatory": false,
             "description": "Specify the number of days for which IoC retraction should be run for Microsoft Defender for Endpoint indicators. Note: This parameter is applicable only if \"IoC(s) Retraction\" is enabled in Threat Exchange Settings. Value must be between 1 and 365."
         },
-        {
-            "label": "Initial Range (in days)",
-            "key": "initial_range",
-            "type": "number",
-            "mandatory": true,
-            "default": 7,
-            "description": "Number of days to pull historical indicators for the initial run. Value must be between 1 and 365."
-        }
-    ]
+		{
+			"label": "Initial Range (in days)",
+			"key": "initial_range",
+			"type": "number",
+			"mandatory": true,
+			"default": 7,
+			"description": "Number of days to pull historical indicators for the initial run. Value must be between 1 and 365."
+		}
+	]
 }

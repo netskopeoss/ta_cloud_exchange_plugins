@@ -1,0 +1,64 @@
+{
+    "name": "Darktrace",
+    "id": "darktrace_cte",
+    "version": "1.0.0",
+    "description": "This plugin fetches IoCs of type Domains, FQDNs, Hostnames, IPv4 and IPv6 from Watched Domains and IPs page of Darktrace platform. This plugin supports sharing Domains, FQDNs, Hostnames, IPv4 and IPv6 to Watched Domains and IPs page. This plugin supports pull and push retraction of IoCs from Darktrace.",
+    "patch_supported": true,
+    "delete_supported": true,
+    "fetch_retraction_info": true,
+    "minimum_version": "6.0.0",
+    "module": "CTE",
+    "configuration": [
+        {
+            "label": "Base URL",
+            "key": "base_url",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "placeholder": "https://<region>.cloud.darktrace.com",
+            "description": "Base URL of Darktrace instance."
+        },
+        {
+            "label": "Public Token",
+            "key": "public_token",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "Public token generated from the Darktrace platform. Navigate to 'Account Settings > API Access > New' to generate the Public Token."
+        },
+        {
+            "label": "Private Token",
+            "key": "private_token",
+            "type": "password",
+            "default": "",
+            "mandatory": true,
+            "description": "Private token generated from the Darktrace platform. Navigate to 'Account Settings > API Access > New' to generate the Private Token."
+        },
+        {
+            "label": "Source Name",
+            "key": "source",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "Name of the Intel Feed source from where the IOCs are to be pulled. Navigate to 'Intel > Watched Domains and IPs' page to get the Source Name. Provide exactly one source name in the parameter."
+        },
+        {
+            "label": "Enable Polling",
+            "key": "is_pull_required",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Yes",
+                    "value": "Yes"
+                },
+                {
+                    "key": "No",
+                    "value": "No"
+                }
+            ],
+            "default": "Yes",
+            "mandatory": true,
+            "description": "Enable/Disable polling Threat IoCs from Darktrace. Disable if you only need to push Threat IoCs to Darktrace."
+        }
+    ]
+}

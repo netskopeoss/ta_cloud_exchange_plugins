@@ -154,28 +154,29 @@ class SyslogPlugin(PluginBase):
 
     def get_nested_field_value(self, data, field_path):
         """Extract value from nested dictionary using dot notation.
-        
+
         Args:
             data: The data dictionary
-            field_path: Dot-separated field path (e.g., 'host_info.device_make')
-            
+            field_path: Dot-separated field path
+            (e.g., 'host_info.device_make')
+
         Returns:
             tuple: (value, exists) where exists is True if field was found
         """
 
         try:
             current_data = data
-            field_parts = field_path.split('.')
-            
+            field_parts = field_path.split(".")
+
             for i, part in enumerate(field_parts):
 
                 if isinstance(current_data, dict) and part in current_data:
                     current_data = current_data[part]
                 else:
                     return None, False
-            
+
             return current_data, True
-            
+
         except Exception as exp:
             self.logger.error(
                 message=(
@@ -283,7 +284,7 @@ class SyslogPlugin(PluginBase):
                     subtype,
                     is_json_path="is_json_path" in extension_mapping,
                 )
-                
+
                 if mapped_field:
                     mapped_field_flag = mapped_field
             except FieldNotFoundError as err:
@@ -356,11 +357,13 @@ class SyslogPlugin(PluginBase):
                     ):
                         try:
                             mapped_field = True
-                            timestamp_value = int(data[extension_mapping["mapping_field"]])
+                            timestamp_value = int(
+                                data[extension_mapping["mapping_field"]]
+                            )
                             return (timestamp_value, mapped_field)
-                        except Exception as e:
+                        except Exception:
                             pass
-                    
+
                     field_result = self.get_mapping_value_from_field(
                         data, extension_mapping["mapping_field"]
                     )
@@ -370,19 +373,20 @@ class SyslogPlugin(PluginBase):
                     nested_value, field_exists = self.get_nested_field_value(
                         data, extension_mapping["mapping_field"]
                     )
-                    
+
                     if field_exists:
                         if (
-                            extension_mapping.get("transformation") == "Time Stamp"
+                            extension_mapping.get("transformation")
+                            == "Time Stamp"
                             and nested_value
                         ):
                             try:
                                 mapped_field = True
                                 timestamp_value = int(nested_value)
                                 return timestamp_value, mapped_field
-                            except Exception as e:
+                            except Exception:
                                 pass
-                        
+
                         mapped_field = True
                         final_result = (
                             (nested_value, True)
@@ -391,8 +395,8 @@ class SyslogPlugin(PluginBase):
                         )
                         return final_result
                     elif "default_value" in extension_mapping:
-                        # If mapped value is not found in response and default is \
-                        # mapped, map the default value (case #2)
+                        # If mapped value is not found in response and default
+                        # is mapped, map the default value (case #2)
                         return extension_mapping["default_value"], mapped_field
                     else:  # case #6
                         raise FieldNotFoundError(
@@ -455,10 +459,9 @@ class SyslogPlugin(PluginBase):
                 message=str(err),
             )
 
-        if (
-            not isinstance(mappings, dict)
-            or not syslog_validator.validate_syslog_map(mappings)
-        ):
+        if not isinstance(
+            mappings, dict
+        ) or not syslog_validator.validate_syslog_map(mappings):
             self.logger.error(
                 f"{validation_err_msg} {err_msg}",
             )
@@ -516,9 +519,8 @@ class SyslogPlugin(PluginBase):
             skip_log_source_identifier_field = "no"
         if transform_data_json:
             try:
-                if (
-                    version.parse(CE_VERSION) <=
-                    version.parse(MAXIMUM_CORE_VERSION)
+                if version.parse(CE_VERSION) <= version.parse(
+                    MAXIMUM_CORE_VERSION
                 ):
                     validate_syslog_mappings(
                         self.mappings,
@@ -660,9 +662,8 @@ class SyslogPlugin(PluginBase):
             return transformed_data
         else:
             try:
-                if (
-                    version.parse(CE_VERSION) <=
-                    version.parse(MAXIMUM_CORE_VERSION)
+                if version.parse(CE_VERSION) <= version.parse(
+                    MAXIMUM_CORE_VERSION
                 ):
                     validate_syslog_mappings(
                         self.mappings,
@@ -834,6 +835,12 @@ class SyslogPlugin(PluginBase):
         syslogger.handlers = []
         syslogger.propagate = False
 
+        skip_priority = (
+            self._get_skip_flag_value(configuration, "skip_priority_field")
+            == "yes"
+            and self._transformation_compatibility_check(configuration)
+        )
+
         if configuration.get("syslog_protocol") == "TLS":
             tls_handler = SSLSysLogHandler(
                 configuration.get("syslog_protocol"),
@@ -842,6 +849,7 @@ class SyslogPlugin(PluginBase):
                     configuration.get("syslog_port"),
                 ),
                 certs=configuration.get("syslog_certificate"),
+                skip_priority=skip_priority,
             )
             syslogger.addHandler(tls_handler)
         else:
@@ -857,6 +865,7 @@ class SyslogPlugin(PluginBase):
                     configuration.get("syslog_port"),
                 ),
                 socktype=socktype,
+                skip_priority=skip_priority,
             )
 
             if configuration.get("syslog_protocol") == "TCP":
@@ -984,7 +993,10 @@ class SyslogPlugin(PluginBase):
             )
             self.logger.error(
                 message=(f"{self.log_prefix}: {error_msg} Error: {err}"),
-                resolution="Make sure you have provided correct syslog server and port.",
+                resolution=(
+                    "Ensure that you have provided correct syslog server "
+                    "and port."
+                ),
                 details=str(traceback.format_exc()),
             )
             raise SyslogPluginError(error_msg)
@@ -995,7 +1007,7 @@ class SyslogPlugin(PluginBase):
             del syslogger.handlers[:]
             del syslogger
 
-    def  _validate_configuration_parameters(
+    def _validate_configuration_parameters(
         self,
         field_name: str,
         field_value: Union[str, List, bool, int],
@@ -1038,7 +1050,7 @@ class SyslogPlugin(PluginBase):
                 else f"{field_name} is a required configuration parameter."
             )
             self.logger.error(
-                message=f"{self.log_prefix}: {validation_err_msg}{err_msg}",
+                message=f"{self.log_prefix}: {validation_err_msg} {err_msg}",
                 resolution=(
                     f"Ensure that {field_name} value is provided in the "
                     "configuration parameters."
@@ -1056,7 +1068,7 @@ class SyslogPlugin(PluginBase):
                 f" parameter '{field_name}'."
             )
             self.logger.error(
-                message=f"{self.log_prefix}: {validation_err_msg}{err_msg}",
+                message=f"{self.log_prefix}: {validation_err_msg} {err_msg}",
                 resolution=(
                     f"Ensure that valid value for {field_name} is "
                     "provided in the configuration parameters."
@@ -1073,7 +1085,9 @@ class SyslogPlugin(PluginBase):
                     f" {str(range_values[0])} to {str(range_values[1])}."
                 )
                 self.logger.error(
-                    message=f"{self.log_prefix}: {validation_err_msg}{err_msg}",
+                    message=(
+                        f"{self.log_prefix}: {validation_err_msg} {err_msg}"
+                    ),
                     resolution=(
                         f"Ensure that valid value for {field_name} is "
                         "provided in the configuration parameters "
@@ -1087,16 +1101,18 @@ class SyslogPlugin(PluginBase):
                 )
 
         # Allowed values check
-        if allowed_values and field_type is str and field_value not in allowed_values:
+        if (
+            allowed_values
+            and field_type is str
+            and field_value not in allowed_values
+        ):
             err_msg = (
                 f"Invalid value provided for the configuration"
                 f" parameter '{field_name}'. Allowed values are"
                 f" {', '.join(value for value in allowed_values)}."
             )
             self.logger.error(
-                message=(
-                    f"{self.log_prefix}: {validation_err_msg}{err_msg}"
-                ),
+                message=(f"{self.log_prefix}: {validation_err_msg} {err_msg}"),
                 resolution=(
                     f"Ensure that valid value for {field_name} is "
                     "provided in the configuration parameters "
@@ -1109,21 +1125,34 @@ class SyslogPlugin(PluginBase):
                 message=err_msg,
             )
 
-    def _get_config_params(self, configurations: dict, params_to_get: List[str] = None):
+    def _get_config_params(
+        self, configurations: dict, params_to_get: List[str] = None
+    ):
         """Get the required configuration parameters."""
         all_params = {
             "syslog_server": configurations.get("syslog_server", "").strip(),
-            "syslog_protocol": configurations.get("syslog_protocol", "").strip(),
+            "syslog_protocol": configurations.get(
+                "syslog_protocol", ""
+            ).strip(),
             "syslog_port": configurations.get("syslog_port"),
-            "syslog_certificate": configurations.get("syslog_certificate", "").strip(),
-            "log_source_identifier": configurations.get("log_source_identifier", ""),
+            "syslog_certificate": configurations.get(
+                "syslog_certificate", ""
+            ).strip(),
+            "log_source_identifier": configurations.get(
+                "log_source_identifier", ""
+            ),
             "skip_timestamp_field": self._get_skip_flag_value(
                 configurations, "skip_timestamp_field"
             ),
             "skip_log_source_identifier_field": self._get_skip_flag_value(
                 configurations, "skip_log_source_identifier_field"
             ),
-            "transform_data_json": self._transformation_compatibility_check(configurations),
+            "skip_priority_field": self._get_skip_flag_value(
+                configurations, "skip_priority_field"
+            ),
+            "transform_data_json": self._transformation_compatibility_check(
+                configurations
+            ),
         }
 
         if not params_to_get:
@@ -1131,7 +1160,6 @@ class SyslogPlugin(PluginBase):
 
         result = [all_params.get(param) for param in params_to_get]
         return result[0] if len(result) == 1 else tuple(result)
-
 
     def validate(self, configuration: dict) -> ValidationResult:
         """Validate the configuration parameters dict."""
@@ -1146,6 +1174,7 @@ class SyslogPlugin(PluginBase):
             log_source_identifier,
             skip_timestamp_field,
             skip_log_source_identifier_field,
+            skip_priority_field,
             transform_data_json,
         ) = self._get_config_params(configuration)
 
@@ -1155,7 +1184,7 @@ class SyslogPlugin(PluginBase):
             field_value=syslog_server,
             field_type=str,
             is_required=True,
-            validation_err_msg=validation_err_msg
+            validation_err_msg=validation_err_msg,
         ):
             return server_result
 
@@ -1166,7 +1195,7 @@ class SyslogPlugin(PluginBase):
             field_type=str,
             is_required=True,
             allowed_values=SYSLOG_PROTOCOLS,
-            validation_err_msg=validation_err_msg
+            validation_err_msg=validation_err_msg,
         ):
             return protocol_result
 
@@ -1178,7 +1207,7 @@ class SyslogPlugin(PluginBase):
             is_required=True,
             range_validation=True,
             range_values=(0, 65535),
-            validation_err_msg=validation_err_msg
+            validation_err_msg=validation_err_msg,
         ):
             return port_result
 
@@ -1189,10 +1218,10 @@ class SyslogPlugin(PluginBase):
                 field_value=syslog_certificate,
                 field_type=str,
                 is_required=True,
-                validation_err_msg=validation_err_msg
+                validation_err_msg=validation_err_msg,
             ):
                 return certificate_result
-        
+
         # Validate Exclude Timestamp Field
         if timestamp_field := self._validate_configuration_parameters(
             field_name="Exclude Timestamp Field",
@@ -1204,7 +1233,7 @@ class SyslogPlugin(PluginBase):
             return timestamp_field
 
         # Validate Exclude Log Source Identifier Field
-        if log_source_identifier_field := self._validate_configuration_parameters(
+        if log_source_identifier_field := self._validate_configuration_parameters(  # noqa E501
             field_name="Exclude Log Source Identifier Field",
             field_value=skip_log_source_identifier_field,
             field_type=str,
@@ -1212,7 +1241,17 @@ class SyslogPlugin(PluginBase):
             validation_err_msg=validation_err_msg,
         ):
             return log_source_identifier_field
-        
+
+        # Validate Exclude Priority Field
+        if priority_field := self._validate_configuration_parameters(
+            field_name="Exclude Priority Field",
+            field_value=skip_priority_field,
+            field_type=str,
+            allowed_values=IDENTIFIER_ALLOWED_VALUES,
+            validation_err_msg=validation_err_msg,
+        ):
+            return priority_field
+
         # Determine if Log Source Identifier is required based on format
         require_log_source_identifier = (
             not transform_data_json or skip_log_source_identifier_field == "no"
@@ -1239,13 +1278,16 @@ class SyslogPlugin(PluginBase):
             return ValidationResult(success=False, message=str(err))
         except Exception:
             err_msg = (
-                "Error occurred while establishing connection with Syslog Server. "
-                "Make sure you have provided correct Syslog Server, Port and "
-                "Syslog Certificate(if required)."
+                "Error occurred while establishing connection with Syslog "
+                "Server. Make sure you have provided correct Syslog Server, "
+                "Port and Syslog Certificate(if required)."
             )
             self.logger.error(
                 f"{validation_err_msg} {err_msg}",
-                resolution="Make sure you have provided correct syslog server and port."
+                resolution=(
+                    "Ensure that you have provided correct syslog server "
+                    "and port."
+                ),
             )
             return ValidationResult(success=False, message=err_msg)
 

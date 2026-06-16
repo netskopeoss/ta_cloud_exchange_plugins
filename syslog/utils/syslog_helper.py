@@ -190,7 +190,8 @@ def validate_syslog_mappings(mappings, data_type, name):
         mappings: Attribute mapping json string
 
     Raises:
-        MappingValidationError: For in-valid mapping json for any of the data_type.
+        MappingValidationError: For in-valid mapping json for
+            any of the data_type.
     """
     data_type_specific_mapping = mappings["taxonomy"][data_type]
     if data_type == "json":
@@ -229,6 +230,7 @@ def validate_syslog_mappings(mappings, data_type, name):
                         cef_field, subtype, err
                     )
                 )
+
 
 def get_syslog_mappings(mappings):
     """Read mapping json and return the dict of mappings

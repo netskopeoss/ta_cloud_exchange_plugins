@@ -60,7 +60,12 @@ class SyslogValidator(object):
         """Patch logger.error to keep resolution backward compatible."""
         original_error = self.logger.error
 
-        def patched_error(message=None, details=None, resolution=None, **kwargs):
+        def patched_error(
+            message=None,
+            details=None,
+            resolution=None,
+            **kwargs
+        ):
             log_kwargs = {"message": message}
             if details:
                 log_kwargs["details"] = details
@@ -70,7 +75,6 @@ class SyslogValidator(object):
             return original_error(**log_kwargs)
 
         self.logger.error = patched_error
-
 
     def validate_taxonomy(self, instance):
         """Validate the schema of given taxonomy JSON.
@@ -154,7 +158,10 @@ class SyslogValidator(object):
                         self.log_prefix, err
                     )
                 ),
-                resolution="Ensure that the valid mapping is provided for the mapping configuration.",
+                resolution=(
+                    "Ensure that the valid mapping is provided for the "
+                    "mapping configuration."
+                ),
                 details=str(traceback.format_exc()),
             )
             return False

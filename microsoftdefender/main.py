@@ -28,22 +28,25 @@ SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
 CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+CTE Microsoft Defender for Endpoint plugin.
 """
 
-"""Microsoft Defender for Endpoint implementation pull/push the data."""
-
-from time import sleep
+import traceback
 import jwt
-import re
-import ipaddress
-import urllib.parse
-from .lib import msal
-from datetime import datetime, timedelta
-from dateutil import parser
-from operator import attrgetter
+from datetime import datetime, timedelta, timezone
+from pydantic import ValidationError
+from typing import (
+    Dict,
+    Generator,
+    List,
+    Literal,
+    Set,
+    Tuple,
+    Type,
+    Union,
+)
 
-from typing import Dict, List
-import requests.exceptions
 from netskope.integrations.cte.utils import TagUtils
 from netskope.integrations.cte.plugin_base import (
     PluginBase,
@@ -58,51 +61,99 @@ from netskope.integrations.cte.models import (
 )
 from netskope.integrations.cte.models.business_rule import (
     Action,
-    ActionWithoutParams
+    ActionWithoutParams,
 )
-from netskope.common.utils import add_user_agent
-from .utils.constant import actions, allow_deletion, generate_alert, default_base_url
-
-class MicrosoftDefenderForEndpointPlugin(Exception):
-    """Custom Exception raised for Microsoft Defender for endpoint plugin.
-    """
-
-    pass
-
-def check_url_domain_ip(type):
-    """Categorize URL as Domain, IP or URL."""
-    regex_domain = (
-        "^((?!-)[A-Za-z0-9-]" +
-        "{1,63}(?<!-)\\.)" +
-        "+[A-Za-z]{2,6}"
-    )
-    try:
-        ipaddress.ip_address(type)
-        return "IpAddress"
-    except Exception:
-        if re.search(regex_domain, type):
-            return "DomainName"
-        else:
-            return "Url"
+from .utils.constants import (
+    ACTIONS,
+    BATCH_DELETE_ENDPOINT,
+    DATE_TIME_FORMAT,
+    DAYS_LIMIT,
+    EMPTY_ERROR_MESSAGE,
+    INVALID_VALUE_ERROR_MESSAGE,
+    INDICATOR_ENDPOINT,
+    IOC_GENERATED_ALERT,
+    IOC_SOURCE_LENGTH,
+    MODULE_NAME,
+    PAGE_SIZE,
+    PLUGIN_NAME,
+    PLUGIN_VERSION,
+    RETRACTION,
+    RETRACTION_FETCH_BATCH_SIZE,
+    RETRACTION_DELETE_BATCH_SIZE,
+    THREAT_TYPES,
+    TYPE_ERROR_MESSAGE,
+    VALID_BASE_URLS,
+    VALIDATION_ERROR_MSG,
+    YES_NO_PARAMETER
+)
+from .utils.helper import (
+    MicrosoftDefenderPluginException,
+    MicrosoftDefenderPluginHelper,
+)
 
 
 class MicrosoftDefenderEndpointPluginV2(PluginBase):
+    """CTE Microsoft Defender for Endpoint Plugin."""
 
-    def get_actions(self):
-        """Get availabel actions."""
+    def __init__(self, name, *args, **kwargs):
+        """Plugin initializer.
+
+        Args:
+            name (str): Plugin configuration name.
+        """
+        super().__init__(name, *args, **kwargs)
+        self.plugin_name, self.plugin_version = self._get_plugin_info()
+        self.log_prefix = f"{MODULE_NAME} {self.plugin_name}"
+        self.config_name = name
+        if name:
+            self.log_prefix = f"{self.log_prefix} [{name}]"
+        self.mde_helper = MicrosoftDefenderPluginHelper(
+            logger=self.logger,
+            log_prefix=self.log_prefix,
+            plugin_name=self.plugin_name,
+            plugin_version=self.plugin_version,
+        )
+
+    def _get_plugin_info(self) -> Tuple[str, str]:
+        """Get plugin name and version from manifest.
+
+        Returns:
+            Tuple[str, str]: Plugin name and version pulled from manifest.
+        """
+        try:
+            metadata = MicrosoftDefenderEndpointPluginV2.metadata
+            plugin_name = metadata.get("name", PLUGIN_NAME)
+            plugin_version = metadata.get("version", PLUGIN_VERSION)
+            return plugin_name, plugin_version
+        except Exception as exp:
+            self.logger.error(
+                message=(
+                    f"{MODULE_NAME} {PLUGIN_NAME}: Error occurred while"
+                    f" getting plugin details. Error: {exp}"
+                ),
+                details=str(traceback.format_exc()),
+            )
+        return (PLUGIN_NAME, PLUGIN_VERSION)
+
+    def get_actions(self) -> List[ActionWithoutParams]:
+        """Get available actions.
+
+        Returns:
+            List[ActionWithoutParams]: List of available actions.
+        """
         return [
             ActionWithoutParams(label="Perform Action", value="action"),
         ]
 
-    def get_action_fields(self, action: Action):
+    def get_action_fields(self, action: Action) -> List[Dict]:
         """Get fields required for an action.
 
         Args:
             action (Action): Action object which is selected as Target.
-        Return:
+
+        Returns:
             List[Dict]: List of configurable fields based on selected action.
         """
-
         if action.value == "action":
             return [
                 {
@@ -110,18 +161,22 @@ class MicrosoftDefenderEndpointPluginV2(PluginBase):
                     "key": "action",
                     "type": "choice",
                     "choices": [
-                        {"key": action, "value": action} for action in actions
+                        {"key": act, "value": act} for act in ACTIONS.values()
                     ],
                     "default": "Audit",
                     "mandatory": True,
-                    "description": "The action to be applied to the Indicators.",
+                    "description": (
+                        "The action that is taken if the indicator "
+                        "is discovered in the organization."
+                    ),
                 },
                 {
-                    "label": "Generate alert",
+                    "label": "Generate Alert",
                     "key": "generate_alert",
                     "type": "choice",
                     "choices": [
-                        {"key": ad, "value": ad} for ad in allow_deletion
+                        {"key": ad, "value": ad}
+                        for ad in sorted(YES_NO_PARAMETER.values())
                     ],
                     "default": "No",
                     "mandatory": True,
@@ -132,549 +187,974 @@ class MicrosoftDefenderEndpointPluginV2(PluginBase):
                     "key": "allow_deletion",
                     "type": "choice",
                     "choices": [
-                        {"key": ad, "value": ad} for ad in allow_deletion
+                        {"key": ad, "value": ad}
+                        for ad in sorted(YES_NO_PARAMETER.values())
                     ],
                     "default": "No",
                     "mandatory": True,
-                    "description": "Whether or not to delete the existing Indicators on Defender to insert new Indicators",
+                    "description": (
+                        "Whether or not to delete the existing indicator(s) "
+                        f"from the {PLUGIN_NAME} platform to "
+                        "insert new indicator(s). If Yes selected, oldest "
+                        "indicator will be deleted when max capacity of 15000 "
+                        "active indicators per tenant is exceeded."
+                    ),
                 },
             ]
 
-    def validate_action(self, action: Action):
-        """Validate Action Parameters
+    def validate_action(self, action: Action) -> ValidationResult:
+        """Validate action parameters.
 
-        This method validations the action and their parameters.
-        Makes sure mandatory parameters have a valid value,
-        and unsupport values are rejected.
+        This method validates the action and their parameters. Makes sure
+        mandatory parameters have a valid value and unsupported values are
+        rejected.
+
+        Args:
+            action (Action): Action object to validate.
+
+        Returns:
+            ValidationResult: Validation result with success flag and message.
         """
-
         if action.value not in ["action"]:
-            return ValidationResult(
-                success=False, message="Unsupported action provided."
+            err_msg = (
+                "Unsupported action provided. "
+                "Allowed value is 'Perform Action'."
             )
-        if action.parameters.get("action") not in actions:
-            return ValidationResult(
-                success=False,
-                message="Invalid action provided."
+            self.logger.error(
+                f"{self.log_prefix}: {err_msg}"
             )
-        if action.parameters.get("allow_deletion") not in allow_deletion:
             return ValidationResult(
-                success=False,
-                message="Invalid value for Allow deletion provided."
+                success=False, message=err_msg
             )
-        if action.parameters.get("generate_alert") not in generate_alert:
-            return ValidationResult(
-                success=False,
-                message="Invalid value for Generate Alert provided."
-            )
+
+        # Validate Actions
+        push_action = action.parameters.get("action", "")
+        if validation_result := self._validate_parameters(
+            parameter_type="action",
+            field_name="Action",
+            field_value=push_action,
+            field_type=str,
+            allowed_values=ACTIONS,
+        ):
+            return validation_result
+
+        # Validate Generate Alert
+        generate_alert = action.parameters.get("generate_alert", "")
+        if validation_result := self._validate_parameters(
+            parameter_type="action",
+            field_name="Generate Alert",
+            field_value=generate_alert,
+            field_type=str,
+            allowed_values=YES_NO_PARAMETER,
+        ):
+            return validation_result
+
+        # Validate Allow Existing Indicators to be deleted?
+        allow_deletion = action.parameters.get("allow_deletion", "")
+        if validation_result := self._validate_parameters(
+            parameter_type="action",
+            field_name="Allow Existing Indicators to be deleted?",
+            field_value=allow_deletion,
+            field_type=str,
+            allowed_values=YES_NO_PARAMETER,
+        ):
+            return validation_result
+
+        log_msg = (
+            "Successfully validated action parameters."
+        )
+        self.logger.debug(
+            f"{self.log_prefix}: {log_msg}"
+        )
         return ValidationResult(
             success=True,
-            message="Validation successful."
+            message=log_msg,
         )
 
-    def get_authorization_json(self, tenantid, appid, appsecret, base_url):
-        """Get authorization token from Azure AD"""
-        if base_url == "https://api-gov.securitycenter.microsoft.us":
-            authority = "https://login.microsoftonline.us/{0}".format(tenantid)
-        else:
-            authority = "https://login.microsoftonline.com/{0}".format(tenantid)
-        scope = [f"{base_url}/.default"]
-
-        app = msal.ConfidentialClientApplication(
-            appid, authority=authority, client_credential=appsecret, proxies=self.proxy
-        )
-
-        auth_json = app.acquire_token_for_client(scopes=scope)
-
-        return auth_json
-
-    def _create_tags(self, tag_utils: TagUtils, tag_name):
-        """Create tag list and add tags to netskope using tag_utils.
+    def _create_tags(self, tag_name: str) -> Tuple[str, bool]:
+        """Create a tag in Netskope using TagUtils.
 
         Args:
-            tag_utils (tag_utils): Tag utility class object.
-            ioc_response (JSON): Indicator response object.
+            tag_name (str): Name of the tag to create.
 
         Returns:
-            List[str]: List of tag names.
+            Tuple[str, bool]: Tuple of tag name and success flag.
         """
-        if not tag_utils.exists(tag_name.strip()):
-            tag_utils.create_tag(
-                TagIn(name=tag_name.strip(), color="#ED3347")
-            )
-        return tag_name
-
-    def create_indicator(self, indicator, indicator_type):
-        """Create Indicator according to type."""
-        type_conversion = {
-            "url": IndicatorType.URL,
-            "md5": IndicatorType.MD5,
-            "sha256": IndicatorType.SHA256,
-        }
-        severity_conversion = {
-            "Low": SeverityType.LOW,
-            "Medium": SeverityType.MEDIUM,
-            "High": SeverityType.HIGH,
-        }
-        first_seen = parser.parse(
-            indicator.get("creationTimeDateTimeUtc", datetime.utcnow())
-        )
-        last_seen = parser.parse(
-            indicator.get("lastUpdateTime", datetime.utcnow())
-        )
-        title = indicator.get("title") if indicator.get("title", "") else "No title available"
-        description = indicator.get("description") if indicator.get("description", "") else "No description available"
-        comments = title + " | " + description
-        return Indicator(
-            value=indicator.get("indicatorValue"),
-            type=type_conversion.get(indicator_type),
-            firstSeen=first_seen,
-            lastSeen=last_seen,
-            comments=comments,
-            severity=severity_conversion.get(
-                indicator.get("severity"), SeverityType.UNKNOWN
-            ),
-            tags= [
-                self._create_tags(
-                    TagUtils(), f"Defender_{indicator['action']}"
+        tag_utils = TagUtils()
+        try:
+            if not tag_utils.exists(tag_name.strip()):
+                tag_utils.create_tag(
+                    TagIn(name=tag_name.strip(), color="#ED3347")
                 )
-            ]
-        )
-
-    def pull(self):
-        """Pull tiIndicator data stored on the user's tenant"""
-        auth_json = self.get_authorization_json(
-            self.configuration["tenantid"].strip(),
-            self.configuration["appid"].strip(),
-            self.configuration["appsecret"].strip(),
-            self.configuration.get("base_url", default_base_url).strip(),
-        )
-        indicators = []
-        auth_token = auth_json.get("access_token")
-        if not auth_token:
-            error_msg = auth_json.get("error_description", "Description not available")
+            return tag_name, True
+        except ValueError:
+            return tag_name, False
+        except Exception as exp:
             self.logger.error(
-                "Plugin: Microsoft Defender for Endpoint, "
-                "Unable to pull indicators from Defender. "
-                f"Error: {error_msg}"
+                message=(
+                    f"{self.log_prefix}: Unexpected error occurred while"
+                    f" creating tag '{tag_name}'. Error: {exp}"
+                ),
+                details=str(traceback.format_exc()),
             )
-            raise MicrosoftDefenderForEndpointPlugin(error_msg)
-        headers = {
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-            "Authorization": f"Bearer {auth_token}",
-        }
+            return tag_name, False
 
-        last_pull_dt = self.last_run_at
-        if self.last_run_at is None:
-            last_pull_dt = datetime.utcnow() - timedelta(
-                days=self.configuration["initial_range"]
-            )
-        url = f"{self.configuration.get('base_url', default_base_url).strip()}/api/indicators"
-        action_list  = []
-        for action in self.configuration.get('actions_to_be_pulled', actions):
-            action_list.append(f"action+eq+'{action}'")
-        action_string = " or ".join(action_list)
-        date_time_filter = (
-            f"creationTimeDateTimeUtc+ge+{last_pull_dt.strftime('%Y-%m-%dT%H:%M:%SZ')}"
-        )
-        params = {
-            "$filter": date_time_filter
-        }
-        if len(action_string) != 0:
-            params = {
-                "$filter" : f"{date_time_filter} and ({action_string})"
-            }
-        generate_alert_field = self.configuration.get("generate_alert", "Both")
-        while True:
-            response = self.call_pull_api(url, headers, params)
-            resp_json = response.json()
-            if response.status_code != 200:
-                error_message = resp_json.get("error", {}).get("message", "")
-                self.logger.error(
-                    f"Plugin: Microsoft Defender for Endpoint, "
-                    f"Unable to Pull indicators from Defender, "
-                    f"Received status code: {response.status_code}, "
-                    f"Message: {error_message}"
-                )
-                raise MicrosoftDefenderForEndpointPlugin(error_message)
-
-            for indicator in resp_json.get("value", []):
-                indicator_description = indicator.get("description")
-
-                # Proceed only if the indicator is not created by Netskope CTE module's push method
-                if indicator_description is None or "Netskope-CTE" not in indicator_description:
-
-                    # Check the generateAlert field from the response and compare it with what the user has selected
-                    # Always create indicator if Both is selected as input
-                    if generate_alert_field == "Both" or indicator.get("generateAlert", False) == generate_alert_field:
-                        if indicator.get("indicatorType") in [
-                            "Url", "IpAddress", "DomainName"
-                        ]:
-                            indicators.append(
-                                self.create_indicator(indicator, "url")
-                            )
-                        elif indicator.get("indicatorType") == "FileMd5":
-                            indicators.append(
-                                self.create_indicator(indicator, "md5")
-                            )
-                        elif indicator.get("indicatorType") == "FileSha256":
-                            indicators.append(
-                                self.create_indicator(indicator, "sha256")
-                            )
-            if resp_json.get("@odata.nextLink", []):
-                url = resp_json["@odata.nextLink"]
-                params = {}
-            else:
-                break
-        return indicators
-
-    def push(self, indicators: List[Indicator], action_dict: Dict):
-        """Push the Indicator list to Microsoft Defender for Endpoint
-        Args:
-            indicators (List[cte.models.Indicators]):
-            List of Indicators to be pushed.
+    def _get_storage(self) -> Dict:
+        """Get storage object.
 
         Returns:
-            cte.plugin_base.PushResult: PushResults object with success
-            flag and Push result message.
+            Dict: Storage object.
+        """
+        storage = self.storage if self.storage is not None else {}
+        return storage
+
+    def get_access_token_and_storage(
+        self,
+        base_url: str,
+        tenant_id: str,
+        app_id: str,
+        app_secret: str,
+        is_validation: bool = False,
+    ) -> Tuple[Dict, Dict]:
+        """
+        Get authentication header and storage.
+
+        Args:
+            base_url (str): Base URL.
+            tenant_id (str): Tenant ID.
+            app_id (str): App ID.
+            app_secret (str): App secret.
+            is_validation (bool): Whether this is called from validate
+                method. Defaults to False.
+
+        Returns:
+            Tuple[Dict, Dict]: Authentication header and storage.
+        """
+        storage = self._get_storage()
+        auth_header = storage.get("auth_header")
+        stored_config_hash = storage.get("config_hash")
+
+        current_config_hash = self.mde_helper.hash_string(
+            string=(
+                f"{base_url}{tenant_id}{app_id}{app_secret}"
+            )
+        )
+        if auth_header and stored_config_hash == current_config_hash:
+            return auth_header, storage
+        else:
+            auth_header = self.mde_helper.generate_auth_token(
+                tenant_id=tenant_id,
+                app_id=app_id,
+                app_secret=app_secret,
+                base_url=base_url,
+                proxies=self.proxy,
+                is_validation=is_validation
+            )
+            storage.update(
+                {
+                    "auth_header": auth_header,
+                    "config_hash": current_config_hash,
+                }
+            )
+            return auth_header, storage
+
+    def create_indicator(
+        self,
+        indicator: Dict,
+        threat_data_type: List,
+        is_retraction: bool,
+    ) -> Union[Tuple[Indicator, str], Tuple[str, str], Tuple[bool, str]]:
+        """Create an Indicator object from a raw API response indicator.
+
+        Args:
+            indicator (Dict): Raw indicator dictionary from API response.
+            threat_data_type (List): List of selected indicator types from
+                configuration (e.g. ["IpAddressV4", "FileSha256"]). Empty list
+                means all types are accepted — no filtering is applied.
+            is_retraction (bool): When True, returns (ioc_value, "") instead of
+                building a full Indicator object.
+
+        Returns:
+            Union[Tuple[Indicator, str], Tuple[str, str], Tuple[bool, str]]:
+                - (Indicator, indicator_type) for a success indicator.
+                - (ioc_value, "") when is_retraction is True.
+                - (False, indicator_type) when the resolved IP version is not
+                  in the selected threat_data_type (indicator skipped).
+        """
+        (
+            type_conversion,
+            severity_conversion
+        ) = self.mde_helper.ioc_type_severity_conversion()
+
+        ioc_value = indicator.get("indicatorValue", "")
+        if is_retraction:
+            return ioc_value, ""
+        indicator_type = indicator.get("indicatorType", "")
+        severity = indicator.get("severity", "")
+
+        if indicator_type == "IpAddress":
+            indicator_type = self.mde_helper.determine_ip_version(
+                ip_address_str=ioc_value
+            )
+            if threat_data_type and indicator_type not in threat_data_type:
+                return False, indicator_type
+
+        ioc_type = type_conversion.get(indicator_type, IndicatorType.URL)
+        ioc_severity = severity_conversion.get(severity, SeverityType.UNKNOWN)
+        first_seen = self.mde_helper.parse_date_time(
+            indicator.get("creationTimeDateTimeUtc", "")
+        )
+        last_seen = self.mde_helper.parse_date_time(
+            indicator.get("lastUpdateTime", "")
+        )
+        title = (
+            indicator.get("title") or "No title available"
+        )
+        description = (
+            indicator.get("description") or "No description available"
+        )
+        comments = title + " | " + description
+        tag_name = (
+            f"Defender_{indicator.get('action', 'Unknown')}"
+        )
+        tag_name, tag_success = self._create_tags(tag_name)
+        if not tag_success:
+            tag_name = []
+        else:
+            tag_name = [tag_name]
+
+        try:
+            indicator_obj = Indicator(
+                value=ioc_value,
+                type=ioc_type,
+                firstSeen=first_seen,
+                lastSeen=last_seen,
+                comments=comments,
+                severity=ioc_severity,
+                tags=tag_name,
+            )
+        except ValidationError as e:
+            self.logger.error(
+                message=(
+                    f"{self.log_prefix}: Validation error while creating "
+                    f"indicator for value '{ioc_value}'. Skipping."
+                ),
+                details=str(e),
+            )
+            return False, indicator_type
+        except Exception:
+            self.logger.error(
+                message=(
+                    f"{self.log_prefix}: Unexpected error while creating "
+                    f"indicator for value '{ioc_value}'. Skipping."
+                ),
+                details=str(traceback.format_exc()),
+            )
+            return False, indicator_type
+
+        return indicator_obj, indicator_type
+
+    def _prepare_params(
+        self,
+        last_pull_dt: datetime,
+        actions_to_be_pulled: List[str],
+        threat_data_type: List[str],
+    ) -> Dict:
+        """Build OData query params dict for the pull API.
+
+        Combines up to three filter clauses joined by 'and':
+        - Date filter: creationTimeDateTimeUtc >= last_pull_dt
+        - Action filter: action eq 'X' or action eq 'Y' ...
+        - Type filter: indicatorType eq 'X' or indicatorType eq 'Y' ...
+
+        Args:
+            last_pull_dt (datetime): Start datetime for the pull window.
+                Pass an empty string to skip date filtering.
+            actions_to_be_pulled (List[str]): Action values to filter on.
+                Pass an empty list to skip action filtering.
+            threat_data_type (List[str]): Indicator type values to filter on
+                (e.g. "FileSha256", "FileMd5", "DomainName", "Url",
+                "IpAddressV4", "IpAddressV6"). Pass an empty list to skip
+                type filtering.
+
+        Returns:
+            Dict: Query parameter dict with "$filter" and "$top" keys,
+                ready to pass as params to api_helper.
+        """
+
+        def normalize_types(types):
+            types = set(types)
+            if {"IpAddressV4", "IpAddressV6"} & types:
+                types -= {"IpAddressV4", "IpAddressV6"}
+                types.add("IpAddress")
+            return types
+
+        clauses = []
+        if last_pull_dt:
+            date_filter = (
+                "creationTimeDateTimeUtc ge "
+                f"{last_pull_dt.strftime('%Y-%m-%dT%H:%M:%SZ')}"
+            )
+            clauses.append(date_filter)
+
+        if actions_to_be_pulled:
+            action_clause = " or ".join(
+                f"action eq '{act}'" for act in actions_to_be_pulled
+            )
+            clauses.append(f"({action_clause})")
+
+        if threat_data_type:
+            api_types = normalize_types(threat_data_type)
+
+            type_clause = " or ".join(
+                f"indicatorType eq '{t}'" for t in api_types
+            )
+            clauses.append(f"({type_clause})")
+
+        filter_value = " and ".join(clauses)
+        params = {"$top": PAGE_SIZE}
+        if filter_value:
+            params["$filter"] = filter_value
+        return params
+
+    def _process_indicators_response(
+        self,
+        page_results: List[Dict],
+        generate_alert_field: str,
+        threat_data_type: List,
+        is_retraction: bool,
+    ) -> Tuple[Union[List[Indicator], Set[str]], int, Dict]:
+        """Process raw API response and build Indicator objects.
+
+        Skips indicators created by the Netskope CTE push method, filters by
+        the generateAlert field if configured, and delegates IP version
+        resolution and type filtering to create_indicator.
+
+        Args:
+            page_results (List[Dict]): List of raw indicator dicts from API.
+            generate_alert_field (str): "Both", True, or False — controls
+                which indicators to include based on generateAlert flag.
+            threat_data_type (List): List of selected indicator types from
+                configuration. Passed through to create_indicator for IP
+                version filtering. Empty list means all types are accepted.
+            is_retraction (bool): When True, collects raw indicator value
+                strings into a set instead of building Indicator objects.
+
+        Returns:
+            Tuple[Union[List[Indicator], Set[str]], int, Dict]: Tuple of
+                (page_indicators, skipped_count, ioc_type_counts) where
+                ioc_type_counts is a dict mapping indicator type names to
+                their pull counts.
+        """
+        if is_retraction and RETRACTION not in self.log_prefix:
+            self.log_prefix = self.log_prefix + f" [{RETRACTION}]"
+
+        page_indicators = set() if is_retraction else []
+        skipped_count = 0
+        ioc_type_counts = {
+            "FileSha256": 0,
+            "FileMd5": 0,
+            "DomainName": 0,
+            "Url": 0,
+            "IpAddressV4": 0,
+            "IpAddressV6": 0,
+        }
+
+        for indicator in page_results:
+            try:
+                # Skip indicators created by Netskope CTE push method
+                indicator_description = indicator.get("description")
+                if (
+                    indicator_description is not None
+                    and "Netskope-CTE" in indicator_description
+                ):
+                    skipped_count += 1
+                    continue
+
+                # Filter by generateAlert if not "Both"
+                if generate_alert_field != "Both" and (
+                    indicator.get("generateAlert", False)
+                    != generate_alert_field
+                ):
+                    skipped_count += 1
+                    continue
+
+                indicator_obj, indicator_type = self.create_indicator(
+                    indicator=indicator,
+                    threat_data_type=threat_data_type,
+                    is_retraction=is_retraction
+                )
+                if not indicator_obj:
+                    if indicator_type in ["IpAddressV4", "IpAddressV6"]:
+                        continue
+                    skipped_count += 1
+                    continue
+
+                if is_retraction:
+                    page_indicators.add(indicator_obj)
+                else:
+                    page_indicators.append(indicator_obj)
+
+                if indicator_type in ioc_type_counts:
+                    ioc_type_counts[indicator_type] += 1
+
+            except Exception as exp:
+                self.logger.error(
+                    message=(
+                        f"{self.log_prefix}: Error occurred while processing "
+                        f"indicator. Skipping. Error: {exp}"
+                    ),
+                    details=str(traceback.format_exc()),
+                )
+                skipped_count += 1
+                continue
+
+        return page_indicators, skipped_count, ioc_type_counts
+
+    def _pull_indicators(
+        self,
+        is_retraction: bool = False,
+        is_sharing: bool = False,
+    ) -> Generator[Tuple[List[Indicator], Dict], None, None]:
+        """Pull indicators from Microsoft Defender for Endpoint.
+
+        Args:
+            is_retraction (bool, optional):
+                When True, pull modified indicators for retraction.
+                Defaults to False.
+            is_sharing (bool, optional): When True, return whole response.
+
+        Yields:
+            Tuple[List[Indicator], Dict]: Batch of Indicator objects and
+                an empty checkpoint dict (checkpoint is time-based, not
+                page-based, so no per-page state is needed).
+        """
+        if is_retraction and RETRACTION not in self.log_prefix:
+            self.log_prefix = self.log_prefix + f" [{RETRACTION}]"
+
+        (
+            base_url,
+            tenant_id,
+            app_id,
+            app_secret,
+            _,
+            threat_data_type,
+            actions_to_be_pulled,
+            generate_alert_field,
+            _,
+            retraction_interval,
+            initial_range,
+        ) = self.mde_helper.get_configuration_parameters(
+            self.configuration
+        )
+
+        actions_to_be_pulled = actions_to_be_pulled or list(ACTIONS.values())
+        threat_data_type = threat_data_type or list(THREAT_TYPES.values())
+
+        sub_checkpoint = getattr(self, "sub_checkpoint", None)
+        if is_sharing:
+            last_pull_dt = ""
+            actions_to_be_pulled = []
+            threat_data_type = []
+        elif is_retraction:
+            last_pull_dt = datetime.now(timezone.utc) - timedelta(
+                days=retraction_interval
+            )
+        elif sub_checkpoint and sub_checkpoint.get("checkpoint"):
+            last_pull_dt = sub_checkpoint.get("checkpoint")
+        elif self.last_run_at:
+            last_pull_dt = self.last_run_at
+        else:
+            self.logger.info(
+                f"{self.log_prefix}: This is initial data pull since "
+                "checkpoint is empty. Querying indicators for "
+                f"last {initial_range} days."
+            )
+            last_pull_dt = datetime.now(timezone.utc) - timedelta(
+                days=initial_range
+            )
+
+        url = INDICATOR_ENDPOINT.format(base_url=base_url)
+        params = self._prepare_params(
+            last_pull_dt=last_pull_dt,
+            actions_to_be_pulled=actions_to_be_pulled,
+            threat_data_type=threat_data_type,
+        )
+
+        total_pulled = 0
+        total_skipped = 0
+        skip_count = 0
+        page_count = 0
+        next_page = True
+        checkpoint = ""
+
+        modified_logger = (
+            "modified indicator(s)" if is_retraction else "indicator(s)"
+        )
+        if not is_sharing:
+            self.logger.info(
+                f"{self.log_prefix}: Pulling {modified_logger} "
+                f"from checkpoint: {str(last_pull_dt)}."
+            )
+
+        try:
+            auth_headers, storage = self.get_access_token_and_storage(
+                base_url=base_url,
+                tenant_id=tenant_id,
+                app_id=app_id,
+                app_secret=app_secret,
+            )
+
+            while next_page:
+                page_count += 1
+                page_indicators = set() if is_retraction else []
+                self.logger.debug(
+                    f"{self.log_prefix}: Pulling {modified_logger} for "
+                    f"page {page_count} from {PLUGIN_NAME} platform."
+                )
+                params["$skip"] = skip_count
+
+                resp_json = self.mde_helper.api_helper(
+                    logger_msg=(
+                        f"pulling {modified_logger} for page {page_count}"
+                    ),
+                    url=url,
+                    method="GET",
+                    params=params,
+                    headers=auth_headers,
+                    verify=self.ssl_validation,
+                    proxies=self.proxy,
+                    configuration=self.configuration,
+                    storage=storage,
+                    is_retraction=is_retraction
+                )
+                resp_list = resp_json.get("value", [])
+                resp_count = len(resp_list)
+
+                if resp_list and is_sharing:
+                    yield resp_list
+                    if resp_count < PAGE_SIZE:
+                        next_page = False
+                    else:
+                        skip_count += PAGE_SIZE
+                elif resp_list:
+                    page_indicators, skipped_count, ioc_type_counts = (
+                        self._process_indicators_response(
+                            resp_list,
+                            generate_alert_field,
+                            threat_data_type,
+                            is_retraction
+                        )
+                    )
+                    page_indicator_count = len(page_indicators)
+                    total_pulled += page_indicator_count
+                    total_skipped += skipped_count
+
+                    if resp_count < PAGE_SIZE:
+                        next_page = False
+                    else:
+                        skip_count += PAGE_SIZE
+
+                    checkpoint = resp_list[-1].get("creationTimeDateTimeUtc")
+
+                    self.logger.info(
+                        f"{self.log_prefix}: Successfully pulled "
+                        f"{page_indicator_count} {modified_logger} "
+                        f"and skipped {skipped_count} indicator(s) "
+                        f"for page {page_count} from {PLUGIN_NAME} platform. "
+                        f"Pull Stats: {ioc_type_counts.get('Url')} URLs, "
+                        f"{ioc_type_counts.get('DomainName')} Domains, "
+                        f"{ioc_type_counts.get('IpAddressV4')} IPv4, "
+                        f"{ioc_type_counts.get('IpAddressV6')} IPv6, "
+                        f"{ioc_type_counts.get('FileMd5')} MD5, "
+                        f"{ioc_type_counts.get('FileSha256')} SHA256. "
+                        f"Total {modified_logger} pulled - {total_pulled}."
+                    )
+                else:
+                    next_page = False
+
+                if not next_page and not is_sharing:
+                    log_msg = (
+                        "Successfully pulled "
+                        f"{total_pulled} indicator(s) "
+                        f"from {PLUGIN_NAME} platform"
+                    )
+                    if total_skipped:
+                        log_msg += (
+                            f" and skipped {total_skipped} "
+                            "indicator(s) due to "
+                            "filter provided in the plugin configuration "
+                            "or already shared from Netskope CE"
+                        )
+                    self.logger.info(
+                        f"{self.log_prefix}: {log_msg}."
+                    )
+
+                if page_indicators:
+                    if hasattr(self, "sub_checkpoint") and not is_retraction:
+                        yield page_indicators, {"checkpoint": checkpoint}
+                    else:
+                        yield page_indicators, None
+
+        except MicrosoftDefenderPluginException:
+            raise
+        except Exception as exp:
+            err_msg = (
+                f"Unexpected error occurred while pulling "
+                f"indicator(s) from {PLUGIN_NAME} platform. Error: {exp}"
+            )
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg}",
+                details=str(traceback.format_exc()),
+            )
+            raise MicrosoftDefenderPluginException(err_msg)
+
+    def pull(self) -> List[Indicator]:
+        """Pull indicator data stored on the user's tenant.
+
+        Returns:
+            List[Indicator]: List of pulled Indicator objects.
+        """
+        try:
+            is_pull_required = self.configuration.get(
+                "is_pull_required", "Yes"
+            )
+            if is_pull_required.lower() == "no":
+                self.logger.info(
+                    f"{self.log_prefix}: Polling is disabled in configuration "
+                    "parameter hence skipping pulling of indicators from "
+                    f"{PLUGIN_NAME}."
+                )
+                return []
+
+            if hasattr(self, "sub_checkpoint"):
+                def wrapper(self):
+                    yield from self._pull_indicators()
+                return wrapper(self)
+            else:
+                indicators = []
+                for batch, _ in self._pull_indicators():
+                    indicators.extend(batch)
+                self.logger.info(
+                    f"{self.log_prefix}: Total {len(indicators)} "
+                    f"indicator(s) pulled from {PLUGIN_NAME} platform."
+                )
+                return indicators
+        except MicrosoftDefenderPluginException:
+            raise
+        except Exception as err:
+            err_msg = (
+                "Error occurred while pulling indicators "
+                f"from {PLUGIN_NAME} platform."
+            )
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg} Error: {err}",
+                details=str(traceback.format_exc()),
+            )
+            raise MicrosoftDefenderPluginException(err_msg)
+
+    def push(
+        self, indicators: List[Indicator], action_dict: Dict
+    ) -> PushResult:
+        """Push the Indicator list to Microsoft Defender for Endpoint.
+
+        Args:
+            indicators (List[Indicator]): List of Indicators to be pushed.
+            action_dict (Dict): Action parameters dictionary.
+
+        Returns:
+            PushResult: PushResult object with success flag and message.
         """
         action_dict = action_dict.get("parameters")
-        # strip the whitespace from the authentication parameters
+
+        (
+            base_url,
+            tenant_id,
+            app_id,
+            app_secret,
+            source,
+            *_,
+        ) = self.mde_helper.get_configuration_parameters(
+            self.configuration
+        )
         try:
-            auth_json = self.get_authorization_json(
-                self.configuration["tenantid"].strip(),
-                self.configuration["appid"].strip(),
-                self.configuration["appsecret"].strip(),
-                self.configuration.get("base_url", default_base_url).strip(),
+            auth_header, storage = self.get_access_token_and_storage(
+                base_url=base_url,
+                tenant_id=tenant_id,
+                app_id=app_id,
+                app_secret=app_secret,
             )
-            auth_token = auth_json.get("access_token")
-            if not auth_token:
-                error_msg = auth_json.get("error_description", "Description not available")
-                self.logger.error(
-                    "Plugin: Microsoft Defender for Endpoint, "
-                    "Unable to push indicators from Defender. "
-                    f"Error: {error_msg}"
-                )
-                return PushResult(
-                    success=False,
-                    message=(
-                        "Plugin: Microsoft Defender for Endpoint, "
-                        "Failed to push indicators to Defender "
-                        f"Error: {error_msg}."
-                    ),
-                )
-            headers = {
-                "Authorization": f"Bearer {auth_token}",
-                "Content-Type": "application/json",
-            }
-            payload_list = self.prepare_payload(indicators, action_dict)
-            resp = self.push_indicators_to_defender(
-                headers, payload_list, action_dict
+            payload_list = self.prepare_payload(
+                indicators=indicators,
+                action_dict=action_dict,
+                source=source
             )
-            return resp
-        except requests.exceptions.ProxyError:
-            self.notifier.error(
-                "Plugin: Microsoft Defender for Endpoint, "
-                "Invalid proxy configuration."
+            return self.push_indicators_to_defender(
+                base_url=base_url,
+                headers=auth_header,
+                json_payload=payload_list,
+                action_dict=action_dict,
+                storage=storage,
+            )
+        except MicrosoftDefenderPluginException as exp:
+            return PushResult(
+                success=False,
+                message=str(exp),
+            )
+        except Exception as exp:
+            err_msg = (
+                "Error occurred while sharing "
+                f"indicator(s) to {PLUGIN_NAME} platform."
             )
             self.logger.error(
-                "Plugin: Microsoft Defender for Endpoint, "
-                "Invalid proxy configuration."
+                f"{self.log_prefix}: {err_msg} Error: {repr(exp)}"
             )
             return PushResult(
                 success=False,
-                message=(
-                    "Plugin: Microsoft Defender for Endpoint, "
-                    "Failed to push indicators to Defender "
-                    "Invalid proxy configuration"
-                ),
-            )
-        except requests.exceptions.ConnectionError:
-            self.notifier.error(
-                "Plugin: Microsoft Defender for Endpoint, "
-                "Unable to establish connection with Defender platform. "
-                "Proxy server or Defender API is not reachable."
-            )
-            self.logger.error(
-                "Plugin: Microsoft Defender for Endpoint, "
-                "Unable to establish connection with Defender platform. "
-                "Proxy server or Defender API is not reachable."
-            )
-            return PushResult(
-                success=False,
-                message=(
-                    "Plugin: Microsoft Defender for Endpoint, "
-                    "Failed to push indicators to Defender "
-                    "Unable to establish connection with Defender platform."
-                ),
-            )
-        except requests.exceptions.RequestException as e:
-            self.logger.error(
-                "Plugin: Microsoft Defender for Endpoint, "
-                "Exception occurred while making an API call "
-                "to Defender platform"
-            )
-            return PushResult(
-                success=False,
-                message=(
-                    "Plugin: Microsoft Defender for Endpoint, "
-                    "Exception occurred while making an API call to Defender. "
-                    f"Error : {repr(e)}"
-                ),
+                message=err_msg,
             )
 
-    def call_push_api(self, indicator, headers, retry_count = 1, retry_val = 15):
-        post_resp = requests.post(
-            f"{self.configuration.get('base_url', default_base_url).strip()}/api/indicators",
-            headers=add_user_agent(headers),
-            json=indicator,
-            verify=self.ssl_validation,
-            proxies=self.proxy,
-        )
-        if post_resp.status_code in [500, 504] and retry_count <= 3:
-            self.logger.error(
-                f"Plugin Microsoft Defender for Endpoint, "
-                f"Received error code {post_resp.status_code}, "
-                f"Retrying in {retry_val} seconds."
-            )
-            sleep(retry_val)
-            retry_val = retry_val * 2
-            return self.call_push_api(indicator, headers, retry_count+1, retry_val)
-        elif post_resp.status_code == 429:
-            retry_val_429 = post_resp.headers.get("Retry-After", "60")
-            if retry_count <= 3 and int(retry_val) <= 300:
-                self.logger.error(f"Plugin Microsoft Defender for Endpoint: Retrying after {retry_val_429} seconds.")
-                sleep(int(retry_val_429))
-                retry_val = retry_val * 2
-                return self.call_push_api(indicator, headers, retry_count + 1, retry_val)
-        return post_resp
+    def push_indicators_to_defender(
+        self,
+        base_url: str,
+        headers: Dict,
+        json_payload: List[Dict],
+        action_dict: Dict,
+        storage: Dict
+    ) -> PushResult:
+        """Push indicators to Microsoft Defender for Endpoint.
 
-    def call_del_api(self, indicator, headers, retry_count = 1, retry_val = 15):
-        url = (
-            f"{self.configuration.get('base_url', default_base_url).strip()}"
-            f"/api/indicators/{indicator.get('id')}"
-        )
-        del_resp = requests.delete(
-            url,
-            headers=headers,
-            proxies=self.proxy,
-        )
-        if del_resp.status_code in [500, 504] and retry_count <= 3:
-            self.logger.error(
-                f"Plugin Microsoft Defender for Endpoint, "
-                f"Received error code {del_resp.status_code}, "
-                f"Retrying in {retry_val} seconds."
-            )
-            sleep(retry_val)
-            retry_val = retry_val * 2
-            return self.call_del_api(indicator, headers, retry_count+1, retry_val)
-        elif del_resp.status_code == 429:
-            retry_val_429 = del_resp.headers.get("Retry-After", "60")
-            if retry_count <= 3 and int(retry_val) <= 300:
-                self.logger.error(f"Plugin Microsoft Defender for Endpoint: Retrying after {retry_val_429} seconds.")
-                sleep(int(retry_val_429))
-                retry_val = retry_val * 2
-                return self.call_del_api(indicator, headers, retry_count + 1, retry_val)
-        return del_resp
+        Pulls the full current indicator list first (to support the
+        allow_deletion capacity logic), then pushes each payload item.
 
-    def call_pull_api(self, url, headers, params = {}, retry_count = 1, retry_val = 15):
-        get_resp = requests.get(
-            url,
-            headers=add_user_agent(headers),
-            params = urllib.parse.urlencode(params, safe=':+'),
-            verify=self.ssl_validation,
-            proxies=self.proxy,
-        )
-        if get_resp.status_code in [500, 504] and retry_count <= 3:
-            self.logger.error(
-                f"Plugin Microsoft Defender for Endpoint, "
-                f"Received error code {get_resp.status_code}, "
-                f"Retrying in {retry_val} seconds."
-            )
-            sleep(retry_val)
-            retry_val = retry_val * 2
-            return self.call_pull_api(url, headers, params, retry_count+1, retry_val)
-        elif get_resp.status_code == 429:
-            retry_val_429 = get_resp.headers.get("Retry-After", "60")
-            if retry_count <= 3 and int(retry_val) <= 300:
-                self.logger.error(f"Plugin Microsoft Defender for Endpoint: Retrying after {retry_val_429} seconds.")
-                sleep(int(retry_val_429))
-                retry_val = retry_val * 2
-                return self.call_pull_api(url, headers, params, retry_count+1, retry_val)
-        return get_resp
+        Args:
+            base_url (str): Base URL for API calls.
+            headers (Dict): HTTP headers including Authorization token.
+            json_payload (List[Dict]): List of indicator payloads to push.
+            action_dict (Dict): Action parameters dictionary.
+            storage (Dict): Storage dict.
 
-
-    def push_indicators_to_defender(self, headers, json_payload, action_dict):
-        """Push the indicator to the Microsoft Defender for Endpoint."""
+        Returns:
+            PushResult: PushResult object with success flag and message.
+        """
         try:
-            url = f"{self.configuration.get('base_url', default_base_url).strip()}/api/indicators"
+            allow_deletion = action_dict.get("allow_deletion", "No")
+            indicators_url = INDICATOR_ENDPOINT.format(
+                base_url=base_url
+            )
             ioc_in_defender = []
-            while True:
-                get_resp = self.call_pull_api(url, headers)
-                resp_json = get_resp.json()
-                if get_resp.status_code != 200:
-                    error_message = resp_json.get("error", {}).get(
-                        "message", ""
-                    )
-                    return PushResult(
-                        success=False,
-                        message=(
-                            "Plugin: Microsoft Defender for Endpoint, "
-                            "Unable to push indicators to Defender, "
-                            f"Received status code: {get_resp.status_code}, "
-                            f"Message: {error_message}"
+            success_count = 0
+            failed_iocs = set()
+
+            if allow_deletion == "Yes":
+                # Pull all existing indicators to get their IDs for deletion
+                for resp_list in self._pull_indicators(is_sharing=True):
+                    for ioc in resp_list:
+                        ioc_in_defender.append(
+                            {
+                                "id": ioc.get("id"),
+                                "creationTimeDateTimeUtc": ioc.get(
+                                    "creationTimeDateTimeUtc"
+                                ),
+                            }
                         )
-                    )
-                for ioc in resp_json["value"]:
-                    ioc_in_defender.append(
-                        {
-                            "id": ioc.get("id"),
-                            "creationTimeDateTimeUtc": ioc.get(
-                                "creationTimeDateTimeUtc"
-                            ),
-                        }
-                    )
-                if resp_json.get("@odata.nextLink", []):
-                    url = resp_json["@odata.nextLink"]
-                else:
-                    break
-            sorted_defender_ioc_list = sorted(
-                ioc_in_defender, key=lambda i: i["creationTimeDateTimeUtc"],
-                reverse=True
-            )  # in decscending order earliest creation time at the end
+
+                # Sort descending; earliest creation time at the end
+                sorted_defender_ioc_list = sorted(
+                    ioc_in_defender,
+                    key=lambda i: i["creationTimeDateTimeUtc"] or "",
+                    reverse=True,
+                )
+
+            self.logger.info(
+                f"{self.log_prefix}: Sharing {len(json_payload)} indicator(s) "
+                f"to {PLUGIN_NAME} platform."
+            )
             for ioc in json_payload:
-                push_resp = self.call_push_api(ioc, headers)
+                ioc_value = ioc.get('indicatorValue', "")
+                push_resp = self.mde_helper.api_helper(
+                    logger_msg=(
+                        f"sharing indicator '{ioc_value}'"
+                    ),
+                    url=indicators_url,
+                    method="POST",
+                    headers=headers,
+                    json=ioc,
+                    configuration=self.configuration,
+                    storage=storage,
+                    verify=self.ssl_validation,
+                    proxies=self.proxy,
+                    is_handle_error_required=False,
+                )
                 if push_resp.status_code == 200:
+                    self.logger.debug(
+                        f"{self.log_prefix}: Successfully shared "
+                        f"indicator '{ioc_value}'."
+                    )
+                    success_count += 1
                     continue
-                if (
-                    push_resp.status_code == 400 and
-                    "Max capacity exceeded" in
-                    push_resp.json().get("error",{}).get("message", "")
-                ):
-                    if(action_dict.get("allow_deletion", "No") == "Yes"):
-                        del_resp = self.call_del_api(
-                            sorted_defender_ioc_list.pop(),
-                            headers
-                        )
-                        if del_resp.status_code != 204:
-                            del_resp_json = del_resp.json()
-                            error_message = del_resp_json.get("error", {}).get(
-                                "message", ""
+                if push_resp.status_code == 400:
+                    push_resp_json = push_resp.json()
+                    error_message = push_resp_json.get(
+                        "error", {}
+                    ).get("message", "")
+
+                    if "Max capacity exceeded" in error_message:
+                        if (
+                            allow_deletion == "Yes"
+                            and sorted_defender_ioc_list
+                        ):
+                            del_ioc = sorted_defender_ioc_list.pop()
+                            ioc_id = del_ioc.get('id', "")
+                            del_resp = self._delete_indicators_from_defender(
+                                indicator_id=ioc_id,
+                                base_url=base_url,
+                                headers=headers,
+                                storage=storage
                             )
-                            self.logger.warn(
-                                "Plugin: Microsoft Defender for Endpoint, "
-                                "Unable to push indicator "
-                                f"{ioc['indicatorValue']}, "
-                                "Received status code: "
-                                f"{del_resp.status_code}, "
-                                f"Message: {error_message}"
+                            if not del_resp:
+                                err_msg = (
+                                    "Unable to share "
+                                    f"indicator {ioc_value}."
+                                )
+                                self.logger.error(
+                                    f"{self.log_prefix}: {err_msg}"
+                                )
+                                failed_iocs.add(ioc_value)
+                                continue
+
+                            # Retry push after deletion
+                            retry_resp = self.mde_helper.api_helper(
+                                logger_msg=(
+                                    "retry sharing indicator "
+                                    f"'{ioc_value}'"
+                                ),
+                                url=indicators_url,
+                                method="POST",
+                                headers=headers,
+                                json=ioc,
+                                configuration=self.configuration,
+                                storage=storage,
+                                verify=self.ssl_validation,
+                                proxies=self.proxy,
+                                is_handle_error_required=False,
                             )
-                            continue
-                        push_resp = self.call_push_api(ioc, headers)
-                        if push_resp.status_code != 200:
-                            push_resp_json = push_resp.json()
-                            error_message = push_resp_json.get(
-                                "error", {}
-                            ).get("message", "")
-                            self.logger.warn(
-                                "Plugin: Microsoft Defender for Endpoint, "
-                                "Unable to push indicator "
-                                f"{ioc['indicatorValue']}, "
-                                "Received status code: "
-                                f"{push_resp.status_code}, "
-                                f"Message: {error_message}"
-                            )
-                    else:
-                        self.logger.error(
-                            "Plugin: Microsoft Defender for Endpoint, "
-                            "Unable to push more "
-                            "indicators to Defender as Maximum "
-                            "capacity is exceeded."
-                        )
-                        return PushResult(
-                            success=False,
-                            message=(
-                                "Plugin: Microsoft Defender for Endpoint, "
-                                "Unable to push more "
-                                "indicators to Defender as Maximum "
+                            if retry_resp.status_code != 200:
+                                retry_error = retry_resp.json().get(
+                                    "error", {}
+                                ).get("message", "")
+                                err_msg = (
+                                    "Unable to share "
+                                    f"indicator {ioc_value}."
+                                )
+                                self.logger.error(
+                                    message=f"{self.log_prefix}: {err_msg}",
+                                    details=str(retry_error)
+                                )
+                                failed_iocs.add(ioc_value)
+                                continue
+                            success_count += 1
+                        else:
+                            err_msg = (
+                                f"Failed to share more indicator(s) "
+                                f"to {PLUGIN_NAME} platform due to maximum "
                                 "capacity is exceeded."
                             )
+                            self.logger.error(
+                                message=f"{self.log_prefix}: {err_msg}",
+                                resolution=(
+                                    "Delete indicators from "
+                                    f"{PLUGIN_NAME} platform to share more "
+                                    "indicator(s)."
+                                )
+                            )
+                            return PushResult(
+                                success=False,
+                                message=err_msg,
+                            )
+                    else:
+                        err_msg = (
+                            f"Failed to share indicator '{ioc_value}' "
+                            f"to {PLUGIN_NAME} platform."
                         )
-                elif push_resp.status_code == 400:
-                    push_resp_json = push_resp.json()
-                    error_message = push_resp_json.get("error", {}).get(
-                        "message", ""
-                    )
-                    self.logger.warn(
-                        "Plugin: Microsoft Defender for Endpoint, "
-                        "Unable to push indicator "
-                        f"{ioc['indicatorValue']}, "
-                        f"Received status code: {push_resp.status_code}, "
-                        f"Message: {error_message}"
-                    )
+                        self.logger.error(
+                            message=f"{self.log_prefix}: {err_msg}",
+                            details=str(push_resp_json)
+                        )
+                        failed_iocs.add(ioc_value)
+                        continue
                 else:
                     push_resp_json = push_resp.json()
-                    error_message = push_resp_json.get("error", {}).get(
-                        "message", ""
+                    err_msg = (
+                        f"Failed to share indicator '{ioc_value}' "
+                        f"to {PLUGIN_NAME} platform."
                     )
-                    return PushResult(
-                        success=False,
-                        message=(
-                            "Plugin: Microsoft Defender for Endpoint, "
-                            "Unable to push Indicator to Defender , "
-                            f"Received status code: {push_resp.status_code}, "
-                            f"Message: {error_message}"
-                        )
+                    self.logger.error(
+                        message=f"{self.log_prefix}: {err_msg}",
+                        details=str(push_resp_json)
                     )
+                    failed_iocs.add(ioc_value)
+                    continue
+
+            log_msg = (
+                f"Successfully shared {success_count} "
+                f"indicator(s) to {PLUGIN_NAME} platform."
+            )
+            if failed_iocs:
+                log_msg += (
+                    f" Failed to share {len(failed_iocs)} "
+                    "indicator(s)."
+                )
+            self.logger.info(
+                f"{self.log_prefix}: {log_msg}"
+            )
+            if failed_iocs and "failed_iocs" in PushResult.model_fields:
+                return PushResult(
+                    success=True,
+                    message=log_msg,
+                    failed_iocs=list(failed_iocs),
+                )
             return PushResult(
                 success=True,
-                message=(
-                    "Plgin: Microsoft Defender for Endpoint, "
-                    f"Successfully Pushed {len(json_payload)} "
-                    "Indicator(s) to Microsoft Defender for Endpoint"
-                )
+                message=log_msg,
             )
-        except Exception as e:
+        except MicrosoftDefenderPluginException:
+            raise
+        except Exception as exp:
+            err_msg = (
+                "Error occurred while sharing indicator(s)."
+            )
             self.logger.error(
-                "Plugin: Microsoft Defender for Endpoint, "
-                "Exception Occurred while executing push method."
-                f"Error: {e}"
+                message=(
+                    f"{self.log_prefix}: {err_msg} Error: {exp}"
+                ),
+                details=str(traceback.format_exc()),
             )
             return PushResult(
                 success=False,
-                message=(
-                    "Plugin: Microsoft Defender for Endpoint, "
-                    f"Error occurred while sharing indicators to Defender, "
-                    f"Error: {e}"
-                )
+                message=err_msg,
             )
 
-    def prepare_payload(self, indicators, action_dict):
+    def prepare_payload(
+        self,
+        indicators: List[Indicator],
+        action_dict: Dict,
+        source: str
+    ) -> List[Dict]:
         """Prepare the JSON payload for Push.
 
         Args:
-            ioc_ids (List[str]):
-            indicators (List[cte.models.Indicators]): List of Indicator
-            objects to be pushed.
+            indicators (List[Indicator]): List of Indicator objects to push.
+            action_dict (Dict): Action parameters dictionary.
+            source (str): Source will be added in indicator description.
+
         Returns:
-            List[dict]: List of python dict object of JSON response model
-            as per Defender API
+            List[Dict]: List of indicator payload dictionaries as per
+                Defender API format.
         """
         generate_alert_conversion = {
             "Yes": True,
-            "No": False
-        }
-        type_conversion = {
-            IndicatorType.URL: "Url",
-            IndicatorType.MD5: "FileMd5",
-            IndicatorType.SHA256: "FileSha256",
-        }
-        severity_conversion = {
-            SeverityType.LOW: "Low",
-            SeverityType.MEDIUM: "Medium",
-            SeverityType.HIGH: "High",
-            SeverityType.CRITICAL: "High"
+            "No": False,
         }
         action_conversion = {
             "unknown": "Audit",
@@ -682,302 +1162,949 @@ class MicrosoftDefenderEndpointPluginV2(PluginBase):
             "block": "Block",
             "alert": "Audit",
             "Alert": "Audit",
-            "AlertAndBlock": "Block"
+            "AlertAndBlock": "Block",
         }
+
+        (
+            type_conversion,
+            severity_conversion
+        ) = self.mde_helper.ioc_type_severity_conversion(is_sharing=True)
+
         payload_list = []
-        source = self.configuration.get("source", "")
+
         action = action_dict.get("action", "Audit")
+        generate_alert = action_dict.get("generate_alert", "No")
         generate_alert_action = generate_alert_conversion.get(
-            (action_dict.get("generate_alert", "No"))
+            generate_alert, True
         )
-        if action in action_conversion.keys():
+
+        if action in action_conversion:
             if action == "AlertAndBlock":
                 generate_alert_action = True
-            action = action_conversion.get(action)
-        sorted_indicators = sorted(
-            indicators, key=attrgetter("firstSeen")
-        )  # in ascendng order on the basis of firstseen
-        for indicator in sorted_indicators:
-            json_body = {
-                "indicatorValue": indicator.value,
-                "action": action,
-                "title": f"Indicator {indicator.value} of type {type_conversion.get(indicator.type)}",
-                "description": f" Netskope-CTE | {source} | {indicator.comments}",
-            }
-            if severity_conversion.get(indicator.severity, None):
-                json_body["severity"] = severity_conversion.get(
-                    indicator.severity
-                )
-            if action == "Audit":
-                json_body["generateAlert"] = True
-            else:
-                json_body["generateAlert"] = generate_alert_action
-            if type_conversion.get(indicator.type) == "Url":
-                json_body["indicatorType"] = check_url_domain_ip(
-                    indicator.value
-                )
-                json_body["title"] = (
-                    f"Indicator {indicator.value} of type {check_url_domain_ip(indicator.value)}"
-                )
-            else:
-                json_body["indicatorType"] = type_conversion.get(
-                    indicator.type
-                )
+            action = action_conversion[action]
 
+        for indicator in indicators:
+            ioc_value = indicator.value
+            ioc_type = type_conversion.get(indicator.type, "DomainName")
+            json_body = {
+                "indicatorValue": ioc_value,
+                "action": action,
+                "description": (
+                    f"Netskope-CTE | {source} | {indicator.comments}"
+                ),
+            }
+
+            if severity := severity_conversion.get(indicator.severity):
+                json_body["severity"] = severity
+
+            json_body["generateAlert"] = (
+                True if action == "Audit" else generate_alert_action
+            )
+
+            if ioc_type in ["Url", "IpAddress", "DomainName"]:
+                ioc_type = self.mde_helper.check_url_domain_ip(ioc_value)
+            json_body["indicatorType"] = ioc_type
+
+            json_body["title"] = (
+                f"Indicator {ioc_value} of type {ioc_type}"
+            )
             payload_list.append(json_body.copy())
+
         return payload_list
+
+    def _validate_parameters(
+        self,
+        parameter_type: Literal["configuration", "action"],
+        field_name: str,
+        field_value: Union[str, int, List],
+        field_type: Type,
+        allowed_values: Dict = None,
+        max_value: int = None,
+        is_required: bool = True,
+        should_strip_str: bool = True,
+    ):
+        """Validate plugin parameters generically.
+
+        Args:
+            parameter_type (Literal["configuration", "action"]): Type of
+                parameter being validated.
+            field_name (str): Name of the field for error messages.
+            field_value (Union[str, int, List]): Value of the field to
+                validate.
+            field_type (Type): Expected type of the field value.
+            allowed_values (Dict, optional): List of allowed values.
+                Defaults to None.
+            max_value (int, optional): Maximum allowed integer value.
+                Defaults to None.
+            is_required (bool): Whether the field is required.
+                Defaults to True.
+            should_strip_str (bool): Whether to strip string values before
+                validation. Set to False for password fields.
+                Defaults to True.
+
+        Returns:
+            ValidationResult: ValidationResult with success=False if
+                invalid, or None if valid.
+        """
+        if isinstance(field_value, str) and should_strip_str:
+            field_value = field_value.strip()
+
+        if (
+            is_required
+            and not isinstance(field_value, int)
+            and not field_value
+        ):
+            err_msg = EMPTY_ERROR_MESSAGE.format(
+                field_name=field_name, parameter_type=parameter_type
+            )
+            self.logger.error(
+                message=(
+                    f"{self.log_prefix}: {VALIDATION_ERROR_MSG} {err_msg}"
+                ),
+                resolution=(
+                    f"Ensure that {field_name} value is provided in the "
+                    f"{parameter_type} parameters."
+                ),
+            )
+            return ValidationResult(success=False, message=err_msg)
+
+        if is_required and not isinstance(field_value, field_type):
+            err_msg = TYPE_ERROR_MESSAGE.format(
+                field_name=field_name,
+                parameter_type=parameter_type,
+            )
+            self.logger.error(
+                message=(
+                    f"{self.log_prefix}: {VALIDATION_ERROR_MSG} {err_msg}"
+                ),
+                resolution=(
+                    f"Ensure that a valid value for {field_name} is "
+                    f"provided in the {parameter_type} parameters."
+                ),
+            )
+            return ValidationResult(success=False, message=err_msg)
+
+        if allowed_values:
+            allowed_values_str = ', '.join(allowed_values.keys())
+            err_msg = (
+                TYPE_ERROR_MESSAGE.format(
+                    field_name=field_name, parameter_type=parameter_type
+                )
+                + INVALID_VALUE_ERROR_MESSAGE.format(
+                    allowed_values=allowed_values_str
+                )
+            )
+            resolution = (
+                f"Ensure that a valid value for {field_name} is "
+                f"provided in the {parameter_type} parameters "
+                f"and it should be one of {allowed_values_str}."
+            )
+            if (
+                field_type is str
+                and field_value not in allowed_values.values()
+            ):
+                self.logger.error(
+                    message=(
+                        f"{self.log_prefix}: {VALIDATION_ERROR_MSG} "
+                        f"{err_msg}"
+                    ),
+                    resolution=resolution,
+                )
+                return ValidationResult(success=False, message=err_msg)
+            elif field_type is list:
+                for value in field_value:
+                    if value not in allowed_values.values():
+                        self.logger.error(
+                            message=(
+                                f"{self.log_prefix}: {VALIDATION_ERROR_MSG} "
+                                f"{err_msg}"
+                            ),
+                            resolution=resolution,
+                        )
+                        return ValidationResult(
+                            success=False, message=err_msg
+                        )
+
+        if (
+            max_value
+            and isinstance(field_value, int)
+            and (field_value > max_value or field_value <= 0)
+        ):
+            err_msg = (
+                f"Invalid value for {field_name} provided in "
+                f"{parameter_type} parameters. Valid value should be an "
+                f"integer greater than 0 and less than {max_value}."
+            )
+            self.logger.error(
+                message=(
+                    f"{self.log_prefix}: {VALIDATION_ERROR_MSG} {err_msg}"
+                ),
+                resolution=(
+                    f"Ensure that the value for {field_name} is an integer "
+                    f"greater than 0 and less than {max_value}."
+                ),
+            )
+            return ValidationResult(success=False, message=err_msg)
 
     def _validate_credentials(
         self,
-        tenantid: str,
-        appid: str,
-        appsecret: str,
+        tenant_id: str,
+        app_id: str,
+        app_secret: str,
         base_url: str,
-    ):
-        """Validate Azure AD Application Credentials"""
+        configuration: dict
+    ) -> ValidationResult:
+        """Validate Azure AD application credentials.
+
+        Args:
+            tenant_id (str): Azure AD Tenant ID.
+            app_id (str): Azure AD Application ID.
+            app_secret (str): Azure AD Application Secret.
+            base_url (str): Microsoft Defender for Endpoint base URL.
+            configuration (dict): Configuration Dict.
+
+        Returns:
+            ValidationResult: Validation result with success flag and
+                message.
+        """
         try:
-            isValid = False
-            auth_json = self.get_authorization_json(
-                tenantid.strip(),
-                appid.strip(),
-                appsecret.strip(),
-                base_url.strip(),
+            is_valid = False
+            auth_header, storage = self.get_access_token_and_storage(
+                base_url=base_url,
+                tenant_id=tenant_id,
+                app_id=app_id,
+                app_secret=app_secret,
+                is_validation=True,
             )
-            auth_token = auth_json.get("access_token")
+
+            auth_token = auth_header.get("Authorization")
+            if auth_token and auth_token.startswith("Bearer "):
+                auth_token = auth_token.removeprefix("Bearer ")
+
             if not auth_token:
-                error_msg = auth_json.get("error_description", "Description not available")
                 self.logger.error(
-                    f"Plugin: Microsoft Defender for Endpoint, "
-                    f"Error: {error_msg}"
+                    f"{self.log_prefix}: {VALIDATION_ERROR_MSG} "
+                    "Could not retrieve access token."
                 )
                 return ValidationResult(
                     success=False,
-                    message="Plugin: Microsoft Defender for Endpoint, "
-                    "Could not verify credentials."
+                    message="Could not verify credentials.",
                 )
-            alg = jwt.get_unverified_header(auth_token)["alg"]
+
+            alg = jwt.get_unverified_header(auth_token).get("alg")
             decoded_auth_token = jwt.decode(
-                auth_json["access_token"],
+                auth_token,
                 algorithms=alg,
                 options={"verify_signature": False},
             )
             roles = set(decoded_auth_token.get("roles", []))
             if "Ti.ReadWrite" in roles or "Ti.ReadWrite.All" in roles:
-                isValid = True
-            if isValid:
-                headers = {
-                    "Authorization": f"Bearer {auth_token}",
-                    "Content-Type": "application/json",
-                }
-                params = {
-                    "$filter": "creationTimeDateTimeUtc+ge+" +
-                    f"{datetime.now().strftime('%Y-%m-%dT%H:%M:%SZ')}"
-                }
-                # check for pull
-                response = self.call_pull_api(
-                    f"{base_url}/api/indicators",
-                    headers,
-                    params
+                is_valid = True
+            if is_valid:
+                creation_time = (
+                    datetime.now(timezone.utc).strftime(DATE_TIME_FORMAT)
                 )
-                if response.status_code == 200:
-                    return ValidationResult(
-                        success=True,
-                        message="Pugin: Microsoft Defender for Endpoint, "
-                        "Validation successful."
+                params = {
+                    "$filter": (
+                        f"creationTimeDateTimeUtc ge {creation_time}"
                     )
-                else:
-                    error_message = response.json().get("error", {}).get(
-                        "message", ""
-                    )
-                    self.logger.error(
-                        "Plugin: Microsoft Defender for Endpoint, "
-                        "Validation error occurred. "
-                        f"Received status code: {response.status_code}, "
-                        f"{error_message}"
-                    )
-                    return ValidationResult(
-                        success=False,
-                        message="Plugin: Microsoft Defender for Endpoint, "
-                        "Validation error occurred. "
-                        f"Received status code: {response.status_code}, "
-                        f"{error_message}"
-                    )
+                }
+                url = INDICATOR_ENDPOINT.format(
+                    base_url=base_url
+                )
+                logger_msg = (
+                    f"validating connectivity with {PLUGIN_NAME} platform"
+                )
+
+                self.mde_helper.api_helper(
+                    logger_msg=logger_msg,
+                    url=url,
+                    method="GET",
+                    params=params,
+                    headers=auth_header,
+                    verify=self.ssl_validation,
+                    proxies=self.proxy,
+                    configuration=configuration,
+                    storage=storage,
+                    is_validation=True,
+                )
+
+                logger_msg = (
+                    "Successfully validated configuration "
+                    f"parameters for {PLUGIN_NAME} platform."
+                )
+                self.logger.debug(
+                    f"{self.log_prefix}: {logger_msg}"
+                )
+                return ValidationResult(
+                    success=True, message=logger_msg,
+                )
             else:
+                err_msg = (
+                    "Required API roles 'Ti.ReadWrite or "
+                    "Ti.ReadWrite.All' not found in the access token."
+                )
+                resolution = (
+                    "Ensure that the Entra application has 'Ti.ReadWrite or "
+                    "Ti.ReadWrite.All' roles assigned."
+                )
                 self.logger.error(
-                    "Plugin: Microsoft Defender for Endpoint, "
-                    "required roles not defined"
+                    message=(
+                        f"{self.log_prefix}: {VALIDATION_ERROR_MSG} {err_msg}"
+                    ),
+                    resolution=resolution
                 )
                 return ValidationResult(
                     success=False,
-                    message="Plugin: Microsoft Defender for Endpoint, "
-                    "Couldn't find required API permissions."
+                    message=err_msg,
                 )
-        except Exception as ex:
+        except MicrosoftDefenderPluginException as exp:
+            err_msg = f"Validation error occurred. Error: {exp}"
             self.logger.error(
-                f"Plugin: Microsoft Defender for Endpoint, "
-                f"{ex}"
+                message=f"{self.log_prefix}: {err_msg}",
+                details=str(traceback.format_exc()),
             )
             return ValidationResult(
                 success=False,
-                message="Plugin: Microsoft Defender for Endpoint, "
-                "Could not verify credentials."
+                message=f"{str(exp)} Check logs for more details."
             )
-
-    def validate(self, configuration):
-        """Validate the configuration"""
-        if "base_url" not in configuration or not configuration["base_url"].strip():
+        except Exception as exp:
+            err_msg = "Unexpected validation error occurred."
             self.logger.error(
-                "Plugin: Microsoft Defender for Endpoint "
-                "Base URL parameter not found in the configuration."
+                message=f"{self.log_prefix}: {err_msg} Error: {exp}",
+                details=str(traceback.format_exc()),
             )
             return ValidationResult(
                 success=False,
-                message="Base URL is a Required Field.",
+                message=f"{err_msg} Check logs for more details.",
             )
 
-        elif configuration["base_url"].strip() not in [
-            "https://api.securitycenter.microsoft.com",
-            "https://api-us.securitycenter.microsoft.com",
-            "https://api-eu.securitycenter.microsoft.com",
-            "https://api-uk.securitycenter.microsoft.com",
-            "https://api-gcc.securitycenter.microsoft.us",
-            "https://api-gov.securitycenter.microsoft.us",
-        ]:
-            self.logger.error(
-                "Plugin: Microsoft Defender for Endpoint "
-                "Error: Invalid value for 'Base URL' provided, "
-                "Select value from the given options only."
-            )
-            return ValidationResult(
-                success=False,
-                message="Invalid value for 'Base URL' provided. "
-                "Select value from the given options only.",
-            )
+    def validate(self, configuration: Dict) -> ValidationResult:
+        """Validate the plugin configuration parameters.
 
-        if (
-            "tenantid" not in configuration or not
-            configuration["tenantid"].strip()
+        Args:
+            configuration (Dict): Dict object having all plugin configuration
+                parameters.
+
+        Returns:
+            ValidationResult: ValidationResult object with success flag and
+                message.
+        """
+        self.logger.debug(
+            f"{self.log_prefix}: Validating configuration parameters."
+        )
+        (
+            base_url,
+            tenant_id,
+            app_id,
+            app_secret,
+            source,
+            threat_data_type,
+            actions_to_be_pulled,
+            generate_alert_val,
+            is_pull_required,
+            retraction_interval,
+            initial_range,
+        ) = self.mde_helper.get_configuration_parameters(configuration)
+
+        # Validate Base URL
+        if validation_result := self._validate_parameters(
+            parameter_type="configuration",
+            field_name="Base URL",
+            field_value=base_url,
+            field_type=str,
+            allowed_values=VALID_BASE_URLS,
         ):
-            self.logger.error(
-                "Plugin: Microsoft Defender for Endpoint, "
-                "Tenant ID parameter not found in the configuration."
-            )
-            return ValidationResult(
-                success=False,
-                message="Plugin: Microsoft Defender for Endpoint, "
-                "Invalid Tenant ID provided."
-            )
+            return validation_result
 
-        if "appid" not in configuration or not configuration["appid"].strip():
-            self.logger.error(
-                "Plugin, Microsoft Defender for Endpoint, "
-                "App ID parameter not found in the configuration."
-            )
-            return ValidationResult(
-                success=False,
-                message="Plugin: Microsoft Defender for Endpoint, "
-                "Invalid App ID provided."
-            )
-
-        if (
-            "appsecret" not in configuration or not
-            configuration["appsecret"].strip()
+        # Validate Tenant ID
+        if validation_result := self._validate_parameters(
+            parameter_type="configuration",
+            field_name="Tenant ID",
+            field_value=tenant_id,
+            field_type=str,
         ):
-            self.logger.error(
-                "Plugin: Microsoft Defender for Endpoint, "
-                "App Secret parameter not found in the configuration."
-            )
-            return ValidationResult(
-                succes=False,
-                message="Plugin: Microsoft Defender for Endpoint, "
-                "Invalid App Secret Provided."
-            )
+            return validation_result
 
-        if (
-            "source" not in configuration
-            or type(configuration["source"]) != str
-            or len(configuration["source"]) > 200
+        # Validate Application ID
+        if validation_result := self._validate_parameters(
+            parameter_type="configuration",
+            field_name="Application ID",
+            field_value=app_id,
+            field_type=str,
         ):
-            self.logger.error(
-                "Plugin: Microsoft Defender for Endpoint, "
-                "Validation error occurred "
-                "Error: Length of IOC Source cannot be more than 200 characters."
-            )
-            return ValidationResult(
-                success=False,
-                message="Error:  "
-                "Length of IOC Source cannot be more than 200 characters.",
-            )
+            return validation_result
 
-        if "actions_to_be_pulled" not in configuration:
-            self.logger.error(
-                "Plugin: Microsoft Defender for Endpoint, "
-                "Actions parameter not found in the configuration."
-            )
-            return ValidationResult(
-                success=False, message="Action is not provided."
-            )
+        # Validate Application Secret (do not strip — password field)
+        if validation_result := self._validate_parameters(
+            parameter_type="configuration",
+            field_name="Application Secret",
+            field_value=app_secret,
+            field_type=str,
+            should_strip_str=False,
+        ):
+            return validation_result
 
-        elif not (set(configuration["actions_to_be_pulled"]).issubset(set(actions))):
-            self.logger.error(
-                "Plugin: Microsoft Defender for Endpoint, "
-                "Actions should be seleted from the provided options only."
-            )
-            return ValidationResult(
-                success=False, message="Invalid Action provided."
-            )
-
-        if "generate_alert" not in configuration:
+        # Validate IOC Source length (optional field)
+        if source and len(source) > IOC_SOURCE_LENGTH:
             err_msg = (
-                "Generate Alert is a required field."
+                f"IOC Source length exceeding {IOC_SOURCE_LENGTH}"
+                " characters."
             )
             self.logger.error(
-                "Plugin: Microsoft Defender for Endpoint, "
-                "Validation error occurred "
-                f"{err_msg}"
+                message=(
+                    f"{self.log_prefix}: {VALIDATION_ERROR_MSG} {err_msg}"
+                ),
+                resolution=(
+                    f"Ensure that IOC Source does not exceed"
+                    f" {IOC_SOURCE_LENGTH} characters."
+                ),
             )
-            return ValidationResult(
-                success=False,
-                message=err_msg,
-           )
-        elif configuration["generate_alert"] not in [True, False, "Both"]:
-            err_msg = (
-                "Invalid value for 'Generate Alert' provided. "
-                "Allowed values are 'Both', 'True', and 'False'."
-            )
-            self.logger.error(
-                "Plugin: Microsoft Defender for Endpoint, "
-                "Validation error occurred "
-                f"{err_msg}"
-            )
-            return ValidationResult(
-                success=False,
-                message=err_msg,
-            )
+            return ValidationResult(success=False, message=err_msg)
 
-        if (
-            "initial_range" not in configuration
-            or not configuration["initial_range"]
-            or type(configuration["initial_range"]) != int
-            or configuration["initial_range"] < 0
+        # Validate Type of Threat data to pull
+        if validation_result := self._validate_parameters(
+            parameter_type="configuration",
+            field_name="Type of Threat data to pull",
+            field_value=threat_data_type,
+            field_type=list,
+            allowed_values=THREAT_TYPES,
+            is_required=False,
         ):
+            return validation_result
+
+        # Validate Actions
+        if validation_result := self._validate_parameters(
+            parameter_type="configuration",
+            field_name="Actions",
+            field_value=actions_to_be_pulled,
+            field_type=list,
+            allowed_values=ACTIONS,
+            is_required=False,
+        ):
+            return validation_result
+
+        # Validate Indicators with Generated Alert
+        field_name = "Indicators with Generated Alert"
+        parameter_type = "configuration"
+        if generate_alert_val is None:
+            err_msg = EMPTY_ERROR_MESSAGE.format(
+                field_name=field_name, parameter_type=parameter_type
+            )
             self.logger.error(
-                "Plugin: Microsoft Defender for Endpoint, "
-                "Validation error occurred "
-                "Error: Type of Initial Range (in days) "
-                "should be non-zero positive integer."
+                message=(
+                    f"{self.log_prefix}: {VALIDATION_ERROR_MSG} {err_msg}"
+                ),
+                resolution=(
+                    f"Ensure that {field_name} value is provided in the "
+                    f"{parameter_type} parameters."
+                ),
             )
-            return ValidationResult(
-                success=False,
-                message="Error: Type of Initial Range (in days) "
-                "should be non-zero positive integer.",
+            return ValidationResult(success=False, message=err_msg)
+        if generate_alert_val not in IOC_GENERATED_ALERT.values():
+            allowed_values_str = ', '.join(IOC_GENERATED_ALERT.keys())
+            err_msg = (
+                TYPE_ERROR_MESSAGE.format(
+                    field_name=field_name, parameter_type=parameter_type
+                )
+                + INVALID_VALUE_ERROR_MESSAGE.format(
+                    allowed_values=allowed_values_str
+                )
             )
+            resolution = (
+                f"Ensure that a valid value for {field_name} is "
+                f"provided in the {parameter_type} parameters "
+                f"and it should be one of {allowed_values_str}."
+            )
+            self.logger.error(
+                message=(
+                    f"{self.log_prefix}: {VALIDATION_ERROR_MSG} "
+                    f"{err_msg}"
+                ),
+                resolution=resolution,
+            )
+            return ValidationResult(success=False, message=err_msg)
 
+        # Validate Enable Polling
+        if validation_result := self._validate_parameters(
+            parameter_type="configuration",
+            field_name="Enable Polling",
+            field_value=is_pull_required,
+            field_type=str,
+            allowed_values=YES_NO_PARAMETER,
+        ):
+            return validation_result
 
-        # this is where the data comes in from manifest.json
+        # Validate Retraction Interval (in days)
+        if validation_result := self._validate_parameters(
+            parameter_type="configuration",
+            field_name="Retraction Interval (in days)",
+            field_value=retraction_interval,
+            field_type=int,
+            max_value=DAYS_LIMIT,
+            is_required=False
+        ):
+            return validation_result
+
+        # Validate Initial Range
+        if validation_result := self._validate_parameters(
+            parameter_type="configuration",
+            field_name="Initial Range (in days)",
+            field_value=initial_range,
+            field_type=int,
+            max_value=DAYS_LIMIT,
+        ):
+            return validation_result
+
+        # Validate credentials via connectivity check
         return self._validate_credentials(
-            configuration["tenantid"].strip(),
-            configuration["appid"].strip(),
-            configuration["appsecret"].strip(),
-            configuration["base_url"].strip()
+            tenant_id, app_id, app_secret, base_url, configuration
+        )
+
+    def _delete_indicators_from_defender(
+        self,
+        indicator_id: str,
+        base_url: str,
+        headers: dict,
+        storage: dict
+    ):
+        """Delete a single indicator from Microsoft Defender for Endpoint.
+
+        Used by the push flow when MDE reports "Max capacity exceeded" — the
+        oldest existing indicator is deleted to make room for a new one.
+
+        Args:
+            indicator_id (str): MDE indicator ID to delete.
+            base_url (str): Microsoft Defender for Endpoint base URL.
+            headers (dict): Authorization headers for the request.
+            storage (dict): Token storage dict passed through to api_helper.
+
+        Returns:
+            bool: True if the indicator was deleted successfully,
+                False otherwise.
+        """
+        indicators_url = INDICATOR_ENDPOINT.format(
+            base_url=base_url
+        )
+        del_url = f"{indicators_url}/{indicator_id}"
+        try:
+            _ = self.mde_helper.api_helper(
+                logger_msg=(
+                    f"deleting indicator from {PLUGIN_NAME} platform"
+                ),
+                url=del_url,
+                method="DELETE",
+                headers=headers,
+                configuration=self.configuration,
+                storage=storage,
+                verify=self.ssl_validation,
+                proxies=self.proxy,
+            )
+            return True
+        except MicrosoftDefenderPluginException:
+            return False
+        except Exception as exp:
+            err_msg = (
+                "Error occurred while deleting indicators "
+                f"from {PLUGIN_NAME} platform."
+            )
+            self.logger.error(
+                message=(
+                    f"{self.log_prefix}: {err_msg} Error: {exp}"
+                ),
+                details=str(traceback.format_exc()),
+            )
+            return False
+
+    def get_modified_indicators(
+        self, source_indicators: List[List[Dict]]
+    ) -> Generator[Tuple[List[str], bool], None, None]:
+        """Get all modified IoCs status.
+
+        Args:
+            source_indicators (List[List[Dict]]): Source IoCs.
+
+        Yields:
+            List of retracted IoCs, Status (List, bool): List of
+                retracted IoCs values. Status of execution.
+        """
+        if RETRACTION not in self.log_prefix:
+            self.log_prefix = self.log_prefix + f" [{RETRACTION}]"
+
+        (
+            *_,
+            retraction_interval,
+            _,
+        ) = self.mde_helper.get_configuration_parameters(
+            self.configuration
+        )
+
+        if not (retraction_interval and isinstance(retraction_interval, int)):
+            log_msg = (
+                "Retraction Interval is not available for the configuration "
+                f"'{self.config_name}'. Skipping retraction of indicator(s) "
+                f"from {PLUGIN_NAME} platform."
+            )
+            self.logger.info(f"{self.log_prefix}: {log_msg}")
+            yield [], True
+            return
+
+        self.logger.info(
+            message=(
+                f"{self.log_prefix}: Pulling modified indicator(s) "
+                f"from {PLUGIN_NAME} platform."
+            )
+        )
+
+        try:
+            modified_indicators_gen = self._pull_indicators(is_retraction=True)
+        except MicrosoftDefenderPluginException:
+            raise
+        except Exception as err:
+            err_msg = (
+                "Error occurred while pulling modified "
+                f"indicator(s) from {PLUGIN_NAME} platform."
+            )
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg} Error: {err}",
+                details=str(traceback.format_exc()),
+            )
+            raise MicrosoftDefenderPluginException(err_msg)
+
+        modified_iocs = set()
+        for ioc_values_set, _ in modified_indicators_gen:
+            modified_iocs.update(ioc_values_set)
+
+        for source_ioc_list in source_indicators:
+            try:
+                total_iocs = len(source_ioc_list)
+                iocs = {
+                    ioc.value for ioc in source_ioc_list
+                    if ioc and ioc.value not in modified_iocs
+                }
+
+                self.logger.info(
+                    f"{self.log_prefix}: {len(iocs)} indicator(s) will "
+                    f"be marked as retracted from {total_iocs} total "
+                    "indicator(s) present in Cloud Exchange for "
+                    f"{PLUGIN_NAME}."
+                )
+                yield list(iocs), False
+            except Exception as err:
+                err_msg = (
+                    f"Error while pulling modified indicator(s) from "
+                    f"{PLUGIN_NAME} platform."
+                )
+                self.logger.error(
+                    message=(f"{self.log_prefix}: {err_msg} Error: {err}"),
+                    details=traceback.format_exc(),
+                )
+                raise MicrosoftDefenderPluginException(err_msg)
+
+    def _fetch_indicator_ids_by_value(
+        self,
+        indicator_values: List[str],
+        base_url: str,
+        auth_headers: Dict,
+        storage: dict,
+    ) -> List[str]:
+        """Fetch Microsoft Defender indicator IDs for given indicator values.
+
+        Queries the Indicators API using OData filter clauses in batches of
+        RETRACTION_FETCH_BATCH_SIZE (20) and paginates results using $top
+        and $skip.
+
+        Args:
+            indicator_values (List[str]): Indicator values to look up.
+            base_url (str): Base URL for API calls.
+            auth_headers (Dict): Authorization headers.
+            storage (dict): Storage dict for token refresh.
+
+        Returns:
+            List[str]: Deduplicated list of indicator IDs found.
+        """
+        if RETRACTION not in self.log_prefix:
+            self.log_prefix = self.log_prefix + f" [{RETRACTION}]"
+
+        url = INDICATOR_ENDPOINT.format(base_url=base_url)
+        ids = []
+
+        for i in range(0, len(indicator_values), RETRACTION_FETCH_BATCH_SIZE):
+            batch = indicator_values[
+                i: i + RETRACTION_FETCH_BATCH_SIZE
+            ]
+            filter_clause = " or ".join(
+                f"indicatorValue eq '{v}'" for v in batch
+            )
+            skip = 0
+            while True:
+                params = {
+                    "$filter": filter_clause,
+                    "$top": PAGE_SIZE,
+                    "$skip": skip,
+                }
+                try:
+                    resp_json = self.mde_helper.api_helper(
+                        logger_msg=(
+                            "fetching indicator IDs for retraction "
+                            f"batch {i // RETRACTION_FETCH_BATCH_SIZE + 1}"
+                        ),
+                        url=url,
+                        method="GET",
+                        params=params,
+                        headers=auth_headers,
+                        configuration=self.configuration,
+                        storage=storage,
+                        verify=self.ssl_validation,
+                        proxies=self.proxy,
+                        is_retraction=True,
+                    )
+                except MicrosoftDefenderPluginException:
+                    raise
+                except Exception as exp:
+                    err_msg = (
+                        "Error occurred while fetching indicator IDs "
+                        f"for retraction from {PLUGIN_NAME} platform."
+                    )
+                    self.logger.error(
+                        message=(
+                            f"{self.log_prefix}: {err_msg} Error: {exp}"
+                        ),
+                        details=str(traceback.format_exc()),
+                    )
+                    raise MicrosoftDefenderPluginException(err_msg)
+
+                page_values = resp_json.get("value", [])
+                ids.extend(item["id"] for item in page_values if "id" in item)
+
+                if len(page_values) < PAGE_SIZE:
+                    break
+                skip += PAGE_SIZE
+
+        return list(set(ids))
+
+    def _batch_delete_indicators(
+        self,
+        indicator_ids: List[str],
+        base_url: str,
+        auth_headers: Dict,
+        storage: dict,
+    ) -> Tuple[int, int]:
+        """Delete Microsoft Defender indicators in batches via BatchDelete API.
+
+        Args:
+            indicator_ids (List[str]): List of indicator IDs to delete.
+            base_url (str): Base URL for API calls.
+            auth_headers (Dict): Authorization headers.
+            storage (dict): Storage dict for token refresh.
+
+        Returns:
+            Tuple[int, int]: (deleted_count, failed_count).
+        """
+        if RETRACTION not in self.log_prefix:
+            self.log_prefix = self.log_prefix + f" [{RETRACTION}]"
+
+        delete_url = BATCH_DELETE_ENDPOINT.format(base_url=base_url)
+        deleted_count = 0
+        failed_count = 0
+
+        for i in range(0, len(indicator_ids), RETRACTION_DELETE_BATCH_SIZE):
+            batch = indicator_ids[i: i + RETRACTION_DELETE_BATCH_SIZE]
+            batch_num = i // RETRACTION_DELETE_BATCH_SIZE + 1
+            try:
+                self.mde_helper.api_helper(
+                    logger_msg=(
+                        f"retracting {len(batch)} indicator(s) in "
+                        f"batch {batch_num} from {PLUGIN_NAME} platform."
+                    ),
+                    url=delete_url,
+                    method="POST",
+                    json={"IndicatorIds": batch},
+                    headers=auth_headers,
+                    configuration=self.configuration,
+                    storage=storage,
+                    verify=self.ssl_validation,
+                    proxies=self.proxy,
+                    is_retraction=True,
+                )
+                deleted_count += len(batch)
+                self.logger.debug(
+                    f"{self.log_prefix}: Successfully retracted {len(batch)} "
+                    f"indicator(s) in batch {batch_num}."
+                )
+            except MicrosoftDefenderPluginException as exp:
+                failed_count += len(batch)
+                self.logger.error(
+                    f"{self.log_prefix}: Failed to retract {len(batch)} "
+                    f"indicator(s) in batch {batch_num} from {PLUGIN_NAME}. "
+                    f"Error: {exp}"
+                )
+
+        return deleted_count, failed_count
+
+    def retract_indicators(
+        self,
+        retracted_indicators_lists: List[List[Indicator]],
+        list_action_dict: List[Action],
+    ):
+        """Retract/Delete Indicators from Microsoft Defender for Endpoint.
+
+        Fetches indicator IDs from MDE by value (OData filter, batches of
+        RETRACTION_FETCH_BATCH_SIZE) then deletes via BatchDelete API
+        (batches of RETRACTION_DELETE_BATCH_SIZE).
+
+        Args:
+            retracted_indicators_lists (List[List[Indicator]]):
+                Retract indicators list.
+            list_action_dict (List[Action]): List of action dict.
+
+        Yields:
+            ValidationResult: Validation result per batch.
+        """
+        if RETRACTION not in self.log_prefix:
+            self.log_prefix = self.log_prefix + f" [{RETRACTION}]"
+
+        self.logger.info(
+            f"{self.log_prefix}: Starting retraction of indicator(s) from "
+            f"{PLUGIN_NAME} platform."
+        )
+
+        (
+            base_url,
+            tenant_id,
+            app_id,
+            app_secret,
+            *_,
+        ) = self.mde_helper.get_configuration_parameters(self.configuration)
+
+        auth_headers, storage = self.get_access_token_and_storage(
+            base_url=base_url,
+            tenant_id=tenant_id,
+            app_id=app_id,
+            app_secret=app_secret,
+        )
+
+        total_retracted = 0
+        total_failed = 0
+
+        for batch_num, retraction_batch in enumerate(
+            retracted_indicators_lists, start=1
+        ):
+            try:
+                values = [
+                    ioc.value
+                    for ioc in retraction_batch
+                    if ioc and ioc.value
+                ]
+                if not values:
+                    log_msg = (
+                        f"No indicator values in batch {batch_num}. "
+                        "Skipping batch."
+                    )
+                    self.logger.info(
+                        f"{self.log_prefix}: {log_msg}"
+                    )
+                    yield ValidationResult(
+                        success=True,
+                        message=log_msg,
+                    )
+                    continue
+
+                self.logger.debug(
+                    f"{self.log_prefix}: Fetching indicator IDs for "
+                    f"{len(values)} indicator(s) in batch {batch_num}."
+                )
+
+                ids = self._fetch_indicator_ids_by_value(
+                    indicator_values=values,
+                    base_url=base_url,
+                    auth_headers=auth_headers,
+                    storage=storage,
+                )
+
+                if not ids:
+                    log_msg = (
+                        "No matching indicator IDs "
+                        f"found in {PLUGIN_NAME} for batch {batch_num}. "
+                        "Skipping retraction."
+                    )
+                    self.logger.info(
+                        f"{self.log_prefix}: {log_msg}"
+                    )
+                    yield ValidationResult(
+                        success=True,
+                        message=log_msg,
+                    )
+                    continue
+
+                self.logger.debug(
+                    f"{self.log_prefix}: Found {len(ids)} indicator ID(s) "
+                    f"to retract for batch {batch_num}."
+                )
+
+                deleted, failed = self._batch_delete_indicators(
+                    indicator_ids=ids,
+                    base_url=base_url,
+                    auth_headers=auth_headers,
+                    storage=storage,
+                )
+                total_retracted += deleted
+                total_failed += failed
+
+                log_msg = (
+                    f"Successfully retracted {deleted} indicator(s)"
+                )
+                if failed > 0:
+                    log_msg += (
+                        f" and failed {failed} indicator(s)"
+                    )
+                self.logger.debug(
+                    f"{self.log_prefix}: {log_msg} in retraction "
+                    f"batch {batch_num} from {PLUGIN_NAME} platform."
+                )
+                yield ValidationResult(
+                    success=True,
+                    message=log_msg,
+                )
+
+            except MicrosoftDefenderPluginException as exp:
+                err_msg = (
+                    f"Error occurred while retracting "
+                    f"indicator(s) in batch {batch_num}."
+                )
+                self.logger.error(
+                    message=(
+                        f"{self.log_prefix}: {err_msg} Error: {exp}"
+                    ),
+                    details=str(traceback.format_exc()),
+                )
+                yield ValidationResult(
+                    success=False,
+                    message=err_msg,
+                )
+            except Exception as exp:
+                err_msg = (
+                    f"Unexpected error occurred while retracting "
+                    f"indicator(s) in batch {batch_num}."
+                )
+                self.logger.error(
+                    message=(
+                        f"{self.log_prefix}: {err_msg} Error: {exp}"
+                    ),
+                    details=str(traceback.format_exc()),
+                )
+                yield ValidationResult(
+                    success=False,
+                    message=err_msg,
+                )
+
+        log_msg = (
+            f"Successfully retracted {total_retracted} indicator(s)"
+        )
+        if total_failed > 0:
+            log_msg += (
+                f" and failed to retract {total_failed} indicator(s)"
+            )
+        self.logger.info(
+            f"{self.log_prefix}: {log_msg} from {PLUGIN_NAME} platform."
         )

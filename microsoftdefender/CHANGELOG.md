@@ -1,8 +1,15 @@
+# 1.4.0
+## Added
+- Added support for indicator retraction.
+- Added 'Type of Threat data to pull' and 'Enable Polling' configuration parameters.
+- Added support to bifurcate the URL by types (Domain, IPv4, IPv6 & URL).
+- Added resolution for error logs starting from CE v6.0.0.
+- Added support for storing access token in the storage.
+
 # 1.3.1
 ## Added
 - Added 'Indicators with Generated Alert' field in Configuration parameters.
 - Added 'Generate Alert' field in the sharing configuration.
-
 ## Removed
 - Removed actions 'Alert' and 'Alert and Block' from configuration and sharing configuration.
 

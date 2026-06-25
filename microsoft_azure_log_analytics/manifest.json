@@ -1,0 +1,94 @@
+{
+    "name": "Microsoft Azure Log Analytics",
+    "id": "microsoft_azure_log_analytics",
+    "version": "1.0.0",
+    "minimum_version": "6.0.0",
+    "mapping": "Microsoft Azure Log Analytics Default Mappings",
+    "module": "CLS",
+    "format_options": [
+        {
+            "label": "CEF",
+            "value": "cef"
+        },
+        {
+            "label": "JSON",
+            "value": "json"
+        }
+    ],
+    "types": [
+        "alerts",
+        "events",
+        "webtx"
+    ],
+    "description": "This plugin supports ingestion of Alerts (DLP, Malware, Policy, Compromised Credential, Malsite, Quarantine, Remediation, Security Assessment, Watchlist, UBA, CTEP, Device, Content), Events (Page, Application, Audit, Infrastructure, Network, Incident, Endpoint, Client Status) and WebTx data into Microsoft Azure Log Analytics Workspace Table. This plugin supports ingestion in CEF and JSON format. \nNote: CEF is only supported in 'Single Table' mode.",
+    "configuration": [
+        {
+            "label": "Directory (tenant) ID",
+            "key": "tenantid",
+            "type": "text",
+            "mandatory": true,
+            "default": "",
+            "description": "Directory (tenant) ID of Microsoft Entra ID application."
+        },
+        {
+            "label": "Application (client) ID",
+            "key": "appid",
+            "type": "text",
+            "mandatory": true,
+            "default": "",
+            "description": "Application (client) ID of Microsoft Entra ID application."
+        },
+        {
+            "label": "Client Secret",
+            "key": "appsecret",
+            "type": "password",
+            "mandatory": true,
+            "default": "",
+            "description": "Client Secret of Microsoft Entra ID application."
+        },
+        {
+            "label": "DCE URI",
+            "key": "dce_uri",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "URI of Data Collector Endpoint."
+        },
+        {
+            "label": "DCR Immutable ID",
+            "key": "dcr_immutable_id",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "Immutable ID of Data Collection Rule."
+        },
+        {
+            "label": "Log Source Identifier",
+            "key": "log_source_identifier",
+            "type": "text",
+            "default": "Netskope CE",
+            "mandatory": true,
+            "description": "This will be added in the 'Application' column of the destination custom log table(s)."
+        },
+        {
+            "label": "Ingestion Mode",
+            "key": "ingestion_mode",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Single Table",
+                    "value": "single_table"
+                },
+                {
+                    "key": "Per Data Type (One Table Per Type)",
+                    "value": "per_data_type"
+                }
+            ],
+            "default": "single_table",
+            "has_api_call": true,
+            "payload_fields": ["ingestion_mode"],
+            "mandatory": true,
+            "description": "Choose 'Single Table' to push every record into a single custom table inside a 'RawData' column. Choose 'Per Data Type' to push Alerts, Events and WebTx into separate custom tables with one column per Netskope field — you must upload the schemas from the plugin guide to Azure before selecting the Ingestion Mode."
+        }
+    ]
+}

@@ -1,35 +1,36 @@
-"""
+"""Azure Netskope LogStreaming CLS plugin.
+
 BSD 3-Clause License
 
 Copyright (c) 2021, Netskope OSS
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
-modification, are permitted provided that the following conditions are met:
+modification, are permitted provided that the following conditions are
+met:
 
-1. Redistributions of source code must retain the above copyright notice, this
-   list of conditions and the following disclaimer.
+1. Redistributions of source code must retain the above copyright
+   notice, this list of conditions and the following disclaimer.
 
-2. Redistributions in binary form must reproduce the above copyright notice,
-   this list of conditions and the following disclaimer in the documentation
-   and/or other materials provided with the distribution.
+2. Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in the
+   documentation and/or other materials provided with the distribution.
 
 3. Neither the name of the copyright holder nor the names of its
    contributors may be used to endorse or promote products derived from
    this software without specific prior written permission.
 
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
-FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
-DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
-SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
-CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
-OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
+PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-
-Azure Netskope LogStreaming plugin.
 """
 
 import gzip
@@ -39,12 +40,12 @@ import json
 import pandas as pd
 import csv
 import time
-import requests
-from typing import List, Tuple, Dict, Any, Generator
+from typing import List, Tuple, Dict, Any, Generator, Union
 from io import BytesIO, StringIO
 import base64
-from urllib.parse import urlparse
 
+from packaging import version
+from netskope.common.api import __version__ as CE_VERSION
 from netskope.common.utils import (
     Notifier,
 )
@@ -59,6 +60,7 @@ from netskope.common.models import NetskopeFieldType, FieldDataType
 
 from .utils.client import AzureNLSClient
 from .utils.exceptions import AzureNLSException
+from .utils.helper import extract_container_name
 
 from .utils.constants import (
     MODULE_NAME,
@@ -78,6 +80,16 @@ from .utils.constants import (
     TYPE_ALERT,
     TYPE_WEBTX,
     PLUGIN_NAME,
+    MESSAGES_PER_PAGE,
+    VISIBILITY_TIMEOUT,
+    VALIDATION_ERROR_MSG,
+    MAXIMUM_CORE_VERSION,
+)
+
+from .lib.azure.core.exceptions import (
+    AzureError,
+    HttpResponseError,
+    ServiceRequestError,
 )
 
 plugin_provider_helper = PluginProviderHelper()
@@ -108,12 +120,39 @@ class AzureNetskopeLogStreaming(PluginBase):
         self.log_prefix = f"{MODULE_NAME} {self.plugin_name}"
         if name:
             self.log_prefix = f"{self.log_prefix} [{name}]"
+        self.resolution_support = version.parse(CE_VERSION) > version.parse(
+            MAXIMUM_CORE_VERSION
+        )
+        self._patch_logger_methods()
+
+    def _patch_logger_methods(self):
+        """Patch logger.error to pass resolution= only on CE > 5.1.2.
+
+        CE versions up to and including 5.1.2 do not accept the
+        resolution keyword argument.  This wrapper swallows it
+        silently on older installs so the plugin runs on both old
+        and new CE versions without branching at every call site.
+        """
+        original_error = self.logger.error
+
+        def patched_error(
+            message=None, details=None, resolution=None, **kwargs
+        ):
+            log_kwargs = {"message": message}
+            if details:
+                log_kwargs["details"] = details
+            if resolution and self.resolution_support:
+                log_kwargs["resolution"] = resolution
+            log_kwargs.update(kwargs)
+            return original_error(**log_kwargs)
+
+        self.logger.error = patched_error
 
     def _get_plugin_info(self) -> Tuple[str, str]:
         """Get plugin name and version from manifest.
 
         Returns:
-            tuple: Tuple of plugin's name and version fetched from manifest.
+            tuple: Tuple of plugin name and version from manifest.
         """
         try:
             manifest_json = AzureNetskopeLogStreaming.metadata
@@ -123,14 +162,20 @@ class AzureNetskopeLogStreaming(PluginBase):
         except Exception as exp:
             self.logger.error(
                 message=(
-                    "{} {}: Error occurred while"
-                    " getting plugin details. Error: {}".format(
-                        MODULE_NAME, PLUGIN_NAME, exp
-                    )
+                    "{} {}: Error occurred while getting plugin "
+                    "details. Error: {}".format(MODULE_NAME, PLUGIN_NAME, exp)
                 ),
                 details=traceback.format_exc(),
             )
         return (PLUGIN_NAME, PLUGIN_VERSION)
+
+    def chunk_size(self) -> int:
+        """Return the optimal chunk size for this plugin.
+
+        Returns:
+            int: Number of records per batch yielded to the framework.
+        """
+        return BATCH_SIZE
 
     def transform(
         self,
@@ -139,7 +184,10 @@ class AzureNetskopeLogStreaming(PluginBase):
         subtype: str,
         **kwargs,
     ) -> List:
-        """Transform the raw netskope target platform supported.
+        """Transform raw Netskope data to the target platform format.
+
+        Each record is processed individually so that a single malformed
+        record does not abort the entire batch.
 
         Args:
             raw_data (List): Raw data to be transformed.
@@ -147,20 +195,87 @@ class AzureNetskopeLogStreaming(PluginBase):
             subtype (str): Subtype of the raw data.
 
         Returns:
-            List: List of transformed data
+            List: List of transformed data.
         """
-        return raw_data
+        transformed = []
+        for record in raw_data:
+            try:
+                transformed.append(record)
+            except Exception as e:
+                self.logger.debug(
+                    message=(
+                        f"{self.log_prefix}: Skipping "
+                        f"{data_type}/{subtype} record due to "
+                        f"transformation error. Error: {e}"
+                    ),
+                    details=traceback.format_exc(),
+                )
+        return transformed
 
-    def _validate_auth_params(
-        self, configuration: dict, queue_name: str, validation_err_msg: str
-    ) -> Tuple[bool, str]:
-        """Validate the Plugin configuration parameters.
+    def _validate_parameters(
+        self,
+        field_name: str,
+        field_value: Union[str, List, bool, int],
+        field_type: type,
+        is_required: bool = True,
+    ) -> Union[ValidationResult, None]:
+        """Validate a single configuration parameter.
+
+        Logs the error and returns a failed ValidationResult when
+        validation fails; returns None when the value is acceptable.
+        The caller can use a walrus-operator pattern to short-circuit.
 
         Args:
-            data (dict): Dict object having all the Plugin
-            configuration parameters.
-            queue_name (str): Queue name.
-            validation_err_msg (str): validation error message.
+            field_name: Human-readable label used in error messages.
+            field_value: Value to validate.
+            field_type: Expected Python type.
+            is_required: Whether the field must be non-empty.
+
+        Returns:
+            ValidationResult on failure, None on success.
+        """
+        if field_type is str and isinstance(field_value, str):
+            field_value = field_value.strip()
+        if (
+            is_required
+            and not isinstance(field_value, int)
+            and not field_value
+        ):
+            err_msg = f"'{field_name}' is a required configuration parameter."
+            self.logger.error(
+                message=(
+                    f"{self.log_prefix}: {VALIDATION_ERROR_MSG}" f"{err_msg}"
+                ),
+                resolution=(
+                    f"Ensure that the {field_name} is provided in "
+                    "the plugin configuration parameters."
+                ),
+            )
+            return ValidationResult(success=False, message=err_msg)
+        if not isinstance(field_value, field_type):
+            err_msg = (
+                f"Invalid value provided for the configuration "
+                f"parameter '{field_name}'."
+            )
+            self.logger.error(
+                message=(
+                    f"{self.log_prefix}: {VALIDATION_ERROR_MSG}" f"{err_msg}"
+                ),
+                resolution=(
+                    f"Ensure that the {field_name} field value is "
+                    "valid and of the correct type."
+                ),
+            )
+            return ValidationResult(success=False, message=err_msg)
+        return None
+
+    def _validate_connection_string_auth(
+        self,
+        configuration: dict,
+    ) -> Union[ValidationResult, None]:
+        """Validate the connection string via live blob service connectivity.
+
+        Returns None on success, ValidationResult(success=False) on failure.
         """
         try:
             azure_helper = AzureNLSClient(
@@ -169,152 +284,156 @@ class AzureNetskopeLogStreaming(PluginBase):
                 self.log_prefix,
             )
             azure_helper.get_blob_service_client(is_validation=True)
-            azure_helper.get_queue_client()
-            queue_service_client = azure_helper.get_queue_service_client()
+            return None
+        except AzureNLSException as exp:
+            return ValidationResult(success=False, message=str(exp))
+        except Exception as err:
+            err_msg = (
+                f"Error occurred while creating {PLATFORM_NAME} "
+                f"blob service client object for {PLUGIN_NAME}. "
+                f"Verify the {PLATFORM_NAME} Storage Account "
+                "Connection String provided in the configuration "
+                "parameters."
+            )
+            self.logger.error(
+                message=(
+                    f"{self.log_prefix}: {VALIDATION_ERROR_MSG}"
+                    f"{err_msg} Error: {err}"
+                ),
+                details=traceback.format_exc(),
+                resolution=(
+                    "Ensure that the Microsoft Azure Storage Account"
+                    " Connection String is correct and accessible "
+                    "from the CE host."
+                ),
+            )
+            return ValidationResult(success=False, message=err_msg)
 
-            # validating the queue name provided in the config params
-            valid_queue_name = False
-            try:
-                queues = queue_service_client.list_queues()
-            except Exception as e:
-                err_msg = (
-                    f"Error occurred while getting {PLATFORM_NAME} Data"
-                    f" Storage queues for {PLUGIN_NAME}."
-                )
-                self.logger.error(
-                    message=f"{self.log_prefix}: {err_msg} Error: {e}",
-                    details=traceback.format_exc(),
-                )
-                raise AzureNLSException(err_msg)
+    def _validate_queue_exists(
+        self,
+        configuration: dict,
+        queue_name: str,
+    ) -> Union[ValidationResult, None]:
+        """Validate that the queue exists in the Azure Storage Account.
+
+        Returns None on success, ValidationResult(success=False) on failure.
+        """
+        try:
+            azure_helper = AzureNLSClient(
+                configuration,
+                self.logger,
+                self.log_prefix,
+            )
+            queue_service_client = azure_helper.get_queue_service_client()
+            queues = queue_service_client.list_queues()
             for queue in queues:
                 if queue.name == queue_name:
-                    valid_queue_name = True
-                    break
-
-            if not valid_queue_name:
-                err_msg = (
-                    f"Invalid {PLATFORM_NAME} Data Storage Queue Name"
-                    f" provided, the provided queue '{queue_name}' does"
-                    f" not exist on {PLATFORM_NAME}."
-                )
-                raise AzureNLSException(err_msg)
-
-            return True, "success"
+                    return None
+            err_msg = (
+                f"Invalid {PLATFORM_NAME} Data Storage Queue Name "
+                f"provided. The queue '{queue_name}' does not exist"
+                f" in the {PLATFORM_NAME} Storage Account."
+            )
+            self.logger.error(
+                message=(
+                    f"{self.log_prefix}: {VALIDATION_ERROR_MSG}"
+                    f"{err_msg}"
+                ),
+                details="",
+                resolution=(
+                    f"Ensure that the queue '{queue_name}' exists "
+                    f"under {PLATFORM_NAME} Storage Account > "
+                    "Queues."
+                ),
+            )
+            return ValidationResult(success=False, message=err_msg)
         except AzureNLSException as exp:
-            self.logger.error(
-                message=(
-                    f"{self.log_prefix}: {validation_err_msg} Error: {exp}"
-                ),
-                details=traceback.format_exc(),
-            )
-            return False, str(exp)
+            return ValidationResult(success=False, message=str(exp))
         except Exception as err:
-            error_msg = (
-                "Unexpected error occurred while validating configuration"
-                " parameters. Check logs for more details."
+            err_msg = (
+                f"Error occurred while listing {PLATFORM_NAME} "
+                f"Storage queues for {PLUGIN_NAME}."
             )
             self.logger.error(
                 message=(
-                    f"{self.log_prefix}: {validation_err_msg} {error_msg}"
-                    f" Error: {err}"
+                    f"{self.log_prefix}: {VALIDATION_ERROR_MSG}"
+                    f"{err_msg} Error: {err}"
                 ),
                 details=traceback.format_exc(),
+                resolution=(
+                    "Ensure that the Microsoft Azure Storage Account"
+                    " Connection String is correct and Queue is accessible."
+                ),
             )
-            return False, error_msg
+            return ValidationResult(success=False, message=err_msg)
 
     def validate(self, configuration: Dict[str, Any]) -> ValidationResult:
         """Validate the Plugin configuration parameters.
 
         Args:
             configuration (dict): Dict object having all the Plugin
-            configuration parameters.
+                configuration parameters.
+
         Returns:
-            ValidateResult object with success flag and message.
+            ValidationResult object with success flag and message.
         """
-
-        validation_err_msg = "Validation error occurred."
-
         # Validate Azure Storage Account Connection String
-        connection_string = configuration.get("connection_string", "").strip()
-        if not connection_string:
-            err_msg = (
-                f"{PLATFORM_NAME} Storage Account Connection String "
-                "is a required configuration parameter."
-            )
-            self.logger.error(
-                f"{self.log_prefix}: {validation_err_msg} Error: {err_msg}"
-            )
-            return ValidationResult(success=False, message=err_msg)
-        elif not isinstance(connection_string, str):
-            err_msg = (
-                f"Invalid {PLATFORM_NAME} Storage Account Connection String"
-                f" found in the configuration parameters. {PLATFORM_NAME}"
-                " Storage Account Connection String should be a valid string."
-            )
-            self.logger.error(
-                f"{self.log_prefix}: {validation_err_msg} Error: {err_msg}"
-            )
-            return ValidationResult(success=False, message=err_msg)
+        connection_string = configuration.get("connection_string", "")
+        if validation_result := self._validate_parameters(
+            field_name=(
+                f"{PLATFORM_NAME} Storage Account Connection String"
+            ),
+            field_value=connection_string,
+            field_type=str,
+        ):
+            return validation_result
 
-        # Validate Azure Queue name.
+        # Validate connection string via live blob service connectivity
+        if validation_result := self._validate_connection_string_auth(
+            configuration
+        ):
+            return validation_result
+
+        # Validate Azure Queue Name
         queue_name = configuration.get("queue_name", "").strip()
-        if not queue_name:
-            err_msg = (
-                f"{PLATFORM_NAME} Data Storage Queue Name is a "
-                "required configuration parameter."
-            )
-            self.logger.error(
-                f"{self.log_prefix}: {validation_err_msg} Error: {err_msg}"
-            )
-            return ValidationResult(success=False, message=err_msg)
-        elif not isinstance(queue_name, str):
-            err_msg = (
-                f"Invalid {PLATFORM_NAME} Data Storage Queue Name found in the"
-                f" configuration parameters. {PLATFORM_NAME} Data Storage "
-                "Queue Name should be a valid string."
-            )
-            self.logger.error(
-                f"{self.log_prefix}: {validation_err_msg} Error: {err_msg}"
-            )
-            return ValidationResult(success=False, message=err_msg)
+        if validation_result := self._validate_parameters(
+            field_name=f"{PLATFORM_NAME} Data Storage Queue Name",
+            field_value=queue_name,
+            field_type=str,
+        ):
+            return validation_result
 
-        # Validate authentication parameters
-        success, message = self._validate_auth_params(
-            configuration, queue_name, validation_err_msg
+        # Validate the queue exists in the Storage Account
+        if validation_result := self._validate_queue_exists(
+            configuration, queue_name
+        ):
+            return validation_result
+
+        validation_msg = f"Validation successful for {PLUGIN_NAME} plugin."
+        self.logger.debug(
+            f"{self.log_prefix}: {validation_msg}"
         )
-
-        if not success:
-            return ValidationResult(success=False, message=f"{message}")
-
-        # validation successful
-        validation_msg = f"Validation Successful for {PLUGIN_NAME} plugin."
-        self.logger.debug(f"{self.log_prefix}: {validation_msg}")
         return ValidationResult(success=True, message=validation_msg)
 
-    def extract_container_name(self, blob_url: str) -> str:
-        """
-        Extracts the container name from an Azure Blob Storage URL.
+    def _get_messages_from_response(
+        self, azure_helper: AzureNLSClient, queue_client
+    ) -> List:
+        """Receive messages from the queue and extract blob references.
+
+        Deletes each processed message from the queue after the blob
+        URL is successfully extracted.
 
         Args:
-            blob_url (str): The full blob URL.
+            azure_helper: AzureNLSClient for get_queue_messages().
+            queue_client: QueueClient used for delete_message().
 
         Returns:
-            str: The container name.
+            List of (container_name, blob_name) tuples for download.
         """
-        parsed = urlparse(blob_url)
-        # Path will be like: /container/blob-name
-        parts = parsed.path.strip("/").split("/")
-        return parts[0] if parts else None
-
-    def _get_messages_from_response(self, queue_client) -> List:
-        """
-        Get messages from response
-
-        Args:
-            queue_client: The Azure queue client
-        """
-        messages = queue_client.receive_messages(
-            messages_per_page=20, visibility_timeout=3000
+        messages = azure_helper.get_queue_messages(
+            queue_client=queue_client,
+            messages_per_page=MESSAGES_PER_PAGE,
+            visibility_timeout=VISIBILITY_TIMEOUT,
         )
         messages_list = []
         try:
@@ -329,9 +448,7 @@ class AzureNetskopeLogStreaming(PluginBase):
                         event_data = json.loads(decoded_str)
                         blob_url = event_data.get("data", {}).get("url", "")
                         if blob_url:
-                            container_name = self.extract_container_name(
-                                blob_url
-                            )
+                            container_name = extract_container_name(blob_url)
                             blob_name = (
                                 blob_url.split(f"/{container_name}/")[1]
                                 if container_name
@@ -349,13 +466,17 @@ class AzureNetskopeLogStreaming(PluginBase):
                                     )
                                 except Exception as e:
                                     err_msg = (
-                                        "Error occurred while deleting message"
-                                        f" containing blob url: {blob_url} "
-                                        f"from {PLATFORM_NAME} Storage Queue."
+                                        "Error occurred while "
+                                        "deleting message "
+                                        "containing blob url: "
+                                        f"{blob_url} from "
+                                        f"{PLATFORM_NAME} "
+                                        "Storage Queue."
                                     )
                                     self.logger.error(
                                         message=(
-                                            f"{self.log_prefix}: {err_msg}"
+                                            f"{self.log_prefix}:"
+                                            f" {err_msg}"
                                             f" Error: {e}"
                                         ),
                                         details=traceback.format_exc(),
@@ -364,33 +485,45 @@ class AzureNetskopeLogStreaming(PluginBase):
                     except Exception as e:
                         err_msg = (
                             "Unexpected error occurred while "
-                            f"receiving messages from {PLATFORM_NAME} "
-                            "Storage Queue."
+                            "parsing a message from "
+                            f"{PLATFORM_NAME} Storage Queue."
                         )
                         self.logger.error(
-                            message=f"{self.log_prefix}: {err_msg} Error: {e}",
+                            message=(
+                                f"{self.log_prefix}: {err_msg}" f" Error: {e}"
+                            ),
                             details=traceback.format_exc(),
                         )
                         continue
 
-        except requests.exceptions.RequestException as e:
+        except (ServiceRequestError, HttpResponseError, AzureError) as e:
             err_msg = (
                 "Error occurred while communicating with "
-                f"{PLATFORM_NAME} Storage queue."
+                f"{PLATFORM_NAME} Storage Queue."
             )
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {e}",
                 details=traceback.format_exc(),
+                resolution=(
+                    "Ensure that the CE host has network "
+                    "connectivity to the Azure Storage endpoint "
+                    "and that the Connection String is valid and "
+                    "has not expired."
+                ),
             )
             raise AzureNLSException(err_msg)
         except Exception as e:
             err_msg = (
                 "Unexpected error occurred while receiving "
-                f"messages from {PLATFORM_NAME} Storage queue."
+                f"messages from {PLATFORM_NAME} Storage Queue."
             )
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {e}",
                 details=traceback.format_exc(),
+                resolution=(
+                    "Ensure that the Azure Storage Queue is "
+                    "properly configured and accessible."
+                ),
             )
             raise AzureNLSException(err_msg)
 
@@ -399,10 +532,10 @@ class AzureNetskopeLogStreaming(PluginBase):
     def _process_incident_event(
         self, incident_data: Dict[str, Any]
     ) -> Dict[str, Any]:
-        """Process incident data to convert some int fields to sting
+        """Convert known integer fields to strings for incident data.
 
         Args:
-            incident_data: Incidnet data to be processed
+            incident_data: Incident record dict to be processed.
         """
         for key in STRING_FIELDS:
             if key in incident_data and incident_data[key]:
@@ -415,10 +548,12 @@ class AzureNetskopeLogStreaming(PluginBase):
         container_name: str,
         blob_name: str,
     ) -> Generator[Tuple[Dict[str, Any], str, str], None, None]:
-        """Bifurcate the data.
+        """Categorise records into alerts, events, or webtx groups.
 
         Args:
-            data (bytes): The json data.
+            data_list: Parsed records from a single CSV chunk.
+            container_name: Azure container name (for log messages).
+            blob_name: Blob file name (for log messages).
         """
         result = {}
         skip_count = 0
@@ -445,25 +580,37 @@ class AzureNetskopeLogStreaming(PluginBase):
                     result.setdefault("v2", []).append(data)
                 else:
                     skip_count += 1
-            except Exception:
+            except Exception as e:
+                self.logger.debug(
+                    message=(
+                        f"{self.log_prefix}: Skipped a record from"
+                        f" file '{blob_name}' due to unexpected "
+                        f"error. Error: {e}"
+                    ),
+                    details=traceback.format_exc(),
+                )
                 skip_count += 1
                 continue
 
         if skip_count > 0:
             self.logger.info(
-                f"{self.log_prefix}: Skipped {skip_count} out "
-                f"of {len(data_list)} logs from file '{blob_name}' "
-                f"from container '{container_name}' due to invalid data or "
-                "unsupported subtype."
+                f"{self.log_prefix}: Skipped {skip_count} out of "
+                f"{len(data_list)} logs from file '{blob_name}' in"
+                f" container '{container_name}' due to invalid data"
+                " or unsupported subtype."
             )
-        datatype = None
+
         for subtype, data in result.items():
             if data:
-                if subtype in ALERTS:
+                # Reset for every subtype — prevents a stale value
+                # from a previous iteration being emitted when a
+                # subtype is unrecognised.
+                datatype = None
+                if subtype.lower() in ALERTS:
                     datatype = "alerts"
-                elif subtype in EVENTS:
+                elif subtype.lower() in EVENTS:
                     datatype = "events"
-                elif subtype in WEBTX:
+                elif subtype.lower() in WEBTX:
                     datatype = "webtx"
 
                 yield data, datatype, subtype
@@ -471,11 +618,13 @@ class AzureNetskopeLogStreaming(PluginBase):
     def _process_gzipped_csv_in_batches(
         self, data: bytes, container_name: str, blob_name: str, batch_size: int
     ) -> Generator[Tuple[Dict[str, Any], str, str], None, None]:
-        """Process the gzipped CSV data in batches.
+        """Decompress and parse a gzip-compressed CSV blob in batches.
 
         Args:
-            data (bytes): The gzipped CSV data.
-            s3_client (boto3.client): The S3 client.
+            data (bytes): Raw gzip-compressed blob content.
+            container_name: Azure container name (for log messages).
+            blob_name: Blob file name (for log messages).
+            batch_size: Number of CSV rows per batch.
         """
         try:
             with gzip.GzipFile(fileobj=BytesIO(data), mode="rb") as gz:
@@ -492,14 +641,21 @@ class AzureNetskopeLogStreaming(PluginBase):
                     ).delimiter
                 except Exception as e:
                     err_msg = (
-                        "Error occurred while detecting delimiter from"
-                        " csv file. Using default delimiter ','."
+                        "Error occurred while detecting delimiter "
+                        "from CSV file. Using default delimiter ','."
                     )
                     self.logger.error(
-                        message=f"{self.log_prefix}: {err_msg} Error: {e}",
+                        message=(
+                            f"{self.log_prefix}: {err_msg}" f" Error: {e}"
+                        ),
                         details=traceback.format_exc(),
+                        resolution=(
+                            "Ensure that the blob file is a valid "
+                            "gzip-compressed CSV produced by "
+                            "Netskope Log Streaming."
+                        ),
                     )
-                # batching for the batch size
+
                 for chunk in pd.read_csv(
                     StringIO(csv_content),
                     delimiter=delimiter,
@@ -513,9 +669,7 @@ class AzureNetskopeLogStreaming(PluginBase):
                         regex=True,
                         inplace=True,
                     )
-
                     file_data = json.loads(chunk.to_json(orient="records"))
-
                     for data, datatype, subtype in self._bifurcate_data(
                         file_data, container_name, blob_name
                     ):
@@ -523,32 +677,35 @@ class AzureNetskopeLogStreaming(PluginBase):
 
         except Exception as e:
             err_msg = (
-                "Unexpected error occurred while processing container file."
+                "Unexpected error occurred while processing "
+                f"container file '{blob_name}'."
             )
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {e}",
                 details=traceback.format_exc(),
+                resolution=(
+                    "Ensure that the blob files in the Azure "
+                    "Container are gzip-compressed CSV files "
+                    "produced by Netskope Log Streaming. Malformed "
+                    "or unsupported file formats will be skipped."
+                ),
             )
             raise AzureNLSException(err_msg)
 
     def _process_messages(
         self, azure_helper: AzureNLSClient, messages_list: list
     ) -> Generator[Tuple[Dict[str, Any], str, str], None, None]:
-        """Process the messages.
+        """Download and process blobs referenced in the message list.
 
         Args:
-            messages (list): List of messages.
-            configuration (dict): The configuration dictionary.
+            azure_helper: AzureNLSClient with retry-enabled
+                download_blob().
+            messages_list: List of (container_name, blob_name) tuples.
         """
-        file_data = []
         skip_count = 0
-        blob_service_client = azure_helper.get_blob_service_client()
         for container_name, blob_name in messages_list:
             try:
-                blob_client = blob_service_client.get_blob_client(
-                    container=container_name, blob=blob_name
-                )
-                data = blob_client.download_blob().readall()
+                data = azure_helper.download_blob(container_name, blob_name)
                 for (
                     file_data,
                     datatype,
@@ -566,30 +723,37 @@ class AzureNetskopeLogStreaming(PluginBase):
                 continue
             except Exception as e:
                 err_msg = (
-                    "Error occurred while processing storage queue messages "
-                    f"for {PLUGIN_NAME} plugin."
+                    "Error occurred while processing storage queue "
+                    f"messages for {PLUGIN_NAME} plugin."
                 )
                 self.logger.error(
-                    message=f"{self.log_prefix}: {err_msg} Error: {e}",
+                    message=(f"{self.log_prefix}: {err_msg} Error: {e}"),
                     details=traceback.format_exc(),
+                    resolution=(
+                        f"Ensure that the blob '{blob_name}' exists"
+                        f" in container '{container_name}' and is "
+                        "accessible with the credentials provided "
+                        "in the Connection String."
+                    ),
                 )
                 skip_count += 1
                 continue
 
         if skip_count > 0:
             self.logger.info(
-                f"{self.log_prefix}: Skipped processing data for {skip_count}"
-                f" messages from {PLATFORM_NAME} Storage Queue because either"
-                " the file format or the data is of unsupported format."
+                f"{self.log_prefix}: Skipped processing data for "
+                f"{skip_count} message(s) from {PLATFORM_NAME} "
+                "Storage Queue because the file format or data is "
+                "unsupported."
             )
 
     def _get_container_data_in_batches(
         self, configuration: Dict[str, Any]
     ) -> Generator[Tuple[Dict[str, Any], str, str], None, None]:
-        """Get the container data in batches.
+        """Orchestrate queue receive → blob download → batch pipeline.
 
         Args:
-            configuration (dict): The configuration dictionary.
+            configuration (dict): Plugin configuration dictionary.
         """
         try:
             queue_name = configuration.get("queue_name", "").strip()
@@ -600,23 +764,22 @@ class AzureNetskopeLogStreaming(PluginBase):
             )
             queue_client = azure_helper.get_queue_client()
 
-            # get the messages from the storage queue
-            messages_list = []
-            messages_list = self._get_messages_from_response(queue_client)
+            messages_list = self._get_messages_from_response(
+                azure_helper, queue_client
+            )
 
-            if len(messages_list) > 0:
+            if messages_list:
                 self.logger.info(
-                    f"{self.log_prefix}: {len(messages_list)} message(s) from"
-                    f" {PLATFORM_NAME} Storage queue '{queue_name}' will"
-                    " be processed."
+                    f"{self.log_prefix}: {len(messages_list)} "
+                    f"message(s) from {PLATFORM_NAME} Storage queue"
+                    f" '{queue_name}' will be processed."
                 )
             else:
                 self.logger.info(
-                    f"{self.log_prefix}: No message(s) available to process"
-                    f" from queue '{queue_name}'."
+                    f"{self.log_prefix}: No message(s) available to"
+                    f" process from queue '{queue_name}'."
                 )
 
-            # process the messages
             for batch_data, datatype, subtype in self._process_messages(
                 azure_helper, messages_list
             ):
@@ -626,29 +789,32 @@ class AzureNetskopeLogStreaming(PluginBase):
             raise
         except Exception as e:
             err_msg = (
-                "Error unexpected occurred while processing"
-                f" container data for {PLUGIN_NAME} plugin."
+                "Unexpected error occurred while processing "
+                f"container data for {PLUGIN_NAME} plugin."
             )
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {e}",
                 details=traceback.format_exc(),
+                resolution=(
+                    "Ensure that the Azure Storage Account "
+                    "Connection String and Queue configuration are "
+                    "correct."
+                ),
             )
             raise AzureNLSException(err_msg)
 
     def load_maintenance(
         self, configuration: Dict[str, Any]
     ) -> Generator[Tuple[Dict[str, Any], str, str], None, None]:
-        """maintainence pulling from the storage queue.
+        """Maintenance pulling from the storage queue.
 
         Args:
-            configuration (dict): The configuration dictionary.
+            configuration (dict): Plugin configuration dictionary.
         """
-
         if back_pressure.STOP_PULLING:
             self.logger.debug(
-                f"{self.log_prefix}: Maintenance pulling"
-                f" for plugin {PLUGIN_NAME} "
-                "is paused due to back pressure."
+                f"{self.log_prefix}: Maintenance pulling for plugin"
+                f" {PLUGIN_NAME} is paused due to back pressure."
             )
             time.sleep(BACK_PRESSURE_WAIT_TIME)
 
@@ -662,23 +828,24 @@ class AzureNetskopeLogStreaming(PluginBase):
     def pull(
         self, start_time=None, end_time=None
     ) -> Generator[Tuple[Tuple[bytes, str, str], None], None, None]:
-        """Pull data from container using azure storage queue.
+        """Pull data from container using Azure Storage Queue.
 
         Args:
-            start_time: start time for historical pulling.
-            end_time: end time for historical pulling.
+            start_time: Start time for historical pulling (unsupported).
+            end_time: End time for historical pulling (unsupported).
         """
-
         if start_time is not None or end_time is not None:
             self.logger.info(
-                f"{self.log_prefix}: {HISTORICAL_PULL} "
-                f"is not supported for {PLUGIN_NAME}."
+                f"{self.log_prefix}: {HISTORICAL_PULL} is not "
+                f"supported for {PLUGIN_NAME}."
             )
-            return {"success": False}
+            return
 
         page_data = []
         log_data_type = "alerts"
         sub_type = "device"
+        total_records = 0
+
         try:
             self.should_exit.clear()
             back_pressure_thread = threading.Thread(
@@ -698,6 +865,8 @@ class AzureNetskopeLogStreaming(PluginBase):
                     sub_type,
                     MAINTENANCE_PULL,
                 )
+                total_records += len(page_data)
+
                 if sub_type != "v2":
                     page_data = gzip.compress(
                         json.dumps({RESULT: page_data}).encode("utf-8"),
@@ -715,14 +884,26 @@ class AzureNetskopeLogStreaming(PluginBase):
             yield (page_data, log_data_type, sub_type), None
         except Exception as err:
             error_msg = (
-                "Error occurred while fetching alerts, events and webtx logs "
-                f"from {PLATFORM_NAME} Storage Account for {PLUGIN_NAME}."
+                "Error occurred while pulling alerts, events and "
+                f"webtx logs from {PLATFORM_NAME} Storage Account "
+                f"for {PLUGIN_NAME}."
             )
             self.logger.error(
-                message=f"{self.log_prefix}: {error_msg} Error: {err}",
+                message=(f"{self.log_prefix}: {error_msg} Error: {err}"),
                 details=traceback.format_exc(),
+                resolution=(
+                    "Ensure that the Microsoft Azure Storage Account"
+                    " credentials and Queue configuration are "
+                    "correct and accessible from the CE host."
+                ),
             )
             raise AzureNLSException(error_msg)
+        finally:
+            self.should_exit.set()
+            self.logger.info(
+                f"{self.log_prefix}: Maintenance pull complete. "
+                f"Total records pulled: {total_records}."
+            )
 
     def log_message(
         self,
@@ -732,30 +913,34 @@ class AzureNetskopeLogStreaming(PluginBase):
         sub_type: str,
         pull_type: str,
     ) -> None:
-        """Log the message for pulling data from Netskope log streaming.
+        """Log a summary of pulled records for a given subtype batch.
 
         Args:
-            data (List[dict]): List of dictionaries of data pulled from
-            Netskope API.
+            plugin_name (str): Plugin name for the log message.
+            data (List[dict]): Records pulled.
+            log_data_type (str): Data type (alerts/events/webtx).
             sub_type (str): Subtype of the data.
-            pull_type (str): Type of pulling (maintenance, historical,
-            real-time).
+            pull_type (str): Pull mode label (e.g. maintenance).
         """
+        if log_data_type == "alerts":
+            log_data_type = "alert"
+        elif log_data_type == "events":
+            log_data_type = "event"
+
         if sub_type == "v2":
             log_msg = (
                 f"Pulled {len(data)} {log_data_type} log(s) "
-                f"for plugin {plugin_name} from {pull_type}"
-                f" in JSON format."
+                f"for plugin {plugin_name} from {pull_type} "
+                "in JSON format."
             )
         else:
             log_msg = (
-                f"Pulled {len(data)} {sub_type} {log_data_type}(s) "
-                f"for plugin {plugin_name} from {pull_type}"
-                f" in JSON format."
+                f"Pulled {len(data)} {sub_type} {log_data_type}(s)"
+                f" for plugin {plugin_name} from {pull_type} "
+                "in JSON format."
             )
-
         self.logger.info(
-            message=f"{self.log_prefix}: {log_msg}",
+            message=f"{self.log_prefix}: {log_msg}"
         )
 
     def extract_and_store_fields(
@@ -764,11 +949,11 @@ class AzureNetskopeLogStreaming(PluginBase):
         typeOfField=NetskopeFieldType.EVENT,
         sub_type=None,
     ):
-        """Extract and store keys from list of dictionaries.
+        """Extract and store field metadata from a list of log records.
 
         Args:
-            items (List[dict]): List of dictionaries. i.e. alerts, or events.
-            typeOfField (str): Alert or Event
+            items (List[dict]): List of log records (alerts or events).
+            typeOfField (str): Alert or Event field type.
             sub_type (str): Subtype of alerts or events.
         """
         typeOfField = typeOfField.rstrip("s")
@@ -790,53 +975,60 @@ class AzureNetskopeLogStreaming(PluginBase):
             for field, field_value in item.items():
                 if field in fields:
                     continue
-                if not field_value:
+                if field_value is None or (
+                    isinstance(field_value, (str, list, dict, tuple, set))
+                    and not field_value
+                ):
                     continue
                 field_obj = plugin_provider_helper.get_stored_field(field)
                 if typeOfField == TYPE_WEBTX and not field_obj:
                     self.logger.info(
-                        f"{self.log_prefix}: The CE platform has detected new"
-                        f" field '{field}' in the WebTx logs."
-                        " Configure CLS to use this field if "
+                        f"{self.log_prefix}: The CE platform has "
+                        f"detected new field '{field}' in the WebTx"
+                        " logs. Configure CLS to use this field if "
                         "you wish to sent it to the SIEM."
                     )
                     notifier.info(
-                        f"The CE platform has detected new field '{field}' in"
-                        " the WebTx logs. Configure CLS to use this field if"
-                        " you wish to sent it to the SIEM."
+                        f"The CE platform has detected new field "
+                        f"'{field}' in the WebTx logs. Configure "
+                        "CLS to use this field if you wish to sent "
+                        "it to the SIEM."
                     )
-
                 elif not field_obj:
                     self.logger.info(
-                        f"{self.log_prefix}: The CE platform has detected new "
-                        f"field '{field}' in the {sub_type}"
-                        f" event with id {item_id}. Configure CLS to use "
-                        "this field if you wish to sent it to the SIEM."
+                        f"{self.log_prefix}: The CE platform has "
+                        f"detected new field '{field}' in the "
+                        f"{sub_type} event with id {item_id}. "
+                        "Configure CLS to use this field if you "
+                        "wish to sent it to the SIEM."
                     )
                     notifier.info(
                         f"The CE platform has detected new "
                         f"field '{field}' in the {sub_type}"
-                        f" event with id {item_id}. Configure CLS to use this"
-                        " field if you wish to sent it to the SIEM."
+                        f" event with id {item_id}. Configure CLS "
+                        "to use this field if you wish to sent it "
+                        "to the SIEM."
                     )
                 datatype = (
                     FieldDataType.BOOLEAN
                     if isinstance(field_value, bool)
                     else (
                         FieldDataType.NUMBER
-                        if isinstance(field_value, int)
-                        or isinstance(field_value, float)
+                        if isinstance(field_value, (int, float))
                         else FieldDataType.TEXT
                     )
                 )
                 plugin_provider_helper.store_new_field(
                     field,
                     typeOfField,
-                    FieldDataType.TEXT if field in STRING_FIELDS else datatype,
+                    (
+                        FieldDataType.TEXT
+                        if field in STRING_FIELDS
+                        else datatype
+                    ),
                 )
             fields = fields.union(item.keys())
 
     def cleanup(self, action_type: str = ActionType.DELETE.value) -> None:
-        """Remove all related dependencies of the record before
-        its deletion, ensuring data integrity."""
+        """Remove all related dependencies before record deletion."""
         pass

@@ -29,17 +29,40 @@ CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-Azure Netskope LogStreaming Plugin.
+Azure Netskope LogStreaming Validator.
 """
 
-
-class Error(Exception):
-    """Base class for exceptions in this module."""
-
-    pass
+from typing import Tuple
+from ..utils.constants import CONNECTION_STRING_REQUIRED_COMPONENTS
 
 
-class AzureNLSException(Error):
-    """Azure NLS plugin Custom Exception class."""
+def validate_connection_string_format(
+    connection_string: str,
+) -> Tuple[bool, str]:
+    """Validate the structural format of an Azure Storage Account Connection String.
 
-    pass
+    This is a pre-flight format check run before attempting live auth,
+    so users get a clear error for malformed strings rather than a cryptic
+    SDK exception.
+
+    Args:
+        connection_string: Raw connection string value from configuration.
+
+    Returns:
+        Tuple of (is_valid, error_message). error_message is empty on success.
+    """
+    missing = [
+        comp
+        for comp in CONNECTION_STRING_REQUIRED_COMPONENTS
+        if comp not in connection_string
+    ]
+    if missing:
+        return False, (
+            "Invalid Microsoft Azure Storage Account Connection String format. "
+            f"Missing required components: {', '.join(missing)}. "
+            "Expected format: DefaultEndpointsProtocol=https;"
+            "AccountName=<storage_account_name>;"
+            "AccountKey=<base64_encoded_key>;"
+            "EndpointSuffix=core.windows.net"
+        )
+    return True, ""

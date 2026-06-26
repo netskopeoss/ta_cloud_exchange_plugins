@@ -32,25 +32,35 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 Azure Netskope LogStreaming constants.
 """
 
-# from netskope_api.iterator.const import Const
-
 MODULE_NAME = "CLS"
-PLUGIN_VERSION = "1.0.0"
+PLUGIN_VERSION = "1.0.1"
 PLATFORM_NAME = "Microsoft Azure"
 PLUGIN_NAME = "Azure Netskope LogStreaming"
+VALIDATION_ERROR_MSG = "Validation error occurred. "
+# Last CE version that does NOT support resolution= in logger.error().
+# Versions strictly above this get the resolution field; 5.1.2 and below do not.
+MAXIMUM_CORE_VERSION = "5.1.2"
 MAINTENANCE_PULL = "maintenance pulling"
 HISTORICAL_PULL = "Historical pulling"
 TYPE_EVENT = "events"
 TYPE_ALERT = "alerts"
 TYPE_WEBTX = "webtx"
-MAX_RETRIES = 3
+
+# Retry and timeout settings (used in client.py retry logic)
+MAX_RETRIES = 4
 READ_TIMEOUT = 300
 DEFAULT_WAIT_TIME = 30
 VALIDATION_READTIMEOUT = 60
+
 RESULT = "result"
-QUEUE_SIZE = 10
 BATCH_SIZE = 10000
 BACK_PRESSURE_WAIT_TIME = 300
+
+# Azure Queue receive settings
+MESSAGES_PER_PAGE = 20
+# Visibility timeout in seconds: blobs must be fully processed within this window
+# before the message reappears in the queue for reprocessing.
+VISIBILITY_TIMEOUT = 3000
 
 STRING_FIELDS = [
     "dlp_incident_id",
@@ -60,7 +70,20 @@ STRING_FIELDS = [
     "browser_session_id",
 ]
 
+# Maps record_type or alert_type field values from Netskope Log Streaming CSV
+# data to normalized subtype keys used for bifurcation into ALERTS / EVENTS /
+# WEBTX.
+#
+# Two patterns exist in the wild:
+#   1. record_type is a descriptive value ("alert_type_dlp", "page", etc.)
+#      → handled by the first branch in _bifurcate_data()
+#   2. record_type == "alert" and alert_type holds the alert subtype
+#      → handled by the second branch in _bifurcate_data()
+#
+# All values are lowercase (with underscores for multi-word) so they match the
+# ALERTS and EVENTS lists without case-sensitive lookup errors.
 NLS_EVENT_MAPPINGS = {
+    # --- record_type-keyed entries (old Netskope Log Streaming format) ---
     "alert_type_c2": "ctep",
     "alert_type_compromised_credential": "Compromised Credential",
     "alert_type_content": "content",
@@ -79,7 +102,7 @@ NLS_EVENT_MAPPINGS = {
     "application": "application",
     "audit": "audit",
     "clientstatus": "clientstatus",
-    "epdlp": "epdlp",
+    "endpoint": "endpoint",
     "incident": "incident",
     "infrastructure": "infrastructure",
     "network": "network",
@@ -102,13 +125,12 @@ NLS_EVENT_MAPPINGS = {
 }
 
 ALERTS = [
-    "anomaly",
-    "compromisedcredential",
+    "compromised credential",
     "policy",
     "malsite",
     "malware",
     "dlp",
-    "securityassessment",
+    "security assessment",
     "watchlist",
     "quarantine",
     "remediation",
@@ -132,3 +154,10 @@ EVENTS = [
 ]
 
 WEBTX = ["v2"]
+
+CONNECTION_STRING_REQUIRED_COMPONENTS = [
+    "DefaultEndpointsProtocol=",
+    "AccountName=",
+    "AccountKey=",
+    "EndpointSuffix=",
+]

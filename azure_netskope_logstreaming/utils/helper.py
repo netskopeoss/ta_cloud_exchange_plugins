@@ -29,17 +29,28 @@ CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-Azure Netskope LogStreaming Plugin.
+Azure Netskope LogStreaming Helper Utilities.
 """
 
-
-class Error(Exception):
-    """Base class for exceptions in this module."""
-
-    pass
+from typing import Optional
+from urllib.parse import urlparse
 
 
-class AzureNLSException(Error):
-    """Azure NLS plugin Custom Exception class."""
+def extract_container_name(blob_url: str) -> Optional[str]:
+    """Extract the container name from an Azure Blob Storage URL.
 
-    pass
+    Azure Blob URLs follow the pattern:
+    https://<account>.blob.core.windows.net/<container>/<blob-path>
+
+    Args:
+        blob_url: Full Azure Blob Storage URL.
+
+    Returns:
+        Container name string, or None if the URL cannot be parsed.
+    """
+    try:
+        parsed = urlparse(blob_url)
+        parts = parsed.path.strip("/").split("/")
+        return parts[0] if parts and parts[0] else None
+    except Exception:
+        return None

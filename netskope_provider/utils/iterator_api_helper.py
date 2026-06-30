@@ -47,7 +47,6 @@ from .constants import (
     PLATFORM_NAME,
     MODULE_NAME,
     MAX_API_CALLS,
-    MAXIMUM_CE_VERSION,
     DEFAULT_WAIT_TIME,
     RATELIMIT_RESET,
     RATELIMIT_REMAINING,
@@ -96,33 +95,6 @@ class NetskopePluginHelper(object):
         self.logger = logger
         self.plugin_name = plugin_name
         self.plugin_version = plugin_version
-        self.resolution_support = version.parse(CE_VERSION) > version.parse(
-            MAXIMUM_CE_VERSION
-        )
-        self.is_ce_version_greater_than_512 = self.resolution_support
-        # Patch logger methods to handle resolution parameter compatibility
-        self._patch_logger_methods()
-
-    def _patch_logger_methods(self):
-        """patch logger methods to handle resolution parameter
-        compatibility."""
-        # Store original methods
-        original_error = self.logger.error
-
-        def patched_error(
-            message=None, details=None, resolution=None, **kwargs
-        ):
-            """Patched error method that handles resolution compatibility."""
-            log_kwargs = {"message": message}
-            if details:
-                log_kwargs["details"] = details
-            if resolution and self.resolution_support:
-                log_kwargs["resolution"] = resolution
-            log_kwargs.update(kwargs)
-            return original_error(**log_kwargs)
-
-        # Replace logger methods with patched versions
-        self.logger.error = patched_error
 
     def _add_user_agent(self, headers: Union[Dict, None] = None) -> Dict:
         """Add User-Agent in the headers for third-party requests.
@@ -697,22 +669,25 @@ class NetskopePluginHelper(object):
                 logger_msg,
                 is_validation=is_validation
             )
+
     def check_iterator_status(
         self,
         tenant_hostname,
+        tenant_configuration_name,
         headers,
         proxies=None,
         tenant_storage=None
     ):
         """
         This function is used to check the status of the Client status iterator.
-        
+
         Parameters:
         tenant_hostname (str): The tenant hostname.
+        tenant_configuration_name (str): The tenant configuration name.
         headers (dict): The headers to be sent with the API call.
         proxies (dict): The proxy configuration in case of proxy enabled.
         tenant_storage (dict): The tenant configuration storage.
-        
+
         Returns:
         bool: True if the iterator is ready else False.
         """
@@ -725,10 +700,11 @@ class NetskopePluginHelper(object):
         else:
             iterator_name = self.create_iterator(
                 tenant_url=tenant_hostname,
-                tenant_configuration_name=self.tenant_name,
+                tenant_configuration_name=tenant_configuration_name,
                 headers=headers,
-                iterator_name=CLIENT_STATUS_ITERATOR_NAME
-            )        
+                iterator_name=CLIENT_STATUS_ITERATOR_NAME,
+                proxies=proxies,
+            )
         logger_msg = (
             "Checking status of iterator "
             f"with name {iterator_name}"

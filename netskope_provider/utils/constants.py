@@ -36,8 +36,7 @@ from netskope_api.iterator.const import Const
 import os
 
 MODULE_NAME = "TENANT"
-PLUGIN_VERSION = "1.6.0"
-MAXIMUM_CE_VERSION = "5.1.2"
+PLUGIN_VERSION = "1.6.1"
 PLATFORM_NAME = "Netskope"
 MAX_API_CALLS = 4
 DATE_FORMAT = "%Y-%m-%dT%H:%M:%S.%fZ"
@@ -98,7 +97,22 @@ if isinstance(RETRY_COUNT_FOR_PULLING, str) and RETRY_COUNT_FOR_PULLING.isnumeri
         RETRY_COUNT_FOR_PULLING = DEFAULT_RETRY_COUNT
 else:
     RETRY_COUNT_FOR_PULLING = DEFAULT_RETRY_COUNT
-STRING_FIELDS = ['dlp_incident_id', 'connection_id', 'app_session_id', 'dlp_parent_id', 'browser_session_id']
+# ID fields converted to string so large 64-bit identifiers keep their
+# precision downstream (see alert_id_fields_syslog_mapping.md). A set is used
+# for O(1) membership checks since this lookup runs for every field on every
+# log record.
+ID_STRING_FIELDS = {
+    "app_session_id",
+    "browser_session_id",
+    "connection_id",
+    "dlp_incident_id",
+    "dlp_parent_id",
+    "incident_id",
+    "latest_incident_id",
+    "request_id",
+    "signature_id",
+    "transaction_id",
+}
 DLP_INCIDENT_FORENSICS_ENDPOINT = "{base_url}/api/v2/incidents/dlpincidents/{dlp_incident_id}/forensics"
 DLP_INCIDENT_ORIGINAL_FILE_ENDPOINT = "{base_url}/api/v2/incidents/dlpincidents/{dlp_incident_id}/originalfile"
 DLP_INCIDENT_SUB_FILE_ENDPOINT = "{base_url}/api/v2/incidents/dlpincidents/{dlp_incident_id}/subfile"
@@ -106,3 +120,113 @@ DLP_INCIDENT_SUB_FILE_ENDPOINT = "{base_url}/api/v2/incidents/dlpincidents/{dlp_
 RATELIMIT_REMAINING = "ratelimit-remaining"
 # Rate limit RESET value is in seconds
 RATELIMIT_RESET = "ratelimit-reset"
+
+ALERT_EVENT_ID_FIELD_MAPPING = {
+    "alert": {
+        "c2": [
+            "signature_id",
+            "transaction_id"
+        ],
+        "content": [
+            "dlp_incident_id",
+            "incident_id"
+        ],
+        "ctep": [
+            "signature_id",
+            "transaction_id"
+        ],
+        "dlp": [
+            "app_session_id",
+            "browser_session_id",
+            "connection_id",
+            "dlp_incident_id",
+            "dlp_parent_id",
+            "incident_id",
+            "request_id",
+            "transaction_id"
+        ],
+        "ips": [
+            "signature_id",
+            "transaction_id"
+        ],
+        "malsite": [
+            "app_session_id",
+            "browser_session_id",
+            "connection_id",
+            "incident_id",
+            "request_id",
+            "transaction_id"
+        ],
+        "malware": [
+            "app_session_id",
+            "browser_session_id",
+            "connection_id",
+            "incident_id",
+            "request_id",
+            "transaction_id"
+        ],
+        "policy": [
+            "app_session_id",
+            "browser_session_id",
+            "connection_id",
+            "incident_id",
+            "request_id",
+            "transaction_id"
+        ],
+        "remediation": [
+            "app_session_id",
+            "browser_session_id",
+            "connection_id",
+            "incident_id",
+            "request_id",
+            "transaction_id"
+        ],
+        "uba": [
+            "app_session_id",
+            "browser_session_id",
+            "connection_id",
+            "incident_id",
+            "request_id",
+            "transaction_id"
+        ],
+        "watchlist": [
+            "app_session_id",
+            "browser_session_id",
+            "connection_id",
+            "dlp_incident_id",
+            "dlp_parent_id",
+            "incident_id",
+            "request_id",
+            "transaction_id"
+        ]
+    },
+    "event": {
+        "application": [
+            "app_session_id",
+            "browser_session_id",
+            "connection_id",
+            "dlp_incident_id",
+            "dlp_parent_id",
+            "request_id",
+            "transaction_id"
+        ],
+        "endpoint": [
+            "dlp_incident_id",
+            "incident_id"
+        ],
+        "incident": [
+            "app_session_id",
+            "connection_id",
+            "dlp_incident_id",
+            "dlp_parent_id",
+            "latest_incident_id"
+        ],
+        "page": [
+            "app_session_id",
+            "browser_session_id",
+            "connection_id",
+            "request_id",
+            "transaction_id"
+        ]
+    }
+}

@@ -1,3 +1,8 @@
+# 1.6.1 (Requires minimum Cloud Exchange version 6.1.0)
+## Added
+- Added coordinated cleanup of the shared client status iterator so it is removed only once no Netskope plugin (CRE or CLS) is using it.
+- Type cast large ID fields to String to avoid UI rounding them off while rendering.
+
 # 1.6.0
 ## Fixed
 - Updated the historical pull logic to ensure that valid events within the requested time range from the last batch are processed.

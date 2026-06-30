@@ -522,6 +522,7 @@ class NetskopeClient:
                 else:
                     is_iterator_ready = self.netskope_api_plugin_helper.check_iterator_status(
                         tenant_hostname=self.tenant_hostname,
+                        tenant_configuration_name=self.tenant_name,
                         headers=self.headers,
                         proxies=self.proxy,
                         tenant_storage=self.tenant.get("storage", {})

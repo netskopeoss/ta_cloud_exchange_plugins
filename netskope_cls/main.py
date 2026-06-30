@@ -1,6 +1,5 @@
 """Netskope Plugin."""
 import traceback
-import inspect
 from typing import List, Literal
 
 from netskope.integrations.cls.plugin_base import (
@@ -229,24 +228,24 @@ class NetskopeCLSPlugin(PluginBase):
         }
 
         modified_type_map = type_map.copy()
-        if "events" in modified_type_map and "clientstatus" in modified_type_map.get("events", []):
-            try:
-                provider.client_status_validation()
-                modified_type_map["events"] = [
-                    event_type
-                    for event_type in modified_type_map.get("events", [])
-                    if event_type != "clientstatus"
-                ]
-            except Exception as e:
-                return ValidationResult(success=False, message=str(e))
+        clientstatus_requested = (
+            "events" in modified_type_map
+            and "clientstatus" in modified_type_map.get("events", [])
+        )
+        if clientstatus_requested:
+            modified_type_map["events"] = [
+                event_type
+                for event_type in modified_type_map.get("events", [])
+                if event_type != "clientstatus"
+            ]
         elif tenant_configuration:
             try:
-                cleanup_params = inspect.signature(provider.cleanup).parameters
-                cleanup_kwargs = {'is_validation': True} if 'is_validation' in cleanup_params else {}
+                provider.unregister_client_status_consumer("cls", self.name)
             except Exception as e:
-                cleanup_kwargs = {}
-
-            provider.cleanup(tenant_configuration, **cleanup_kwargs)
+                self.logger.error(
+                    f"{self.log_prefix}: Error while releasing client_status "
+                    f"subscription for CLS plugin '{self.name}': {e}"
+                )
 
         # use the modified_type_map for the permission check
         provider.permission_check(
@@ -255,7 +254,7 @@ class NetskopeCLSPlugin(PluginBase):
             configuration_name=self.name,
         )
 
-        # If all validations are successful, update tenant storage with incident 
+        # If all validations are successful, update tenant storage with incident
         # enrichment option
         provider.update_incident_enrichment_option_to_storage(
             tenant_name=tenant_name,
@@ -265,10 +264,44 @@ class NetskopeCLSPlugin(PluginBase):
             operation="set",
         )
 
+        # Register only after all other validations pass — prevents a stale
+        # True subscriber leaf when permission_check fails and the plugin
+        # stays disabled.
+        if clientstatus_requested:
+            try:
+                provider.register_client_status_consumer("cls", self.name)
+            except Exception as e:
+                return ValidationResult(success=False, message=str(e))
+
         return ValidationResult(success=True, message="Validation successful.")
 
     def cleanup(self, action_type: str):
-        """Unsert Incident option"""
+        """
+        Tear down per-plugin provider state when this CLS plugin is
+        disabled or deleted.
+
+        Performs two actions on the associated provider:
+          1. Unsets the DLP incident enrichment option for this plugin
+             via ``update_incident_enrichment_option_to_storage``.
+          2. Releases this plugin's hold on the shared client_status
+             iterator via ``unregister_client_status_consumer`` with
+             ``deleted`` derived from ``action_type``:
+
+              * ``action_type == "delete"`` -> ``deleted=True``: the leaf
+                is removed from the subscriber registry entirely.
+              * ``action_type == "disable"`` (or anything else) ->
+                ``deleted=False``: the leaf is set to False (config still
+                exists but is opted out of client_status).
+
+        If this call drops the last active subscriber, the provider will
+        delete the shared iterator on the tenant.
+
+        Args:
+            action_type (str): Cleanup action identifier passed by the
+                framework — typically the value of
+                ``ActionType.DELETE`` (``"delete"``) or
+                ``ActionType.DISABLE`` (``"disable"``).
+        """
         tenant_name = helper.get_tenant_cls(self.name).name
         provider = plugin_provider_helper.get_provider(
             tenant_name=tenant_name
@@ -281,3 +314,14 @@ class NetskopeCLSPlugin(PluginBase):
             incident_enrichment_option="no",
             operation="unset",
         )
+
+        try:
+            provider.unregister_client_status_consumer(
+                "cls", self.name, deleted=(action_type == "delete")
+            )
+        except Exception as e:
+            self.logger.error(
+                f"{self.log_prefix}: Error while releasing client_status "
+                f"subscription on CLS plugin '{self.name}' "
+                f"(action_type={action_type}): {e}"
+            )

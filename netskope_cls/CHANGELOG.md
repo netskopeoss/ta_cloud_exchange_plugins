@@ -1,3 +1,7 @@
+# 2.3.1 (Requires minimum Cloud Exchange version 6.1.0 and minimum Netskope Provider version 1.6.1)
+## Added
+- Added coordinated cleanup of the shared client status iterator so it is removed only once no Netskope plugin (CRE or CLS) is using it. This feature requires Netskope Provider plugin v1.6.1 and Cloud Exchange version v6.0.0 or above.
+
 # 2.3.0
 ## Added
 - Added support for pulling forensics fields for DLP Incidents, To pull and ingest these fields update your Netskope Tenant version to 1.5.0 and CE version to 5.1.2.

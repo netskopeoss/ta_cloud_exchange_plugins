@@ -34,4 +34,4 @@ Netskope CLS constants.
 
 MODULE_NAME = "CLS"
 PLUGIN_NAME = "Netskope CLS"
-PLUGIN_VERSION = "2.3.0"
+PLUGIN_VERSION = "2.3.1"

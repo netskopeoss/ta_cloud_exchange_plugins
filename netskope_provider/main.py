@@ -139,7 +139,7 @@ class NetskopeProviderPlugin(PluginBase):
     def parse_incident_events(self, events_data):
         tenant_name = self.configuration.get("tenantName", "").strip().rstrip("/")
         for event in events_data:
-            for key in CONST.STRING_FIELDS:
+            for key in CONST.ID_STRING_FIELDS:
                 if key in event and event[key] is not None:
                     event[key] = str(event[key])
             dlp_incident_id = event.get("dlp_incident_id")
@@ -152,17 +152,84 @@ class NetskopeProviderPlugin(PluginBase):
                 )
         return events_data
 
+    def _stringify_id_fields(self, alert_event_obj, id_string_fields: List[str]):
+        """Convert all ID fields to string in the given records.
+
+        Large 64-bit identifiers (session, connection, incident, request,
+        transaction, and signature IDs) are stringified so their precision is
+        preserved downstream. The full list of ID fields is defined in
+        ``CONST.ID_STRING_FIELDS`` (see alert_id_fields_syslog_mapping.md).
+
+        Args:
+            records (List[dict]): Alert or event records to update in place.
+
+        Returns:
+            List[dict]: The same list with ID fields converted to string.
+        """
+        records = None
+        if isinstance(alert_event_obj, dict) and isinstance(
+            alert_event_obj.get("result"), list
+        ):
+            records = alert_event_obj.get("result")
+        elif isinstance(alert_event_obj, list):
+            records = alert_event_obj
+        else:
+            return alert_event_obj
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            for key in id_string_fields:
+                if key in record and record[key] is not None:
+                    record[key] = str(record[key])
+        return alert_event_obj
+
     def parse_data(self, events: bytes, data_type: str, sub_type: str):
         """Parse incoming data."""
         decompressed_events = gzip.decompress(events)
+        data_type_stripped = data_type.rstrip("s")
+        is_alert_or_event = data_type in [
+            "event",
+            "events",
+            "alert",
+            "alerts",
+        ]
+        id_string_fields = CONST.ALERT_EVENT_ID_FIELD_MAPPING.get(
+            data_type_stripped, {}
+        ).get(sub_type.lower(), [])
         try:
-            if data_type in ['event', 'events'] and sub_type == "incident":
-                return self.parse_incident_events(json.loads(decompressed_events).get("result", []))
-            return json.loads(decompressed_events)
+            alert_event_obj = json.loads(decompressed_events)
+            if is_alert_or_event and sub_type == "incident":
+                return self.parse_incident_events(
+                    alert_event_obj.get("result", [])
+                )
+            if is_alert_or_event and id_string_fields:
+                alert_event_obj = self._stringify_id_fields(
+                    alert_event_obj, id_string_fields
+                )
+            return alert_event_obj
         except json.decoder.JSONDecodeError:
-            if data_type in ['event', 'events'] and sub_type == "incident":
-                return self.parse_incident_events(parse_csv_response(pd.read_csv(StringIO(decompressed_events.decode("utf-8")), keep_default_na=False)))
-            return parse_csv_response(pd.read_csv(StringIO(decompressed_events.decode("utf-8")), keep_default_na=False))
+            parsed_csv_data = parse_csv_response(
+                pd.read_csv(
+                    StringIO(decompressed_events.decode("utf-8")),
+                    keep_default_na=False,
+                )
+            )
+            if is_alert_or_event and sub_type == "incident":
+                return self.parse_incident_events(parsed_csv_data)
+            if is_alert_or_event and id_string_fields:
+                return self._stringify_id_fields(
+                    parsed_csv_data, id_string_fields
+                )
+            return parsed_csv_data
+        except Exception as err:
+            self.logger.error(
+                message=(
+                    f"{self.log_prefix}: Unexpected error while parsing data"
+                    f" for {data_type} and sub type {sub_type}. Error: {err}"
+                ),
+                details=traceback.format_exc(),
+            )
+            raise
 
     def transform(self, raw_data, data_type, subtype, **kwargs) -> List:
         """Transform the raw netskope target platform supported."""
@@ -616,78 +683,94 @@ class NetskopeProviderPlugin(PluginBase):
             typeOfField (str): Alert or Event
             sub_type (str): Subtype of alerts or events.
         """
-        typeOfField = typeOfField.rstrip("s")
-        fields = set()
-        for item in items:
-            if not isinstance(item, dict):
-                item = item.dict()
-            item_id = item.get("_id", None)
-            if not sub_type and typeOfField == NetskopeFieldType.ALERT:
-                sub_type = item.get("alert_type", None)
-            elif not sub_type and typeOfField == NetskopeFieldType.EVENT:
-                sub_type = item.get("event_type", None)
-            if not item_id:
-                item_id = item.get("id")
-            for field, field_value in item.items():
-                if field in fields:
-                    continue
-                if not field_value:
-                    continue
-                field_obj = plugin_provider_helper.get_stored_field(field)
-                if (
-                    typeOfField == NetskopeFieldType.WEBTX
-                    and field_obj is None
-                ):
-                    self.logger.info(
-                        f"{self.log_prefix}: The CE platform has detected new field '{field}' in the WebTx logs."
-                        " Configure CLS to use this field if you wish to sent it to the SIEM."
+        try:
+            typeOfField = typeOfField.rstrip("s")
+            fields = set()
+            for item in items:
+                if not isinstance(item, dict):
+                    item = item.dict()
+                item_id = item.get("_id", None)
+                if not sub_type and typeOfField == NetskopeFieldType.ALERT:
+                    sub_type = item.get("alert_type", None)
+                elif not sub_type and typeOfField == NetskopeFieldType.EVENT:
+                    sub_type = item.get("event_type", None)
+                if not item_id:
+                    item_id = item.get("id")
+                for field, field_value in item.items():
+                    if field in fields:
+                        continue
+                    if field_value is None or (
+                        isinstance(field_value, (str, list, dict, tuple, set))
+                        and not field_value
+                    ):
+                        continue
+                    field_obj = plugin_provider_helper.get_stored_field(field)
+                    if (
+                        typeOfField == NetskopeFieldType.WEBTX
+                        and field_obj is None
+                    ):
+                        self.logger.info(
+                            f"{self.log_prefix}: The CE platform has detected new field '{field}' in the WebTx logs."
+                            " Configure CLS to use this field if you wish to sent it to the SIEM."
+                        )
+                        notifier.info(
+                            f"The CE platform has detected new field '{field}' in the WebTx logs."
+                            " Configure CLS to use this field if you wish to sent it to the SIEM."
+                        )
+                    elif sub_type not in CONST.EVENTS.keys() and field_obj is None:
+                        self.logger.info(
+                            f"{self.log_prefix}: The CE platform has detected new field '{field}' in the {sub_type}"
+                            f" alert with id {item_id}. Configure CLS to use this field if you wish to sent it to the SIEM."
+                        )
+                        notifier.info(
+                            f"The CE platform has detected new field '{field}' in the {sub_type}"
+                            f" alert with id {item_id}. Configure CLS to use this field if you wish to sent it to the SIEM."
+                        )
+                        self.logger.info(
+                            f"{self.log_prefix}: The CE platform has detected new field '{field}' in the {sub_type}"
+                            f" alert with id {item_id}. Configure CTO to use this field if you wish to map to a ticket."
+                        )
+                        notifier.info(
+                            f"The CE platform has detected new field '{field}' in the {sub_type}"
+                            f" alert with id {item_id}. Configure CTO to use this field if you wish to map to a ticket."
+                        )
+                    elif field_obj is None:
+                        self.logger.info(
+                            f"{self.log_prefix}: The CE platform has detected new field '{field}' in the {sub_type}"
+                            f" event with id {item_id}. Configure CLS to use this field if you wish to sent it to the SIEM."
+                        )
+                        notifier.info(
+                            f"The CE platform has detected new field '{field}' in the {sub_type}"
+                            f" event with id {item_id}. Configure CLS to use this field if you wish to sent it to the SIEM."
+                        )
+
+                    datatype = (
+                        FieldDataType.BOOLEAN
+                        if isinstance(field_value, bool)
+                        else (
+                            FieldDataType.NUMBER
+                            if isinstance(field_value, int)
+                            or isinstance(field_value, float)
+                            else FieldDataType.TEXT
+                        )
                     )
-                    notifier.info(
-                        f"The CE platform has detected new field '{field}' in the WebTx logs."
-                        " Configure CLS to use this field if you wish to sent it to the SIEM."
-                    )
-                elif sub_type not in CONST.EVENTS.keys() and field_obj is None:
-                    self.logger.info(
-                        f"{self.log_prefix}: The CE platform has detected new field '{field}' in the {sub_type}"
-                        f" alert with id {item_id}. Configure CLS to use this field if you wish to sent it to the SIEM."
-                    )
-                    notifier.info(
-                        f"The CE platform has detected new field '{field}' in the {sub_type}"
-                        f" alert with id {item_id}. Configure CLS to use this field if you wish to sent it to the SIEM."
-                    )
-                    self.logger.info(
-                        f"{self.log_prefix}: The CE platform has detected new field '{field}' in the {sub_type}"
-                        f" alert with id {item_id}. Configure CTO to use this field if you wish to map to a ticket."
-                    )
-                    notifier.info(
-                        f"The CE platform has detected new field '{field}' in the {sub_type}"
-                        f" alert with id {item_id}. Configure CTO to use this field if you wish to map to a ticket."
-                    )
-                elif field_obj is None:
-                    self.logger.info(
-                        f"{self.log_prefix}: The CE platform has detected new field '{field}' in the {sub_type}"
-                        f" event with id {item_id}. Configure CLS to use this field if you wish to sent it to the SIEM."
-                    )
-                    notifier.info(
-                        f"The CE platform has detected new field '{field}' in the {sub_type}"
-                        f" event with id {item_id}. Configure CLS to use this field if you wish to sent it to the SIEM."
+                    if field in CONST.ID_STRING_FIELDS:
+                        datatype = FieldDataType.TEXT
+                    plugin_provider_helper.store_new_field(
+                        field, typeOfField, datatype
                     )
 
-                datatype = (
-                    FieldDataType.BOOLEAN
-                    if isinstance(field_value, bool)
-                    else (
-                        FieldDataType.NUMBER
-                        if isinstance(field_value, int)
-                        or isinstance(field_value, float)
-                        else FieldDataType.TEXT
-                    )
-                )
-                plugin_provider_helper.store_new_field(
-                    field, typeOfField, FieldDataType.TEXT if field in CONST.STRING_FIELDS else datatype
-                )
-
-            fields = fields.union(item.keys())
+                fields = fields.union(item.keys())
+        except Exception as err:
+            self.logger.error(
+                message=(
+                    f"{self.log_prefix}: Unexpected error occurred while storing"
+                    f"field for {typeOfField}, Sub Type: {sub_type}. Error:"
+                    f" {err}"
+                ),
+                details=traceback.format_exc(),
+            )
+            raise
 
     def client_status_validation(self):
         """Validate client status endpoint."""
@@ -779,6 +862,227 @@ class NetskopeProviderPlugin(PluginBase):
                 details=traceback.format_exc(),
             )
             raise NetskopeProviderPluginException(error_msg)
+
+    def _delete_client_status_iterator(self, configuration=None) -> None:
+        """
+        Delete the client_status iterator from the Netskope tenant and clear
+        its name from the provider's tenant storage.
+
+        Performs the tenant DELETE against
+        ``/api/v2/events/dataexport/iterator/{iterator_name}`` and then unsets
+        the ``client_status_iterator`` key from storage. If no iterator name
+        is currently recorded in storage, this is a no-op.
+
+        Invoked from two places:
+          * ``cleanup`` — full provider/tenant removal (unconditional).
+          * ``unregister_client_status_consumer`` — only when no active
+            subscriber remains.
+
+        Args:
+            configuration (dict, optional): Provider configuration to read
+                ``tenantName`` and ``v2token`` from. Defaults to
+                ``self.configuration`` when not supplied.
+
+        Returns:
+            None
+        """
+        logger_msg = "deleting Client Status Iterator"
+        try:
+            cfg = configuration if configuration is not None else self.configuration
+            tenant_name = (cfg or {}).get("tenantName", "").strip().rstrip("/")
+            v2token = (cfg or {}).get("v2token", "")
+            client_status_iterator = self.storage.get(
+                "client_status_iterator", ""
+            ) if self.storage else ""
+            if not client_status_iterator:
+                return
+            delete_cs_endpoint = (
+                f"{tenant_name}/api/v2/events/dataexport/iterator/{client_status_iterator}"
+            )
+            headers = {
+                'accept': 'application/json',
+                'Authorization': f'Bearer {v2token}'
+            }
+            logger_msg = (
+                f"Deleting Client Status Iterator {client_status_iterator} "
+                f"for tenant {tenant_name}"
+            )
+            self.netskope_provider_helper.api_helper(
+                logger_msg=logger_msg,
+                url=delete_cs_endpoint,
+                method="DELETE",
+                headers=headers,
+                proxies=self.proxy,
+                is_handle_error_required=True
+            )
+            plugin_provider_helper.update_tenant_storage(
+                self.name, update_unset={"client_status_iterator": ""}
+            )
+            if isinstance(self.storage, dict):
+                self.storage.pop("client_status_iterator", None)
+        except NetskopeProviderPluginException:
+            pass
+        except Exception as e:
+            self.logger.error(
+                f"{self.log_prefix}: "
+                f"Unexpected error occurred while {logger_msg}: {e}"
+            )
+
+    def _has_active_client_status_subscriber(self) -> bool:
+        """
+        Check whether any consumer is currently subscribed to client_status.
+
+        Walks the ``client_status_subscribers`` map (shape:
+        ``{module: {config_name: bool}}``) in the provider's tenant storage
+        and returns True if any leaf is truthy. A ``True`` leaf means the
+        owning plugin configuration is actively pulling client_status; a
+        ``False`` leaf means the configuration exists but has opted out.
+
+        Used by ``unregister_client_status_consumer`` to decide whether the
+        iterator can be deleted.
+
+        Returns:
+            bool: True if at least one config across any module has its
+                subscriber leaf set to True; False otherwise (including when
+                the map is missing or empty).
+        """
+        subs = (self.storage or {}).get("client_status_subscribers", {}) or {}
+        if not isinstance(subs, dict):
+            return False
+        for configs in subs.values():
+            if not isinstance(configs, dict):
+                continue
+            if any(bool(v) for v in configs.values()):
+                return True
+        return False
+
+    def register_client_status_consumer(
+        self,
+        module: Literal["cls", "cre"],
+        config_name: str,
+    ) -> None:
+        """
+        Register a CLS or CRE plugin configuration as an active consumer of
+        the shared client_status iterator.
+
+        Bundles two operations that must happen together:
+          1. Run ``client_status_validation`` — validate the existing iterator
+             or create a new one (with the 404 -> recreate self-heal).
+          2. Set ``client_status_subscribers.<module>.<config_name>`` to True
+             in the provider's tenant storage via dot-notation, so concurrent
+             writes by the other module touch a different leaf and don't
+             clobber this one.
+
+        Called by CLS and CRE during ``validate`` when the plugin is saved
+        with ``clientstatus`` in its requested event types. Replaces the
+        previous direct call to ``client_status_validation`` so the
+        subscriber registry stays consistent.
+
+        Args:
+            module (Literal["cls", "cre"]): The consuming module.
+            config_name (str): The plugin configuration name (``self.name``
+                in the calling plugin). Must not contain ``.`` or start with
+                ``$`` since it becomes a MongoDB field key.
+
+        Returns:
+            None
+
+        Raises:
+            NetskopeProviderPluginException: Propagated from
+                ``client_status_validation`` if iterator creation fails.
+        """
+        self.client_status_validation()
+        leaf_path = f"client_status_subscribers.{module}.{config_name}"
+        plugin_provider_helper.update_tenant_storage(
+            self.name, update_set={leaf_path: True}
+        )
+        if isinstance(self.storage, dict):
+            self.storage.setdefault(
+                "client_status_subscribers", {}
+            ).setdefault(module, {})[config_name] = True
+
+    def unregister_client_status_consumer(
+        self,
+        module: Literal["cls", "cre"],
+        config_name: str,
+        deleted: bool = False,
+    ) -> None:
+        """
+        Release a consumer's hold on the shared client_status iterator and
+        delete the iterator only when no other consumer is still subscribed.
+
+        Two release modes:
+          * ``deleted=False`` (opt-out): the plugin config still exists but
+            no longer needs ``clientstatus``. The leaf
+            ``client_status_subscribers.<module>.<config_name>`` is set to
+            False so the registry still knows the config.
+          * ``deleted=True`` (plugin removal): the leaf is unset entirely so
+            the map does not accumulate dead configs.
+
+        After updating its own leaf, the method evaluates whether any leaf
+        across any module is still True (via
+        ``_has_active_client_status_subscriber``). If none are, it invokes
+        ``_delete_client_status_iterator`` to delete the iterator from the
+        tenant and clear ``client_status_iterator`` from storage. Otherwise
+        the iterator is left alone — another consumer still owns it.
+
+        Migration safety: if the subscriber registry did not exist before
+        this call (a pre-upgrade tenant where the iterator was created by
+        the old, unsubscribed code path), the method records its leaf but
+        skips iterator deletion. A subsequent unregister, by which point
+        both modules will have written their leaves, re-evaluates normally.
+
+        Called by CLS and CRE during ``validate`` when the plugin is saved
+        without ``clientstatus``, and during their ``cleanup`` (with
+        ``deleted=True``) when the plugin is removed.
+
+        Args:
+            module (Literal["cls", "cre"]): The consuming module.
+            config_name (str): The plugin configuration name. Must not
+                contain ``.`` or start with ``$`` since it becomes a MongoDB
+                field key.
+            deleted (bool): True when the calling plugin configuration is
+                being deleted (unset the leaf); False when the plugin is
+                merely opting out of ``clientstatus`` (set the leaf to
+                False). Defaults to False.
+
+        Returns:
+            None
+        """
+        pre_subs = (self.storage or {}).get("client_status_subscribers", {}) or {}
+        pre_existed = isinstance(pre_subs, dict) and any(
+            isinstance(v, dict) and len(v) > 0 for v in pre_subs.values()
+        )
+
+        leaf_path = f"client_status_subscribers.{module}.{config_name}"
+        if deleted:
+            plugin_provider_helper.update_tenant_storage(
+                self.name, update_unset={leaf_path: ""}
+            )
+            if isinstance(self.storage, dict):
+                mod = self.storage.get(
+                    "client_status_subscribers", {}
+                ).get(module, {})
+                if isinstance(mod, dict):
+                    mod.pop(config_name, None)
+        else:
+            plugin_provider_helper.update_tenant_storage(
+                self.name, update_set={leaf_path: False}
+            )
+            if isinstance(self.storage, dict):
+                self.storage.setdefault(
+                    "client_status_subscribers", {}
+                ).setdefault(module, {})[config_name] = False
+
+        # Migration safety: if no subscriber leaf existed before this call,
+        # treat ownership as unknown and skip iterator deletion. The next
+        # unregister after both modules have been through the new path will
+        # re-evaluate.
+        if not pre_existed:
+            return
+
+        if not self._has_active_client_status_subscriber():
+            self._delete_client_status_iterator()
 
     def update_incident_enrichment_option_to_storage(
         self,
@@ -1048,44 +1352,12 @@ class NetskopeProviderPlugin(PluginBase):
 
     def cleanup(self, configuration, is_validation=False) -> None:
         """Remove all related dependencies of the record before its deletion, ensuring data integrity."""
-        # Delete the Client Status iterator from the storage
-        try:
-            tenant_name = configuration.get("tenantName", "").strip().rstrip("/")
-            v2token = configuration.get("v2token", "")
-            client_status_iterator = self.storage.get(
-                "client_status_iterator", ""
-            ) if self.storage else ""
-            if client_status_iterator:
-                delete_cs_endpoint = (
-                    f"{tenant_name}/api/v2/events/dataexport/iterator/{client_status_iterator}"
-                )
-                headers = {
-                    'accept': 'application/json',
-                    'Authorization': f'Bearer {v2token}'
-                }
-                logger_msg = (
-                    f"Deleting Client Status Iterator {client_status_iterator} "
-                    f"for tenant {tenant_name}"
-                )
-                self.netskope_provider_helper.api_helper(
-                    logger_msg=logger_msg,
-                    url=delete_cs_endpoint,
-                    method="DELETE",
-                    headers=headers,
-                    proxies=self.proxy,
-                    is_handle_error_required=True
-                )
-                update_unset = {"client_status_iterator": ""}
-                plugin_provider_helper.update_tenant_storage(
-                    self.name, update_unset=update_unset
-                )
-        except NetskopeProviderPluginException:
-            pass
-        except Exception as e:
-            self.logger.error(
-                f"{self.log_prefix}: "
-                f"Unexpected error occurred while {logger_msg}: {e}"
-            )
+        tenant_name = configuration.get("tenantName", "").strip().rstrip("/")
+        # Full provider/tenant removal: drop the client_status iterator unconditionally.
+        # In-flight CLS / CRE plugin saves go through
+        # (un)register_client_status_consumer instead, so the iterator survives
+        # while any consumer is still subscribed.
+        self._delete_client_status_iterator(configuration)
         if not is_validation:
             tenants = plugin_provider_helper.list_tenants()
             if len(tenants) == 1:

@@ -1,3 +1,13 @@
+# 1.8.0 (Requires minimum Cloud Exchange version 6.1.0 and minimum Netskope Provider version 1.6.1)
+## Added
+- Added support for the 'Add to Destination Profile' action on Netskope.
+- Added support for the 'Add to DNS Profile' action on Netskope.
+- Added support for the 'Add to Service Profile' action on Netskope.
+- Added support for the 'Create Device Classification' action on Netskope.
+- Added coordinated cleanup of the shared client status iterator so it is removed only once no Netskope plugin (CRE or CLS) is using it.
+## Changed
+- Updated the 'Add Host to Private App' action to roll hosts over into additional private apps when a private app reaches its host limit, with a 'Skip Excess Hosts' option to skip the excess hosts instead.
+
 # 1.7.0
 ## Added
 - Added the required `hostname` parameter to the device payload for device tagging APIs.

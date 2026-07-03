@@ -32,13 +32,20 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 CTE Web Page IOC Scraper Plugin.
 """
 
+import html
+import json
 import re
 import traceback
+import xml.etree.ElementTree as ET
 from ipaddress import IPv4Address, IPv6Address, ip_address
-from typing import Dict, List
+from typing import Dict, Iterator, List, Tuple, Union
 
+from html.parser import HTMLParser
 from urllib.parse import urlparse
 from pydantic import ValidationError
+
+from packaging import version
+from netskope.common.api import __version__ as CE_VERSION
 
 from netskope.integrations.cte.models import Indicator, IndicatorType
 
@@ -48,10 +55,25 @@ from netskope.integrations.cte.plugin_base import (
 )
 
 from .utils.externalwebsite_constants import (
+    DEFAULT_BATCH_SIZE,
+    DOMAIN_REGEX,
+    DOMAIN_REGEX_2,
+    FILE_TYPES,
+    FILE_TYPES_LABELS,
+    IPV4_REGEX,
+    IPV6_REGEX,
+    MAXIMUM_CORE_VERSION,
+    MD5_REGEX,
     MODULE_NAME,
     PLATFORM_NAME,
     PLUGIN_VERSION,
+    RESPONSE_LIST_REGEX,
+    RETRACTION,
+    RETRACTION_IOC_TAG,
+    SHA256_REGEX,
     THREAT_TYPES,
+    THREAT_TYPES_LABELS,
+    VALIDATION_ERROR_MESSAGE,
 )
 
 from .utils.externalwebsite_helper import (
@@ -79,6 +101,10 @@ class WebPageIOCScraperPlugin(PluginBase):
         self.log_prefix = f"{MODULE_NAME} {self.plugin_name}"
         if name:
             self.log_prefix = f"{self.log_prefix} [{name}]"
+        self.resolution_support = version.parse(CE_VERSION) > version.parse(
+            MAXIMUM_CORE_VERSION
+        )
+        self._patch_logger_methods()
         self.web_page_ioc_scraper_helper = WebPageIOCScraperPluginHelper(
             logger=self.logger,
             log_prefix=self.log_prefix,
@@ -154,13 +180,20 @@ class WebPageIOCScraperPlugin(PluginBase):
             indicator_types = self._get_indicator_types(
                 threat_types=self.configuration.get("type", "")
             )
-            self.logger.info(f"{self.log_prefix}: Pulling IOC(s) from {url}.")
+            ioc_label = (
+                "modified IOC(s)"
+                if RETRACTION in self.log_prefix
+                else "IOC(s)"
+            )
+            self.logger.info(
+                f"{self.log_prefix}: Pulling {ioc_label} from {url}."
+            )
             response = self.web_page_ioc_scraper_helper.api_helper(
                 url=url,
                 method="GET",
                 verify=self.ssl_validation,
                 proxies=self.proxy,
-                logger_msg="pulling IOC(s)",
+                logger_msg=f"pulling {ioc_label}",
             )
             indicators, skipped_count, indicator_type_count = (
                 self.extract_indicators(response, indicator_types)
@@ -173,61 +206,137 @@ class WebPageIOCScraperPlugin(PluginBase):
                 ]
             )
             self.logger.debug(
-                f"Pull Stat: {pull_stats} indicator(s) were fetched. "
+                f"{self.log_prefix}: Pull Stats: {pull_stats} "
+                f"{ioc_label} pulled."
+            )
+            total_fetched = sum(indicator_type_count.values())
+            skipped_log = (
+                f" Skipped {skipped_count} record(s) as IOC value might be"
+                " duplicate, invalid or the IOC type does not match the"
+                ' "Type of Threat data to pull" selected in the'
+                " configuration parameter."
+                if skipped_count > 0
+                else ""
             )
             self.logger.info(
-                f"{self.log_prefix}: Successfully fetched "
-                f"{sum(indicator_type_count.values())} IOC(s) "
-                f"from '{url}'."
+                f"{self.log_prefix}: Successfully pulled {total_fetched}"
+                f" {ioc_label} from '{url}'.{skipped_log}"
             )
-            if skipped_count > 0:
-                self.logger.info(
-                    f"{self.log_prefix}: Skipped {skipped_count} record(s) as "
-                    "IOC value might be duplicate, invalid or the IOC"
-                    ' type does not match the "Type of Threat data to pull" '
-                    "selected in the configuration parameter."
-                )
+            if hasattr(self, "sub_checkpoint"):
+
+                def _indicator_generator():
+                    for batch in self._yield_indicator_batches(indicators):
+                        yield batch, None
+
+                return _indicator_generator()
+
             return indicators
 
         except WebPageIOCScraperPluginException as exp:
-            err_msg = "Error occurred while pulling indicators."
+            err_msg = "Error occurred while pulling IOC(s)."
             self.logger.error(
                 message=(f"{self.log_prefix}: {err_msg} Error: {str(exp)}"),
                 details=str(traceback.format_exc()),
             )
             raise exp
         except Exception as exp:
-            err_msg = "Error occurred while pulling indicators."
+            err_msg = "Error occurred while pulling IOC(s)."
             self.logger.error(
                 message=(f"{self.log_prefix}: {err_msg} Error: {str(exp)}"),
                 details=str(traceback.format_exc()),
             )
             raise exp
 
+    def get_modified_indicators(self, indicators):
+        """Get all modified indicators status for retraction.
+
+        Re-fetches the configured URL, extracts fresh IOC(s), and compares
+        them against the previously stored indicators. Any stored indicator
+        no longer present in the fresh response is yielded for retraction.
+        """
+        if RETRACTION not in self.log_prefix:
+            self.log_prefix = f"{self.log_prefix} {RETRACTION}"
+            self.web_page_ioc_scraper_helper.log_prefix = self.log_prefix
+
+        url = self.configuration["url"].strip().strip("/")
+        fresh_indicators = []
+        try:
+            fresh_iocs = self.pull()
+            if isinstance(fresh_iocs, list):
+                fresh_indicators = [ioc.value for ioc in fresh_iocs]
+            else:
+                for batch in fresh_iocs:
+                    batch_indicators = batch
+                    if isinstance(batch, tuple):
+                        batch_indicators = batch[0]
+                    fresh_indicators.extend(
+                        [ioc.value for ioc in batch_indicators]
+                    )
+            self.logger.info(
+                f"{self.log_prefix}: Successfully pulled "
+                f"{len(fresh_indicators)} IOC(s) from '{url}' "
+                f"as part of {RETRACTION_IOC_TAG} task."
+            )
+            if not fresh_indicators:
+                self.logger.info(
+                    f"{self.log_prefix}: No IOC(s) were returned from '{url}' "
+                    f"during {RETRACTION_IOC_TAG} task. "
+                    "All stored IOC(s) will be considered for retraction."
+                )
+        except WebPageIOCScraperPluginException as exp:
+            err_msg = (
+                f"Error occurred while pulling IOC(s) for "
+                f"{RETRACTION_IOC_TAG} task."
+            )
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg} Error: {str(exp)}",
+                details=str(traceback.format_exc()),
+            )
+            raise exp
+        except Exception as exp:
+            err_msg = (
+                f"Error occurred while pulling IOC(s) for "
+                f"{RETRACTION_IOC_TAG} task."
+            )
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg} Error: {str(exp)}",
+                details=str(traceback.format_exc()),
+            )
+            raise exp
+
+        stored_indicators = set()
+        for indicator_list in indicators:
+            for indicator in indicator_list:
+                stored_indicators.add(indicator.value)
+
+        if not stored_indicators:
+            self.logger.info(
+                f"{self.log_prefix}: No stored IOC(s) found in CE "
+                f"for {RETRACTION_IOC_TAG} task."
+            )
+
+        retracted_indicators = list(stored_indicators - set(fresh_indicators))
+        self.logger.info(
+            f"{self.log_prefix}: Total {len(retracted_indicators)} "
+            f"IOC(s) will be retracted as part of {RETRACTION_IOC_TAG} task "
+            f"out of {len(stored_indicators)} total stored IOC(s)."
+        )
+        if not retracted_indicators:
+            yield retracted_indicators, False
+            return
+
+        for batch in self._yield_value_batches(retracted_indicators):
+            yield batch, False
+
     def extract_indicators(
         self, response, indicator_types: Dict
-    ) -> List[dict]:
-        """
-        Extract indicators from a given response based on the specified indicator types.
+    ) -> Tuple[List[Indicator], int, Dict]:
+        """Extract IOCs from response for all configured indicator types."""
+        response = self._prepare_response_text(response)
 
-        Args:
-            response (str): The response from which to extract indicators.
-            indicator_types (Dict): A dictionary mapping indicator types to \
-                                    their corresponding values.
-
-        Returns:
-            Tuple[List[dict], int]: A tuple containing a list of extracted \
-                                    indicators and the number of skipped indicators.
-        """
         all_indicators_set = set()
         indicators = []
-        exact_indicators = []
-        extracted_domains = []
-        extracted_domains_2 = []
         skipped_count = 0
-        exact_skipped_count = 0
-        extracted_skipped_count = 0
-        domain_flag = False
         indicator_type_count = {
             "sha256": 0,
             "md5": 0,
@@ -238,296 +347,300 @@ class WebPageIOCScraperPlugin(PluginBase):
         }
 
         if "sha256" in indicator_types:
-            sha256_regex = r"\b[a-fA-F0-9]{64}\b"
-            sha256_list = re.findall(sha256_regex, response)
-            for sha256 in sha256_list:
-                try:
-                    indicators.append(
-                        Indicator(
-                            value=sha256.strip(),
-                            type=indicator_types["sha256"],
-                        )
-                    )
-                    indicator_type_count["sha256"] += 1
-                    all_indicators_set.add(sha256.strip())
-                except ValidationError:
-                    skipped_count += 1
-                except Exception:
-                    skipped_count += 1
+            iocs, skipped = self._extract_sha256_iocs(
+                response, indicator_types["sha256"], all_indicators_set
+            )
+            indicators.extend(iocs)
+            indicator_type_count["sha256"] = len(iocs)
+            skipped_count += skipped
 
         if "md5" in indicator_types:
-            md5_regex = r"\b[a-fA-F\d]{32}\b"
-            md5_list = re.findall(md5_regex, response)
-
-            for md5 in md5_list:
-                try:
-                    indicators.append(
-                        Indicator(
-                            value=md5.strip(), type=indicator_types["md5"]
-                        )
-                    )
-                    indicator_type_count["md5"] += 1
-                    all_indicators_set.add(md5.strip())
-                except ValidationError:
-                    skipped_count += 1
-                except Exception:
-                    skipped_count += 1
+            iocs, skipped = self._extract_md5_iocs(
+                response, indicator_types["md5"], all_indicators_set
+            )
+            indicators.extend(iocs)
+            indicator_type_count["md5"] = len(iocs)
+            skipped_count += skipped
 
         if "ipv4" in indicator_types:
-            ipv4_regex = r"(?<![:\/\.\d])\b(?:\d{1,3}\.){3}\d{1,3}\b\/*?(?![:\/\.\dA-Za-z])"  # noqa
-            ipv4_list = re.findall(ipv4_regex, response)
-            for ipv4 in ipv4_list:
-                try:
-                    ipv4 = ipv4.strip().strip("/")
-                    if isinstance(ip_address(ipv4), IPv4Address):
-                        indicators.append(
-                            Indicator(
-                                value=ipv4,
-                                type=indicator_types["ipv4"],
-                            )
-                        )
-                        indicator_type_count["ipv4"] += 1
-                        all_indicators_set.add(ipv4)
-                except ValidationError:
-                    skipped_count += 1
-                except Exception:
-                    skipped_count += 1
+            iocs, skipped = self._extract_ipv4_iocs(
+                response, indicator_types["ipv4"], all_indicators_set
+            )
+            indicators.extend(iocs)
+            indicator_type_count["ipv4"] = len(iocs)
+            skipped_count += skipped
 
         if "ipv6" in indicator_types:
-
-            response_list_regex = r"[^\s]+"
-
-            ipv6_regex = r"^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|([0-9a-fA-F]{1,4}:){1,7}:)(\/*)?$"  # noqa
-
-            response_list = re.findall(response_list_regex, str(response))
-
-            pattern = re.compile(ipv6_regex, re.VERBOSE | re.MULTILINE)
-
-            ipv6_list = [
-                match[0]
-                for ip in response_list
-                for match in re.findall(pattern, ip)
-            ]
-            for ipv6 in ipv6_list:
-                try:
-                    ipv6 = ipv6.strip().strip("/")
-                    if isinstance(ip_address(ipv6), IPv6Address):
-                        indicators.append(
-                            Indicator(
-                                value=ipv6,
-                                type=indicator_types["ipv6"],
-                            )
-                        )
-                        indicator_type_count["ipv6"] += 1
-                        all_indicators_set.add(ipv6)
-                except ValidationError:
-                    skipped_count += 1
-                except Exception:
-                    skipped_count += 1
-
-        if "url" in indicator_types:
-
-            extract_domains = self.configuration.get("extract_domains", "yes")
-            domain_regex = r"^(?:\*\.)?[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}"  # noqa
-
-            domain_regex_2 = r"(?<!-)(?<![:\/\w.])(?:\*\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}|(?<!\*)[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)*\.[a-zA-Z]{2,})(?::(?:6553[0-5]|655[0-2]\d|65[0-4]\d{2}|6[0-4]\d{3}|[1-5]\d{4}|\d{1,4}))?(?:\/)?(?![:\/\w])"
-
-            response_list_regex = r"[^\s]+"
-
-            response_list = re.findall(response_list_regex, response)
-
-            for indicator in response_list:
-                try:
-                    try:
-                        parse_result = urlparse(indicator)
-                    except Exception as e:
-                        err_msg = f"Error while parsing indicator {indicator}."
-                        self.logger.error(
-                            message=f"{self.log_prefix}: {err_msg} Error: {e}",
-                            details=traceback.format_exc(),
-                        )
-                        if indicator not in all_indicators_set:
-                            all_indicators_set.add(indicator)
-                            exact_skipped_count += 1
-                        continue
-
-                    netloc = parse_result.netloc.strip()
-                    fragment = parse_result.fragment.strip()
-                    path = parse_result.path.strip()
-                    scheme = parse_result.scheme.strip()
-
-                    if extract_domains == "yes":
-                        if netloc and (netloc not in all_indicators_set):
-                            extracted_domains.append(
-                                Indicator(
-                                    value=netloc,
-                                    type=getattr(
-                                        IndicatorType,
-                                        "DOMAIN",
-                                        IndicatorType.URL,
-                                    ),
-                                )
-                            )
-                            indicator_type_count["domain"] += 1
-                            all_indicators_set.add(netloc)
-                        else:
-                            extracted_domain = re.findall(domain_regex, path)
-                            if not extracted_domain:
-                                extracted_domain = re.findall(
-                                    domain_regex_2, path
-                                )
-
-                            if (
-                                extracted_domain
-                                and (extracted_domain[0] != fragment)
-                                and (
-                                    extracted_domain[0]
-                                    not in all_indicators_set
-                                )
-                            ):
-                                extracted_domains.append(
-                                    Indicator(
-                                        value=extracted_domain[0],
-                                        type=getattr(
-                                            IndicatorType,
-                                            "DOMAIN",
-                                            IndicatorType.URL,
-                                        ),
-                                    )
-                                )
-                                indicator_type_count["domain"] += 1
-                                all_indicators_set.add(extracted_domain[0])
-                            else:
-                                if indicator not in all_indicators_set:
-                                    extracted_skipped_count += 1
-                                    all_indicators_set.add(indicator)
-                    else:
-                        if indicator not in all_indicators_set:
-                            exact_indicators.append(
-                                Indicator(
-                                    value=indicator,
-                                    type=IndicatorType.URL,
-                                )
-                            )
-                            indicator_type_count["url"] += 1
-                            all_indicators_set.add(indicator)
-                except Exception as e:
-                    err_msg = f"Error while parsing indicator {indicator}."
-                    self.logger.error(
-                        message=f"{self.log_prefix}: {err_msg} Error: {e}",
-                        details=traceback.format_exc(),
-                    )
-                    indicators.append(
-                        Indicator(
-                            value=indicator,
-                            type=IndicatorType.URL,
-                        )
-                    )
-                    indicator_type_count["url"] += 1
-                    all_indicators_set.add(indicator)
-                    continue
-
-            indicators += (
-                exact_indicators if exact_indicators else extracted_domains
+            iocs, skipped = self._extract_ipv6_iocs(
+                response, indicator_types["ipv6"], all_indicators_set
             )
+            indicators.extend(iocs)
+            indicator_type_count["ipv6"] = len(iocs)
+            skipped_count += skipped
 
-        if "domain" in indicator_types:
-            extract_domains = self.configuration.get("extract_domains", "yes")
+        if "url" in indicator_types or "domain" in indicator_types:
+            url_iocs, domain_iocs, skipped = self._extract_url_domain_iocs(
+                response, indicator_types, all_indicators_set
+            )
+            indicators.extend(url_iocs + domain_iocs)
+            indicator_type_count["url"] = len(url_iocs)
+            indicator_type_count["domain"] = len(domain_iocs)
+            skipped_count += skipped
 
-            if ("url" in indicator_types and extract_domains == "no") or (
-                "url" not in indicator_types
-            ):
-                domain_flag = True
+        return indicators, skipped_count, indicator_type_count
 
-            domain_regex = r"^(?:\*\.)?[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}"  # noqa
+    def _extract_sha256_iocs(
+        self,
+        response: str,
+        ioc_type,
+        all_indicators_set: set,
+    ) -> Tuple[List[Indicator], int]:
+        """Extract SHA256 hash IOCs from response."""
+        extracted, skipped = [], 0
+        for value in re.findall(SHA256_REGEX, response):
+            try:
+                value = value.strip()
+                if value not in all_indicators_set:
+                    extracted.append(Indicator(value=value, type=ioc_type))
+                    all_indicators_set.add(value)
+            except (ValidationError, Exception):
+                skipped += 1
+        return extracted, skipped
 
-            domain_regex_2 = r"(?<!-)(?<![:\/\w.])(?:\*\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}|(?<!\*)[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)*\.[a-zA-Z]{2,})(?::(?:6553[0-5]|655[0-2]\d|65[0-4]\d{2}|6[0-4]\d{3}|[1-5]\d{4}|\d{1,4}))?(?:\/)?(?![:\/\w])"
+    def _extract_md5_iocs(
+        self,
+        response: str,
+        ioc_type,
+        all_indicators_set: set,
+    ) -> Tuple[List[Indicator], int]:
+        """Extract MD5 hash IOCs from response."""
+        extracted, skipped = [], 0
+        for value in re.findall(MD5_REGEX, response):
+            try:
+                value = value.strip()
+                if value not in all_indicators_set:
+                    extracted.append(Indicator(value=value, type=ioc_type))
+                    all_indicators_set.add(value)
+            except (ValidationError, Exception):
+                skipped += 1
+        return extracted, skipped
 
-            response_list_regex = r"[^\s]+"
+    def _extract_ipv4_iocs(
+        self,
+        response: str,
+        ioc_type,
+        all_indicators_set: set,
+    ) -> Tuple[List[Indicator], int]:
+        """Extract IPv4 address IOCs from response."""
+        extracted, skipped = [], 0
+        for value in re.findall(IPV4_REGEX, response):
+            try:
+                value = value.strip().strip("/")
+                if isinstance(ip_address(value), IPv4Address) and value not in all_indicators_set:  # noqa: E501
+                    extracted.append(Indicator(value=value, type=ioc_type))
+                    all_indicators_set.add(value)
+            except (ValidationError, Exception):
+                skipped += 1
+        return extracted, skipped
 
-            response_list = re.findall(response_list_regex, response)
+    def _extract_ipv6_iocs(
+        self,
+        response: str,
+        ioc_type,
+        all_indicators_set: set,
+    ) -> Tuple[List[Indicator], int]:
+        """Extract IPv6 address IOCs from response."""
+        extracted, skipped = [], 0
+        pattern = re.compile(IPV6_REGEX, re.VERBOSE | re.MULTILINE)
+        ipv6_list = [
+            match[0]
+            for token in re.findall(RESPONSE_LIST_REGEX, str(response))
+            for match in re.findall(pattern, token)
+        ]
+        for value in ipv6_list:
+            try:
+                value = value.strip().strip("/")
+                if isinstance(ip_address(value), IPv6Address) and value not in all_indicators_set:  # noqa: E501
+                    extracted.append(Indicator(value=value, type=ioc_type))
+                    all_indicators_set.add(value)
+            except (ValidationError, Exception):
+                skipped += 1
+        return extracted, skipped
 
-            for indicator in response_list:
+    def _extract_url_domain_iocs(
+        self,
+        response: str,
+        indicator_types: Dict,
+        all_indicators_set: set,
+    ) -> Tuple[List[Indicator], List[Indicator], int]:
+        """Extract URL and Domain IOCs from response."""
+        extract_domains_setting = self.configuration.get(
+            "extract_domains", "yes"
+        )
+        has_url = "url" in indicator_types
+        has_domain = "domain" in indicator_types
+        should_extract_domains = has_domain or (
+            has_url and extract_domains_setting == "yes"
+        )
+        add_full_urls = has_url and extract_domains_setting == "no"
+        domain_type = getattr(IndicatorType, "DOMAIN", IndicatorType.URL)
+        url_indicators, domain_indicators = [], []
+        skipped_count = 0
+
+        for indicator in re.findall(RESPONSE_LIST_REGEX, response):
+            try:
                 try:
-                    try:
-                        parse_result = urlparse(indicator)
-                    except Exception as e:
-                        err_msg = f"Error while parsing indicator {indicator}."
-                        self.logger.error(
-                            message=f"{self.log_prefix}: {err_msg} Error: {e}",
-                            details=traceback.format_exc(),
-                        )
-                        if indicator not in all_indicators_set:
-                            all_indicators_set.add(indicator)
-                            exact_skipped_count += 1
-                        continue
-
-                    netloc = parse_result.netloc.strip()
-                    fragment = parse_result.fragment.strip()
-                    path = parse_result.path.strip()
-                    scheme = parse_result.scheme.strip()
-
-                    if netloc and (netloc not in all_indicators_set):
-                        extracted_domains_2.append(
-                            Indicator(
-                                value=netloc,
-                                type=getattr(
-                                    IndicatorType,
-                                    "DOMAIN",
-                                    IndicatorType.URL,
-                                ),
-                            )
-                        )
-                        indicator_type_count["domain"] += 1
-                        all_indicators_set.add(netloc)
-                    else:
-                        extracted_domain = re.findall(domain_regex, path)
-                        if not extracted_domain:
-                            extracted_domain = re.findall(domain_regex_2, path)
-
-                        if (
-                            extracted_domain
-                            and (extracted_domain[0] != fragment)
-                            and (extracted_domain[0] not in all_indicators_set)
-                        ):
-                            extracted_domains_2.append(
-                                Indicator(
-                                    value=extracted_domain[0],
-                                    type=getattr(
-                                        IndicatorType,
-                                        "DOMAIN",
-                                        IndicatorType.URL,
-                                    ),
-                                )
-                            )
-                            indicator_type_count["domain"] += 1
-                            all_indicators_set.add(extracted_domain[0])
-                        else:
-                            if (
-                                domain_flag
-                                and indicator not in all_indicators_set
-                            ):
-                                extracted_skipped_count += 1
-                                all_indicators_set.add(indicator)
-
+                    parse_result = urlparse(indicator)
                 except Exception as e:
-                    err_msg = f"Error while parsing indicator {indicator}."
+                    err_msg = f"Error while parsing IOC {indicator}."
                     self.logger.error(
                         message=f"{self.log_prefix}: {err_msg} Error: {e}",
                         details=traceback.format_exc(),
                     )
                     if indicator not in all_indicators_set:
-                        skipped_count += 1
                         all_indicators_set.add(indicator)
+                        skipped_count += 1
                     continue
 
-            indicators += extracted_domains_2
+                netloc = parse_result.netloc.strip()
+                fragment = parse_result.fragment.strip()
+                path = parse_result.path.strip()
 
-        skipped_count = (
-            skipped_count + extracted_skipped_count + exact_skipped_count
-        )
+                if should_extract_domains:
+                    if netloc and netloc not in all_indicators_set:
+                        domain_indicators.append(
+                            Indicator(value=netloc, type=domain_type)
+                        )
+                        all_indicators_set.add(netloc)
+                    else:
+                        extracted_domain = re.findall(DOMAIN_REGEX, path)
+                        if not extracted_domain:
+                            extracted_domain = re.findall(DOMAIN_REGEX_2, path)
+                        if (
+                            extracted_domain
+                            and extracted_domain[0] != fragment
+                            and extracted_domain[0] not in all_indicators_set
+                        ):
+                            domain_indicators.append(
+                                Indicator(
+                                    value=extracted_domain[0],
+                                    type=domain_type,
+                                )
+                            )
+                            all_indicators_set.add(extracted_domain[0])
+                        elif indicator not in all_indicators_set:
+                            if not add_full_urls:
+                                skipped_count += 1
+                                all_indicators_set.add(indicator)
 
-        return indicators, skipped_count, indicator_type_count
+                if add_full_urls and indicator not in all_indicators_set:
+                    url_indicators.append(
+                        Indicator(value=indicator, type=IndicatorType.URL)
+                    )
+                    all_indicators_set.add(indicator)
+
+            except Exception as e:
+                err_msg = f"Error while parsing IOC {indicator}."
+                self.logger.error(
+                    message=f"{self.log_prefix}: {err_msg} Error: {e}",
+                    details=traceback.format_exc(),
+                )
+                if has_url and indicator not in all_indicators_set:
+                    url_indicators.append(
+                        Indicator(value=indicator, type=IndicatorType.URL)
+                    )
+                    all_indicators_set.add(indicator)
+                elif indicator not in all_indicators_set:
+                    skipped_count += 1
+                    all_indicators_set.add(indicator)
+                continue
+
+        return url_indicators, domain_indicators, skipped_count
+
+    def _patch_logger_methods(self):
+        """Patch logger.error to accept resolution for supported
+        CE versions."""
+
+        original_error = self.logger.error
+
+        def patched_error(
+            message=None, details=None, resolution=None, **kwargs
+        ):
+            log_kwargs = {"message": message}
+            if details:
+                log_kwargs["details"] = details
+            if resolution and self.resolution_support:
+                log_kwargs["resolution"] = resolution
+            log_kwargs.update(kwargs)
+            return original_error(**log_kwargs)
+
+        self.logger.error = patched_error
+
+    def _prepare_response_text(self, response):
+        """Normalize API response into plain text based on the
+        configured file_type."""
+        file_type = self.configuration.get("file_type", "plain_text")
+
+        if isinstance(response, (bytes, bytearray)):
+            response = response.decode("utf-8", errors="ignore")
+
+        if not isinstance(response, str):
+            response = str(response)
+
+        if file_type == "json":
+            try:
+                json_payload = json.loads(response.strip())
+            except (ValueError, TypeError):
+                json_payload = (
+                    response if isinstance(response, (dict, list)) else None
+                )
+            if json_payload is not None:
+                flattened_values = self._flatten_json_values(json_payload)
+                response = "\n".join(flattened_values)
+
+        elif file_type == "xml":
+            try:
+                root = ET.fromstring(response.strip())
+                texts: List[str] = []
+                for elem in root.iter():
+                    if elem.text and elem.text.strip():
+                        texts.append(elem.text.strip())
+                response = "\n".join(texts)
+            except ET.ParseError:
+                pass
+
+        elif file_type == "html":
+
+            class _HTMLValueExtractor(HTMLParser):
+                def __init__(self):
+                    super().__init__()
+                    self.values: List[str] = []
+
+                def handle_data(self, data):
+                    value = html.unescape(data).strip()
+                    if value:
+                        self.values.append(value)
+
+            parser = _HTMLValueExtractor()
+            parser.feed(response)
+            response = "\n".join(parser.values)
+        return response
+
+    def _flatten_json_values(self, payload) -> List[str]:
+        """Recursively extract only string values from a JSON payload
+        (int/float skipped)."""
+        flattened_values: List[str] = []
+        if isinstance(payload, dict):
+            for value in payload.values():
+                flattened_values.extend(self._flatten_json_values(value))
+        elif isinstance(payload, list):
+            for item in payload:
+                flattened_values.extend(self._flatten_json_values(item))
+        elif isinstance(payload, str):
+            value = payload.strip()
+            if value:
+                flattened_values.append(value)
+        return flattened_values
 
     def is_url(self, url: str) -> bool:
         """Validate URL.
@@ -543,30 +656,109 @@ class WebPageIOCScraperPlugin(PluginBase):
         except (ValueError, Exception):
             return False
 
-    def _validate_url(self, url):
-        """
-        Validate the URL provided in configuration parameters.
-
-        Args:
-            url (str): The URL to validate.
-
-        Returns:
-            ValidationResult: The result of the validation.
-        """
+    def _validate_url(self, url, file_type="plain_text"):
+        """Validate URL connectivity and verify the response format
+        in one call."""
         try:
             self.logger.debug(
-                f"{self.log_prefix}: Validating URL provided in configuration parameters."
+                f"{self.log_prefix}: Validating URL provided in "
+                "configuration parameters."
             )
-            self.web_page_ioc_scraper_helper.api_helper(
+            response = self.web_page_ioc_scraper_helper.api_helper(
                 url=url,
                 method="GET",
                 verify=self.ssl_validation,
                 proxies=self.proxy,
-                logger_msg=f"verifying the connectivity with {url}.",
+                logger_msg=f"verifying the connectivity with {url}",
                 is_validation=True,
             )
 
-            validation_msg = f"Validation successful for {MODULE_NAME} {self.plugin_name} Plugin."
+            if file_type != "plain_text":
+                if isinstance(response, (bytes, bytearray)):
+                    response = response.decode("utf-8", errors="ignore")
+                if not isinstance(response, str):
+                    response = str(response)
+                raw = response.strip()
+
+                if file_type == "json":
+                    try:
+                        json.loads(raw)
+                    except (ValueError, TypeError):
+                        err_msg = (
+                            "File Type is set to 'JSON' but the response "
+                            "is not valid JSON. "
+                            "Please verify the URL or change the File Type."
+                        )
+                        self.logger.error(
+                            f"{self.log_prefix}: {err_msg}",
+                            resolution=(
+                                "Ensure that the feed returns JSON content "
+                                "or select the appropriate File Type."
+                            ),
+                        )
+                        return ValidationResult(success=False, message=err_msg)
+
+                elif file_type == "xml":
+                    err_msg = (
+                        "File Type is set to 'XML' but the response "
+                        "is not valid XML. "
+                        "Please verify the URL or change the File Type."
+                    )
+                    resolution = (
+                        "Ensure that the feed returns XML content "
+                        "or select the appropriate File Type."
+                    )
+                    try:
+                        ET.fromstring(raw)
+                        html_pattern = re.search(
+                            r"<!DOCTYPE\s+html|<(?:html|head|body|div|p|br"
+                            r"|span|table|tr|td|script|meta)[\s>\/]",
+                            raw[:2000],
+                            re.IGNORECASE,
+                        )
+                        if html_pattern:
+                            self.logger.error(
+                                f"{self.log_prefix}: {err_msg}",
+                                resolution=resolution
+                            )
+                            return ValidationResult(
+                                success=False, message=err_msg
+                            )
+                    except ET.ParseError:
+                        self.logger.error(
+                            f"{self.log_prefix}: {err_msg}",
+                            resolution=resolution,
+                        )
+                        return ValidationResult(success=False, message=err_msg)
+
+                elif file_type == "html":
+                    has_html = re.search(
+                        r"<!DOCTYPE\s+html"
+                        r"|<(?:html|head|body|div|p|br|span|table"
+                        r"|tr|td|th|ul|ol|li|h[1-6]|script|style"
+                        r"|meta|form|input|a\b|img\b)[\s>\/]",
+                        raw,
+                        re.IGNORECASE,
+                    )
+                    if not has_html:
+                        err_msg = (
+                            "File Type is set to 'HTML' but the response "
+                            "does not appear to contain HTML markup. "
+                            "Please verify the URL or change the File Type."
+                        )
+                        self.logger.error(
+                            f"{self.log_prefix}: {err_msg}",
+                            resolution=(
+                                "Ensure that the feed returns HTML content "
+                                "or select the appropriate File Type."
+                            ),
+                        )
+                        return ValidationResult(success=False, message=err_msg)
+
+            validation_msg = (
+                f"Validation successful for {MODULE_NAME} "
+                f"{self.plugin_name} Plugin."
+            )
             self.logger.debug(f"{self.log_prefix}: {validation_msg}")
             return ValidationResult(
                 success=True,
@@ -588,58 +780,205 @@ class WebPageIOCScraperPlugin(PluginBase):
             )
             return ValidationResult(success=False, message=err_msg)
 
-    def validate(self, configuration) -> ValidationResult:
-        """Validate the Plugin configuration parameters.
+    def _validate_configuration_parameters(
+        self,
+        field_name: str,
+        field_value: Union[str, List, bool, int],
+        field_type: type,
+        is_required: bool = True,
+        allowed_values: list = None,
+        display_values: list = None,
+        validation_err_msg: str = VALIDATION_ERROR_MESSAGE,
+        required_field_message: str = None,
+    ) -> Union[ValidationResult, None]:
+        """
+        Validate the given configuration field value.
 
         Args:
-            configuration (dict): Dict object having all the Plugin
-            configuration parameters.
+            field_name (str): Name of the configuration field.
+            field_value (str, List, bool, int): Value of the configuration
+                field.
+            field_type (type): Expected type of the configuration field.
+            allowed_values (Dict, optional): Dictionary of allowed values for
+                the configuration field. Defaults to None.
+            custom_validation_func (Callable, optional): Custom validation
+                function to be applied. Defaults to None.
+            is_required (bool, optional): Whether the field is required.
+                Defaults to True.
+            validation_err_msg (str, optional): Error message to be logged in
+                case of validation failure. Defaults to "Validation error
+                occurred. ".
+
         Returns:
-            cte.plugin_base.ValidationResult: ValidationResult object with
-            success flag and message.
+            ValidationResult: ValidationResult object indicating whether the
+                validation was successful or not.
         """
-        url = configuration.get("url", "").strip().strip("/")
-        threat_type = configuration.get("type", [])
-        validation_err = "Validation error occurred."
-        if not url:
-            err_msg = "Website URL is a required configuration parameter."
-            self.logger.error(f"{self.log_prefix}: {validation_err} {err_msg}")
-            return ValidationResult(success=False, message=err_msg)
-        elif not isinstance(url, str) or not self.is_url(url):
+
+        validation_err = validation_err_msg
+        display_field_name = field_name
+
+        def _log_and_return(
+            message: str, resolution: str = None
+        ) -> ValidationResult:
+            self.logger.error(
+                f"{self.log_prefix}: {validation_err} {message}",
+                resolution=resolution,
+            )
+            return ValidationResult(success=False, message=message)
+
+        value = field_value
+
+        if isinstance(value, str):
+            value = value.strip()
+
+        if is_required:
+            missing = value is None
+            if isinstance(value, str):
+                missing = not value
+            elif isinstance(value, list):
+                missing = len(value) == 0
+            if missing:
+                err_msg = (
+                    required_field_message
+                    or f"{display_field_name} is a required "
+                    "configuration parameter."
+                )
+                resolution = (
+                    f"Ensure that {display_field_name} is provided "
+                    "in the configuration parameters."
+                )
+                return _log_and_return(err_msg, resolution)
+
+        if value is not None and not isinstance(value, field_type):
+            err_msg = f"Invalid value for {display_field_name} provided."
+            resolution = (
+                f"Ensure that {display_field_name} value matches "
+                f"type {field_type.__name__}."
+            )
+            return _log_and_return(err_msg, resolution)
+
+        if allowed_values and value is not None:
+            labels = display_values or allowed_values
+            if isinstance(value, list):
+                invalid_values = [
+                    val for val in value if val not in allowed_values
+                ]
+                if invalid_values:
+                    err_msg = (
+                        f"Invalid value for {display_field_name} provided."
+                        f" Allowed values are {', '.join(map(str, labels))}."
+                    )
+                    resolution = (
+                        f"Ensure that the value for "
+                        f"{display_field_name} is one of: "
+                        f"{', '.join(map(str, labels))}."
+                    )
+                    return _log_and_return(err_msg, resolution)
+            else:
+                if value not in allowed_values:
+                    err_msg = (
+                        f"Invalid value for {display_field_name} provided."
+                        f" Allowed values are {', '.join(map(str, labels))}."
+                    )
+                    resolution = (
+                        f"Ensure that the value for "
+                        f"{display_field_name} is one of: "
+                        f"{', '.join(map(str, labels))}."
+                    )
+                    return _log_and_return(err_msg, resolution)
+
+        return None
+
+    def validate(self, configuration) -> ValidationResult:
+        """Validate the Plugin configuration parameters."""
+
+        url, threat_types, extract_domains, file_type = (
+            self.web_page_ioc_scraper_helper.get_config_params(
+                configuration,
+                ["url", "threat_types", "extract_domains", "file_type"],
+            )
+        )
+
+        if url_validation := self._validate_configuration_parameters(
+            field_name="Website URL",
+            field_value=url,
+            field_type=str,
+            required_field_message=(
+                "Website URL is a required configuration parameter."
+            ),
+        ):
+            return url_validation
+
+        if threat_type_validation := self._validate_configuration_parameters(
+            field_name="Type of Threat data to pull",
+            field_value=threat_types,
+            field_type=list,
+            allowed_values=THREAT_TYPES,
+            display_values=THREAT_TYPES_LABELS,
+            required_field_message=(
+                "Type of Threat data to pull is a required "
+                "configuration parameter."
+            ),
+        ):
+            return threat_type_validation
+
+        if file_type_validation := self._validate_configuration_parameters(
+            field_name="File Type",
+            field_value=file_type,
+            field_type=str,
+            allowed_values=FILE_TYPES,
+            display_values=FILE_TYPES_LABELS,
+            required_field_message=(
+                "File Type is a required configuration parameter."
+            ),
+        ):
+            return file_type_validation
+
+        if extract_domains_validation := self._validate_configuration_parameters(  # noqa: E501
+            field_name="Extract Domains from URL",
+            field_value=extract_domains,
+            field_type=str,
+            allowed_values=["yes", "no"],
+            required_field_message=(
+                "Extract Domains from URL is a required "
+                "configuration parameter."
+            ),
+        ):
+            return extract_domains_validation
+
+        if not self.is_url(url):
             err_msg = (
                 "Invalid website URL provided in configuration parameters."
             )
-            self.logger.error(f"{self.log_prefix}: {validation_err} {err_msg}")
+            self.logger.error(
+                f"{self.log_prefix}: {VALIDATION_ERROR_MESSAGE} {err_msg}",
+                resolution="Ensure that the Website URL is valid.",
+            )
             return ValidationResult(success=False, message=err_msg)
 
-        if not threat_type:
-            err_msg = (
-                "Type of Threat data to pull is a required "
-                "configuration parameter."
-            )
-            self.logger.error(f"{self.log_prefix}: {validation_err} {err_msg}")
-            return ValidationResult(success=False, message=err_msg)
-        elif not (
-            all(threat_type in THREAT_TYPES for threat_type in threat_type)
-        ):
-            err_msg = (
-                "Invalid value for 'Type of Threat data to pull' "
-                f"provided. Allowed values are {', '.join(THREAT_TYPES).upper()}."
-            )
-            self.logger.error(f"{self.log_prefix}: {validation_err} {err_msg}")
-            return ValidationResult(success=False, message=err_msg)
+        return self._validate_url(url, file_type)
 
-        extract_domains = configuration.get("extract_domains", "").strip()
-        if not extract_domains:
-            err_msg = "Extract Domains from URL is a required configuration parameter."
-            self.logger.error(f"{self.log_prefix}: {validation_err} {err_msg}")
-            return ValidationResult(success=False, message=err_msg)
-        elif extract_domains not in ["yes", "no"]:
-            err_msg = (
-                "Invalid value for Extract Domains from URL "
-                "provided. Allowed values are 'Yes' and 'No'."
-            )
-            self.logger.error(f"{self.log_prefix}: {validation_err} {err_msg}")
-            return ValidationResult(success=False, message=err_msg)
+    def _yield_indicator_batches(
+        self, indicators: List[Indicator], batch_size: int = None
+    ) -> Iterator[List[Indicator]]:
+        """Yield indicators in fixed-size batches."""
 
-        return self._validate_url(url)
+        if batch_size is None:
+            batch_size = DEFAULT_BATCH_SIZE
+
+        total = len(indicators)
+        for start_index in range(0, total, batch_size):
+            yield indicators[start_index: start_index + batch_size]
+
+    def _yield_value_batches(
+        self, values: List[str], batch_size: int = None
+    ) -> Iterator[List[str]]:
+        """Yield list values (e.g., retractions) in fixed-size batches."""
+
+        if batch_size is None:
+            batch_size = DEFAULT_BATCH_SIZE
+
+        total = len(values)
+        for start_index in range(0, total, batch_size):
+            batch = values[start_index: start_index + batch_size]
+            yield batch

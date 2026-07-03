@@ -32,7 +32,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 CTE Web Page IOC Scraper Plugin helper module.
 """
 
-
 import traceback
 import time
 from typing import Dict, Union
@@ -44,7 +43,7 @@ from .externalwebsite_constants import (
     DEFAULT_WAIT_TIME,
     MAX_API_CALLS,
     MODULE_NAME,
-    PLATFORM_NAME
+    PLATFORM_NAME,
 )
 
 
@@ -62,11 +61,7 @@ class WebPageIOCScraperPluginHelper(object):
     """
 
     def __init__(
-        self,
-        logger,
-        log_prefix: str,
-        plugin_name: str,
-        plugin_version: str
+        self, logger, log_prefix: str, plugin_name: str, plugin_version: str
     ):
         """Web Page IOC Scraper Plugin Helper initializer.
 
@@ -89,6 +84,8 @@ class WebPageIOCScraperPluginHelper(object):
         Returns:
             Dict: Dictionary after adding User-Agent.
         """
+        if headers and "User-Agent" in headers:
+            return headers
         headers = add_user_agent(headers)
         ce_added_agent = headers.get("User-Agent", "netskope-ce")
         user_agent = "{}-{}-{}-v{}".format(
@@ -114,7 +111,6 @@ class WebPageIOCScraperPluginHelper(object):
         json=None,
         is_handle_error_required=True,
         is_validation=False,
-        regenerate_auth_token=True,
     ):
         """API Helper to perform API request on ThirdParty platform \
         and captures all the possible errors for requests.
@@ -132,9 +128,6 @@ class WebPageIOCScraperPluginHelper(object):
             should handle the status codes. Defaults to True.
             is_validation (bool, optional): Does this request coming from
             validate method?. Defaults to False.
-            regenerate_auth_token (bool, optional): Is regenerating auth token
-            required? Defaults to True.
-            configuration (Dict): Configuration Dictionary.
 
 
         Returns:
@@ -180,40 +173,60 @@ class WebPageIOCScraperPluginHelper(object):
                         self.logger.error(
                             message=f"{self.log_prefix}: {err_msg}",
                             details=err_msg,
+                            resolution=(
+                                "Ensure that the configured URL does not "
+                                "have strict rate limits or reduce the "
+                                "polling frequency."
+                            ),
                         )
                         raise WebPageIOCScraperPluginException(err_msg)
                     retry_after = int(response.headers.get("Retry-After", 60))
-                    retry_after = int(retry_after)
                     if retry_after > 300:
                         err_msg = (
                             "'Retry-After' value received from "
                             f"response headers while {logger_msg} is greater "
-                            f" than 5 minutes hence "
+                            f"than 5 minutes hence "
                             f"returning status code {status_code}."
                         )
                         self.logger.error(
-                            message=f"{self.log_prefix}: {err_msg}"
+                            message=f"{self.log_prefix}: {err_msg}",
+                            resolution=(
+                                "Ensure that the configured URL's rate limit "
+                                "cooldown is within 5 minutes or increase "
+                                "the polling interval."
+                            ),
                         )
                         raise WebPageIOCScraperPluginException(err_msg)
                     self.logger.error(
                         message=(
-                            f"{self.log_prefix}: Received exit code 429, API rate limit"
-                            f" exceeded while {logger_msg}. Retrying after {retry_after} "
-                            f"seconds. {MAX_API_CALLS - 1 - retry_counter} retries remaining."
-                        )
+                            f"{self.log_prefix}: Received exit code 429, "
+                            f"API rate limit exceeded while {logger_msg}. "
+                            f"Retrying after {retry_after} seconds. "
+                            f"{MAX_API_CALLS - 1 - retry_counter} "
+                            "retries remaining."
+                        ),
+                        resolution=(
+                            "Ensure that the configured URL does not "
+                            "have strict rate limits or reduce the "
+                            "polling frequency."
+                        ),
                     )
                     time.sleep(retry_after)
                 elif (500 <= status_code <= 600) and not is_validation:
                     if retry_counter == MAX_API_CALLS - 1:
                         err_msg = (
                             f"Received exit code {status_code}, while "
-                            f" {logger_msg}. Max retries for rate limit "
+                            f"{logger_msg}. Max retries for rate limit "
                             "handler exceeded hence returning status"
                             f" code {status_code}."
                         )
                         self.logger.error(
                             message=f"{self.log_prefix}: {err_msg}",
                             details=err_msg,
+                            resolution=(
+                                "Ensure that the configured URL is accessible "
+                                "and the server is running correctly."
+                            ),
                         )
                         raise WebPageIOCScraperPluginException(err_msg)
 
@@ -224,6 +237,10 @@ class WebPageIOCScraperPluginHelper(object):
                             f"{logger_msg}. Retrying after {DEFAULT_WAIT_TIME}"
                             f" seconds. {MAX_API_CALLS - 1 - retry_counter}"
                             " retries remaining."
+                        ),
+                        resolution=(
+                            "Ensure that the configured URL is accessible "
+                            "and the server is running correctly."
                         ),
                     )
                     time.sleep(DEFAULT_WAIT_TIME)
@@ -246,10 +263,13 @@ class WebPageIOCScraperPluginHelper(object):
                     "Proxy error occurred. Verify "
                     "the proxy configuration provided."
                 )
-
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {error}",
                 details=traceback.format_exc(),
+                resolution=(
+                    "Ensure that the proxy configuration provided is "
+                    "correct and the proxy server is reachable."
+                ),
             )
             raise WebPageIOCScraperPluginException(err_msg)
         except requests.exceptions.ConnectionError as error:
@@ -264,10 +284,29 @@ class WebPageIOCScraperPluginHelper(object):
                     f"platform. Proxy server or {PLATFORM_NAME}"
                     " server is not reachable."
                 )
-
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {error}",
                 details=traceback.format_exc(),
+                resolution=(
+                    "Ensure that the Website URL is reachable and the "
+                    "proxy server configuration is correct."
+                ),
+            )
+            raise WebPageIOCScraperPluginException(err_msg)
+        except requests.exceptions.ReadTimeout as error:
+            err_msg = f"Read timeout error occurred while {logger_msg}."
+            if is_validation:
+                err_msg = (
+                    "Read timeout error occurred. Verify the "
+                    "Website URL provided in the configuration parameters."
+                )
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg} Error: {error}",
+                details=traceback.format_exc(),
+                resolution=(
+                    "Ensure that the configured URL is reachable and "
+                    "the network connection is stable."
+                ),
             )
             raise WebPageIOCScraperPluginException(err_msg)
         except requests.HTTPError as err:
@@ -280,6 +319,10 @@ class WebPageIOCScraperPluginHelper(object):
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {err}",
                 details=traceback.format_exc(),
+                resolution=(
+                    "Ensure that the configuration parameters provided "
+                    "are correct and the API endpoint is valid."
+                ),
             )
             raise WebPageIOCScraperPluginException(err_msg)
         except Exception as exp:
@@ -292,6 +335,10 @@ class WebPageIOCScraperPluginHelper(object):
                 self.logger.error(
                     message=f"{self.log_prefix}: {err_msg} Error: {exp}",
                     details=traceback.format_exc(),
+                    resolution=(
+                        "Ensure that the configuration parameters provided "
+                        "are correct."
+                    ),
                 )
                 raise WebPageIOCScraperPluginException(
                     f"{err_msg} Check logs for more details."
@@ -299,8 +346,50 @@ class WebPageIOCScraperPluginHelper(object):
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {exp}",
                 details=traceback.format_exc(),
+                resolution=(
+                    "Ensure that the configuration parameters provided "
+                    "are correct."
+                ),
             )
             raise WebPageIOCScraperPluginException(err_msg)
+
+    @staticmethod
+    def get_config_params(configurations: dict, params_to_get: list = None):
+        """Return sanitized configuration parameters from a config dict."""
+        configurations = configurations or {}
+
+        threat_types = configurations.get("type", [])
+        if isinstance(threat_types, str):
+            threat_types = (
+                [threat_types.strip()] if threat_types.strip() else []
+            )
+        elif not isinstance(threat_types, list):
+            threat_types = []
+
+        extract_domains = configurations.get("extract_domains")
+        if isinstance(extract_domains, str):
+            extract_domains = extract_domains.strip().lower()
+
+        file_type = configurations.get("file_type")
+        if isinstance(file_type, str):
+            file_type = file_type.strip()
+
+        url = configurations.get("url", "")
+        url = url.strip().strip("/") if isinstance(url, str) else ""
+
+        ordered_keys = ["url", "threat_types", "extract_domains", "file_type"]
+        sanitized_params = {
+            "url": url,
+            "threat_types": threat_types,
+            "extract_domains": extract_domains,
+            "file_type": file_type,
+        }
+
+        if not params_to_get:
+            return tuple(sanitized_params[key] for key in ordered_keys)
+
+        result = [sanitized_params.get(param) for param in params_to_get]
+        return result[0] if len(result) == 1 else tuple(result)
 
     def handle_error(
         self,
@@ -327,12 +416,31 @@ class WebPageIOCScraperPluginHelper(object):
             400: "Received exit code 400, HTTP client error",
             403: "Received exit code 403, Forbidden",
             404: "Received exit code 404, Resource not found",
+            429: "Received exit code 429, API rate limit exceeded",
+        }
+        resolution_dict = {
+            400: (
+                "Ensure that the Website URL provided in the "
+                "configuration parameters is valid."
+            ),
+            403: (
+                "Ensure that the Website URL is accessible and "
+                "does not require authentication."
+            ),
+            404: (
+                "Ensure that the Website URL provided in the "
+                "configuration parameters is valid and accessible."
+            ),
+            429: (
+                "Ensure that the configured URL does not have strict "
+                "rate limits or reduce the polling frequency."
+            ),
         }
         if is_validation:
             error_dict = {
                 400: (
                     "Received exit code 400, Bad Request, Verify the "
-                    " Website URL provided in the configuration parameters."
+                    "Website URL provided in the configuration parameters."
                 ),
                 403: (
                     "Received exit code 403, Forbidden, Verify the"
@@ -342,6 +450,11 @@ class WebPageIOCScraperPluginHelper(object):
                     "Received exit code 404, Resource not found, Verify "
                     "Website URL provided in the configuration parameters."
                 ),
+                429: (
+                    "Received exit code 429, API rate limit exceeded. "
+                    "Verify the Website URL provided in the "
+                    "configuration parameters."
+                ),
             }
 
         if status_code in [200, 201]:
@@ -350,11 +463,13 @@ class WebPageIOCScraperPluginHelper(object):
             return {}
         elif status_code in error_dict:
             err_msg = error_dict[status_code]
+            resolution_msg = resolution_dict.get(status_code)
             if is_validation:
                 log_err_msg = validation_msg + err_msg
                 self.logger.error(
                     message=f"{self.log_prefix}: {log_err_msg}",
                     details=f"API response: {resp.text}",
+                    resolution=resolution_msg,
                 )
                 raise WebPageIOCScraperPluginException(err_msg)
             else:
@@ -362,20 +477,27 @@ class WebPageIOCScraperPluginHelper(object):
                 self.logger.error(
                     message=f"{self.log_prefix}: {err_msg}",
                     details=f"API response: {resp.text}",
+                    resolution=resolution_msg,
                 )
                 raise WebPageIOCScraperPluginException(err_msg)
-
         else:
             err_msg = (
                 "HTTP Server Error"
                 if (status_code >= 500 and status_code <= 600)
                 else "HTTP Error"
             )
+            log_err_msg = (
+                validation_msg + err_msg if is_validation else err_msg
+            )
             self.logger.error(
                 message=(
                     f"{self.log_prefix}: Received exit code {status_code}, "
-                    f"{validation_msg+err_msg} while {logger_msg}."
+                    f"{log_err_msg} while {logger_msg}."
                 ),
                 details=f"API response: {resp.text}",
+                resolution=(
+                    "Ensure that the configured URL is accessible "
+                    "and the server is running correctly."
+                ),
             )
             raise WebPageIOCScraperPluginException(err_msg)

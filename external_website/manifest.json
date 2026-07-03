@@ -1,10 +1,12 @@
 {
     "name": "Web Page IOC Scraper",
     "id": "external_website",
-    "version": "1.2.0",
-    "description": "This plugin is used to pull IOCs of type URL, Domain, IPv4, IPv6, MD5 and SHA256 from any public website. This plugin does not support sharing of IOCs or performing any actions.",
+    "version": "2.0.0",
+    "description": "This plugin is used to pull IOCs of type URL, Domain, IPv4, IPv6, MD5 and SHA256 from any public website. This plugin does not support sharing of IOCs or performing any actions. This plugin supports pull retraction of IOCs from any public website.",
     "patch_supported": false,
+    "minimum_version": "5.1.2",
     "push_supported": false,
+    "fetch_retraction_info": true,
     "module": "CTE",
     "configuration": [
         {
@@ -57,6 +59,32 @@
             "description": "Type of Threat data to pull. Allowed values are SHA256, MD5, URL, Domain, IPv4, IPv6."
         },
         {
+            "label": "File Type",
+            "key": "file_type",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Plain Text",
+                    "value": "plain_text"
+                },
+                {
+                    "key": "JSON",
+                    "value": "json"
+                },
+                {
+                    "key": "XML",
+                    "value": "xml"
+                },
+                {
+                    "key": "HTML",
+                    "value": "html"
+                }
+            ],
+            "mandatory": true,
+            "default": "plain_text",
+            "description": "Select the format of the data returned by the configured URL. Note: If the selected format does not match the actual response format, a validation error will be raised."
+        },
+        {
             "label": "Extract Domains from URL",
             "key": "extract_domains",
             "type": "choice",
@@ -72,7 +100,7 @@
             ],
             "mandatory": false,
             "default": "yes",
-            "description": "Choose whether to extract only the domain name or use the entire URL. For example, if the URL is google.com/abc/xyz, selecting 'Yes' will extract google.com, while selecting 'No' will use the full URL google.com/abc/xyz. Note: This setting is applicable only when the indicator type 'URL' is selected in the 'Type of Threat Data to Pull' configuration parameter."
+            "description": "Choose whether to extract only the domain name or use the entire URL. For example, if the URL is google.com/abc/xyz, selecting 'Yes' will extract google.com, while selecting 'No' will use the full URL google.com/abc/xyz. Note: This setting is applicable only when the IOC type 'URL' is selected in the 'Type of Threat Data to Pull' configuration parameter."
         }
     ]
 }

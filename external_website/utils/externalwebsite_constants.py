@@ -34,7 +34,44 @@ CTE Web Page IOC Scraper Plugin constants.
 
 MODULE_NAME = "CTE"
 PLATFORM_NAME = "Web Page IOC Scraper"
-PLUGIN_VERSION = "1.2.0"
-MAX_API_CALLS = 3
+MAXIMUM_CORE_VERSION = "5.1.2"
+PLUGIN_VERSION = "2.0.0"
+MAX_API_CALLS = 4
 DEFAULT_WAIT_TIME = 60
+DEFAULT_BATCH_SIZE = 5000
 THREAT_TYPES = ["sha256", "md5", "url", "domain", "ipv4", "ipv6"]
+THREAT_TYPES_LABELS = ["SHA256", "MD5", "URL", "Domain", "IPv4", "IPv6"]
+RETRACTION_IOC_TAG = "IOC(s) Retraction"
+RETRACTION = "[Retraction]"
+FILE_TYPES = ["plain_text", "json", "xml", "html"]
+FILE_TYPES_LABELS = ["Plain Text", "JSON", "XML", "HTML"]
+VALIDATION_ERROR_MESSAGE = "Validation error occurred."
+
+SHA256_REGEX = r"\b[a-fA-F0-9]{64}\b"
+MD5_REGEX = r"\b[a-fA-F\d]{32}\b"
+IPV4_REGEX = r"(?<![:\/\.\d])\b(?:\d{1,3}\.){3}\d{1,3}\b\/*?(?![:\/\.\dA-Za-z])"  # noqa: E501
+IPV6_REGEX = (  # noqa: E501
+    r"^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}"
+    r"|([0-9a-fA-F]{1,4}:){1,7}:"
+    r"|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}"
+    r"|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}"
+    r"|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}"
+    r"|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}"
+    r"|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}"
+    r"|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})"
+    r"|:((:[0-9a-fA-F]{1,4}){1,7}|:)"
+    r"|([0-9a-fA-F]{1,4}:){1,7}:)(\/*)?$"
+)
+RESPONSE_LIST_REGEX = r"[^\s]+"
+DOMAIN_REGEX = (  # noqa: E501
+    r"^(?:\*\.)?[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?"
+    r"(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}"
+)
+DOMAIN_REGEX_2 = (  # noqa: E501
+    r"(?<!-)(?<![:\/\w.])(?:\*\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?"
+    r"(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}"
+    r"|(?<!\*)[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?"
+    r"(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)*\.[a-zA-Z]{2,})"
+    r"(?::(?:6553[0-5]|655[0-2]\d|65[0-4]\d{2}|6[0-4]\d{3}"
+    r"|[1-5]\d{4}|\d{1,4}))?(?:\/)?(?![:\/\w])"
+)

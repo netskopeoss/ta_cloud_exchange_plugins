@@ -1,0 +1,53 @@
+{
+    "name": "Kolide",
+    "id": "kolide_ztre",
+    "version": "1.0.0",
+    "module": "CRE",
+    "minimum_version": "6.1.0",
+    "description": "This plugin is used to fetch provisioned and deprovisioned users. Provisioned users are retrieved from the 'People' page and devices are retrieved from the 'Devices' page in Kolide. It also supports enriching device records with open issue counts and device compliance status (via the Kolide Shared Signals Framework stream). This plugin supports the 'Manage Device Group' action to add devices to or remove devices from a Kolide device group. This plugin does not support performing any actions on the users entity.",
+    "configuration": [
+        {
+            "label": "API Token",
+            "key": "api_token",
+            "type": "password",
+            "mandatory": true,
+            "description": "Kolide API token used to authenticate all API requests. The token must be in the format k2sk_v1_<secret>. It can be created by a Full Access admin at Settings → Developers → API Keys."
+        },
+        {
+            "label": "Fetch Deprovisioned People",
+            "key": "fetch_deprovisioned_people",
+            "type": "choice",
+            "mandatory": false,
+            "default": "no",
+            "choices": [
+                {"key": "Yes", "value": "yes"},
+                {"key": "No", "value": "no"}
+            ],
+            "description": "When set to 'Yes', deprovisioned (deleted/disabled) users are fetched along with active users and marked with 'Is Deleted' set to true; active users are marked 'Is Deleted' false. When set to 'No', only active users are fetched."
+        },
+        {
+            "label": "Fetch Open Issues",
+            "key": "fetch_open_issues",
+            "type": "choice",
+            "mandatory": false,
+            "default": "no",
+            "choices": [
+                {"key": "Yes", "value": "yes"},
+                {"key": "No", "value": "no"}
+            ],
+            "description": "When set to 'Yes', all open compliance issues are fetched from Kolide and populate the 'Open Issues Count', 'Exempted Issues Count' and 'Issue Title' fields on Device records. When set to 'No', open issues are not fetched."
+        },
+        {
+            "label": "Fetch Compliance Status",
+            "key": "fetch_compliance_status",
+            "type": "choice",
+            "mandatory": false,
+            "default": "yes",
+            "choices": [
+                {"key": "Yes", "value": "yes"},
+                {"key": "No", "value": "no"}
+            ],
+            "description": "When set to 'Yes', device compliance status is fetched from the Kolide SSF (Shared Signals Framework) stream and populates the 'Compliance Status' field on Device records; an SSF stream is created automatically on first use. When set to 'No', compliance status is not fetched."
+        }
+    ]
+}

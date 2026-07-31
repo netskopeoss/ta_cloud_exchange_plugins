@@ -36,7 +36,7 @@ from netskope_api.iterator.const import Const
 import os
 
 MODULE_NAME = "TENANT"
-PLUGIN_VERSION = "1.6.1"
+PLUGIN_VERSION = "1.6.2"
 PLATFORM_NAME = "Netskope"
 MAX_API_CALLS = 4
 DATE_FORMAT = "%Y-%m-%dT%H:%M:%S.%fZ"
@@ -87,16 +87,55 @@ RESULT = "result"
 TIMESTAMP_HWM = "timestamp_hwm"
 QUEUE_SIZE = 10
 DEFAULT_WAIT_TIME = 30
-EXPONENTIAL_WAIT_TIME = 180
 WAIT_TIME = "wait_time"
-DEFAULT_RETRY_COUNT = 3
-RETRY_COUNT_FOR_PULLING = os.environ.get("RETRY_COUNT_FOR_PULLING")
-if isinstance(RETRY_COUNT_FOR_PULLING, str) and RETRY_COUNT_FOR_PULLING.isnumeric():
-    RETRY_COUNT_FOR_PULLING = int(RETRY_COUNT_FOR_PULLING)
-    if RETRY_COUNT_FOR_PULLING < 1:
-        RETRY_COUNT_FOR_PULLING = DEFAULT_RETRY_COUNT
-else:
-    RETRY_COUNT_FOR_PULLING = DEFAULT_RETRY_COUNT
+
+
+def _get_env_int(name, default, minimum=1):
+    """Read a positive integer override from the environment."""
+    value = os.environ.get(name)
+    if isinstance(value, str) and value.isnumeric() and int(value) >= minimum:
+        return int(value)
+    return default
+
+
+# ---------------------------------------------------------------------------
+# Unified pull retry mechanism (see iterator_helper.PullRetryController).
+#
+# Every transient failure while pulling is retried in place with exponential
+# backoff: delays grow 30s -> 60s -> 120s -> 240s -> 480s (~15 min), then
+# stay flat at 15 min. Two bounds stop the retries:
+#   * maintenance pulling never retries past its scheduled pull window
+#     (MAINTENANCE_PULL_WINDOW_SECONDS after the task started);
+#   * any pull retries a single failure episode for at most
+#     BACKOFF_MAX_TOTAL seconds (this is the only bound for the one-shot
+#     historical pulls).
+#
+# Retry policy: retry EVERY HTTP error status except authentication (401)
+# and permission (403) failures, plus every network/stream/unexpected
+# exception. 401/403 are the only non-retryable statuses -- repeating the
+# request cannot succeed until the token or its scopes are fixed, and they
+# keep their banner/storage side effects. Every other 4xx and 5xx (including
+# 400/404 and 501/505) is retried within the bounds above; a request that
+# truly cannot succeed simply exhausts the episode budget and reports an
+# actionable failure.
+# ---------------------------------------------------------------------------
+NON_RETRYABLE_HTTP_STATUS_CODES = {401, 403}
+RETRYABLE_HTTP_STATUS_CODES = (
+    set(range(400, 600)) - NON_RETRYABLE_HTTP_STATUS_CODES
+)
+BACKOFF_INITIAL_DELAY = _get_env_int("PULL_BACKOFF_INITIAL_DELAY", 30)
+BACKOFF_FACTOR = 2
+BACKOFF_MAX_DELAY = _get_env_int("PULL_BACKOFF_MAX_DELAY", 900)
+# Upper bound of a single failure episode; the only bound for historical.
+BACKOFF_MAX_TOTAL = _get_env_int("PULL_BACKOFF_MAX_TOTAL", 3600)
+BACKOFF_JITTER_RATIO = 0.1
+BACKOFF_SLEEP_TICK = 30
+# Scheduled length of one maintenance pull cycle: load() stops pulling and
+# pull() stops retrying once this much time has passed since the cycle
+# started. The env override exists for testing only.
+MAINTENANCE_PULL_WINDOW_SECONDS = _get_env_int(
+    "PULL_MAINTENANCE_WINDOW_SECONDS", 3600
+)
 # ID fields converted to string so large 64-bit identifiers keep their
 # precision downstream (see alert_id_fields_syslog_mapping.md). A set is used
 # for O(1) membership checks since this lookup runs for every field on every

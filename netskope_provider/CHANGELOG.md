@@ -1,3 +1,10 @@
+# 1.6.2 (Requires minimum Cloud Exchange version 6.1.0)
+## Changed
+- Updated the pull retry mechanism with a unified in-pull exponential backoff engine, replacing the legacy retry decorator for more reliable handling of transient failures. Retries are now strictly bounded by pull windows (or 1 hour for historical pulls).
+- Added recovery for interrupted data streams (including automatic Dataexport resend support) while immediately failing only on authentication/permission errors (401/403).
+## Fixed
+- Fixed historical pulls so that an explicit empty sub-type selection pulls nothing instead of falling back to the tenant-wide sub-type union.
+
 # 1.6.1 (Requires minimum Cloud Exchange version 6.1.0)
 ## Added
 - Added coordinated cleanup of the shared client status iterator so it is removed only once no Netskope plugin (CRE or CLS) is using it.

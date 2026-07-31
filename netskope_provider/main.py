@@ -639,7 +639,11 @@ class NetskopeProviderPlugin(PluginBase):
             log_prefix=self.log_prefix,
             compress_historical_data=compress_historical_data,
         )
-        if not override_subtypes:
+        # An explicit empty list means the caller selected no sub-types -> pull nothing.
+        # Only None (the maintenance/live pull) means "no override -> tenant-wide union".
+        # `not override_subtypes` conflated [] with None and bled other plugins' sub-types
+        # into a historical pull that had selected nothing for this data type.
+        if override_subtypes is None:
             sub_type_config_mapping, latest_checked = (
                 get_sub_type_config_mapping(self.name, data_type)
             )
@@ -655,7 +659,8 @@ class NetskopeProviderPlugin(PluginBase):
             should_apply_expo_backoff,
             should_exec_lifecycle,
         ) in client.create_job():
-            if not override_subtypes:
+            # See note above: an explicit empty list must not fall back to the union.
+            if override_subtypes is None:
                 sub_type_config_mapping, latest_checked = (
                     get_sub_type_config_mapping(
                         self.name,

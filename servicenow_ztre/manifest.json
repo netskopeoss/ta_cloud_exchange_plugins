@@ -1,34 +1,68 @@
 {
-  "name": "ServiceNow",
-  "description": "This plugin supports performing 'Share application data' action to 'User Administration > Companies' page of the ServiceNow platform. This plugin does not support fetching data from the ServiceNow platform.",
-  "id": "servicenow_ztre",
-  "version": "1.0.0",
-  "module": "CRE",
-  "minimum_version": "5.1.0",
-  "configuration": [
-    {
-      "label": "Instance URL",
-      "key": "instance_url",
-      "type": "text",
-      "default": "",
-      "mandatory": true,
-      "description": "ServiceNow instance URL."
-    },
-    {
-      "label": "Username",
-      "key": "username",
-      "type": "text",
-      "default": "",
-      "mandatory": true,
-      "description": "Username of your ServiceNow instance. Username can be created from 'System Security > Users and Groups > Users' page of the ServiceNow instance."
-    },
-    {
-      "label": "Password",
-      "key": "password",
-      "type": "password",
-      "default": "",
-      "mandatory": true,
-      "description": "Password of your ServiceNow instance. Password for the username can be set from 'System Security > Users and Groups > Users > Select User > Set Password' page of the ServiceNow instance."
-    }
-  ]
+    "name": "ServiceNow",
+    "description": "This plugin fetches Users from the 'sys_user' table (System Security > Users and Groups > Users), Devices from the 'cmdb_ci_computer' table (Configuration > Base Item > Computers), and Applications from the 'cmdb_ci_business_app' table (Organization > Business Applications) of the ServiceNow platform. It supports the 'Add/Remove User from Group', 'Add/Remove User from Role', 'Update User Delegation', 'Manage Device Tags', 'Manage Application Tags', and 'Share Application Data' actions.",
+    "id": "servicenow_ztre",
+    "version": "2.0.0",
+    "module": "CRE",
+    "minimum_version": "6.1.0",
+    "configuration": [
+        {
+            "label": "Instance URL",
+            "key": "instance_url",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "ServiceNow instance URL. e.g. https://your-instance.service-now.com"
+        },
+        {
+            "label": "Username",
+            "key": "username",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "Username of your ServiceNow instance. Username can be created from 'System Security > Users and Groups > Users' page of the ServiceNow instance."
+        },
+        {
+            "label": "Password",
+            "key": "password",
+            "type": "password",
+            "default": "",
+            "mandatory": true,
+            "description": "Password of your ServiceNow instance. Password for the username can be set from 'System Security > Users and Groups > Users > Select User > Set Password' page of the ServiceNow instance."
+        },
+        {
+            "label": "Pull Additional Details",
+            "key": "pull_options",
+            "type": "multichoice",
+            "choices": [
+                {
+                    "key": "Inactive Users",
+                    "value": "pull_inactive_users"
+                },
+                {
+                    "key": "User Roles",
+                    "value": "pull_user_roles"
+                },
+                {
+                    "key": "User Groups",
+                    "value": "pull_user_groups"
+                },
+                {
+                    "key": "User Delegation",
+                    "value": "pull_user_delegation"
+                },
+                {
+                    "key": "Device Tags",
+                    "value": "pull_device_tags"
+                },
+                {
+                    "key": "Application Tags",
+                    "value": "pull_application_tags"
+                }
+            ],
+            "default": [],
+            "mandatory": false,
+            "description": "Select the optional data to pull. The selected options expose additional fields. Unselected options are skipped and their fields are not exposed. **Note: For all the selected options in the parameter additional API calls are made to fetch data from ServiceNow**"
+        }
+    ]
 }

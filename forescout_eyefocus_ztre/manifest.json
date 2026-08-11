@@ -1,0 +1,125 @@
+{
+    "name": "Forescout eyeFocus",
+    "id": "forescout_eyefocus_ztre",
+    "version": "1.0.0",
+    "minimum_version": "6.0.0",
+    "module": "CRE",
+    "netskope": false,
+    "description": "This plugin is used to fetch Assets from the Assets page of Forescout eyeFocus Cloud platform. This plugin does not support any actions on Assets.",
+    "configuration": [
+        {
+            "label": "Base URL",
+            "key": "base_url",
+            "type": "text",
+            "default": "",
+            "placeholder": "https://<instance>.cloud.forescout.com",
+            "mandatory": true,
+            "description": "Base URL of your Forescout eyeFocus Cloud instance. e.g. https://demo.cloud.forescout.com"
+        },
+        {
+            "label": "API Token",
+            "key": "api_token",
+            "type": "password",
+            "default": "",
+            "mandatory": true,
+            "description": "Bearer API token used to authenticate against the Forescout eyeFocus REM Asset Search API."
+        },
+        {
+            "label": "Asset Categories",
+            "key": "asset_categories",
+            "type": "multichoice",
+            "choices": [
+                {
+                    "key": "Network Device",
+                    "value": "Network Device"
+                },
+                {
+                    "key": "Unknown",
+                    "value": "Unknown"
+                },
+                {
+                    "key": "Medical Device",
+                    "value": "Medical Device"
+                },
+                {
+                    "key": "IoT",
+                    "value": "IoT"
+                },
+                {
+                    "key": "OT",
+                    "value": "OT"
+                },
+                {
+                    "key": "IT",
+                    "value": "IT"
+                }
+            ],
+            "default": [
+                "Network Device",
+                "Unknown",
+                "Medical Device",
+                "IoT",
+                "OT",
+                "IT"
+            ],
+            "mandatory": false,
+            "description": "Asset categories to pull. Only assets whose Forescout category is selected here are pulled; the filter is applied by the plugin after each API call. All categories are selected by default. Leave empty to pull assets of every category. Deselect 'IT' to exclude Netskope-Client-compatible hosts (laptops / desktops / phones) and pull only non-host / headless assets."
+        },
+        {
+            "label": "Pull Strategy",
+            "key": "pull_strategy",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Incremental",
+                    "value": "incremental"
+                },
+                {
+                    "key": "Full Window (refetch configured initial range every pull) ",
+                    "value": "full"
+                }
+            ],
+            "default": "incremental",
+            "mandatory": true,
+            "description": "How each pull cycle determines its datetime range. 'Incremental': the first pull uses the Initial Range and every later pull fetches only assets seen since the last successful run. 'Full Window': every pull re-fetches all assets within the Initial Range, so existing assets are refreshed on each cycle."
+        },
+        {
+            "label": "Initial Range (in days)",
+            "key": "initial_range",
+            "type": "number",
+            "default": 7,
+            "mandatory": true,
+            "description": "Number of days to look back. With the 'Incremental' Pull Strategy this applies to the first pull only; with the 'Full Window' Pull Strategy it applies to every pull. Valid range: 1 to 365."
+        },
+        {
+            "label": "Pagination Window (in days)",
+            "key": "pull_window",
+            "type": "number",
+            "default": 1,
+            "mandatory": true,
+            "description": "Size of each datetime window the pull is sliced into (the REM API is paginated by narrowing the time window, not by page number). A window that still exceeds the 1000-asset API cap is automatically split into smaller sub-windows. Valid range: 1 to 30."
+        },
+        {
+            "label": "Apply Risk Score Filter",
+            "key": "advanced_filters",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Yes",
+                    "value": "yes"
+                },
+                {
+                    "key": "No",
+                    "value": "no"
+                }
+            ],
+            "default": "no",
+            "has_api_call": true,
+            "payload_fields": [
+                "advanced_filters"
+            ],
+            "mandatory": true,
+            "description": "Select 'Yes' to filter the assets fetched by their Forescout risk score. Additional 'Minimum Risk Score' and 'Maximum Risk Score' fields are then displayed and are applied server-side by the REM Asset Search API. Select 'No' to fetch assets of every risk score."
+        }
+    ]
+}

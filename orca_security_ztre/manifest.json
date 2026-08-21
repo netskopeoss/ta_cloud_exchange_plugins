@@ -1,0 +1,32 @@
+{
+    "name": "Orca Security",
+    "id": "orca_security_ztre",
+    "version": "1.0.0",
+    "module": "CRE",
+    "minimum_version": "6.1.0",
+    "description": "This plugin is used to fetch Workloads and Users from the Inventory > Inventory Overview page from following 'Asset Category or Type' AWS EC2 Instance, Azure Compute VM Instance, Azure Container Instance, GCP Compute VM Instance, OCI Compute VM Instance, GCP User, AWS IAM User, OCI User, Azure User, Azure Service Principal, GCP IAM Service Account, K8s Service Account in Orca Security. This plugin supports the 'Scan Data Now' action to trigger an on-demand Orca scan and the 'Add/Remove Custom Tag' action to add or remove custom tags for Workloads and Users.\n\nNetskope Normalized Score = round((10 - Risk Score) * 100), computed only when Risk Score is present and within [0.0, 10.0].",
+    "configuration": [
+        {
+            "label": "Base URL",
+            "key": "base_url",
+            "type": "choice",
+            "default": "https://app.orcasecurity.io",
+            "has_api_call": true,
+            "payload_fields": [
+                "base_url"
+            ],
+            "mandatory": true,
+            "choices": [
+                {"key": "Global (app.orcasecurity.io)", "value": "https://app.orcasecurity.io"},
+                {"key": "India (app.in.orcasecurity.io)", "value": "https://app.in.orcasecurity.io"},
+                {"key": "Europe (app.eu.orcasecurity.io)", "value": "https://app.eu.orcasecurity.io"},
+                {"key": "Australia (app.au.orcasecurity.io)", "value": "https://app.au.orcasecurity.io"},
+                {"key": "South America (app.sa.orcasecurity.io)", "value": "https://app.sa.orcasecurity.io"},
+                {"key": "Indonesia (app.id.orcasecurity.io)", "value": "https://app.id.orcasecurity.io"},
+                {"key": "Government (app.gov.orcasecurity.io)", "value": "https://app.gov.orcasecurity.io"},
+                {"key": "Custom", "value": "custom"}
+            ],
+            "description": "Select the region of your Orca Security tenant. Select 'Custom' to reveal a 'Custom Base URL' field for tenants that use a different base URL."
+        }
+    ]
+}

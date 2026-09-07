@@ -55,7 +55,11 @@ from .constants import (
     DESTINATION_PROFILE_EXACT_PER_PROFILE_LIMIT,
     DESTINATION_PROFILE_REGEX_TOTAL_LIMIT,
     DEVICE_CLASSIFICATION_TAGS_PER_GROUP,
+    MAX_NETWORK_PROFILES,
     MAX_RETRY_COUNT,
+    NETWORK_PROFILE_EMPTY_PLACEHOLDER,
+    NETWORK_PROFILE_PER_PROFILE_LIMIT,
+    NETWORK_PROFILE_TENANT_TOTAL_LIMIT,
     PRIVATE_APP_MIN_CIDR_PREFIX,
     PRIVATE_APP_TAG_MAX_LENGTH,
     REGEX_HOSTNAME_LABEL,
@@ -295,6 +299,7 @@ class NetskopePluginHelper(object):
         field_name: str,
         field_value: str,
         forbidden_chars,
+        disallow_non_printable: bool = False,
     ) -> Union[ValidationResult, None]:
         """Validate that a field value contains no forbidden characters.
 
@@ -302,23 +307,35 @@ class NetskopePluginHelper(object):
             field_name (str): Display name of the field.
             field_value (str): Value to validate.
             forbidden_chars: Iterable of single characters to reject.
+            disallow_non_printable (bool): When True, also reject any
+                non-printable character (e.g. control characters), in
+                addition to ``forbidden_chars``.
 
         Returns:
             ValidationResult on failure, None when valid.
         """
-        if any(char in field_value for char in forbidden_chars):
+        has_forbidden_char = any(
+            char in field_value for char in forbidden_chars
+        )
+        has_non_printable = disallow_non_printable and any(
+            not char.isprintable() for char in field_value
+        )
+        if has_forbidden_char or has_non_printable:
             chars_str = ", ".join(
                 f"'{c}'" for c in forbidden_chars
             )
+            desc = chars_str
+            if disallow_non_printable:
+                desc = f"{chars_str}, or non-printable"
             err_msg = (
                 f"'{field_name}' should not contain"
-                f" {chars_str} characters."
+                f" {desc} characters."
             )
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg}",
                 resolution=(
                     f"Ensure that '{field_name}' does not"
-                    f" contain {chars_str}."
+                    f" contain {desc} characters."
                 ),
             )
             return ValidationResult(success=False, message=err_msg)
@@ -350,20 +367,29 @@ class NetskopePluginHelper(object):
 
         A Source field resolves to either a list (already split) or a
         comma-separated string; a Static field is a comma-separated
-        string. This trims whitespace, drops empty entries, and
-        de-duplicates while preserving the original order.
+        string. A parameter declared with ``allowMultipleSource`` adds a
+        third shape: one entry per mapped field, nested one level deeper
+        wherever a mapped Source field's record value is itself a list.
+        This flattens that nesting, trims whitespace, drops empty
+        entries, and de-duplicates while preserving the original order.
 
         Args:
             raw_value (Union[str, list]): Resolved field value, either
-                a list or a comma-separated string.
+                a list (optionally nested one level) or a
+                comma-separated string.
 
         Returns:
             List[str]: Cleaned, de-duplicated values in original order.
         """
-        if isinstance(raw_value, list):
+        if isinstance(raw_value, (list, tuple, set)):
             candidates = []
             for item in raw_value:
-                candidates.extend(str(item).split(","))
+                if isinstance(item, (list, tuple, set)):
+                    for nested_item in item:
+                        if nested_item is not None:
+                            candidates.extend(str(nested_item).split(","))
+                elif item is not None:
+                    candidates.extend(str(item).split(","))
         else:
             candidates = str(raw_value or "").split(",")
         cleaned = []
@@ -374,6 +400,49 @@ class NetskopePluginHelper(object):
                 seen.add(value)
                 cleaned.append(value)
         return cleaned
+
+    def _join_multi_source_value(self, raw_value: Union[str, list]) -> str:
+        """Collapse a multi-source parameter value to its Static form.
+
+        A parameter declared with ``allowMultipleSource`` arrives as one
+        entry per mapped field instead of a single string. Joining the
+        flattened values with commas yields exactly what the same
+        configuration would look like as one Static comma-separated
+        field, so the string-based checks in ``validate_action`` apply
+        unchanged. A value that is already a string is returned as-is so
+        Static validation keeps seeing the user's literal input.
+
+        Args:
+            raw_value (Union[str, list]): Configured field value.
+
+        Returns:
+            str: Comma-separated equivalent of the configured value.
+        """
+        if isinstance(raw_value, str):
+            return raw_value
+        return ",".join(self._normalize_csv_values(raw_value))
+
+    def _has_source_field_value(self, raw_value: Union[str, list]) -> bool:
+        """Whether a Source field is mapped to this parameter.
+
+        A parameter declared with ``allowMultipleSource`` can mix Static
+        values and Source fields, so any entry naming a record field
+        makes the whole parameter Source-bound and defers its validation
+        to action execution.
+
+        Args:
+            raw_value (Union[str, list]): Configured field value.
+
+        Returns:
+            bool: True when at least one entry is a Source field.
+        """
+        if isinstance(raw_value, str):
+            return raw_value.startswith("$")
+        if isinstance(raw_value, (list, tuple, set)):
+            return any(
+                self._has_source_field_value(item) for item in raw_value
+            )
+        return False
 
     def _attribute_failed_ids(
         self,
@@ -503,6 +572,101 @@ class NetskopePluginHelper(object):
             )
         return max(0, max_shareable), limit_label
 
+    def _format_destination_profile_value(
+        self, value: str
+    ) -> Optional[str]:
+        """Prefix a CIDR block or IP range value for a destination profile.
+
+        The destination profile API accepts a bare CIDR block or IP range
+        without error, but only treats a value as a network when it is
+        prefixed with ``CIDR:`` / ``RANGE:`` respectively; without the
+        prefix the value is matched as a literal string, which never
+        matches real traffic. Only applies to exact-match profiles: a
+        regex profile's values are patterns, not addresses, so this must
+        not be called for one. Netskope's destination profile does not
+        support IPv6 in any form (plain address, CIDR block, or range),
+        so such a value is dropped (``None``) rather than shared.
+        Destination profiles also reject ``http://``/``https://`` values
+        for both exact-match and regex types, so any value containing
+        either is dropped (``None``) as well.
+
+        IPv4 is parsed with ``ipaddress.IPv4Network``/``IPv4Address``
+        specifically rather than the generic ``ip_network``/``ip_address``
+        dispatchers, since those raise immediately on IPv6 input instead
+        of silently succeeding as a valid IPv6 network/address. Whether a
+        ``/``-containing value is a CIDR attempt at all is decided by the
+        address portion alone (before the ``/``): if that parses as an
+        IPv4 or IPv6 address, the value is a CIDR attempt and its prefix
+        length is validated (dropped as ``None`` if out of the 0-32 /
+        0-128 range, e.g. ``/33``, rather than passed through unprefixed);
+        otherwise it is not IP-shaped at all (a URL or path) and is
+        returned unchanged. A range entered as ``start - end`` (with
+        spaces around the hyphen) has those spaces stripped, mirroring
+        the network profile action's formatting.
+
+        Args:
+            value (str): Raw destination profile value.
+
+        Returns:
+            Optional[str]: The value prefixed with ``CIDR:``/``RANGE:``
+                when it is a valid IPv4 CIDR block or range (with any
+                spaces around a range's hyphen removed), ``value``
+                unchanged when it is not a CIDR/range attempt at all
+                (e.g. a plain address or a URL), or ``None`` when it is
+                an IPv6 address, CIDR block, or range, an out-of-range
+                IPv4 CIDR prefix (e.g. ``/33``), an ``http://``/
+                ``https://`` value, or an IPv4 range whose start is not
+                less than its end.
+        """
+
+        def _is_ipv6(candidate: str) -> bool:
+            try:
+                ipaddress.IPv6Address(candidate)
+            except ValueError:
+                return False
+            return True
+
+        def _is_ipv4(candidate: str) -> bool:
+            try:
+                ipaddress.IPv4Address(candidate)
+            except ValueError:
+                return False
+            return True
+
+        value = value.strip()
+        if "http://" in value or "https://" in value:
+            return None
+        if "/" in value:
+            addr_part = value.split("/", 1)[0]
+            if _is_ipv4(addr_part):
+                try:
+                    ipaddress.IPv4Network(value, strict=False)
+                except ValueError:
+                    return None
+                return f"CIDR:{value}"
+            if _is_ipv6(addr_part):
+                return None
+            return value
+        if "-" in value:
+            parts = value.split("-")
+            if len(parts) != 2:
+                return value
+            start = parts[0].strip()
+            end = parts[1].strip()
+            try:
+                start_ip = ipaddress.IPv4Address(start)
+                end_ip = ipaddress.IPv4Address(end)
+            except ValueError:
+                if _is_ipv6(start) or _is_ipv6(end):
+                    return None
+                return value
+            if int(start_ip) >= int(end_ip):
+                return None
+            return f"RANGE:{start}-{end}"
+        if _is_ipv6(value):
+            return None
+        return value
+
     def _split_values_within_budget(
         self,
         values: List[str],
@@ -545,6 +709,278 @@ class NetskopePluginHelper(object):
             list(values[:chunk_count]),
             list(values[chunk_count:]),
         )
+
+    # ------------------------------------------------------------------
+    # Network profile helpers
+    # ------------------------------------------------------------------
+
+    def _is_network_profile_placeholder(
+        self, value: str, default_value: str = ""
+    ) -> bool:
+        """Check whether a stored value is *this plugin's* placeholder.
+
+        A comment-prefixed entry is a comment to the network profile API
+        rather than an IP value, but it still occupies a slot out of the
+        per-profile and tenant-wide value limits. So a comment is *not*
+        free room: a member holding 95 addresses and 5 comments is full
+        at a limit of 100, and writing 95 + 5 + 5 back is rejected. Every
+        comment is therefore treated as a real value - counted towards
+        capacity, preserved when the member is rewritten, and carried
+        over when the group is re-packed.
+
+        The one exception is the placeholder this plugin wrote itself,
+        which it is free to overwrite: it is matched here so that its
+        slot counts as reclaimable room, it is cleared as real values
+        arrive, and a member reduced to nothing but the placeholder is
+        still recognized as empty and its profile slot released.
+
+        Matched by exact content rather than by prefix, against both the
+        currently configured ``default_value`` and the built-in default,
+        so a placeholder written before the parameter was customized is
+        still recognized. The consequence is that an operator who
+        happens to write ``NETWORK_PROFILE_EMPTY_PLACEHOLDER`` verbatim
+        as their own comment has it treated as the plugin's - the two
+        are indistinguishable, and the string is the plugin's own.
+
+        Args:
+            value (str): Stored profile value.
+            default_value (str): Placeholder configured on the action.
+                Empty falls back to
+                ``NETWORK_PROFILE_EMPTY_PLACEHOLDER``.
+
+        Returns:
+            bool: True when the value is this plugin's placeholder.
+        """
+        stripped = str(value or "").strip()
+        if not stripped:
+            return False
+        return stripped in {
+            str(default_value or "").strip()
+            or NETWORK_PROFILE_EMPTY_PLACEHOLDER,
+            NETWORK_PROFILE_EMPTY_PLACEHOLDER,
+        }
+
+    def _ordered_network_profile_group(
+        self,
+        existing_profiles: Dict,
+        base_name: str,
+        default_value: str = "",
+    ) -> List[Dict]:
+        """Return the roll-over group for ``base_name`` ordered by number.
+
+        A logical network profile is stored as a base profile ``base``
+        plus numbered roll-over siblings ``base 2``, ``base 3`` ...
+        created when the per-profile value limit is hit. This collects
+        the matching profiles and orders them by number (the base counts
+        as number 1).
+
+        Unlike the private app group the names carry no brackets, so an
+        unrelated profile that happens to be named ``base 2`` is picked
+        up as a sibling. That is accepted and documented rather than
+        detected - the same behaviour the private app group has.
+
+        **This function is the only authority on group membership.**
+        ``existing_profiles`` may be a filtered fetch
+        (``_get_network_profiles(name_contains=...)`` uses the endpoint's
+        ``filter=name co "..."``), and ``co`` is a *case-insensitive
+        partial* match - so it also returns profiles that merely contain
+        the base name (``base-Legacy``, ``My-base``, ``BASE 4``). The
+        pattern below is anchored at both ends and case-sensitive, so
+        every one of those is rejected here. Never treat "the API
+        returned it" as "it belongs to the group".
+
+        Args:
+            existing_profiles (Dict): Profiles keyed by stored name. May
+                contain profiles outside the group; they are filtered out.
+            base_name (str): The base profile name.
+            default_value (str): Placeholder configured on the action, so
+                the plugin's own placeholder can be told apart from an
+                operator's comment. Empty falls back to
+                ``NETWORK_PROFILE_EMPTY_PLACEHOLDER``.
+
+        Returns:
+            List[Dict]: ``{name, id, number, values, real_values,
+                values_count, description, status}`` entries sorted by
+                number. ``values`` is every stored value and
+                ``real_values`` excludes only this plugin's own
+                placeholder - an operator's comment counts as a real
+                value, since it occupies a value slot just as an address
+                does.
+        """
+        # ``\Z`` rather than ``$``: ``$`` also matches just before a
+        # trailing newline, so ``$`` would accept "base 2\n" as a member.
+        pattern = re.compile(rf"^{re.escape(base_name)}( (\d+))?\Z")
+        members = []
+        for name, details in existing_profiles.items():
+            match = pattern.match(str(name))
+            if not match:
+                continue
+            number = int(match.group(2)) if match.group(2) else 1
+            values = [
+                value for value in details.get("values", []) or [] if value
+            ]
+            real_values = [
+                value
+                for value in values
+                if not self._is_network_profile_placeholder(
+                    value, default_value
+                )
+            ]
+            members.append(
+                {
+                    "name": name,
+                    "id": details.get("id", ""),
+                    "number": number,
+                    "values": values,
+                    "real_values": real_values,
+                    # values_count comes from the API on the light fetch
+                    # (where ``values`` is absent), so prefer it and fall
+                    # back to the fetched list only when it is missing.
+                    "values_count": details.get(
+                        "values_count", len(values)
+                    ),
+                    "description": details.get("description", ""),
+                    "status": details.get("status", ""),
+                }
+            )
+        members.sort(key=lambda member: member["number"])
+        return members
+
+    def _network_profile_group_capacity(
+        self,
+        existing_profiles: Dict,
+        members: List[Dict],
+        per_profile_limit: Optional[int] = None,
+    ) -> Tuple[int, List[int], int]:
+        """Compute the room available across a whole profile group.
+
+        Roll-over needs three numbers at once: how much room the tenant
+        still has in total, how much room each existing member has, and
+        how many brand new profiles may still be created. All three are
+        computed from one tenant snapshot so the tenant budget is never
+        counted twice.
+
+        Args:
+            existing_profiles (Dict): Every profile on the tenant, keyed
+                by name (each carrying ``values_count``).
+            members (List[Dict]): The group's members, ordered by number,
+                as returned by ``_ordered_network_profile_group``.
+            per_profile_limit (Optional[int]): Per-profile value limit
+                override; ``None`` uses
+                ``NETWORK_PROFILE_PER_PROFILE_LIMIT``.
+
+        Returns:
+            Tuple[int, List[int], int]: ``(tenant_room, member_room,
+                sibling_slots)`` where ``tenant_room`` is how many more
+                values the tenant can hold, ``member_room`` is the room
+                on each member in ``members`` order (never negative, so a
+                member already over the limit simply reports 0), and
+                ``sibling_slots`` is how many more profiles may be
+                created before the tenant profile cap is reached.
+        """
+        per_profile_limit = (
+            per_profile_limit
+            if per_profile_limit is not None
+            else NETWORK_PROFILE_PER_PROFILE_LIMIT
+        )
+        total_usage = sum(
+            profile.get("values_count", 0)
+            for profile in existing_profiles.values()
+        )
+        tenant_room = max(
+            0, NETWORK_PROFILE_TENANT_TOTAL_LIMIT - total_usage
+        )
+        # Only this plugin's own placeholder is added back as free room:
+        # it is discarded when the member is written to, and counting it
+        # would make the member look one value fuller than it is,
+        # spilling a value into a brand new profile that compaction then
+        # immediately reclaims. An operator's comment is NOT free room -
+        # it stays on the profile and occupies a value slot, so a member
+        # holding 95 addresses and 5 comments is full at a limit of 100
+        # and a write of 95 + 5 + 5 would be rejected by the API. Such
+        # comments are already inside ``real_values``, so they add
+        # nothing back here. Writing the add-back as a delta, rather
+        # than using ``len(real_values)`` directly, keeps a light fetch
+        # (no ``values``) degrading to plain ``values_count`` instead of
+        # reporting the whole limit as free.
+        member_room = [
+            max(
+                0,
+                per_profile_limit
+                - member.get("values_count", 0)
+                + (
+                    len(member.get("values", []))
+                    - len(member.get("real_values", []))
+                ),
+            )
+            for member in members
+        ]
+        sibling_slots = max(
+            0, MAX_NETWORK_PROFILES - len(existing_profiles)
+        )
+        return tenant_room, member_room, sibling_slots
+
+    def _format_network_profile_value(
+        self, value: str
+    ) -> Optional[str]:
+        """Validate and format a network profile IP value in one pass.
+
+        A valid value is one of:
+        - a single IPv4 or IPv6 address (e.g. ``10.50.2.2``),
+        - an IPv4 or IPv6 CIDR block, prefix 0-32 for IPv4 and 0-128
+          for IPv6 (e.g. ``10.50.0.0/12``); the Netskope API accepts
+          ``/0`` as a valid (if unusual) network,
+        - an IPv4 or IPv6 range ``start-end`` where both sides are
+          valid addresses of the same IP version and
+          ``start < end`` (e.g. ``10.0.0.0-10.0.0.240``).
+
+        Each network profile element has an 80-character limit. An
+        uncompressed IPv6 range entered as ``start - end`` (with spaces
+        around the hyphen) can run to 81 characters, one over the limit,
+        while the same range with the spaces removed (``start-end``)
+        fits, so a recognized range is reformatted here as well as
+        validated. A single address or CIDR block is returned unchanged.
+
+        Args:
+            value (str): Raw network profile value.
+
+        Returns:
+            Optional[str]: The value, formatted as ``start-end`` (no
+                surrounding spaces) when it is a valid IP range, or
+                unchanged when it is a valid single address or CIDR
+                block. ``None`` when the value does not match any of
+                the allowed formats.
+        """
+        value = value.strip()
+        if not value:
+            return None
+        if "/" in value:
+            try:
+                # ip_network already rejects a prefix outside the
+                # valid 0-32 (IPv4) / 0-128 (IPv6) range on its own;
+                # /0 is a valid, if unusual, network and is accepted.
+                ipaddress.ip_network(value, strict=False)
+            except ValueError:
+                return None
+            return value
+        if "-" in value:
+            parts = value.split("-")
+            if len(parts) != 2:
+                return None
+            start = parts[0].strip()
+            end = parts[1].strip()
+            try:
+                start_ip = ipaddress.ip_address(start)
+                end_ip = ipaddress.ip_address(end)
+            except ValueError:
+                return None
+            if (
+                start_ip.version != end_ip.version
+                or int(start_ip) >= int(end_ip)
+            ):
+                return None
+            return f"{start}-{end}"
+        return value if self._validate_ip_address(value) else None
 
     # ------------------------------------------------------------------
     # DNS profile helpers

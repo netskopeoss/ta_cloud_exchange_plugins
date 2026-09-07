@@ -61,7 +61,7 @@ REGEX_FOR_DOMAIN = (
 )
 MODULE_NAME = "CRE"
 PLUGIN = "Netskope Risk Exchange"
-PLUGIN_VERSION = "1.8.0"
+PLUGIN_VERSION = "1.9.0"
 URLS = {
     "V2_PRIVATE_APP": "/api/v2/steering/apps/private",
     "V2_PRIVATE_APP_PATCH": "/api/v2/steering/apps/private/{}",
@@ -98,6 +98,10 @@ URLS = {
     "V2_DEVICE_CLASSIFICATION_RULE_BY_ID": (
         "/api/v2/deviceclassification/rules/{}"
     ),
+    "V2_NETWORK_PROFILE": "/api/v2/profiles/networks",
+    "V2_NETWORK_PROFILE_BY_ID": "/api/v2/profiles/networks/{}",
+    "V2_NETWORK_PROFILE_VALUES": "/api/v2/profiles/networks/{}/values",
+    "V2_NETWORK_PROFILE_DEPLOY": "/api/v2/profiles/networks/deploy",
 }
 ERROR_TAG_EXISTS = (
     "Tag provided is already present. Hence use PATCH method to add "
@@ -300,6 +304,100 @@ DEVICE_CLASSIFICATION_OPERATOR_OPTIONS = {
 }
 
 # ---------------------------------------------------------------------------
+# Add to Network Profile action constants
+# ---------------------------------------------------------------------------
+# Capacity limits enforced by Netskope for network profiles. Unlike
+# destination profiles, network profiles have no match type, so there is a
+# single flat capacity bucket (not split exact/regex).
+# The tenant-wide total is a fixed platform limit that cannot be raised, so
+# it is always enforced from this constant and is never overridable from the
+# action. The per-profile limit below is only the default -- Netskope can
+# raise it on a tenant, which is why the action exposes it as an override.
+NETWORK_PROFILE_TENANT_TOTAL_LIMIT = 300000
+NETWORK_PROFILE_PER_PROFILE_LIMIT = 20000
+# Maximum number of network profiles a tenant can hold. Roll-over stops
+# creating numbered siblings once the tenant is at this count.
+MAX_NETWORK_PROFILES = 512
+# Text markers that identify a "some tenant limit was exceeded" rejection of a
+# network profile create. The API reuses 403 for "licensed feature not enabled"
+# as well, so the status alone is not enough to tell the two apart. Matched
+# case-insensitively against the response body.
+#
+# These are deliberately broad: any limit rejection should stop roll-over
+# gracefully (skip the remaining values and report) rather than fail the whole
+# action. They do NOT establish WHICH limit was hit -- use
+# NETWORK_PROFILE_COUNT_ERROR_PATTERNS for that.
+NETWORK_PROFILE_LIMIT_ERROR_MARKERS = [
+    "maximum number",
+    "profile limit",
+    "limit exceeded",
+    "limit has been reached",
+]
+# Identifies a profile-COUNT rejection specifically, so the operator-facing
+# message can name the right cause and the right resolution. The tenant reuses
+# the same "resource limit exceeded" phrasing for value limits, which a marker
+# above cannot tell apart. Observed body:
+#
+#   {"err_code": "60307", "message": "resource limit exceeded: cannot have
+#    more than 512 profiles in a tenant", ...}
+#
+# The count varies by tenant, so it is matched as ``\d+`` and never against
+# MAX_NETWORK_PROFILES. ``err_code`` is deliberately not used: it is not
+# verified constant across tenants. Matched case-insensitively with re.search.
+# Each pattern requires PROFILES (plural) to be the resource being counted, so
+# a per-profile VALUE limit ("...more than 300000 values in a profile", "the
+# per-profile limit") can never match. Note that the bare marker "profile
+# limit" above is intentionally absent here: it also occurs in per-profile
+# value-limit wording, which is the very confusion this list exists to remove.
+NETWORK_PROFILE_COUNT_ERROR_PATTERNS = [
+    r"more than\s+\d+\s+(?:\w+\s+)?profiles\b",
+    r"\bprofiles\s+in\s+a\s+tenant\b",
+    r"\bnumber\s+of\s+(?:\w+\s+)?profiles\b",
+]
+# Written to a member that has to be emptied. A "#"-prefixed entry is a
+# comment to the network profile API, so it matches no traffic. A real IP
+# must never be used here: an emptied profile may still be referenced by a
+# policy, and any address (even a loopback) would start matching traffic.
+NETWORK_PROFILE_EMPTY_PLACEHOLDER = "# Empty Profile"
+# A value starting with one of these characters is a comment to the network
+# profile API, not an IP value. A comment nevertheless occupies a slot out of
+# the per-profile and tenant-wide value limits, so it is treated as a real
+# value everywhere: counted towards capacity, preserved when a member is
+# rewritten, and carried over when a group is re-packed. The single exception
+# is the placeholder this plugin itself wrote - see
+# ``_is_network_profile_placeholder`` - which the plugin is free to overwrite
+# and therefore does count as reclaimable room.
+NETWORK_PROFILE_COMMENT_PREFIXES = ("#", ";")
+# The prefixes rendered for an operator-facing message, e.g. "'#' or ';'".
+NETWORK_PROFILE_COMMENT_PREFIX_DISPLAY = " or ".join(
+    f"'{prefix}'" for prefix in NETWORK_PROFILE_COMMENT_PREFIXES
+)
+# Maximum length of a single network profile element (value or comment).
+MAX_NETWORK_PROFILE_VALUE_LENGTH = 80
+# Longest roll-over suffix a base profile name has to leave room for. A
+# sibling is named "<base> <number>"; a tenant caps out at
+# MAX_NETWORK_PROFILES profiles, so the widest number is 3 digits and the
+# suffix is " 512" -- 4 characters.
+NETWORK_PROFILE_SIBLING_SUFFIX = f" {MAX_NETWORK_PROFILES}"
+# Network profile by-id PATCH / create POST request body byte budget with a
+# safety buffer. Netskope enforces a 10 MB max request body for this API.
+NETWORK_PROFILE_PAYLOAD_LIMIT = 10 * 1024 * 1024
+NETWORK_PROFILE_PAYLOAD_SAFETY_BUFFER = 1024
+# The network profile values endpoint (PATCH with op "append") accepts at
+# most this many values per call, so overflow values are appended in
+# batches of this size (mirrors the destination profile values endpoint).
+NETWORK_PROFILE_VALUES_PER_APPEND = 10
+# Status value returned by the networks list/by-id API for a profile that
+# is staged for deletion. Calling the deploy endpoint on such a profile
+# applies the pending delete, so it must never be auto-deployed.
+NETWORK_PROFILE_STATUS_PENDING_DELETE = "pending-delete"
+# Network profile name/description length limits, and characters not
+# allowed in a name (a description allows any character).
+MAX_NETWORK_PROFILE_NAME_LENGTH = 150
+MAX_NETWORK_PROFILE_DESC_LENGTH = 200
+NETWORK_PROFILE_NAME_FORBIDDEN_CHARS = ['"', ";"]
+
+# ---------------------------------------------------------------------------
 # Action parameter templates
 # ---------------------------------------------------------------------------
 # Static field definitions for the actions added in this release. They are
@@ -312,6 +410,7 @@ DEVICE_CLASSIFICATION_OPERATOR_OPTIONS = {
 #   - service_profile     -> "service_profile_name"
 #   - device_classification -> "device_classification",
 #                              "device_classification_rule"
+#   - network_profile     -> "network_profile_name"
 DESTINATION_PROFILE_ACTION_PARAMS = [
     {
         "label": "Operation",
@@ -365,7 +464,7 @@ DESTINATION_PROFILE_ACTION_PARAMS = [
         "description": (
             "Description for the destination profile. It will add or replace"
             " the current description with provided. The description should"
-            " not exceed {MAX_DESTINATION_PROFILE_DESC_LENGTH} characters."
+            f" not exceed {MAX_DESTINATION_PROFILE_DESC_LENGTH} characters."
         ),
     },
     {
@@ -407,9 +506,10 @@ DESTINATION_PROFILE_ACTION_PARAMS = [
         "default": "",
         "placeholder": "i.e. 10.0.0.1, example.com",
         "mandatory": True,
+        "allowMultipleSource": True,
         "description": (
-            "Select a Source field for the destination values or "
-            "provide Static comma-separated values, IPs, or URLs to "
+            "Select one or more Source fields for the destination values "
+            "or provide Static comma-separated values, IPs, or URLs to "
             "add to the profile."
         ),
     },
@@ -565,10 +665,11 @@ DNS_PROFILE_ACTION_PARAMS = [
         "default": "",
         "placeholder": "i.e. example.com, test.org",
         "mandatory": True,
+        "allowMultipleSource": True,
         "description": (
-            "Select a Source field for the domain names or provide "
-            "Static comma-separated domains or FQDNs to add to the DNS "
-            "profile."
+            "Select one or more Source fields for the domain names or "
+            "provide Static comma-separated domains or FQDNs to add to "
+            "the DNS profile."
         ),
     },
 ]
@@ -636,9 +737,11 @@ SERVICE_PROFILE_ACTION_PARAMS = [
         "default": "",
         "placeholder": "i.e. 443, 8080-8090",
         "mandatory": False,
+        "allowMultipleSource": True,
         "description": (
-            "Select a Source field for the TCP ports or provide Static "
-            "comma-separated ports or port ranges (e.g. 9000-9500)."
+            "Select one or more Source fields for the TCP ports or "
+            "provide Static comma-separated ports or port ranges "
+            "(e.g. 9000-9500)."
         ),
     },
     {
@@ -648,9 +751,11 @@ SERVICE_PROFILE_ACTION_PARAMS = [
         "default": "",
         "placeholder": "i.e. 53, 8080-8090",
         "mandatory": False,
+        "allowMultipleSource": True,
         "description": (
-            "Select a Source field for the UDP ports or provide Static "
-            "comma-separated ports or port ranges (e.g. 9000-9500)."
+            "Select one or more Source fields for the UDP ports or "
+            "provide Static comma-separated ports or port ranges "
+            "(e.g. 9000-9500)."
         ),
     },
     {
@@ -660,9 +765,10 @@ SERVICE_PROFILE_ACTION_PARAMS = [
         "default": "",
         "placeholder": "i.e. 443, 8080-8090",
         "mandatory": False,
+        "allowMultipleSource": True,
         "description": (
-            "Select a Source field for the TCP_UDP ports or provide "
-            "Static comma-separated ports or port ranges "
+            "Select one or more Source fields for the TCP_UDP ports or "
+            "provide Static comma-separated ports or port ranges "
             "(e.g. 9000-9500)."
         ),
     },
@@ -813,10 +919,11 @@ DEVICE_CLASSIFICATION_ACTION_PARAMS = [
         "default": "",
         "placeholder": "i.e. tag1, tag2",
         "mandatory": True,
+        "allowMultipleSource": True,
         "description": (
-            "Select a Source field for the device tags or provide "
-            "Static comma-separated device tag names to use in the "
-            "rule conditions. If more than "
+            "Select one or more Source fields for the device tags or "
+            "provide Static comma-separated device tag names to use in "
+            "the rule conditions. If more than "
             f"{DEVICE_CLASSIFICATION_TAGS_PER_GROUP} tags are provided,"
             " they are split into groups of "
             f"{DEVICE_CLASSIFICATION_TAGS_PER_GROUP} and each group"
@@ -824,6 +931,148 @@ DEVICE_CLASSIFICATION_ACTION_PARAMS = [
             " Append, new tags are unioned with the existing ones and"
             " the result is re-grouped. Each tag must already exist on"
             " the Netskope Tenant."
+        ),
+    },
+]
+
+# This action has no Operation parameter. It always appends: values are added
+# to whatever the group already holds, and removing a value is the revert
+# action's job (it runs when a record stops matching the business rule). The
+# same choice the 'Add Host to Private App' action makes. A Replace would have
+# to rewrite whole profiles from one record's values, which cannot be done
+# safely for a bulk action - the records of a single sync arrive in batches, so
+# each batch would wipe the values written by the batch before it.
+NETWORK_PROFILE_ACTION_PARAMS = [
+    {
+        "label": "Network Profile",
+        "key": "network_profile_name",
+        "type": "choice",
+        "choices": [],
+        "default": "",
+        "mandatory": True,
+        "description": (
+            "Select an existing network profile from the Static field "
+            "dropdown or select 'Create new profile'."
+        ),
+    },
+    {
+        "label": "Create New Network Profile",
+        "key": "new_profile_name",
+        "type": "text",
+        "default": "",
+        "mandatory": False,
+        "description": (
+            "Name of the network profile to create. Provide the name "
+            "in the Static field only if 'Create new profile' is "
+            "selected in Network Profile."
+        ),
+    },
+    {
+        "label": "Description",
+        "key": "new_profile_description",
+        "type": "text",
+        "default": "Created from Netskope CE.",
+        "mandatory": False,
+        "description": (
+            "Description for the network profile. It will add or "
+            "replace the current description with the provided value."
+        ),
+    },
+    {
+        "label": "IPs",
+        "key": "network_values",
+        "type": "text",
+        "default": "",
+        "placeholder": "i.e. 10.50.2.2, 10.0.0.0-10.0.0.240, 10.50.0.0/12",
+        "mandatory": True,
+        "allowMultipleSource": True,
+        "description": (
+            "Select one or more Source fields for the IP values or "
+            "provide Static comma-separated values to add to the network "
+            "profile. Each "
+            "value must be a single IPv4/IPv6 address (10.50.2.2), an "
+            "IPv4/IPv6 range (10.0.0.0-10.0.0.240), or an IPv4/IPv6 CIDR"
+            " block (10.50.0.0/12)."
+        ),
+    },
+    {
+        "label": "Apply Pending Changes",
+        "key": "apply_pending_changes",
+        "type": "choice",
+        "choices": [
+            {"key": "Yes", "value": "Yes"},
+            {"key": "No", "value": "No"},
+        ],
+        "default": "No",
+        "mandatory": True,
+        "description": (
+            "Select 'Yes' to deploy pending changes and retry when the "
+            "network profile has undeployed changes. Select from the "
+            "Static field dropdown only."
+        ),
+    },
+    {
+        "label": "Skip Excess IPs",
+        "key": "skip_excess_ips",
+        "type": "choice",
+        "choices": [
+            {"key": "Yes", "value": "Yes"},
+            {"key": "No", "value": "No"},
+        ],
+        "default": "No",
+        "mandatory": True,
+        "description": (
+            "Select 'No' to roll the values that do not fit over into "
+            "additional numbered network profiles (e.g. 'MyProfile 2') "
+            "when a profile reaches its value limit, or 'Yes' to skip "
+            "those values instead. Room on profiles that already exist "
+            "is used either way, and the profile this action selects or "
+            "creates is always created even when this is set to 'Yes'. "
+            "Select from the Static field dropdown only."
+        ),
+    },
+    {
+        "label": "Network Profile Value Limit",
+        "key": "network_profile_value_limit",
+        "type": "number",
+        "default": NETWORK_PROFILE_PER_PROFILE_LIMIT,
+        "mandatory": False,
+        "description": (
+            "Maximum number of values allowed on a single network "
+            "profile. A profile that reaches this limit is rolled over: "
+            "the remaining values go to the next numbered profile in the"
+            " group. Provide a positive integer in the Static field "
+            "only. The default per-profile limit is "
+            f"{NETWORK_PROFILE_PER_PROFILE_LIMIT}. If you have increased"
+            " limit enter that value here. Leave empty to use the "
+            f"default of {NETWORK_PROFILE_PER_PROFILE_LIMIT}. The "
+            f"tenant-wide limit of {NETWORK_PROFILE_TENANT_TOTAL_LIMIT} "
+            "values across all network profiles cannot be increased and "
+            "is always enforced, so this value cannot exceed "
+            f"{NETWORK_PROFILE_TENANT_TOTAL_LIMIT} either."
+        ),
+    },
+    {
+        "label": "Default Value",
+        "key": "default_value",
+        "type": "text",
+        "default": NETWORK_PROFILE_EMPTY_PLACEHOLDER,
+        "mandatory": False,
+        "description": (
+            "Value written to a network profile that this action has to "
+            "empty - a profile left holding nothing by a revert, whose "
+            "deletion the Netskope Tenant refuses. It "
+            "must start with "
+            f"{NETWORK_PROFILE_COMMENT_PREFIX_DISPLAY}: the network "
+            "profile API treats such an entry as a comment, so the "
+            "profile matches no traffic. Do not use a real IP address "
+            "here - an emptied profile may still be referenced by a "
+            "policy, and any address would start matching traffic. This "
+            "value is the only entry the action ever overwrites: every "
+            "other comment already on the profile is left alone and "
+            "counts towards the per-profile value limit. Provide the "
+            "value in the Static field only. Leave empty to use the "
+            f"default of '{NETWORK_PROFILE_EMPTY_PLACEHOLDER}'."
         ),
     },
 ]

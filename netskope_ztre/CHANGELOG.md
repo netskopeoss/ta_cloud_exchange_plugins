@@ -1,3 +1,10 @@
+# 1.9.0 (Requires minimum Cloud Exchange version 7.0.0 and minimum Netskope Provider version 1.6.2)
+## Added
+- Added support for the 'Add to Network Profile' action on Netskope.
+- Added CIDR and RANGE prefix for IP CIDR and Range values before adding them to Destination Profile.
+- Added support for mapping multiple source fields to the following action parameters: Host and Tags ('Add host to Private App'), Tags ('Tag/Untag Application', 'Tag/Untag Device', 'Create Device Classification'), Network Targets ('Add to Destination Profile'), IPs ('Add to Network Profile'), Domain Names ('Add to DNS Profile'), and TCP Ports, UDP Ports and TCP/UDP Ports ('Add to Service Profile').
+- Added validation of port values during action execution for the 'Add to Service Profile' action; values that are not a valid port or port range are skipped and reported.
+
 # 1.8.0 (Requires minimum Cloud Exchange version 6.1.0 and minimum Netskope Provider version 1.6.1)
 ## Added
 - Added support for the 'Add to Destination Profile' action on Netskope.

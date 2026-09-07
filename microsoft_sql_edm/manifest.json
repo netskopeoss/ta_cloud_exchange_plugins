@@ -2,13 +2,13 @@
     "name": "Microsoft SQL",
     "id": "microsoft_sql_edm",
     "module": "EDM",
-    "version": "1.1.0",
+    "version": "1.1.1",
     "description": "This plugin is used to pull raw data from configured Microsoft SQL server to generate EDM hashes.",
     "patch_supported": false,
     "push_supported": false,
     "pull_supported": true,
     "pull_sample_data_on_validate": true,
-    "minimum_version": "6.1.0",
+    "minimum_version": "7.0.0",
     "supported_edm_method": [
         "edm_file_hashes"
     ],

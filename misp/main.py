@@ -356,13 +356,19 @@ class MISPPlugin(PluginBase):
             "pulling_mechanism", "incremental"
         )
         end_time = datetime.now()
+        batch_number = 0
+        total_source = 0
+        total_to_retract = 0
         for source_ioc_list in source_indicators:
+            batch_number += 1
             source_unique_iocs = set()
             for ioc in source_ioc_list:
                 source_unique_iocs.add(ioc.value)
+            source_total = len(source_unique_iocs)
+            total_source += source_total
             self.logger.info(
                 f"{self.log_prefix}: Getting modified indicators status"
-                f" for {len(source_unique_iocs)} indicator(s) from"
+                f" for {source_total} indicator(s) from"
                 f" {PLATFORM_NAME}."
             )
 
@@ -556,10 +562,25 @@ class MISPPlugin(PluginBase):
                     )
                     raise MISPPluginException(err_msg)
 
+            total_to_retract += len(source_unique_iocs)
+            self.logger.info(
+                f"{self.log_prefix}: {len(source_unique_iocs)} indicator(s)"
+                f" will be marked as retracted out of total {source_total}"
+                f" indicator(s) from batch {batch_number}."
+            )
             yield list(source_unique_iocs), False
 
+        self.logger.info(
+            f"{self.log_prefix}: Total {total_to_retract} indicator(s)"
+            f" marked as retracted out of total {total_source}"
+            f" indicator(s) across {batch_number} batch(es)."
+        )
+
     def _get_ioc_type_from_attribute(self, attribute_value):
-        """Get IoC type from attribute."""
+        """Get IoC type from attribute.
+
+        Priority: IPv4, IPv6, IPv4 CIDR, IPv6 CIDR, Domain, else URL.
+        """
         if self._is_valid_ipv4(attribute_value):
             return getattr(
                 IndicatorType,
@@ -570,6 +591,18 @@ class MISPPlugin(PluginBase):
             return getattr(
                 IndicatorType,
                 "IPV6",
+                IndicatorType.URL,
+            )
+        elif self._is_valid_ipv4_cidr(attribute_value):
+            return getattr(
+                IndicatorType,
+                "IPV4_CIDR",
+                IndicatorType.URL,
+            )
+        elif self._is_valid_ipv6_cidr(attribute_value):
+            return getattr(
+                IndicatorType,
+                "IPV6_CIDR",
                 IndicatorType.URL,
             )
         elif self._is_valid_domain(attribute_value):
@@ -777,6 +810,8 @@ class MISPPlugin(PluginBase):
                 "domain": 0,
                 "ipv4": 0,
                 "ipv6": 0,
+                "ipv4_cidr": 0,
+                "ipv6_cidr": 0,
                 "url": 0,
                 "hostname": 0,
             }
@@ -841,7 +876,14 @@ class MISPPlugin(PluginBase):
                         if attr.get("type") in [
                             "ip-src",
                             "ip-dst",
+                            "url",
                         ]:
+                            # MISP attributes of type "ip-src"/"ip-dst" can
+                            # hold plain IPs or CIDR ranges, and some MISP
+                            # feeds/scripts store IP/CIDR values under the
+                            # generic "url" type. Re-derive the real type
+                            # from the value itself instead of trusting the
+                            # attribute type blindly.
                             ioc_type = self._get_ioc_type_from_attribute(
                                 attr.get("value")
                             )
@@ -943,8 +985,10 @@ class MISPPlugin(PluginBase):
                     f" SHA256: {ioc_counts['sha256']}, MD5:"
                     f" {ioc_counts['md5']}, URLs: {ioc_counts['url']},"
                     f" Domain: {ioc_counts['domain']},"
-                    f" IPv4: {ioc_counts['ipv4']} "
-                    f"and IPv6: {ioc_counts['ipv6']}"
+                    f" IPv4: {ioc_counts['ipv4']}, "
+                    f"IPv6: {ioc_counts['ipv6']}, "
+                    f"IPv4 CIDR: {ioc_counts['ipv4_cidr']} "
+                    f"and IPv6 CIDR: {ioc_counts['ipv6_cidr']}"
                 )
                 self.logger.info(
                     f"{self.log_prefix}: Successfully fetched "
@@ -994,6 +1038,36 @@ class MISPPlugin(PluginBase):
         """
         try:
             ipaddress.IPv4Address(address)
+            return True
+        except Exception:
+            return False
+
+    def _is_valid_ipv4_cidr(self, value: str) -> bool:
+        """Validate IPv4 CIDR notation (e.g. 192.168.1.0/24).
+
+        Args:
+            value (str): Value to validate.
+
+        Returns:
+            bool: True if valid IPv4 CIDR else False.
+        """
+        try:
+            ipaddress.IPv4Network(value, strict=False)
+            return True
+        except Exception:
+            return False
+
+    def _is_valid_ipv6_cidr(self, value: str) -> bool:
+        """Validate IPv6 CIDR notation (e.g. 2001:db8::/32).
+
+        Args:
+            value (str): Value to validate.
+
+        Returns:
+            bool: True if valid IPv6 CIDR else False.
+        """
+        try:
+            ipaddress.IPv6Network(value, strict=False)
             return True
         except Exception:
             return False
@@ -1423,9 +1497,12 @@ class MISPPlugin(PluginBase):
             elif ioc_type in ["domain", "fqdn"]:
                 ioc_type = "domain"
             elif ioc_type in BIFURCATE_INDICATOR_TYPES:
-                if self._is_valid_ipv4(
-                    indicator.value
-                ) or self._is_valid_ipv6(indicator.value):
+                if (
+                    self._is_valid_ipv4(indicator.value)
+                    or self._is_valid_ipv6(indicator.value)
+                    or self._is_valid_ipv4_cidr(indicator.value)
+                    or self._is_valid_ipv6_cidr(indicator.value)
+                ):
                     ioc_type = ip_ioc_type
                 else:
                     ioc_type = "url"
@@ -2046,7 +2123,7 @@ class MISPPlugin(PluginBase):
                     ),
                 },
                 {
-                    "label": "Type of IPv4 or IPv6 IoC to be shared",
+                    "label": "Type of IPv4/IPv6/CIDR IoC to be shared",
                     "key": "ip_ioc_type",
                     "type": "choice",
                     "mandatory": True,
@@ -2056,8 +2133,9 @@ class MISPPlugin(PluginBase):
                     ],
                     "default": "ip-src",
                     "description": (
-                        "Select the IoC type to which IPv4 or IPv6"
-                        " addresses should be shared."
+                        "Select the IoC type to which IPv4, IPv6,"
+                        " IPv4 CIDR or IPv6 CIDR addresses should be"
+                        " shared."
                     ),
                 },
             ]

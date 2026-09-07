@@ -1,3 +1,7 @@
+# 1.5.2 (Required minimum CE version for this is 7.0.0)
+## Added
+- Added support for IPv4 and IPv6 CIDR IOCs.
+
 # 1.5.1
 ## Fixed
 - Fixed an issue where excludeDecayed=1 was being sent even when the 'Decaying Score Threshold' parameter value was not provided in the configuration parameters.

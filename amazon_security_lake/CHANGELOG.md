@@ -1,3 +1,7 @@
+# 2.0.1 (The minimum required CE version for this is 7.0.0)
+## Changed
+- Updated the library to be compatible with Python 3.12.
+
 # 2.0.0
 ## Changed
 - Updated Mappings file using OCSF(v1.3.0) Data Security Finding class.

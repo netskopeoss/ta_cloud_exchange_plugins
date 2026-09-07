@@ -33,7 +33,7 @@ Amazon Security Lake Contstants."""
 
 MODULE_NAME = "CLS"
 PLUGIN_NAME = "Amazon Security Lake"
-PLUGIN_VERSION = "2.0.0"
+PLUGIN_VERSION = "2.0.1"
 USER_AGENT = "APN/1.1 (ahq9d89xj9gspapczzdb59goq)"
 STAGING_DIR = "/opt/netskope/plugins/security_lake_staging/"
 MAX_FILE_SIZE_BYTES = 256 * 1024 * 1024  # Staging threshold for upload

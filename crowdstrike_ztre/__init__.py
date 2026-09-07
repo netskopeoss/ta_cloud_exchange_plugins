@@ -1,1 +1,1 @@
-"""URE CrowdStrike Plugin Package."""
+"""CRE CrowdStrike Plugin Package."""

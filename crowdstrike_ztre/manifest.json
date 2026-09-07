@@ -1,9 +1,9 @@
 {
     "name": "CrowdStrike",
-    "description": "This plugin fetches hosts and their respective ZTA scores from the Host Setup and Management > Host Management page on the CrowdStrike tenant. It also supports 'Add/Remove Tag(s)' for device tagging and 'Put RTR Script' action on hosts.\n\n Netskope normalization score calculation => CrowdStrike host assessment overall score * 10.",
-    "minimum_version": "5.1.0",
+    "description": "This plugin fetches hosts from the 'Host Setup and Management > Host Management' page and the respective Overall Assessment Score for these hosts from the 'Host Setup and Management >  Zero trust assessment' page on the CrowdStrike tenant. It also supports 'Add/Remove Tag(s)' for device tagging and 'Put RTR Script' action on hosts.\n\n Netskope normalization score calculation => CrowdStrike host assessment overall score * 10.",
+    "minimum_version": "7.0.0",
     "id": "crowdstrike_ztre",
-    "version": "1.1.0",
+    "version": "1.1.1",
     "module": "CRE",
     "configuration": [
         {

@@ -1,3 +1,7 @@
+# 1.1.1 (The minimum required CE version for this is 7.0.0)
+## Added
+- Added support for selecting multiple source fields for the ‘Tag(s)’ parameter in the Add/Remove Tag(s) action.
+
 # 1.1.0
 ## Added
 - Added support for fetching host details from Host management page.

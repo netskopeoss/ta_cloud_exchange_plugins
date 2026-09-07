@@ -152,6 +152,52 @@ class CrowdstrikePlugin(PluginBase):
         else:
             return f"FalconGroupingTags/{tag_name}"
 
+    def _is_multi_source_nested_tag(self, tag_value):
+        """Check whether tag payload looks like multi-source with nested arrays."""
+        return isinstance(tag_value, list) and any(
+            isinstance(item, (list, tuple, set)) for item in tag_value
+        )
+
+    def _flatten_multi_source_tag_values(self, tag_value) -> List[str]:
+        """Flatten nested tag arrays and de-duplicate values preserving order."""
+        flattened_values = []
+        for item in tag_value:
+            if isinstance(item, (list, tuple, set)):
+                for nested_item in item:
+                    if nested_item is None:
+                        continue
+                    normalized_value = str(nested_item).strip()
+                    if normalized_value:
+                        flattened_values.append(normalized_value)
+            elif item is not None:
+                normalized_value = str(item).strip()
+                if normalized_value:
+                    flattened_values.append(normalized_value)
+        return list(dict.fromkeys(flattened_values))
+
+    def _resolve_tag_param_values(self, tag) -> List[str]:
+        """Extract non-empty tag values from action tag parameter."""
+        if tag is None:
+            return []
+        if isinstance(tag, list):
+            if self._is_multi_source_nested_tag(tag):
+                return self._flatten_multi_source_tag_values(tag)
+            return [
+                str(item).strip()
+                for item in tag
+                if item is not None and str(item).strip()
+            ]
+        if isinstance(tag, str):
+            if not tag.strip():
+                return []
+            if "," in tag:
+                return [item.strip() for item in tag.split(",") if item.strip()]
+            return [tag.strip()]
+        if not tag:
+            return []
+        normalized_value = str(tag).strip()
+        return [normalized_value] if normalized_value else []
+
     def get_entities(self) -> list[Entity]:
         """Get available entities."""
         return [
@@ -162,167 +208,222 @@ class CrowdstrikePlugin(PluginBase):
                         name="Host ID",
                         type=EntityFieldType.STRING,
                         required=True,
+                        description=(
+                            "Host identifier assigned by CrowdStrike."
+                        ),
                     ),
                     EntityField(
                         name="System Serial Number",
                         type=EntityFieldType.STRING,
                         required=True,
+                        description=(
+                            "Manufacturer device serial number. This field can"
+                            " be used to merge Agent records with other CRE"
+                            " plugins."
+                        ),
                     ),
                     EntityField(
                         name="Overall Assessment Score",
                         type=EntityFieldType.NUMBER,
+                        description=(
+                            "CrowdStrike host overall assessment score."
+                        ),
                     ),
                     EntityField(
                         name="Netskope Normalized Score",
                         type=EntityFieldType.NUMBER,
+                        description="Netskope normalized risk score.",
                     ),
                     EntityField(
                         name="Tags",
                         type=EntityFieldType.LIST,
+                        description="Tags assigned to the host.",
                     ),
                     EntityField(
                         name="CID",
                         type=EntityFieldType.STRING,
+                        description="CrowdStrike Customer ID of the host.",
                     ),
                     EntityField(
                         name="Agent Version",
                         type=EntityFieldType.STRING,
+                        description="Falcon sensor agent version.",
                     ),
                     EntityField(
                         name="BIOS Manufacturer",
                         type=EntityFieldType.STRING,
+                        description="Manufacturer of the device BIOS.",
                     ),
                     EntityField(
                         name="BIOS Version",
                         type=EntityFieldType.STRING,
+                        description="Version of the device BIOS.",
                     ),
                     EntityField(
                         name="Build Number",
                         type=EntityFieldType.STRING,
+                        description="Operating system build number.",
                     ),
                     EntityField(
                         name="External IP",
                         type=EntityFieldType.STRING,
+                        description="Host external IP address.",
                     ),
                     EntityField(
                         name="Mac Address",
                         type=EntityFieldType.STRING,
+                        description="Host MAC address.",
                     ),
                     EntityField(
                         name="Hostname",
                         type=EntityFieldType.STRING,
+                        description="Device hostname or computer name.",
                     ),
                     EntityField(
                         name="First Seen",
                         type=EntityFieldType.DATETIME,
+                        description="Timestamp when the host was first seen.",
                     ),
                     EntityField(
                         name="Last Login User",
                         type=EntityFieldType.STRING,
+                        description="Most recent user logged in to the host.",
                     ),
                     EntityField(
                         name="Last Login User SID",
                         type=EntityFieldType.STRING,
+                        description=(
+                            "Security identifier of the last login user."
+                        ),
                     ),
                     EntityField(
                         name="Last Seen",
                         type=EntityFieldType.DATETIME,
+                        description="Timestamp when the host was last seen.",
                     ),
                     EntityField(
                         name="Local IP",
                         type=EntityFieldType.STRING,
+                        description="Host local IP address.",
                     ),
                     EntityField(
                         name="OS Version",
                         type=EntityFieldType.STRING,
+                        description="Operating system version.",
                     ),
                     EntityField(
                         name="OS Build",
                         type=EntityFieldType.STRING,
+                        description="Operating system build identifier.",
                     ),
                     EntityField(
                         name="Platform ID",
                         type=EntityFieldType.STRING,
+                        description="Platform identifier of the host.",
                     ),
                     EntityField(
                         name="Platform Name",
                         type=EntityFieldType.STRING,
+                        description="Platform name of the host.",
                     ),
                     EntityField(
                         name="RTR State",
                         type=EntityFieldType.STRING,
+                        description="Real Time Response connection state.",
                     ),
                     EntityField(
                         name="Groups",
                         type=EntityFieldType.LIST,
+                        description="Host groups the device belongs to.",
                     ),
                     EntityField(
                         name="Product Type",
                         type=EntityFieldType.STRING,
+                        description="Device product type identifier.",
                     ),
                     EntityField(
                         name="Product Type Description",
                         type=EntityFieldType.STRING,
+                        description="Device product type description.",
                     ),
                     EntityField(
                         name="Provision Status",
                         type=EntityFieldType.STRING,
+                        description="Sensor provisioning status.",
                     ),
                     EntityField(
                         name="Status",
                         type=EntityFieldType.STRING,
+                        description="Current status of the host.",
                     ),
                     EntityField(
                         name="System Manufacturer",
                         type=EntityFieldType.STRING,
+                        description="Manufacturer of the device.",
                     ),
                     EntityField(
                         name="System Product Name",
                         type=EntityFieldType.STRING,
+                        description="Product name of the device.",
                     ),
                     EntityField(
                         name="Modified Timestamp",
                         type=EntityFieldType.DATETIME,
+                        description=(
+                            "Timestamp when the host was last modified."
+                        ),
                     ),
                     EntityField(
                         name="Kernel Version",
                         type=EntityFieldType.STRING,
+                        description="Operating system kernel version.",
                     ),
                     EntityField(
                         name="OS Product Name",
                         type=EntityFieldType.STRING,
+                        description="Operating system product name.",
                     ),
                     EntityField(
                         name="Chassis Type",
                         type=EntityFieldType.STRING,
+                        description="Device chassis type identifier.",
                     ),
                     EntityField(
                         name="Chassis Type Description",
                         type=EntityFieldType.STRING,
+                        description="Device chassis type description.",
                     ),
                     EntityField(
                         name="Connection IP",
                         type=EntityFieldType.STRING,
+                        description="IP address used for connection.",
                     ),
                     EntityField(
                         name="Default Gateway IP",
                         type=EntityFieldType.STRING,
+                        description="Default gateway IP address.",
                     ),
                     EntityField(
                         name="Connection Mac Address",
                         type=EntityFieldType.STRING,
+                        description="MAC address used for connection.",
                     ),
                     EntityField(
                         name="Filesystem Containment Status",
                         type=EntityFieldType.STRING,
+                        description="Filesystem containment status of the host.",
                     ),
                     EntityField(
                         name="Applied Policies",
                         type=EntityFieldType.LIST,
+                        description="Policies applied to the host.",
                     ),
                     EntityField(
                         name="Applied Device Policies",
                         type=EntityFieldType.LIST,
+                        description=(
+                            "Device control policies applied to the host."
+                        ),
                     ),
                 ],
             ),
@@ -1744,16 +1845,34 @@ class CrowdstrikePlugin(PluginBase):
             ):
                 return validation_result
 
-            # validate the tag name
+            # validate the tag name (supports single string or multi-source list)
             tags = action_params.get("tag")
-            if validation_result := self._validate_parameters(
-                field_name="Tag(s)",
-                field_value=tags,
-                field_type=str,
-                is_required=True,
-                check_dollar=True,
-            ):
-                return validation_result
+            if tags is None or (isinstance(tags, list) and len(tags) == 0):
+                err_msg = "'Tag(s)' is a required configuration parameter."
+                self.logger.error(
+                    message=f"{self.log_prefix}: {err_msg}",
+                )
+                return ValidationResult(success=False, message=err_msg)
+            elif isinstance(tags, list):
+                non_string_items = [t for t in tags if not isinstance(t, str)]
+                if non_string_items:
+                    err_msg = (
+                        "Invalid value provided for the configuration"
+                        " parameter 'Tag(s)'. Each item must be a string."
+                    )
+                    self.logger.error(
+                        message=f"{self.log_prefix}: {err_msg}",
+                    )
+                    return ValidationResult(success=False, message=err_msg)
+            else:
+                if validation_result := self._validate_parameters(
+                    field_name="Tag(s)",
+                    field_value=tags,
+                    field_type=str,
+                    is_required=True,
+                    check_dollar=True,
+                ):
+                    return validation_result
 
         return ValidationResult(success=True, message="Validation successful.")
 
@@ -1827,6 +1946,7 @@ class CrowdstrikePlugin(PluginBase):
                     "type": "text",
                     "default": "",
                     "mandatory": True,
+                    "allowMultipleSource": True,
                     "description": (
                         "Comma separated Tag(s) to"
                         " add/remove from the host(s)."
@@ -2106,24 +2226,13 @@ class CrowdstrikePlugin(PluginBase):
         else:
             device_ids = [str(host_id).strip()] if host_id else []
 
-        # Handle both string and list inputs for tag
-        if isinstance(tag, list):
-            tags = [self._add_falcon_prefix(t) for t in tag if str(t).strip()]
-        elif isinstance(tag, str):
-            if tag.strip():  # Check if string is not empty after stripping
-                tags = (
-                    [
-                        self._add_falcon_prefix(t)
-                        for t in tag.split(",")
-                        if t.strip()
-                    ]
-                    if "," in tag
-                    else [self._add_falcon_prefix(tag)]
-                )
-            else:
-                tags = []
-        else:
-            tags = [self._add_falcon_prefix(tag)] if tag else []
+        # Handle both string and list inputs for tag.
+        tag_values = self._resolve_tag_param_values(tag)
+        if not tag_values:
+            err_msg = "No valid tag value(s) found in action parameters."
+            self.logger.error(f"{self.log_prefix}: {err_msg}")
+            raise ValueError(err_msg)
+        tags = [self._add_falcon_prefix(t) for t in tag_values]
 
         payload = {
             "action": action_type,
@@ -2347,39 +2456,12 @@ class CrowdstrikePlugin(PluginBase):
                     host_id_list = [str(host_id).strip()] if host_id else []
 
                 tag = action_params.get("tag", "")
-                if not tag:
-                    self.logger.debug(
-                        f"{self.log_prefix}: Skipping action {action_id}"
-                        " - no tag provided"
-                    )
+                tag_values = self._resolve_tag_param_values(tag)
+                if not tag_values:
                     failed_action_ids.append(action_id)
                     continue
 
-                if isinstance(tag, list):
-                    tag_list = [
-                        self._add_falcon_prefix(t)
-                        for t in tag
-                        if str(t).strip()
-                    ]
-                elif isinstance(tag, str):
-                    if not tag.strip():
-                        self.logger.debug(
-                            f"{self.log_prefix}: Skipping action {action_id}"
-                            " - empty tag provided"
-                        )
-                        failed_action_ids.append(action_id)
-                        continue
-                    tag_list = (
-                        [
-                            self._add_falcon_prefix(t)
-                            for t in tag.split(",")
-                            if t.strip()
-                        ]
-                        if "," in tag
-                        else [self._add_falcon_prefix(tag)]
-                    )
-                else:
-                    tag_list = [self._add_falcon_prefix(tag)] if tag else []
+                tag_list = [self._add_falcon_prefix(t) for t in tag_values]
 
                 action_type = action_params.get("tag_action_type", "add")
                 for single_tag in tag_list:
@@ -2423,7 +2505,7 @@ class CrowdstrikePlugin(PluginBase):
                 return ActionResult(
                     success=True,
                     message=f"Successfully executed {action_label} action.",
-                    failed_action_ids=list(failed_action_ids),
+                    failed_action_ids=list(dict.fromkeys(failed_action_ids)),
                 )
             return
         else:

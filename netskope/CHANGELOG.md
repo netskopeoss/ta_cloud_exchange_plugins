@@ -1,3 +1,17 @@
+# 2.6.0 (Required minimum CE version for this is 7.0.0)
+## Added
+- Added support for prefixing CIDR IOCs and RANGE IOCs when sharing them to the destination profile.
+- Added support for ipv4 CIDR IOCs when sharing them to the private app and url list.
+
+## Updated
+- Updated the Private App sharing logger to include the count of skipped IOCs due to unsupported types.
+- Updated the FQDN validation regex to support hostnames with multiple labels for Private App sharing.
+- Enhanced sharing actions with skipped_iocs tracking to ensure unsupported IOCs retain the correct "Sharing Result" status after retract and un-retract cycles.
+- Improved “Unshared” tagging to ensure all IOCs that fail to be shared are consistently marked as “Unshared” across sharing actions.
+
+## Fixed
+- Added unique destination key mappings for Private App and File Hash List to prevent data from being overwritten by other actions.
+
 # 2.5.0
 ## Added
 - Added support for DNS Profile sharing and push retraction.

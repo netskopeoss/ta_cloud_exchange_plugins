@@ -933,28 +933,30 @@ class NetskopeThreatExchangeHelper:
         success: bool,
         message: str,
         failed_iocs: list = [],
+        skipped_iocs: list = [],
     ) -> PushResult:
-        """Return a PushResult object with optional failed IOCs.
+        """Return a PushResult object with optional failed/skipped IOCs.
 
         Args:
             success (bool): Whether the push operation was successful.
             message (str): Message describing the push result.
-            failed_iocs (list): List of IOCs that failed to push.
+            failed_iocs (list): Indicators that were sent to Netskope and
+                rejected (e.g. API returned an error for that value).
+            skipped_iocs (list): Indicators the plugin discarded before
+                ever attempting to share them (e.g. unsupported type,
+                invalid format, size/capacity limit) — core has no other
+                way to know about these.
 
         Returns:
             PushResult: PushResult object with success status, message,
-                and optionally failed_iocs.
+                and optionally failed_iocs/skipped_iocs.
         """
+        kwargs = {"success": success, "message": message}
         if failed_iocs and "failed_iocs" in PushResult.model_fields:
-            return PushResult(
-                success=success,
-                message=message,
-                failed_iocs=failed_iocs,
-            )
-        return PushResult(
-            success=success,
-            message=message,
-        )
+            kwargs["failed_iocs"] = failed_iocs
+        if skipped_iocs and "skipped_iocs" in PushResult.model_fields:
+            kwargs["skipped_iocs"] = skipped_iocs
+        return PushResult(**kwargs)
 
     def is_valid_ipv6(self, address: str) -> bool:
         """Validate if the given address is a valid IPv6 address.
@@ -1253,7 +1255,7 @@ class NetskopeThreatExchangeHelper:
         return all(
             label and len(label) <= 63 for label in domain.split(".")
         )
-    
+
     def validate_tags_for_private_app(
         self,
         tags_to_push: List[str],

@@ -464,7 +464,7 @@ DESTINATION_PROFILE_ACTION_PARAMS = [
         "description": (
             "Description for the destination profile. It will add or replace"
             " the current description with provided. The description should"
-            " not exceed {MAX_DESTINATION_PROFILE_DESC_LENGTH} characters."
+            f" not exceed {MAX_DESTINATION_PROFILE_DESC_LENGTH} characters."
         ),
     },
     {

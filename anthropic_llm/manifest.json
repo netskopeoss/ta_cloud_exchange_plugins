@@ -1,0 +1,46 @@
+{
+  "name": "Anthropic",
+  "id": "anthropic_llm",
+  "type": "llm_provider",
+  "version": "1.0.0",
+  "module": "LLMProvider",
+  "minimum_version": "7.0.0",
+  "patch_supported": false,
+  "description": "Configure an Anthropic LLM provider for AI-powered analysis workflows in Cloud Exchange.",
+  "configuration": [
+    {
+      "label": "API Key",
+      "key": "api_key",
+      "type": "password",
+      "default": "",
+      "mandatory": true,
+      "description": "Anthropic API key used for authentication. Navigate to https://console.anthropic.com/settings/keys to generate or retrieve your API key."
+    },
+    {
+      "label": "Model",
+      "key": "model",
+      "type": "choice",
+      "has_api_call": true,
+      "payload_fields": [
+        "model"
+      ],
+      "choices": [
+        {
+          "key": "Claude Opus 5",
+          "value": "claude-opus-5"
+        },
+        {
+          "key": "Claude Opus 4.8",
+          "value": "claude-opus-4-8"
+        },
+        {
+          "key": "Claude Sonnet 5",
+          "value": "claude-sonnet-5"
+        }
+      ],
+      "default": "claude-sonnet-5",
+      "mandatory": true,
+      "description": "Default model to use for AI-powered analysis. Built-in web search (which enriches analysis with results from docs.netskope.com and the open web) is available if enabled for your organization's Claude Console."
+    }
+  ]
+}

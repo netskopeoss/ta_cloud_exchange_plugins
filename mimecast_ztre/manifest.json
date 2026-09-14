@@ -1,24 +1,32 @@
 {
   "name": "Mimecast",
   "id": "mimecast_ztre",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "module": "CRE",
-  "minimum_version": "5.1.0",
-  "description": "This plugin is used to fetch users from Awareness Training > Reporting and Insights > Risk Center > View Details page of Mimecast platform. This plugin supports performing actions such as Add to group, Remove from group and No action on Mimecast users.\n\nNetskope normalization score calculation for users: Grade A: 800, Grade B: 600, Grade C: 400, Grade D: 200, Grade F: 1.",
+  "minimum_version": "6.1.0",
+  "description": "This plugin is used to fetch users from Engage > Reporting and Insights > Training Reports page of Mimecast platform. This plugin supports performing actions such as Add to group, Remove from group and No action on Mimecast users.\n\nNetskope normalization score calculation for users: Grade A: 800, Grade B: 600, Grade C: 400, Grade D: 200, Grade F: 1.",
   "configuration": [
+    {
+      "label": "API Base URL",
+      "key": "base_url",
+      "type": "text",
+      "default": "https://api.services.mimecast.com",
+      "mandatory": true,
+      "description": "API Base URL of the Mimecast platform. e.g. https://api.services.mimecast.com."
+    },
     {
       "label": "Client ID",
       "key": "client_id",
       "type": "text",
       "mandatory": true,
-      "description": "Mimecast API Client ID. To generate the Client ID, go to Services > API and Platform Integrations > Mimecast API 2.0 > Generate Keys."
+      "description": "Mimecast API Client ID. To generate the Client ID, go to Integrations > API and Platform Integrations > Mimecast API 2.0 > Generate Keys."
     },
     {
       "label": "Client Secret",
       "key": "client_secret",
       "type": "password",
       "mandatory": true,
-      "description": "Mimecast API Client Secret. To generate the Client Secret, go to Services > API and Platform Integrations > Mimecast API 2.0 > Generate Keys."
+      "description": "Mimecast API Client Secret. To generate the Client Secret, go to Integrations > API and Platform Integrations > Mimecast API 2.0 > Generate Keys."
     }
   ]
 }

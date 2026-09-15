@@ -46,7 +46,6 @@ from .constants import (
     MODULE_NAME,
     DEFAULT_RETRY_AFTER_TIME,
     PLATFORM_NAME,
-    BASE_URL,
     GET_BEARER_TOKEN_ENDPOINT,
 )
 
@@ -259,14 +258,20 @@ class MimecastPluginHelper(object):
                     )
         except ReadTimeout as error:
             err_msg = f"Read Timeout error occurred while {logger_msg}."
+            resolution = None
             if is_validation:
                 err_msg = (
-                    "Read Timeout occurred. Verify the "
-                    f"{PLATFORM_NAME} server is up and running."
+                    "Error occurred while validating configuration "
+                    "parameters due to a read timeout."
+                )
+                resolution = (
+                    f"Ensure that the {PLATFORM_NAME} server is up "
+                    "and running."
                 )
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} {error}",
                 details=str(traceback.format_exc()),
+                resolution=resolution,
             )
             raise MimecastPluginException(err_msg)
         except requests.exceptions.ProxyError as error:
@@ -274,15 +279,21 @@ class MimecastPluginHelper(object):
                 f"Proxy error occurred while {logger_msg}. Verify the "
                 "proxy configuration provided."
             )
+            resolution = None
             if is_validation:
                 err_msg = (
-                    "Proxy error occurred. Verify "
-                    "the proxy configuration provided."
+                    "Error occurred while validating configuration "
+                    "parameters due to a proxy error."
+                )
+                resolution = (
+                    "Ensure that the proxy configuration provided "
+                    "is correct."
                 )
 
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {error}",
                 details=traceback.format_exc(),
+                resolution=resolution,
             )
             raise MimecastPluginException(err_msg)
         except requests.exceptions.ConnectionError as error:
@@ -291,42 +302,62 @@ class MimecastPluginHelper(object):
                 f"platform while {logger_msg}. Proxy server or "
                 f"{PLATFORM_NAME} server is not reachable."
             )
+            resolution = None
             if is_validation:
                 err_msg = (
-                    f"Unable to establish connection with {PLATFORM_NAME} "
-                    f"platform. Proxy server or {PLATFORM_NAME} "
-                    "server is not reachable."
+                    "Error occurred while validating configuration "
+                    f"parameters. Unable to establish connection with "
+                    f"{PLATFORM_NAME} platform."
+                )
+                resolution = (
+                    "Ensure that the API Base URL is correct and the "
+                    f"{PLATFORM_NAME} server is reachable."
                 )
 
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {error}",
                 details=traceback.format_exc(),
+                resolution=resolution,
             )
             raise MimecastPluginException(err_msg)
         except requests.HTTPError as err:
             err_msg = f"HTTP error occurred while {logger_msg}."
+            resolution = None
             if is_validation:
                 err_msg = (
-                    "HTTP error occurred. Verify "
-                    "configuration parameters provided."
+                    "Error occurred while validating configuration "
+                    "parameters due to an HTTP error."
+                )
+                resolution = (
+                    "Ensure that the configuration parameters "
+                    "provided are correct."
                 )
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {err}",
                 details=traceback.format_exc(),
+                resolution=resolution,
             )
             raise MimecastPluginException(err_msg)
         except MimecastPluginException:
             raise
         except Exception as exp:
             err_msg = f"Unexpected error occurred while {logger_msg}."
+            resolution = None
             if is_validation:
                 err_msg = (
-                    "Validation error occurred while performing "
-                    f"API call to {PLATFORM_NAME}."
+                    "Error occurred while validating configuration "
+                    f"parameters due to an unexpected error while "
+                    f"performing the API call to {PLATFORM_NAME}."
+                )
+                resolution = (
+                    "Ensure that the configuration parameters "
+                    "provided are correct. Check logs for more "
+                    "details."
                 )
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {exp}",
                 details=traceback.format_exc(),
+                resolution=resolution,
             )
             raise MimecastPluginException(err_msg)
 
@@ -346,31 +377,45 @@ class MimecastPluginHelper(object):
                 "Invalid JSON response received "
                 f"from API while {logger_msg}. Error: {str(err)}"
             )
+            resolution = None
+            if is_validation:
+                err_msg = (
+                    "Error occurred while parsing the JSON response "
+                    f"received from the {PLATFORM_NAME} API."
+                )
+                resolution = (
+                    "Ensure that the Client ID and Client Secret "
+                    "provided in the configuration parameters are "
+                    "correct."
+                )
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg}",
                 details=f"API response: {response.text}",
+                resolution=resolution,
             )
-            if is_validation:
-                err_msg = (
-                    "Verify Client ID or Client Secret provided in the "
-                    "configuration parameters. Check logs for more details."
-                )
             raise MimecastPluginException(err_msg)
         except Exception as exp:
             err_msg = (
                 "Unexpected error occurred while parsing "
                 f"json response while {logger_msg}. Error: {exp}"
             )
+            resolution = None
+            if is_validation:
+                err_msg = (
+                    "Error occurred while parsing the JSON response "
+                    f"received from the {PLATFORM_NAME} API due to an "
+                    "unexpected error."
+                )
+                resolution = (
+                    "Ensure that the Client ID and Client Secret "
+                    "provided in the configuration parameters are "
+                    "correct. Check logs for more details."
+                )
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg}",
                 details=f"API response: {response.text}",
+                resolution=resolution,
             )
-            if is_validation:
-                err_msg = (
-                    "Unexpected validation error occurred, "
-                    "Verify Client ID or Client Secret provided in the "
-                    "configuration parameters. Check logs for more details."
-                )
             raise MimecastPluginException(err_msg)
 
     def handle_error(
@@ -393,7 +438,26 @@ class MimecastPluginHelper(object):
             not 200,201 and 204.
         """
         status_code = resp.status_code
-        validation_msg = "Validation error occurred, "
+        resolution_dict = {
+            400: (
+                "Ensure that the request payload sent to the "
+                f"{PLATFORM_NAME} API is valid."
+            ),
+            401: (
+                "Ensure that the Client ID and Client Secret "
+                "configured are correct and have not expired."
+            ),
+            403: (
+                "Ensure that the Client ID and Client Secret "
+                "configured have the required API permissions. "
+                "Verify the API user's role under "
+                "Account > Admin Role."
+            ),
+            404: (
+                "Ensure that the requested resource exists on the "
+                f"{PLATFORM_NAME} platform."
+            ),
+        }
         error_dict = {
             400: "Received exit code 400, Bad Request",
             403: "Received exit code 403, Forbidden",
@@ -402,17 +466,9 @@ class MimecastPluginHelper(object):
         }
         if is_validation:
             error_dict = {
-                400: ("Received exit code 400, Bad Request"),
-                401: (
-                    "Received exit code 401, Unauthorized, Verify "
-                    "Client ID and Client Secret "
-                    "provided in the configuration parameters."
-                ),
-                403: (
-                    "Received exit code 403, Forbidden, Verify "
-                    "Client ID and Client Secret "
-                    "provided configuration parameters."
-                ),
+                400: ("Received exit code 400, Bad Request."),
+                401: "Received exit code 401, Unauthorized access.",
+                403: "Received exit code 403, Forbidden.",
                 404: "Received exit code 404, Resource not found.",
             }
         if resp.status_code in [200, 201]:
@@ -425,18 +481,24 @@ class MimecastPluginHelper(object):
             return {}
         elif status_code in error_dict:
             err_msg = error_dict[status_code]
+            resolution = resolution_dict.get(status_code, "")
             if is_validation:
-                log_err_msg = validation_msg + err_msg
+                log_err_msg = (
+                    "Error occurred while validating configuration "
+                    f"parameters. {err_msg}"
+                )
                 self.logger.error(
                     message=f"{self.log_prefix}: {log_err_msg}",
                     details=f"API response: {resp.text}",
+                    resolution=resolution,
                 )
-                raise MimecastPluginException(err_msg)
+                raise MimecastPluginException(log_err_msg)
             else:
                 err_msg += " while " + logger_msg + "."
                 self.logger.error(
                     message=f"{self.log_prefix}: {err_msg}",
                     details=f"API response: {resp.text}",
+                    resolution=resolution,
                 )
                 raise MimecastPluginException(err_msg)
 
@@ -446,10 +508,16 @@ class MimecastPluginHelper(object):
                 if (status_code >= 500 and status_code <= 600)
                 else "HTTP Error"
             )
+            log_err_msg = (
+                "Error occurred while validating configuration "
+                f"parameters. {err_msg}"
+                if is_validation
+                else err_msg
+            )
             self.logger.error(
                 message=(
                     f"{self.log_prefix}: Received exit code {status_code}, "
-                    f"{validation_msg+err_msg} while {logger_msg}."
+                    f"{log_err_msg} while {logger_msg}."
                 ),
                 details=f"API response: {resp.text}",
             )
@@ -462,6 +530,7 @@ class MimecastPluginHelper(object):
             tuple: Credentials
         """
         client_id = configuration.get("client_id", "").strip()
+        # Do not strip password-type fields.
         client_secret = configuration.get("client_secret")
 
         return (client_id, client_secret)
@@ -523,7 +592,8 @@ class MimecastPluginHelper(object):
         try:
             client_id, client_secret = self.get_credentials(configuration)
 
-            url = f"{BASE_URL}/{GET_BEARER_TOKEN_ENDPOINT}"
+            base_url = configuration.get("base_url", "").strip().rstrip("/")
+            url = f"{base_url}/{GET_BEARER_TOKEN_ENDPOINT}"
             data = {
                 "grant_type": "client_credentials",
                 "client_id": client_id,
@@ -544,13 +614,30 @@ class MimecastPluginHelper(object):
                 configuration=configuration,
             )
 
-            return response.get("access_token")
+            access_token = response.get("access_token")
+            if not access_token:
+                err_msg = (
+                    "Error occurred while getting authentication "
+                    f"token from {PLATFORM_NAME}. Access token was "
+                    "not present in the response."
+                )
+                resolution = (
+                    "Ensure that the Client ID and Client Secret "
+                    "configured are valid and have the required API "
+                    "permissions."
+                )
+                self.logger.error(
+                    message=f"{self.log_prefix}: {err_msg}",
+                    details=f"Resolution: {resolution}",
+                )
+                raise MimecastPluginException(err_msg)
+            return access_token
         except MimecastPluginException:
             raise
         except Exception as exp:
             err_msg = (
-                "Unexpected error occurred while getting "
-                f"authentication token from {PLATFORM_NAME}."
+                "Error occurred while getting authentication token "
+                f"from {PLATFORM_NAME} due to an unexpected error."
             )
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {exp}",

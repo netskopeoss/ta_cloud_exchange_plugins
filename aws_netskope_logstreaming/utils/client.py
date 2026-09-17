@@ -39,7 +39,7 @@ from botocore.exceptions import (
     ClientError,
     ReadTimeoutError,
 )
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from botocore.config import Config
 
 from .exceptions import AWSD2CProviderException
@@ -66,11 +66,87 @@ class AWSD2CProviderClient:
         self.aws_public_key = None
         self.aws_session_token = None
 
+    def _fetch_temporary_credentials(
+        self,
+        temp_creds_obj: AWSD2CProviderGenerateTemporaryCredentials,
+        action: str,
+    ) -> dict:
+        """Generate temporary credentials via IAM Roles Anywhere.
+
+        Args:
+            temp_creds_obj (AWSD2CProviderGenerateTemporaryCredentials):
+                Temporary credentials generator object.
+            action (str): Action being performed, used in the error
+                message. i.e. "generate" or "refresh".
+
+        Returns:
+            dict: Temporary credentials returned by IAM Roles Anywhere.
+
+        Raises:
+            AWSD2CProviderException: If no credentials were returned.
+        """
+        temporary_credentials = temp_creds_obj.generate_temporary_credentials()
+        credential_set = temporary_credentials.get("credentialSet") or []
+        credentials = (
+            credential_set[0].get("credentials") if credential_set else None
+        )
+        if not credentials:
+            raise AWSD2CProviderException(
+                f"Unable to {action} Temporary Credentials. "
+                "Check the configuration parameters."
+            )
+        return credentials
+
+    def _is_credentials_expiring(self, credentials: dict) -> bool:
+        """Check whether the cached credentials are about to expire.
+
+        Credentials are refreshed a few minutes before they actually
+        expire so that a long running pull cycle never ends up using
+        credentials that expire mid-request.
+
+        Args:
+            credentials (dict): Cached credentials from the storage.
+
+        Returns:
+            bool: True if the credentials expire within the refresh
+                buffer or the expiration could not be determined.
+        """
+        expiration = credentials.get("expiration")
+        if not expiration:
+            return True
+        try:
+            expiry = datetime.fromisoformat(
+                str(expiration).replace("Z", "+00:00")
+            )
+        except ValueError:
+            # Unparsable expiration - refresh rather than risk using
+            # credentials that have already expired.
+            return True
+        if expiry.tzinfo is None:
+            expiry = expiry.replace(tzinfo=timezone.utc)
+        return expiry <= datetime.now(timezone.utc) + timedelta(
+            minutes=CONST.CREDENTIALS_REFRESH_BUFFER_MINUTES
+        )
+
     def set_credentials(self):
+        """Set the AWS credentials used by the boto3 clients.
+
+        For the 'Deployed on AWS' authentication method nothing is set
+        here - boto3 resolves the IAM instance profile or role attached
+        to the AWS environment. For 'AWS IAM Roles Anywhere' temporary
+        credentials are generated and cached in the plugin storage, and
+        refreshed once they are about to expire.
+
+        Returns:
+            dict: Plugin storage containing the cached credentials.
+
+        Raises:
+            AWSD2CProviderException: On credential errors.
+        """
         try:
             if (
                 self.configuration.get("authentication_method")
-                == "aws_iam_roles_anywhere"
+                == CONST.AWS_IAM_ROLES_ANYWHERE
             ):
                 temp_creds_obj = AWSD2CProviderGenerateTemporaryCredentials(
                     self.configuration,
@@ -80,35 +156,23 @@ class AWSD2CProviderClient:
                     self.log_prefix,
                     CONST.USER_AGENT,
                 )
-                if not self.storage or not self.storage.get("credentials"):
+                cached_credentials = (
+                    self.storage.get("credentials") if self.storage else None
+                )
+                if not cached_credentials:
                     self.storage = {}
-                    temporary_credentials = (
-                        temp_creds_obj.generate_temporary_credentials()
-                    )
-                    credentials = temporary_credentials.get("credentialSet")[
-                        0
-                    ].get("credentials")
-                    if credentials:
-                        self.storage["credentials"] = credentials
-                    else:
-                        raise AWSD2CProviderException(
-                            "Unable to generate Temporary Credentials. "
-                            "Check the configuration parameters."
+                    self.storage["credentials"] = (
+                        self._fetch_temporary_credentials(
+                            temp_creds_obj, "generate"
                         )
-
-                elif datetime.strptime(
-                    self.storage.get("credentials").get("expiration"),
-                    "%Y-%m-%dT%H:%M:%SZ",
-                ) <= datetime.utcnow() - timedelta(
-                    hours=0, minutes=3
-                ):
-                    temporary_credentials = (
-                        temp_creds_obj.generate_temporary_credentials()
                     )
-                    credentials = temporary_credentials.get("credentialSet")[
-                        0
-                    ].get("credentials")
-                    self.storage["credentials"] = credentials
+                elif self._is_credentials_expiring(cached_credentials):
+                    self.storage["credentials"] = (
+                        self._fetch_temporary_credentials(
+                            temp_creds_obj, "refresh"
+                        )
+                    )
+
                 credentials_from_storage = self.storage.get("credentials")
                 self.aws_public_key = credentials_from_storage.get(
                     "accessKeyId"
@@ -145,25 +209,35 @@ class AWSD2CProviderClient:
                 details_msg=str(traceback.format_exc()),
             )
 
-    def get_sqs_client(self):
-        """To get aws sqs client."""
+    def _get_aws_client(self, service_name: str):
+        """Create and return a boto3 client for the given AWS service.
+
+        Args:
+            service_name (str): AWS service name. i.e. "sqs" or "s3".
+
+        Returns:
+            botocore.client.BaseClient: boto3 client object.
+
+        Raises:
+            AWSD2CProviderException: On boto3 client creation errors.
+        """
         try:
-            sqs_client = boto3.client(
-                "sqs",
+            return boto3.client(
+                service_name,
                 aws_access_key_id=self.aws_public_key,
                 aws_secret_access_key=self.aws_private_key,
                 aws_session_token=self.aws_session_token,
-                region_name=self.configuration.get("region_name").strip(),
+                region_name=self.configuration.get("region_name", "").strip(),
                 config=Config(
                     proxies=self.proxy,
                     user_agent=CONST.USER_AGENT,
                 ),
             )
-            return sqs_client
         except ReadTimeoutError as exp:
             err_msg = (
                 "Read timeout error occurred while creating "
-                f"AWS SQS client object for {CONST.PLATFORM_NAME}."
+                f"AWS {service_name.upper()} client object "
+                f"for {CONST.PLATFORM_NAME}."
             )
             handle_and_raise(
                 logger=self.logger,
@@ -193,10 +267,9 @@ class AWSD2CProviderClient:
                     err_msg=str(error),
                     details_msg=str(traceback.format_exc()),
                 )
-
         except Exception as exp:
             err_msg = (
-                f"Error occurred while creating AWS sqs "
+                f"Error occurred while creating AWS {service_name.upper()} "
                 f"client object for {CONST.PLATFORM_NAME}."
             )
             handle_and_raise(
@@ -206,68 +279,14 @@ class AWSD2CProviderClient:
                 err_msg=err_msg,
                 details_msg=str(traceback.format_exc()),
             )
+
+    def get_sqs_client(self):
+        """To get aws sqs client."""
+        return self._get_aws_client("sqs")
 
     def get_s3_client(self):
         """To get aws s3 client."""
-        try:
-            s3_client = boto3.client(
-                "s3",
-                aws_access_key_id=self.aws_public_key,
-                aws_secret_access_key=self.aws_private_key,
-                aws_session_token=self.aws_session_token,
-                region_name=self.configuration["region_name"].strip(),
-                config=Config(
-                    proxies=self.proxy,
-                    user_agent=CONST.USER_AGENT,
-                ),
-            )
-            return s3_client
-        except ReadTimeoutError as exp:
-            err_msg = (
-                "Read timeout error occurred while creating "
-                f"AWS s3 client object for {CONST.PLATFORM_NAME}."
-            )
-            handle_and_raise(
-                logger=self.logger,
-                log_prefix=self.log_prefix,
-                err=exp,
-                err_msg=err_msg,
-                details_msg=str(traceback.format_exc()),
-            )
-        except ClientError as error:
-            if (
-                hasattr(error, "response")
-                and error.response
-                and error.response.get("Error", {}).get("Message")
-            ):
-                err_msg = error.response["Error"].get("Message")
-                handle_and_raise(
-                    logger=self.logger,
-                    log_prefix=self.log_prefix,
-                    err=error,
-                    err_msg=err_msg,
-                    details_msg=str(traceback.format_exc()),
-                )
-            else:
-                handle_and_raise(
-                    logger=self.logger,
-                    log_prefix=self.log_prefix,
-                    err_msg=str(error),
-                    details_msg=str(traceback.format_exc()),
-                )
-
-        except Exception as exp:
-            err_msg = (
-                "Error occurred while creating AWS s3 "
-                f"client object for {CONST.PLATFORM_NAME}."
-            )
-            handle_and_raise(
-                logger=self.logger,
-                log_prefix=self.log_prefix,
-                err=exp,
-                err_msg=err_msg,
-                details_msg=str(traceback.format_exc()),
-            )
+        return self._get_aws_client("s3")
 
     def validate_queue_url_using_name(self, sqs_client, queue_name):
         """Validate queue url using queue name.
@@ -287,7 +306,9 @@ class AWSD2CProviderClient:
             # Check if the queue exists
             if response and response.get("QueueUrl"):
                 queue_url = response.get("QueueUrl")
-                response = sqs_client.receive_message(
+                # Read a single message to confirm the role also has the
+                # permissions needed to consume from the queue at pull time.
+                sqs_client.receive_message(
                     QueueUrl=queue_url,
                     MaxNumberOfMessages=1,
                     WaitTimeSeconds=2,

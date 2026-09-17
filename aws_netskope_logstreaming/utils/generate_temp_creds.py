@@ -90,13 +90,26 @@ class AWSD2CProviderGenerateTemporaryCredentials:
             raise AWSD2CProviderException(err_msg)
 
     def generate_temporary_credentials(self):
+        """Generate temporary AWS credentials via IAM Roles Anywhere.
+
+        Signs a CreateSession request with the configured X.509
+        certificate and private key using the AWS4-X509-RSA-SHA256
+        signing process, and returns the credentials issued by the
+        IAM Roles Anywhere service.
+
+        Returns:
+            dict: CreateSession response containing the credential set.
+
+        Raises:
+            AWSD2CProviderException: On authentication or request errors.
+        """
         try:
             private_key_file = self.configuration.get(
                 "private_key_file", ""
             ).strip()
             pass_phrase = self.configuration.get("pass_phrase")
             public_certificate_file = self.configuration.get(
-                "public_certificate_file"
+                "public_certificate_file", ""
             ).strip()
             region = self.configuration.get("region_name", "").strip()
             duration_seconds = "900"
@@ -104,14 +117,20 @@ class AWSD2CProviderGenerateTemporaryCredentials:
             role_arn = self.configuration.get("role_arn", "").strip()
             session_name = "Session"
             trust_anchor_arn = self.configuration.get(
-                "trust_anchor_arn"
+                "trust_anchor_arn", ""
             ).strip()
 
             method = "POST"
             service = "rolesanywhere"
-            host = "rolesanywhere.{}.amazonaws.com".format(region)
-            endpoint = "https://rolesanywhere.{}.amazonaws.com".format(region)
+            host = f"rolesanywhere.{region}.amazonaws.com"
+            endpoint = f"https://rolesanywhere.{region}.amazonaws.com"
             content_type = "application/json"
+
+            if not pass_phrase:
+                raise AWSD2CProviderException(
+                    "Password Phrase is required for 'AWS IAM Roles"
+                    " Anywhere' authentication method."
+                )
 
             try:
                 private_key = serialization.load_pem_private_key(
@@ -121,7 +140,7 @@ class AWSD2CProviderGenerateTemporaryCredentials:
                 try:
                     private_key = serialization.load_pem_private_key(
                         private_key_file.encode("utf-8"),
-                        password=str.encode(pass_phrase),
+                        password=pass_phrase.encode("utf-8"),
                     )
                 except Exception as exp:
                     err_msg = "Unable to load Private Key."
@@ -131,7 +150,9 @@ class AWSD2CProviderGenerateTemporaryCredentials:
                     )
                     raise AWSD2CProviderException(err_msg)
 
-            # Load public certificate
+            # Load the public certificate and derive the values AWS
+            # requires in the signed request: the DER encoded certificate
+            # and its serial number in decimal.
             cert = x509.load_pem_x509_certificate(
                 public_certificate_file.encode()
             )
@@ -141,117 +162,63 @@ class AWSD2CProviderGenerateTemporaryCredentials:
                 ),
                 "utf-8",
             )
-
-            # Public certificate serial number in decimal
             serial_number_dec = cert.serial_number
 
-            # Request parameters for CreateSession--passed in a JSON block.
-            request_parameters = "{"
-            request_parameters += '"durationSeconds": {},'.format(
-                duration_seconds
+            # Request parameters for CreateSession - passed in a JSON block.
+            request_parameters = (
+                "{"
+                f'"durationSeconds": {duration_seconds},'
+                f'"profileArn": "{profile_arn}",'
+                f'"roleArn": "{role_arn}",'
+                f'"sessionName": "{session_name}",'
+                f'"trustAnchorArn": "{trust_anchor_arn}"'
+                "}"
             )
-            request_parameters += '"profileArn": "{}",'.format(profile_arn)
-            request_parameters += '"roleArn": "{}",'.format(role_arn)
-            request_parameters += '"sessionName": "{}",'.format(session_name)
-            request_parameters += '"trustAnchorArn": "{}"'.format(
-                trust_anchor_arn
-            )
-            request_parameters += "}"
 
-            # Create a date for headers and the credential string
+            # Create a date for the headers and the credential string.
             t = datetime.datetime.utcnow()
             amz_date = t.strftime("%Y%m%dT%H%M%SZ")
             date_stamp = t.strftime("%Y%m%d")
 
-            # ************* TASK 1: CREATE A CANONICAL REQUEST *************
+            # ********* TASK 1: CREATE A CANONICAL REQUEST *********
             # http://docs.aws.amazon.com/general/latest/gr/sigv4-create-canonical-request.html
-
-            # Step 2: Create canonical URI--the part of the URI from domain to
-            # query
-            # string (use '/' if no path)
+            # The request parameters are passed in the body, so the
+            # canonical query string is blank. Header names must be
+            # lowercase and sorted, with a trailing newline. For Roles
+            # Anywhere, content-type and x-amz-x509 are required in
+            # addition to the always required host and x-amz-date.
             canonical_uri = "/sessions"
-
-            # Step 3: Create the canonical query string.
-            # In this example, request
-            # parameters are passed in the body of the request and the query
-            # string is blank.
             canonical_querystring = ""
-
-            # Step 4: Create the canonical headers. Header names must be
-            # trimmed and lowercase, and sorted in code point order from
-            # low to high.
-            # Note that there is a trailing \n.
             canonical_headers = (
-                "content-type:"
-                + content_type
-                + "\n"
-                + "host:"
-                + host
-                + "\n"
-                + "x-amz-date:"
-                + amz_date
-                + "\n"
-                + "x-amz-x509:"
-                + amz_x509
-                + "\n"
+                f"content-type:{content_type}\n"
+                f"host:{host}\n"
+                f"x-amz-date:{amz_date}\n"
+                f"x-amz-x509:{amz_x509}\n"
             )
-
-            # Step 5: Create the list of signed headers. This lists the headers
-            # in the canonical_headers list, delimited with ";" and in alpha.
-            # order Note: The request can include any headers;
-            #  canonical_headers and
-            # signed_headers include those that you want to be included in the
-            # hash of the request. "Host" and "x-amz-date" are always required.
-            # For Roles Anywhere, content-type and x-amz-x509
-            # are also required.
             signed_headers = "content-type;host;x-amz-date;x-amz-x509"
-
-            # Step 6: Create payload hash. In this example,
-            # the payload (body of the request) contains the request
-            # parameters.
             payload_hash = hashlib.sha256(
                 request_parameters.encode("utf-8")
             ).hexdigest()
-
-            # Step 7: Combine elements to create canonical request
             canonical_request = (
-                method
-                + "\n"
-                + canonical_uri
-                + "\n"
-                + canonical_querystring
-                + "\n"
-                + canonical_headers
-                + "\n"
-                + signed_headers
-                + "\n"
-                + payload_hash
+                f"{method}\n"
+                f"{canonical_uri}\n"
+                f"{canonical_querystring}\n"
+                f"{canonical_headers}\n"
+                f"{signed_headers}\n"
+                f"{payload_hash}"
             )
 
-            # ************* TASK 2: CREATE THE STRING TO SIGN*************
-            # Match the algorithm to the hashing algorithm you use, SHA-256
+            # ********* TASK 2: CREATE THE STRING TO SIGN *********
             algorithm = "AWS4-X509-RSA-SHA256"
-            credential_scope = (
-                date_stamp
-                + "/"
-                + region
-                + "/"
-                + service
-                + "/"
-                + "aws4_request"
-            )
+            credential_scope = f"{date_stamp}/{region}/{service}/aws4_request"
             string_to_sign = (
-                algorithm
-                + "\n"
-                + amz_date
-                + "\n"
-                + credential_scope
-                + "\n"
+                f"{algorithm}\n"
+                f"{amz_date}\n"
+                f"{credential_scope}\n"
                 + hashlib.sha256(canonical_request.encode("utf-8")).hexdigest()
             )
 
-            # ************* TASK 3: CALCULATE THE SIGNATURE *************
-            # Sign the string_to_sign using the private_key and hex encode
+            # ********* TASK 3: CALCULATE THE SIGNATURE *********
             signature = private_key.sign(
                 data=string_to_sign.encode("utf-8"),
                 padding=padding.PKCS1v15(),
@@ -259,31 +226,16 @@ class AWSD2CProviderGenerateTemporaryCredentials:
             )
             signature_hex = signature.hex()
 
-            # *** TASK 4: ADD SIGNING INFORMATION TO THE REQUEST ***
-            # Put the signature information in a header named Authorization.
+            # ********* TASK 4: ADD SIGNING INFO TO THE REQUEST *********
+            # The signature goes into the Authorization header. The 'host'
+            # header is added automatically by the requests library.
             authorization_header = (
-                algorithm
-                + " "
-                + "Credential="
-                + str(serial_number_dec)
-                + "/"
-                + credential_scope
-                + ", "
-                + "SignedHeaders="
-                + signed_headers
-                + ", "
-                + "Signature="
-                + signature_hex
+                f"{algorithm} "
+                f"Credential={serial_number_dec}/{credential_scope}, "
+                f"SignedHeaders={signed_headers}, "
+                f"Signature={signature_hex}"
             )
 
-            # For Roles Anywhere, the request  MUST include "host",
-            #  "x-amz-date", "x-amz-x509", "content-type", and
-            # "Authorization".Except for the authorization
-            # header, the headers must be included in the canonical_headers
-            #  and signed_headers values, as
-            # noted earlier. Order here is not significant.
-            # # Python note: The 'host' header is added automatically by the
-            #  Python 'requests' library.
             headers = {
                 "Content-Type": content_type,
                 "X-Amz-Date": amz_date,
@@ -292,7 +244,7 @@ class AWSD2CProviderGenerateTemporaryCredentials:
                 "User-Agent": self.user_agent,
             }
 
-            # ************* SEND THE REQUEST *************
+            # ********* SEND THE REQUEST *********
             response = requests.post(
                 endpoint + canonical_uri,
                 data=request_parameters,
@@ -323,7 +275,7 @@ class AWSD2CProviderGenerateTemporaryCredentials:
                     details=f"{self.parse_response(response)}",
                 )
                 raise AWSD2CProviderException(err_msg)
-            elif response.status_code >= 400 and response.status_code < 500:
+            elif 400 <= response.status_code < 500:
                 err_msg = (
                     f"Received exit code {response.status_code}, "
                     "HTTP client error."
@@ -334,12 +286,11 @@ class AWSD2CProviderGenerateTemporaryCredentials:
                     details=f"{resp_json}",
                 )
                 raise AWSD2CProviderException(err_msg)
-            elif response.status_code >= 500 and response.status_code < 600:
+            elif 500 <= response.status_code < 600:
                 err_msg = (
                     f"Received exit code {response.status_code}."
                     " HTTP Server Error."
                 )
-
                 resp_json = self.parse_response(response=response)
                 self.logger.error(
                     message=f"{self.log_prefix}: {err_msg}",

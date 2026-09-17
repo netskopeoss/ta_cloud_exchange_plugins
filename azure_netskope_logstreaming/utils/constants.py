@@ -33,18 +33,18 @@ Azure Netskope LogStreaming constants.
 """
 
 MODULE_NAME = "CLS"
-PLUGIN_VERSION = "1.0.1"
+PLUGIN_VERSION = "1.1.0"
 PLATFORM_NAME = "Microsoft Azure"
 PLUGIN_NAME = "Azure Netskope LogStreaming"
 VALIDATION_ERROR_MSG = "Validation error occurred. "
 # Last CE version that does NOT support resolution= in logger.error().
 # Versions strictly above this get the resolution field; 5.1.2 and below do not.
-MAXIMUM_CORE_VERSION = "5.1.2"
 MAINTENANCE_PULL = "maintenance pulling"
 HISTORICAL_PULL = "Historical pulling"
 TYPE_EVENT = "events"
 TYPE_ALERT = "alerts"
 TYPE_WEBTX = "webtx"
+DATA_FORMAT_JSON = "json"
 
 # Retry and timeout settings (used in client.py retry logic)
 MAX_RETRIES = 4

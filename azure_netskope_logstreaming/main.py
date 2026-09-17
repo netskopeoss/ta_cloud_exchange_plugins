@@ -44,10 +44,9 @@ from typing import List, Tuple, Dict, Any, Generator, Union
 from io import BytesIO, StringIO
 import base64
 
-from packaging import version
-from netskope.common.api import __version__ as CE_VERSION
 from netskope.common.utils import (
     Notifier,
+    compress_batch,
 )
 from netskope.common.utils.plugin_provider_helper import PluginProviderHelper
 from netskope.common.models.other import ActionType
@@ -83,7 +82,7 @@ from .utils.constants import (
     MESSAGES_PER_PAGE,
     VISIBILITY_TIMEOUT,
     VALIDATION_ERROR_MSG,
-    MAXIMUM_CORE_VERSION,
+    DATA_FORMAT_JSON,
 )
 
 from .lib.azure.core.exceptions import (
@@ -120,33 +119,6 @@ class AzureNetskopeLogStreaming(PluginBase):
         self.log_prefix = f"{MODULE_NAME} {self.plugin_name}"
         if name:
             self.log_prefix = f"{self.log_prefix} [{name}]"
-        self.resolution_support = version.parse(CE_VERSION) > version.parse(
-            MAXIMUM_CORE_VERSION
-        )
-        self._patch_logger_methods()
-
-    def _patch_logger_methods(self):
-        """Patch logger.error to pass resolution= only on CE > 5.1.2.
-
-        CE versions up to and including 5.1.2 do not accept the
-        resolution keyword argument.  This wrapper swallows it
-        silently on older installs so the plugin runs on both old
-        and new CE versions without branching at every call site.
-        """
-        original_error = self.logger.error
-
-        def patched_error(
-            message=None, details=None, resolution=None, **kwargs
-        ):
-            log_kwargs = {"message": message}
-            if details:
-                log_kwargs["details"] = details
-            if resolution and self.resolution_support:
-                log_kwargs["resolution"] = resolution
-            log_kwargs.update(kwargs)
-            return original_error(**log_kwargs)
-
-        self.logger.error = patched_error
 
     def _get_plugin_info(self) -> Tuple[str, str]:
         """Get plugin name and version from manifest.
@@ -868,14 +840,15 @@ class AzureNetskopeLogStreaming(PluginBase):
                 total_records += len(page_data)
 
                 if sub_type != "v2":
-                    page_data = gzip.compress(
-                        json.dumps({RESULT: page_data}).encode("utf-8"),
-                        compresslevel=3,
+                    payload = json.dumps({RESULT: page_data}).encode("utf-8")  # noqa
+                    page_data = compress_batch(
+                        payload, DATA_FORMAT_JSON
                     )
+
                 else:
-                    page_data = gzip.compress(
-                        json.dumps(page_data).encode("utf-8"),
-                        compresslevel=3,
+                    payload = json.dumps(page_data).encode("utf-8")
+                    page_data = compress_batch(
+                        payload, DATA_FORMAT_JSON
                     )
 
                 yield (page_data, log_data_type, sub_type), None

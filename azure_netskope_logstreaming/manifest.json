@@ -9,10 +9,10 @@
     "netskope": false,
     "pull_supported": true,
     "push_supported": false,
-    "version": "1.0.1",
+    "version": "1.1.0",
     "module": "CLS",
-    "minimum_version": "5.1.2",
-    "description": "This plugin is used to pull the Netskope Alerts (DLP, Malware, Policy, Compromised Credential, Malsite, Quarantine, Remediation, Security Assessment, Watchlist, UBA, CTEP, Device, Content), Events (Page, Application, Audit, Infrastructure, Network, Incident, Endpoint, Client Status) and WebTx data from the Azure Containers using Storage Queue of Microsoft Azure Storage Account.",
+    "minimum_version": "7.0.0",
+    "description": "This plugin is used to pull Alerts (DLP, Malware, Policy, Compromised Credential, Malsite, Quarantine, Remediation, Security Assessment, Watchlist, UBA, CTEP, Device, Content), Events (Page, Application, Audit, Infrastructure, Network, Incident, Endpoint, Client Status) and WebTx data from the Azure Containers using Storage Queue of Microsoft Azure Storage Account.",
     "configuration": [
         {
             "label": "Microsoft Azure Storage Account Connection String",

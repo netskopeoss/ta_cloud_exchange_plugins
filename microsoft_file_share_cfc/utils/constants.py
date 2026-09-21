@@ -2,7 +2,7 @@
 
 PLUGIN_NAME = "Microsoft File Share"
 MODULE_NAME = "CFC"
-PLUGIN_VERSION = "1.1.0"
+PLUGIN_VERSION = "1.1.1"
 SUPPORTED_IMAGE_FILE_EXTENSIONS = [
     ".bmp",
     ".dib",

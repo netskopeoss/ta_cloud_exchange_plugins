@@ -1,3 +1,7 @@
+# 1.1.1 (Required minimum CE version for this is 6.1.0)
+## Changed
+- Optimized SFTP file pull performance by reusing a single SFTP session.
+
 # 1.1.0
 ## Added
 - Added validation for images file count and size.

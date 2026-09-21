@@ -2,7 +2,7 @@
     "name": "Linux File Share",
     "id": "linux_file_share_cfc",
     "module": "CFC",
-    "version": "1.1.0",
+    "version": "1.1.1",
     "description": "This plugin is used to pull images or zip files from a remote Linux server via the SFTP protocol and generate CFC hashes of the retrieved file data. It supports files with extensions related to images or zip formats.",
     "patch_supported": false,
     "push_supported": false,

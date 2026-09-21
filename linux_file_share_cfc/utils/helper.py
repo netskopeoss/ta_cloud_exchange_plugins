@@ -832,8 +832,8 @@ class LinuxFileShareHelper:
                 server_configuration
             )
             try:
-                for data in metadata:
-                    with ssh_connection.open_sftp() as sftp_session:
+                with ssh_connection.open_sftp() as sftp_session:
+                    for data in metadata:
                         file_path = (
                             f"{FILE_PATH}/{self.name}/{data.get('dirUuid', '')}"  # noqa E501
                         )

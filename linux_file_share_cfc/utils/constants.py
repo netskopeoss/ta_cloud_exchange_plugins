@@ -34,7 +34,7 @@ Linux File Share CFC plugin constants file.
 
 MODULE_NAME = "CFC"
 PLUGIN_NAME = "Linux File Share"
-PLUGIN_VERSION = "1.1.0"
+PLUGIN_VERSION = "1.1.1"
 SUPPORTED_IMAGE_FILE_EXTENSIONS = [".bmp", ".dib", ".jpeg", ".jpg", ".jpe",
                                    ".jp2", ".png", ".webp", ".avif", ".pbm",
                                    ".pgm", ".ppm", ".pxm", ".pnm", ".pfm",

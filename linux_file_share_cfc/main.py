@@ -470,12 +470,12 @@ class LinuxFileShareCFCPlugin(PluginBase):
             )
 
             if not metadata and not success:
-                self.logger.info(
+                self.logger.error(
                     f"{self.log_prefix}: No {pull_target} were pulled."
                     f"{error_suffix}"
                 )
             elif partial_errors:
-                self.logger.info(
+                self.logger.error(
                     f"{self.log_prefix}: {error_suffix}"
                 )
             else:

@@ -2446,47 +2446,47 @@ class SFTPProtocolFileSharePlugin:
                 server_configuration
             )
             try:
-                for data in metadata:
-                    with ssh_connection.open_sftp() as sftp_session:
-                            file_path = (
-                                f"{FILE_PATH}/{self.name}"
-                                f"/{data.get('dirUuid', '')}"
+                with ssh_connection.open_sftp() as sftp_session:
+                    for data in metadata:
+                        file_path = (
+                            f"{FILE_PATH}/{self.name}"
+                            f"/{data.get('dirUuid', '')}"
+                        )
+                        if not os.path.exists(file_path):
+                            os.makedirs(file_path)
+                        try:
+                            self.validate_file_path(
+                                sftp_session, data.get("path", "")
                             )
-                            if not os.path.exists(file_path):
-                                os.makedirs(file_path)
-                            try:
-                                self.validate_file_path(
-                                    sftp_session, data.get("path", "")
-                                )
-                            except MicrosoftFileShareError as error:
-                                self.logger.error(
-                                    message=(
-                                        f"{self.log_prefix}: Invalid file path "
-                                        f"{str(error)}"
-                                    ),
-                                    details=traceback.format_exc(),
-                                )
-                                success = False
-                                continue
-                            try:
-                                sftp_session.get(
-                                    data.get("path", ""),
-                                    os.path.join(
-                                        file_path, data.get("file", "")
-                                    ),
-                                )
-                            except PermissionError as error:
-                                self.logger.debug(
-                                    message=(
-                                        f"{self.log_prefix}: Permission denied "
-                                        f"while pulling file "
-                                        f"'{data.get('path', '')}'. " 
-                                        f"Error: {str(error)}"
-                                    ),
-                                    details=traceback.format_exc(),
-                                )
-                                success = False
-                                continue
+                        except MicrosoftFileShareError as error:
+                            self.logger.error(
+                                message=(
+                                    f"{self.log_prefix}: Invalid file path "
+                                    f"{str(error)}"
+                                ),
+                                details=traceback.format_exc(),
+                            )
+                            success = False
+                            continue
+                        try:
+                            sftp_session.get(
+                                data.get("path", ""),
+                                os.path.join(
+                                    file_path, data.get("file", "")
+                                ),
+                            )
+                        except PermissionError as error:
+                            self.logger.debug(
+                                message=(
+                                    f"{self.log_prefix}: Permission denied "
+                                    f"while pulling file "
+                                    f"'{data.get('path', '')}'. "
+                                    f"Error: {str(error)}"
+                                ),
+                                details=traceback.format_exc(),
+                            )
+                            success = False
+                            continue
             finally:
                 ssh_connection.close()
         except MicrosoftFileShareError:

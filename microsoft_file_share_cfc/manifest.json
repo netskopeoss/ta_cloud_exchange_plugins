@@ -1,7 +1,7 @@
 {
     "name": "Microsoft File Share",
     "id": "microsoft_file_share_cfc",
-    "version": "1.1.0",
+    "version": "1.1.1",
     "module": "CFC",
     "description": "This plugin is used to pull images or zip files from provided directories present on a remote Windows server. The plugin supports both SMB protocol (version 2.0.2 to 3.1.1) and SFTP protocol for file transfer.",
     "patch_supported": false,

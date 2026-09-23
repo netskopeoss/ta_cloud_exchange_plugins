@@ -36,7 +36,7 @@ from netskope_api.iterator.const import Const
 import os
 
 MODULE_NAME = "TENANT"
-PLUGIN_VERSION = "1.6.2"
+PLUGIN_VERSION = "1.7.0"
 PLATFORM_NAME = "Netskope"
 MAX_API_CALLS = 4
 DATE_FORMAT = "%Y-%m-%dT%H:%M:%S.%fZ"
@@ -84,6 +84,9 @@ TIMESTAMP_HWM_PATTERN = rb"\"timestamp_hwm\"\s*:\s*(\d+)"
 WAIT_TIME_PATTERN = rb"\"wait_time\"\s*:\s*(\d+)"
 ID_PATTERN = rb'\"_id"\s*:'
 RESULT = "result"
+DATA_FORMAT_JSON = "json"
+DATA_FORMAT_CSV = "csv"
+CONTENT_TYPE_CSV = "text/csv"
 TIMESTAMP_HWM = "timestamp_hwm"
 QUEUE_SIZE = 10
 DEFAULT_WAIT_TIME = 30

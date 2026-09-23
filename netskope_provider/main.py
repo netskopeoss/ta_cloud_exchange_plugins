@@ -183,8 +183,30 @@ class NetskopeProviderPlugin(PluginBase):
                     record[key] = str(record[key])
         return alert_event_obj
 
-    def parse_data(self, events: bytes, data_type: str, sub_type: str):
-        """Parse incoming data."""
+    def parse_data(
+        self,
+        events: bytes,
+        data_type: str,
+        sub_type: str,
+        data_format: str = None,
+    ):
+        """Parse incoming data.
+
+        Args:
+            events (bytes): Compressed batch, tagged with the format it was
+                serialised in when it was queued.
+            data_type (str): "alerts" or "events".
+            sub_type (str): Alert or event sub type.
+            data_format (str): Wire format of the batch, taken from the
+                ``Content-Type`` of the response it was pulled with. Every
+                batch this plugin queues is tagged, and so is every batch the
+                platform re-compresses, so an untagged batch is an error
+                rather than something to guess at.
+
+        Raises:
+            ValueError: The batch carries no format, or one this plugin does
+                not serialise.
+        """
         decompressed_events = gzip.decompress(events)
         data_type_stripped = data_type.rstrip("s")
         is_alert_or_event = data_type in [
@@ -197,30 +219,53 @@ class NetskopeProviderPlugin(PluginBase):
             data_type_stripped, {}
         ).get(sub_type.lower(), [])
         try:
-            alert_event_obj = json.loads(decompressed_events)
+            if data_format == CONST.DATA_FORMAT_CSV:
+                alert_event_obj = parse_csv_response(
+                    pd.read_csv(
+                        StringIO(decompressed_events.decode("utf-8")),
+                        keep_default_na=False,
+                    )
+                )
+            elif data_format == CONST.DATA_FORMAT_JSON:
+                alert_event_obj = json.loads(decompressed_events)
+            else:
+                expected = (
+                    f"'{CONST.DATA_FORMAT_JSON}' or "
+                    f"'{CONST.DATA_FORMAT_CSV}'"
+                )
+                raise ValueError(
+                    (
+                        f"The batch carries no data format; expected "
+                        f"{expected}. The source that queued it did not tag "
+                        f"it with the format it was serialised in."
+                    )
+                    if not data_format
+                    else (
+                        f"The batch carries the unsupported data format "
+                        f"'{data_format}'; expected {expected}."
+                    )
+                )
             if is_alert_or_event and sub_type == "incident":
                 return self.parse_incident_events(
                     alert_event_obj.get("result", [])
+                    if isinstance(alert_event_obj, dict)
+                    else alert_event_obj
                 )
             if is_alert_or_event and id_string_fields:
                 alert_event_obj = self._stringify_id_fields(
                     alert_event_obj, id_string_fields
                 )
             return alert_event_obj
-        except json.decoder.JSONDecodeError:
-            parsed_csv_data = parse_csv_response(
-                pd.read_csv(
-                    StringIO(decompressed_events.decode("utf-8")),
-                    keep_default_na=False,
-                )
+        except ValueError as err:
+            self.logger.error(
+                message=(
+                    f"{self.log_prefix}: Invalid data encountered while "
+                    f"parsing data for {data_type} and sub type {sub_type}."
+                    f" Error: {err}"
+                ),
+                details=traceback.format_exc(),
             )
-            if is_alert_or_event and sub_type == "incident":
-                return self.parse_incident_events(parsed_csv_data)
-            if is_alert_or_event and id_string_fields:
-                return self._stringify_id_fields(
-                    parsed_csv_data, id_string_fields
-                )
-            return parsed_csv_data
+            raise
         except Exception as err:
             self.logger.error(
                 message=(
@@ -592,8 +637,12 @@ class NetskopeProviderPlugin(PluginBase):
             business_rule (str, optional): The business rule to apply. Defaults to None.
             override_subtypes (list, optional): List of overridden subtypes (For historical). Defaults to None.
 
-        Returns:
-            GeneratorObject: List of indicator objects received from Netskope along with types.
+        Yields:
+            Tuple[Any, str, Optional[dict], bool]: A tuple of
+                (data, sub_type, sub_type_config_mapping, should_apply_expo_backoff)
+                for each batch of data pulled from Netskope, where
+                sub_type_config_mapping is None for an overridden
+                (historical) sub-type pull.
         """
         from netskope.common.utils.forbidden_notifier import (
             create_or_ack_forbidden_error_banner,

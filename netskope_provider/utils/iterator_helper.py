@@ -4,7 +4,6 @@ import threading
 import time
 import random
 import re
-import gzip
 import json
 from queue import Queue
 import collections
@@ -33,6 +32,7 @@ from netskope.common.utils import (
     Collections,
     Notifier,
     back_pressure,
+    compress_batch,
 )
 from netskope.common.utils.exceptions import (
     IncompleteTransactionError,
@@ -175,6 +175,17 @@ class PullRetryController:
             if time.time() > self._give_up_deadline():
                 return False
         return True
+
+
+def get_media_type(response) -> str:
+    """Return the response's Content-Type media type, without parameters.
+
+    The media type alone decides how a batch is parsed, so any parameters the
+    tenant appends ("text/csv; charset=utf-8") are dropped.
+    """
+    return (
+        response.headers.get("Content-Type", "").split(";")[0].strip().lower()
+    )
 
 
 def convert_numpy_types(obj):
@@ -596,8 +607,7 @@ class NetskopeIteratorBuilder(NetskopeIterator):
                 uri = urlparse(data.url).path
                 if (
                     not data.content
-                    and data.headers.get("Content-Type", "").lower()
-                    != "text/csv"
+                    and get_media_type(data) != CONST.CONTENT_TYPE_CSV
                 ):
                     raise IncompleteTransactionError(
                         "Received empty response."
@@ -743,9 +753,10 @@ class NetskopeIteratorBuilder(NetskopeIterator):
             if not return_schema_headers:
                 return content
             else:
-                headers = data.headers
-                if headers.get("Content-Type", "").lower() == "text/csv":
-                    return content, headers
+                # The Content-Type of the response is what decides the wire
+                # format of this batch; headers are returned only for CSV.
+                if get_media_type(data) == CONST.CONTENT_TYPE_CSV:
+                    return content, data.headers
                 else:
                     return content, None
 
@@ -1138,8 +1149,8 @@ class NetskopeClient:
                                                 ),
                                             ]
                                         )
-                                        content = gzip.compress(
-                                            batch, compresslevel=3
+                                        content = compress_batch(
+                                            batch, CONST.DATA_FORMAT_CSV
                                         )
                                         self.message_queue.put(
                                             (content, sub_type, False, True)
@@ -1160,8 +1171,8 @@ class NetskopeClient:
                                             ),
                                         ]
                                     )
-                                    content = gzip.compress(
-                                        batch, compresslevel=3
+                                    content = compress_batch(
+                                        batch, CONST.DATA_FORMAT_CSV
                                     )
                                     self.message_queue.put(
                                         (content, sub_type, False, True)
@@ -1189,8 +1200,8 @@ class NetskopeClient:
                                     self.message_queue.put(batch)
                             else:
                                 # Fallback to original logic
-                                content = gzip.compress(
-                                    response, compresslevel=3
+                                content = compress_batch(
+                                    response, CONST.DATA_FORMAT_CSV
                                 )
                                 logger.info(
                                     f"{self.log_prefix}: "
@@ -1202,7 +1213,9 @@ class NetskopeClient:
                                 )
                         else:
                             # Original logic for non-incident data
-                            content = gzip.compress(response, compresslevel=3)
+                            content = compress_batch(
+                                response, CONST.DATA_FORMAT_CSV
+                            )
                             logger.info(
                                 f"{self.log_prefix}: "
                                 f"Pulled {len(response.splitlines())-1} {sub_type} {self.type}(s) for tenant "
@@ -1262,7 +1275,9 @@ class NetskopeClient:
                             response.get(CONST.RESULT, [])
                         )
                         response = json.dumps(response).encode("utf-8")
-                    content = gzip.compress(response, compresslevel=3)
+                    content = compress_batch(
+                        response, CONST.DATA_FORMAT_JSON
+                    )
                     self.message_queue.put(
                         (content, sub_type, False, number_of_alerts != 0)
                     )
@@ -1434,11 +1449,11 @@ class NetskopeClient:
                                 filtered_data
                             )
                         if self.compress_historical_data:
-                            filtered_data = gzip.compress(
+                            filtered_data = compress_batch(
                                 json.dumps(
                                     {CONST.RESULT: filtered_data}
                                 ).encode("utf-8"),
-                                compresslevel=3,
+                                CONST.DATA_FORMAT_JSON,
                             )
                         self.message_queue.put(
                             (filtered_data, sub_type, False, True)
@@ -1495,11 +1510,11 @@ class NetskopeClient:
                 ):
                     filtered_data = self.enrich_incident_data(filtered_data)
                 if self.compress_historical_data and filtered_data:
-                    filtered_data = gzip.compress(
+                    filtered_data = compress_batch(
                         json.dumps({CONST.RESULT: filtered_data}).encode(
                             "utf-8"
                         ),
-                        compresslevel=3,
+                        CONST.DATA_FORMAT_JSON,
                     )
                 self.message_queue.put((filtered_data, sub_type, False, True))
                 # if not registered:
@@ -1626,11 +1641,11 @@ class NetskopeClient:
                     )
 
                     if enriched_incidents:
-                        content = gzip.compress(
+                        content = compress_batch(
                             json.dumps(
                                 {CONST.RESULT: enriched_incidents}
                             ).encode("utf-8"),
-                            compresslevel=3,
+                            CONST.DATA_FORMAT_JSON,
                         )
 
                         enriched_batches.append(
@@ -1668,11 +1683,11 @@ class NetskopeClient:
                     )
 
                     if enriched_incidents:
-                        content = gzip.compress(
+                        content = compress_batch(
                             json.dumps(
                                 {CONST.RESULT: enriched_incidents}
                             ).encode("utf-8"),
-                            compresslevel=3,
+                            CONST.DATA_FORMAT_JSON,
                         )
 
                         enriched_batches.append(

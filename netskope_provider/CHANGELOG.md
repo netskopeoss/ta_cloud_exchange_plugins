@@ -1,3 +1,10 @@
+# 1.7.0 (Requires minimum Cloud Exchange version 7.0.0)
+## Changed
+- Pulled alerts and events are now tagged with the format they were serialized in, so Cloud Exchange parses each batch by its declared format instead of inferring it from the content.
+## Fixed
+- Fixed CSV responses being treated as JSON when the tenant returns a Content-Type with a charset parameter (for example "text/csv; charset=utf-8").
+
+
 # 1.6.2 (Requires minimum Cloud Exchange version 6.1.0)
 ## Changed
 - Updated the pull retry mechanism with a unified in-pull exponential backoff engine, replacing the legacy retry decorator for more reliable handling of transient failures. Retries are now strictly bounded by pull windows (or 1 hour for historical pulls).

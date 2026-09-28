@@ -1,0 +1,87 @@
+{
+  "name": "Cisco ISE",
+  "id": "cisco_ise_ztre",
+  "version": "1.0.0",
+  "module": "CRE",
+  "minimum_version": "6.0.0",
+  "netskope": false,
+  "description": "This plugin fetches Security Group Tag (SGT) to IP address mappings from Cisco Identity Services Engine (ISE) and makes them available as 'Hosts' records in Netskope Cloud Exchange. It can pull live session data from the Operations > RADIUS > Live Sessions page, and static IP to SGT mapping data from the Work Centers > TrustSec > Components > IP SGT Static Mapping page. This plugin does not support performing any actions on Cisco ISE.",
+  "configuration": [
+    {
+      "label": "ISE Primary Admin Node Base URL",
+      "key": "ise_host",
+      "type": "text",
+      "mandatory": true,
+      "default": "",
+      "placeholder": "e.g. https://10.50.0.0 or https://ise.example.com",
+      "description": "Base URL of the Cisco ISE Primary Administration Node."
+    },
+    {
+      "label": "SGT-IP Mapping Source",
+      "key": "sgt_ip_mapping_source",
+      "type": "multichoice",
+      "default": ["pxgrid"],
+      "mandatory": true,
+      "choices": [
+        {
+          "key": "Live Sessions",
+          "value": "pxgrid"
+        },
+        {
+          "key": "IP SGT Static Mapping",
+          "value": "ers"
+        }
+      ],
+      "description": "Choose where this plugin should get SGT-to-IP mapping data from. 'Live Sessions' pulls live session data using the pxGrid API. 'IP SGT Static Mapping' pulls static SGT-to-IP mappings configured in ISE using the ERS API. You can select both; if a conflict occurs between the two for the same IP address, 'Live Sessions' data takes precedence over 'IP SGT Static Mapping' data."
+    },
+    {
+      "label": "SGT Name Filter",
+      "key": "sgt_name_filter",
+      "type": "text",
+      "mandatory": false,
+      "default": "",
+      "placeholder": "e.g. BU-Servers, BU-Printers",
+      "description": "Optional comma-separated list of Security Group Tag names to restrict data collection to. Applies to both the Live Sessions and IP SGT Static Mapping sources. Leave empty to pull data for every Security Group Tag."
+    },
+    {
+      "label": "ERS Username",
+      "key": "ers_username",
+      "type": "text",
+      "mandatory": true,
+      "default": "",
+      "placeholder": "e.g. ersadmin",
+      "description": "Username for the Cisco ISE ERS API. Available under Administration > Identity Management > Identities > Users in the ISE Admin Console."
+    },
+    {
+      "label": "ERS Password",
+      "key": "ers_password",
+      "type": "password",
+      "mandatory": true,
+      "description": "Password for the Cisco ISE ERS API user specified in 'ERS Username'."
+    },
+    {
+      "label": "SSL Validation",
+      "key": "ssl_validation_mode",
+      "type": "choice",
+      "has_api_call": true,
+      "payload_fields": ["ssl_validation_mode"],
+      "choices": [
+        {
+          "key": "Disable SSL Validation",
+          "value": "disable"
+        },
+        {
+          "key": "Use System Defaults",
+          "value": "system_default"
+        },
+        {
+          "key": "Use Custom SSL Certificate",
+          "value": "custom_cert"
+        }
+      ],
+      "default": "system_default",
+      "mandatory": true,
+      "description": "Controls SSL/TLS certificate validation for every ERS and pxGrid request to the ISE Primary Admin Node - independent of Cloud Exchange's own SSL validation checkbox. 'Disable SSL Validation' skips certificate validation entirely. 'Use System Defaults' validates against the Cloud Exchange host's default trusted CA store. 'Use Custom SSL Certificate' reveals a certificate textarea below - provide ISE's certificate(s) there, e.g. for its self-signed or private-CA certificates. Note: If SSL validation is enabled, certificates for both Live Sessions and IP SGT Static Mapping will be required."
+    }
+  ]
+}

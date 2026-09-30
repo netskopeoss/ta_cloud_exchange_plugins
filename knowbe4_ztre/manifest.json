@@ -1,49 +1,113 @@
 {
-  "name": "KnowBe4",
-  "id": "knowbe4_ztre",
-  "version": "1.0.0",
-  "module": "CRE",
-  "minimum_version": "5.1.0",
-  "netskope": false,
-  "description": "This plugin is used to fetch users from the PAB User Activity page of the KnowBe4 platform. The PAB User Activity page can be found at KnowBe4 platform > Account Settings > Account Integrations > Phish Alert > See PAB User Activity. The plugin does not support performing any actions on users in KnowBe4.\n\nNetskope normalization score calculation for users => (1000 - (KnowBe4's Current Risk Score) x 10).",
-  "configuration": [
-    {
-      "label": "Base URL",
-      "key": "base_url",
-      "type": "choice",
-      "choices": [
+    "name": "KnowBe4",
+    "id": "knowbe4_ztre",
+    "version": "2.0.0",
+    "module": "CRE",
+    "minimum_version": "6.1.0",
+    "netskope": false,
+    "description": "This plugin is used to fetch Users from the 'Users > Manage Users' page of the KnowBe4 console. This plugin supports the 'Add User to Group', 'Remove User from Group', 'Enroll in Training' and 'Update Custom Field' actions on users in KnowBe4.\n\nNetskope normalization score calculation for users => round(1000 - (KnowBe4's Risk Score x 10)), limited to the range 0 to 1000.",
+    "configuration": [
         {
-          "key": "US Server (us.api.knowbe4.com)",
-          "value": "https://us.api.knowbe4.com"
+            "label": "Base URL",
+            "key": "region_base_url",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "US (training.knowbe4.com)",
+                    "value": "https://training.knowbe4.com"
+                },
+                {
+                    "key": "EU (eu.knowbe4.com)",
+                    "value": "https://eu.knowbe4.com"
+                },
+                {
+                    "key": "CA (ca.knowbe4.com)",
+                    "value": "https://ca.knowbe4.com"
+                },
+                {
+                    "key": "UK (uk.knowbe4.com)",
+                    "value": "https://uk.knowbe4.com"
+                },
+                {
+                    "key": "DE (de.knowbe4.com)",
+                    "value": "https://de.knowbe4.com"
+                },
+                {
+                    "key": "Custom Region URL",
+                    "value": "custom"
+                }
+            ],
+            "default": "https://training.knowbe4.com",
+            "mandatory": true,
+            "description": "Base URL of your KnowBe4 account, without a path. Do not include '/graphql'; the plugin appends it automatically. e.g. https://training.knowbe4.com. Select 'Custom Region URL' to provide a different endpoint below, e.g. for a new KnowBe4 deployment not yet listed here."
         },
         {
-          "key": "EU Server (eu.api.knowbe4.com)",
-          "value": "https://eu.api.knowbe4.com"
+            "label": "Custom Region URL",
+            "key": "custom_region_url",
+            "type": "text",
+            "default": "",
+            "mandatory": false,
+            "description": "Base URL of your KnowBe4 tenant, without a path. Do not include '/graphql'; the plugin appends it automatically. Required only when 'Base URL' is set to 'Custom Region URL'. e.g. 'https://mytenant.knowbe4.com'."
         },
         {
-          "key": "CA Server (ca.api.knowbe4.com)",
-          "value": "https://ca.api.knowbe4.com"
+            "label": "KSAT API Token",
+            "key": "ksat_api_token",
+            "type": "password",
+            "default": "",
+            "mandatory": true,
+            "description": "API token of the KnowBe4 Security Awareness Training (KSAT) product. It can be generated from the 'Account Settings > Account Integrations > API > Product API > Create New API Token' page of the KnowBe4 console."
         },
         {
-          "key": "UK Server (uk.api.knowbe4.com)",
-          "value": "https://uk.api.knowbe4.com"
+            "label": "Pull Archived Users",
+            "key": "pull_archived_users",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Yes",
+                    "value": "Yes"
+                },
+                {
+                    "key": "No",
+                    "value": "No"
+                }
+            ],
+            "default": "No",
+            "mandatory": true,
+            "description": "Select 'Yes' to also pull archived users, in addition to active ones; the 'Archived' entity field is then available to map. Select 'No' to pull only active users."
         },
         {
-          "key": "DE Server (de.api.knowbe4.com)",
-          "value": "https://de.api.knowbe4.com"
+            "label": "Group Action Batch Size",
+            "key": "group_action_batch_size",
+            "type": "number",
+            "default": 50,
+            "mandatory": false,
+            "description": "Number of users sent in a single 'Add User to Group' or 'Remove User from Group' API call. Valid range: 1 to 100."
+        },
+        {
+            "label": "Pull Additional Details",
+            "key": "pull_additional_details",
+            "type": "multichoice",
+            "choices": [
+                {
+                    "key": "Custom Fields",
+                    "value": "custom_fields"
+                },
+                {
+                    "key": "PasswordIQ",
+                    "value": "passwordiq"
+                },
+                {
+                    "key": "SecurityCoach",
+                    "value": "securitycoach"
+                }
+            ],
+            "default": [],
+            "has_api_call": true,
+            "payload_fields": [
+                "pull_additional_details"
+            ],
+            "mandatory": false,
+            "description": "Select the additional details to pull for each user."
         }
-      ],
-      "default": "https://us.api.knowbe4.com",
-      "mandatory": true,
-      "description": "Base URL of KnowBe4 instance."
-    },
-    {
-      "label": "API Token",
-      "key": "api_key",
-      "type": "password",
-      "mandatory": true,
-      "default": "",
-      "description": "API Token can be generated from the 'Account Settings > Account Integrations > API > Reporting API > Create New API Token'."
-    }
-  ]
+    ]
 }

@@ -1,0 +1,21 @@
+{
+    "name": "Netskope Borderless WAN",
+    "id": "netskope_bwan_ztre",
+    "version": "1.0.0",
+    "module": "CRE",
+    "minimum_version": "6.1.0",
+    "minimum_provider_version": "1.1.0",
+    "provider_id": "netskope_bwan_tenant",
+    "netskope": true,
+    "description": "This plugin is used to perform the Add to Address Group and Remove from Address Group actions for IPv4 addresses and IPv4 CIDR ranges on the Netskope Borderless WAN (BWAN) platform. This plugin does not fetch any records from the Netskope Borderless WAN platform.",
+    "configuration": [
+        {
+            "label": "API Token (Optional)",
+            "key": "api_token",
+            "type": "password",
+            "default": "",
+            "mandatory": false,
+            "description": "Optional API Token of the Netskope Borderless WAN platform. If provided, it is used for all the API calls instead of the Auth Token of the selected Netskope Borderless WAN Tenant. If not provided, the Auth Token of the Tenant is used. API Token can be generated from the 'Settings > API Tokens' page of the Netskope Borderless WAN tenant."
+        }
+    ]
+}

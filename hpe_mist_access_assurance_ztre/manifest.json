@@ -1,0 +1,74 @@
+{
+    "name": "HPE Mist Access Assurance",
+    "id": "hpe_mist_access_assurance_ztre",
+    "version": "1.0.0",
+    "module": "CRE",
+    "minimum_version": "7.0.0",
+    "netskope": false,
+    "description": "This plugin is used to fetch Device (Access Point) records from the 'Access Points' page of the HPE Mist platform. It supports the 'Add/Remove Label', 'Add/Update NAC Devices', and 'Delete NAC Devices' actions on HPE Mist.",
+    "configuration": [
+        {
+            "label": "NAC API Base URL",
+            "key": "nac_base_url",
+            "type": "text",
+            "default": "",
+            "mandatory": false,
+            "description": "Base URL of the Juniper NAC API. Do not add '/v1' at the end. Mandatory when 'Fetch Access Points' is set to 'No'. Required to perform the 'Add/Update NAC Devices' or 'Delete NAC Devices' action."
+        },
+        {
+            "label": "NAC Client ID",
+            "key": "nac_client_id",
+            "type": "text",
+            "default": "",
+            "mandatory": false,
+            "description": "Client ID of the Juniper NAC API. Mandatory when 'Fetch Access Points' is set to 'No'. Required to perform the 'Add/Update NAC Devices' or 'Delete NAC Devices' action."
+        },
+        {
+            "label": "NAC Client Secret",
+            "key": "nac_client_secret",
+            "type": "password",
+            "default": "",
+            "mandatory": false,
+            "description": "Client Secret of the Juniper NAC API. Mandatory when 'Fetch Access Points' is set to 'No'. Required to perform the 'Add/Update NAC Devices' or 'Delete NAC Devices' action."
+        },
+        {
+            "label": "Mist Org ID",
+            "key": "nac_mist_org_id",
+            "type": "text",
+            "default": "",
+            "placeholder": "S_xxxxxxx",
+            "mandatory": false,
+            "description": "Mist org ID with environment prefix. Example S_xxxxxxx. Mandatory when 'Fetch Access Points' is set to 'No'. Required to perform the 'Add/Update NAC Devices' or 'Delete NAC Devices' action."
+        },
+        {
+            "label": "Netskope Account ID",
+            "key": "nac_netskope_account_id",
+            "type": "text",
+            "default": "",
+            "mandatory": false,
+            "description": "Netskope Account ID. Contact your Netskope support to obtain this value. Mandatory when 'Fetch Access Points' is set to 'No'. Required to perform the 'Add/Update NAC Devices' or 'Delete NAC Devices' action."
+        },
+        {
+            "label": "Fetch Access Points",
+            "key": "fetch_access_points",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Yes",
+                    "value": "Yes"
+                },
+                {
+                    "key": "No",
+                    "value": "No"
+                }
+            ],
+            "default": "No",
+            "has_api_call": true,
+            "payload_fields": [
+                "fetch_access_points"
+            ],
+            "mandatory": true,
+            "description": "Select 'Yes' to pull Device (Access Point) records from the HPE Mist API using Token Authentication; this reveals the credential fields it requires. Select 'No' to skip the Device (Access Point) pull entirely and use only the NAC workflow, in which case no devices are fetched and the NAC Configuration fields become mandatory instead."
+        }
+    ]
+}

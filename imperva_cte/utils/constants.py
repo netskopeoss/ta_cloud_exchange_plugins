@@ -29,24 +29,23 @@ CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-CTE Imperva Plugin constants.
+CTE Thales Plugin constants.
 """
 
 MODULE_NAME = "CTE"
-PLATFORM_NAME = "Imperva"
-PLUGIN_VERSION = "1.0.0"
-MAXIMUM_CE_VERSION = "5.1.2"
+PLATFORM_NAME = "Thales"
+PLUGIN_VERSION = "1.0.1"
 MAX_API_CALLS = 4
 RETRACTION = "Retraction"
 DEFAULT_SLEEP_TIME = 60
 INTEGER_THRESHOLD = 1800
-IMPERVA_API_BASE_URL = "https://api.imperva.com"
-IMPERVA_INCIDENT_URL = (
+THALES_API_BASE_URL = "https://api.imperva.com"
+THALES_INCIDENT_URL = (
    "https://management.service.imperva.com/attack-analytics/"
    "incident-details/{incident_id}"
 )
-IMPERVA_INCIDENT_ENDPOINT = (
-   f"{IMPERVA_API_BASE_URL}/analytics/v1/incidents"
+THALES_INCIDENT_ENDPOINT = (
+   f"{THALES_API_BASE_URL}/analytics/v1/incidents"
 )
 ENABLE_TAGGING_VALUES = {"Yes": "yes", "No": "no"}
 CHUNK_HOURS = 24

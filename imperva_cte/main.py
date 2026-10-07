@@ -29,7 +29,7 @@ CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-CTE Imperva Plugin constants.
+CTE Thales Plugin.
 """
 
 import traceback
@@ -56,16 +56,16 @@ from .utils.constants import (
     PLATFORM_NAME,
     PLUGIN_VERSION,
     RETRACTION,
-    IMPERVA_INCIDENT_ENDPOINT,
-    IMPERVA_INCIDENT_URL,
+    THALES_INCIDENT_ENDPOINT,
+    THALES_INCIDENT_URL,
     ENABLE_TAGGING_VALUES,
-    CHUNK_HOURS
+    CHUNK_HOURS,
 )
-from .utils.helper import ImpervaPluginException, ImpervaPluginHelper
+from .utils.helper import ThalesPluginException, ThalesPluginHelper
 
 
-class ImpervaPlugin(PluginBase):
-    """Imperva Plugin class"""
+class ThalesPlugin(PluginBase):
+    """Thales Plugin class"""
 
     def __init__(self, name, *args, **kwargs):
         """Init function.
@@ -83,7 +83,7 @@ class ImpervaPlugin(PluginBase):
         self.config_name = name
         if name:
             self.log_prefix = f"{self.log_prefix} [{name}]"
-        self.imperva_helper = ImpervaPluginHelper(
+        self.thales_helper = ThalesPluginHelper(
             logger=self.logger,
             log_prefix=self.log_prefix,
             plugin_name=self.plugin_name,
@@ -97,7 +97,7 @@ class ImpervaPlugin(PluginBase):
             tuple: Tuple of plugin's name and version fetched from manifest.
         """
         try:
-            metadata = ImpervaPlugin.metadata
+            metadata = ThalesPlugin.metadata
             plugin_name = metadata.get("name", PLATFORM_NAME)
             plugin_version = metadata.get("version", PLUGIN_VERSION)
             return plugin_name, plugin_version
@@ -112,13 +112,10 @@ class ImpervaPlugin(PluginBase):
         return (PLATFORM_NAME, PLUGIN_VERSION)
 
     def _validate_connectivity(
-        self,
-        account_id: str,
-        api_id: str,
-        api_key: str
+        self, account_id: str, api_id: str, api_key: str
     ) -> ValidationResult:
         """
-        Validate connectivity with Imperva server by making REST API call.
+        Validate connectivity with Thales server by making REST API call.
 
         Args:
             account_id (str): Account ID.
@@ -134,28 +131,26 @@ class ImpervaPlugin(PluginBase):
                 f"{self.log_prefix}: Validating connectivity with "
                 f"{PLATFORM_NAME} server."
             )
-            headers = self.imperva_helper.get_auth_headers(
-                api_id=api_id,
-                api_key=api_key
+            headers = self.thales_helper.get_auth_headers(
+                api_id=api_id, api_key=api_key
             )
 
             sample_epoch = int(time.time() * 1000)
             params = {
                 "caid": account_id,
                 "from_timestamp": sample_epoch,
-                "to_timestamp": sample_epoch
+                "to_timestamp": sample_epoch,
             }
 
-            self.imperva_helper.api_helper(
-                url=IMPERVA_INCIDENT_ENDPOINT,
+            self.thales_helper.api_helper(
+                url=THALES_INCIDENT_ENDPOINT,
                 method="GET",
                 params=params,
                 headers=headers,
                 verify=self.ssl_validation,
                 proxies=self.proxy,
                 logger_msg=(
-                    f"validating connectivity "
-                    f"with {PLATFORM_NAME} server"
+                    f"validating connectivity with {PLATFORM_NAME} server"
                 ),
                 is_validation=True,
             )
@@ -165,18 +160,13 @@ class ImpervaPlugin(PluginBase):
                 f"connectivity with {PLATFORM_NAME} server "
                 "and plugin configuration parameters."
             )
-            self.logger.debug(
-                f"{self.log_prefix}: {logger_msg}"
-            )
+            self.logger.debug(f"{self.log_prefix}: {logger_msg}")
             return ValidationResult(
                 success=True,
                 message=logger_msg,
             )
-        except ImpervaPluginException as exp:
-            return ValidationResult(
-                success=False,
-                message=str(exp)
-            )
+        except ThalesPluginException as exp:
+            return ValidationResult(success=False, message=str(exp))
         except Exception as exp:
             err_msg = "Unexpected validation error occurred."
             self.logger.error(
@@ -195,6 +185,7 @@ class ImpervaPlugin(PluginBase):
         field_type: type,
         allowed_values: Dict = None,
         max_value: int = None,
+        min_value: int = 1,
         is_required: bool = True,
         validation_err_msg: str = "Validation error occurred. ",
     ) -> Union[ValidationResult, None]:
@@ -210,6 +201,9 @@ class ImpervaPlugin(PluginBase):
                 the configuration field. Defaults to None.
             max_value (int, optional): Maximum allowed value for the
                 configuration field. Defaults to None.
+            min_value (int, optional): Minimum allowed value for the
+                configuration field. Applied only when max_value is
+                provided. Defaults to 1.
             is_required (bool, optional): Whether the field is required.
                 Defaults to True.
             validation_err_msg (str, optional): Error message to be logged in
@@ -223,9 +217,9 @@ class ImpervaPlugin(PluginBase):
         if field_type is str:
             field_value = field_value.strip()
         if (
-            is_required and
-            not isinstance(field_value, int) and
-            not field_value
+            is_required
+            and not isinstance(field_value, int)
+            and not field_value
         ):
             err_msg = f"{field_name} is a required configuration parameter."
             self.logger.error(
@@ -249,14 +243,14 @@ class ImpervaPlugin(PluginBase):
                 resolution=(
                     f"Ensure that valid value for {field_name} is "
                     "provided in the configuration parameters."
-                )
+                ),
             )
             return ValidationResult(
                 success=False,
                 message=err_msg,
             )
         if allowed_values:
-            allowed_values_str = ', '.join(allowed_values.keys())
+            allowed_values_str = ", ".join(allowed_values.keys())
             err_msg = (
                 f"Invalid value provided for the configuration"
                 f" parameter '{field_name}'. Allowed values are"
@@ -296,22 +290,22 @@ class ImpervaPlugin(PluginBase):
                             success=False,
                             message=err_msg,
                         )
-        if max_value and isinstance(field_value, int) and (
-            field_value > max_value or field_value <= 0
+        if (
+            max_value
+            and isinstance(field_value, int)
+            and (field_value > max_value or field_value < min_value)
         ):
             err_msg = (
                 f"Invalid value for {field_name} provided in configuration "
                 "parameters. Valid value should be an integer "
-                f"greater than 0 and less than {max_value}."
+                f"between {min_value} and {max_value}."
             )
             resolution = (
                 f"Ensure that value for {field_name} is "
-                f"an integer greater than 0 and less than {max_value}."
+                f"an integer between {min_value} and {max_value}."
             )
             self.logger.error(
-                message=(
-                    f"{self.log_prefix}: {validation_err_msg}{err_msg}"
-                ),
+                message=(f"{self.log_prefix}: {validation_err_msg}{err_msg}"),
                 resolution=resolution,
             )
             return ValidationResult(
@@ -335,7 +329,7 @@ class ImpervaPlugin(PluginBase):
             enable_tagging,
             retraction_interval,
             initial_pull_range,
-        ) = self.imperva_helper.get_configuration_parameters(
+        ) = self.thales_helper.get_configuration_parameters(
             configuration,
         )
 
@@ -378,6 +372,7 @@ class ImpervaPlugin(PluginBase):
             field_value=initial_pull_range,
             field_type=int,
             max_value=INTEGER_THRESHOLD,
+            min_value=0,
         ):
             return validation_result
 
@@ -536,7 +531,9 @@ class ImpervaPlugin(PluginBase):
         for incident in page_results:
             try:
                 ioc_ipv4 = incident.get("dominant_attack_ip", {}).get("ip", "")
-                ioc_type = self._determine_ip_version(ioc_ipv4) if ioc_ipv4 else None
+                ioc_type = (
+                    self._determine_ip_version(ioc_ipv4) if ioc_ipv4 else None
+                )
 
                 if not ioc_ipv4 or not ioc_type:
                     skip_ioc_count += 1
@@ -553,7 +550,7 @@ class ImpervaPlugin(PluginBase):
                 first_seen = incident.get("first_event_time", "")
                 last_seen = incident.get("last_event_time", "")
 
-                incident_url = IMPERVA_INCIDENT_URL.format(
+                incident_url = THALES_INCIDENT_URL.format(
                     incident_id=incident.get("id", "")
                 )
 
@@ -625,13 +622,9 @@ class ImpervaPlugin(PluginBase):
                 page_indicator_list.append(indicator)
 
             except Exception as e:
-                err_msg = (
-                    "Error occurred while processing incident details."
-                )
+                err_msg = "Error occurred while processing incident details."
                 self.logger.error(
-                    message=(
-                        f"{self.log_prefix}: {err_msg} Error: {e}"
-                    ),
+                    message=(f"{self.log_prefix}: {err_msg} Error: {e}"),
                     details=str(traceback.format_exc()),
                 )
                 skip_ioc_count += 1
@@ -654,10 +647,10 @@ class ImpervaPlugin(PluginBase):
         is_retraction: bool = False,
     ) -> Generator[Tuple[List[Union[Indicator, str]], Dict], None, None]:
         """
-        Pulls IoC(s) from Attack Analytics Incidents page on Imperva.
+        Pulls IoC(s) from Attack Analytics Incidents page on Thales.
 
         Args:
-            account_id (str): Account ID of the Imperva server.
+            account_id (str): Account ID of the Thales server.
             api_id (str): API ID for authentication.
             api_key (str): API Key for authentication.
             initial_pull_range (int): Initial pull range.
@@ -683,17 +676,24 @@ class ImpervaPlugin(PluginBase):
         elif self.last_run_at:
             start_time = int(self.last_run_at.timestamp() * 1000)
         else:
-            self.logger.info(
-                f"{self.log_prefix}: This is initial data fetch since "
-                "checkpoint is empty. Querying IoC(s) for "
-                f"last {initial_pull_range} days."
-            )
+            if initial_pull_range == 0:
+                self.logger.info(
+                    f"{self.log_prefix}: This is initial data fetch since "
+                    "checkpoint is empty and Initial Range is set to 0 days. "
+                    "Hence, skipping the historical pull of indicator(s)."
+                )
+            else:
+                self.logger.info(
+                    f"{self.log_prefix}: This is initial data fetch since "
+                    "checkpoint is empty. Querying IoC(s) for "
+                    f"last {initial_pull_range} days."
+                )
             start_time = int((time.time() - initial_pull_range * 86400) * 1000)
 
         indicator_count = 0
         total_skipped_tags = set()
         page_count = 1
-        headers = self.imperva_helper.get_auth_headers(
+        headers = self.thales_helper.get_auth_headers(
             api_id=api_id,
             api_key=api_key,
         )
@@ -720,10 +720,10 @@ class ImpervaPlugin(PluginBase):
                 params = {
                     "caid": account_id,
                     "from_timestamp": start_ms,
-                    "to_timestamp": end_ms
+                    "to_timestamp": end_ms,
                 }
-                response = self.imperva_helper.api_helper(
-                    url=IMPERVA_INCIDENT_ENDPOINT,
+                response = self.thales_helper.api_helper(
+                    url=THALES_INCIDENT_ENDPOINT,
                     method="GET",
                     params=params,
                     headers=headers,
@@ -788,7 +788,7 @@ class ImpervaPlugin(PluginBase):
                 f"{indicator_count} IoC(s) from "
                 f"{PLATFORM_NAME}."
             )
-        except ImpervaPluginException:
+        except ThalesPluginException:
             raise
         except Exception as err:
             err_msg = (
@@ -799,10 +799,10 @@ class ImpervaPlugin(PluginBase):
                 message=f"{self.log_prefix}: {err_msg} Error: {err}",
                 details=str(traceback.format_exc()),
             )
-            raise ImpervaPluginException(err_msg)
+            raise ThalesPluginException(err_msg)
 
     def _pull(self) -> Generator[Tuple[List[Indicator], Dict], None, None]:
-        """Pulls IoC(s) from Imperva Attack Analytics Incidents.
+        """Pulls IoC(s) from Thales Attack Analytics Incidents.
 
         Yields:
             Generator[Tuple[List[Indicator], Dict], None, None]: Generator
@@ -815,7 +815,7 @@ class ImpervaPlugin(PluginBase):
             enable_tagging,
             _,
             initial_pull_range,
-        ) = self.imperva_helper.get_configuration_parameters(
+        ) = self.thales_helper.get_configuration_parameters(
             self.configuration,
         )
         yield from self._pull_indicators(
@@ -827,7 +827,7 @@ class ImpervaPlugin(PluginBase):
         )
 
     def pull(self) -> List[Indicator]:
-        """Pulls IoC(s) from Imperva Attack Analytics Incidents.
+        """Pulls IoC(s) from Thales Attack Analytics Incidents.
 
         Returns:
             List[Indicator]: List of IoCs.
@@ -840,18 +840,17 @@ class ImpervaPlugin(PluginBase):
                 for batch, _ in self._pull():
                     indicators.extend(batch)
                 return indicators
-        except ImpervaPluginException:
+        except ThalesPluginException:
             raise
         except Exception as err:
             err_msg = (
-                "Error occurred while pulling IoCs "
-                f"from {PLATFORM_NAME}."
+                f"Error occurred while pulling IoCs from {PLATFORM_NAME}."
             )
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {err}",
                 details=str(traceback.format_exc()),
             )
-            raise ImpervaPluginException(err_msg)
+            raise ThalesPluginException(err_msg)
 
     def get_modified_indicators(
         self, source_indicators: List[List[Dict]]
@@ -875,7 +874,7 @@ class ImpervaPlugin(PluginBase):
             _,
             retraction_interval,
             _,
-        ) = self.imperva_helper.get_configuration_parameters(
+        ) = self.thales_helper.get_configuration_parameters(
             self.configuration,
         )
         if not (retraction_interval and isinstance(retraction_interval, int)):
@@ -908,7 +907,8 @@ class ImpervaPlugin(PluginBase):
             try:
                 total_iocs = len(source_ioc_list)
                 iocs = {
-                    ioc.value for ioc in source_ioc_list
+                    ioc.value
+                    for ioc in source_ioc_list
                     if ioc and ioc.value not in modified_iocs
                 }
 
@@ -929,4 +929,4 @@ class ImpervaPlugin(PluginBase):
                     message=(f"{self.log_prefix}: {err_msg} Error: {err}"),
                     details=traceback.format_exc(),
                 )
-                raise ImpervaPluginException(err_msg)
+                raise ThalesPluginException(err_msg)

@@ -1,10 +1,10 @@
 {
-    "name": "Imperva",
+    "name": "Thales",
     "id": "imperva_cte",
-    "version": "1.0.0",
-    "description": "This plugin is used to fetch the IoCs of type IPv4 from the Application > Attack Analytics > Incidents page on the Imperva platform. This plugin does not support sharing of IoCs to the Imperva platform. This plugin supports retraction of IoCs pulled from the Imperva platform.",
+    "version": "1.0.1",
+    "description": "This plugin is used to fetch the IoCs of type IPv4 from the Application > Attack Analytics > Incidents page on the Thales platform. This plugin does not support sharing of IoCs to the Thales platform. This plugin supports retraction of IoCs pulled from the Thales platform.",
     "module": "CTE",
-    "minimum_version": "5.1.0",
+    "minimum_version": "6.0.0",
     "patch_supported": true,
     "push_supported": false,
     "fetch_retraction_info": true,
@@ -23,7 +23,7 @@
             "type": "password",
             "default": "",
             "mandatory": true,
-            "description": "API ID generated from the Imperva instance. API ID can be generated from 'Account Management > User Management > My profile > API keys' page."
+            "description": "API ID generated from the Thales instance. API ID can be generated from 'Account Management > User Management > My profile > API keys' page."
         },
         {
             "label": "API Key",
@@ -31,7 +31,7 @@
             "type": "password",
             "default": "",
             "mandatory": true,
-            "description": "API Key generated from the Imperva instance. API Key can be generated from 'Account Management > User Management > My profile > API keys' page."
+            "description": "API Key generated from the Thales instance. API Key can be generated from 'Account Management > User Management > My profile > API keys' page."
         },
         {
             "label": "Enable Tagging",
@@ -56,7 +56,7 @@
             "key": "retraction_interval",
             "type": "number",
             "mandatory": false,
-            "description": "Specify the number of days for which IoC retraction should be run for Imperva IoCs. Note: This parameter is applicable only for Netskope CE version 5.1.0 or later, and if \"IoC(s) Retraction\" is enabled in Threat Exchange Settings. Value must be between 1 and 1800."
+            "description": "Number of days to use as the retraction interval for Thales indicator(s) pull retraction. This parameter applies only when IoC(s) Retraction is enabled in Threat Exchange Settings. Value must be between 1 and 1800."
         },
         {
             "label": "Initial Range (in days)",
@@ -64,7 +64,7 @@
             "type": "number",
             "mandatory": true,
             "default": 7,
-            "description": "Number of days to pull the data for the initial run. Value must be between 1 and 1800."
+            "description": "Number of days to pull the data for the initial run. Value must be between 0 and 1800."
         }
     ]
 }

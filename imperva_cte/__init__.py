@@ -1,1 +1,1 @@
-"""CTE Imperva Plugin Package."""
+"""CTE Thales Plugin Package."""

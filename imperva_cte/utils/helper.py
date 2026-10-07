@@ -29,17 +29,15 @@ CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-CTE Imperva Plugin constants.
+CTE Thales Plugin helper module.
 """
 
 import json
 import time
 import traceback
 import requests
-from packaging import version
 from typing import Dict, Tuple, Union
 
-from netskope.common.api import __version__ as CE_VERSION
 from netskope.common.utils import add_user_agent
 from .constants import (
     MODULE_NAME,
@@ -47,18 +45,17 @@ from .constants import (
     DEFAULT_SLEEP_TIME,
     MAX_API_CALLS,
     RETRACTION,
-    MAXIMUM_CE_VERSION
 )
 
 
-class ImpervaPluginException(Exception):
-    """Imperva plugin custom exception class."""
+class ThalesPluginException(Exception):
+    """Thales plugin custom exception class."""
 
     pass
 
 
-class ImpervaPluginHelper:
-    """Imperva plugin helper module."""
+class ThalesPluginHelper:
+    """Thales plugin helper module."""
 
     def __init__(
         self,
@@ -67,7 +64,7 @@ class ImpervaPluginHelper:
         plugin_name: str,
         plugin_version: str,
     ):
-        """Imperva Plugin Helper initializer.
+        """Thales Plugin Helper initializer.
 
         Args:
             logger (logger object): Logger object.
@@ -79,32 +76,6 @@ class ImpervaPluginHelper:
         self.logger = logger
         self.plugin_name = plugin_name
         self.plugin_version = plugin_version
-        self.resolution_support = version.parse(CE_VERSION) > version.parse(
-            MAXIMUM_CE_VERSION
-        )
-        # Patch logger methods to handle resolution parameter compatibility
-        self._patch_logger_methods()
-
-    def _patch_logger_methods(self):
-        """Monkey patch logger methods to handle \
-            resolution parameter compatibility."""
-        # Store original methods
-        original_error = self.logger.error
-
-        def patched_error(
-            message=None, details=None, resolution=None, **kwargs
-        ):
-            """Patched error method that handles resolution compatibility."""
-            log_kwargs = {"message": message}
-            if details:
-                log_kwargs["details"] = details
-            if resolution and self.resolution_support:
-                log_kwargs["resolution"] = resolution
-            log_kwargs.update(kwargs)
-            return original_error(**log_kwargs)
-
-        # Replace logger methods with patched versions
-        self.logger.error = patched_error
 
     def _add_user_agent(self, headers: Union[Dict, None] = None) -> Dict:
         """Add User-Agent in the headers for third-party requests.
@@ -212,7 +183,7 @@ class ImpervaPluginHelper:
                             message=f"{self.log_prefix}: {error_msg}",
                             details=f"API response: {response.text}",
                         )
-                        raise ImpervaPluginException(error_msg)
+                        raise ThalesPluginException(error_msg)
                     self.logger.error(
                         message=(
                             f"{self.log_prefix}: Received exit code"
@@ -235,7 +206,7 @@ class ImpervaPluginHelper:
                         if is_handle_error_required
                         else response
                     )
-        except ImpervaPluginException:
+        except ThalesPluginException:
             raise
         except requests.exceptions.ReadTimeout as error:
             err_msg = (
@@ -252,7 +223,7 @@ class ImpervaPluginHelper:
                 message=f"{self.log_prefix}: {err_msg} Error: {error}",
                 details=traceback.format_exc(),
             )
-            raise ImpervaPluginException(err_msg)
+            raise ThalesPluginException(err_msg)
         except requests.exceptions.ProxyError as error:
             err_msg = (
                 f"Proxy error occurred while {logger_msg} when trying "
@@ -270,7 +241,7 @@ class ImpervaPluginHelper:
                 message=f"{self.log_prefix}: {err_msg} Error: {error}",
                 details=traceback.format_exc(),
             )
-            raise ImpervaPluginException(err_msg)
+            raise ThalesPluginException(err_msg)
         except requests.exceptions.ConnectionError as e:
             err_msg = (
                 f"Unable to establish connection with {PLATFORM_NAME} "
@@ -288,7 +259,7 @@ class ImpervaPluginHelper:
                 message=f"{self.log_prefix}: {err_msg} Error: {e}",
                 details=traceback.format_exc(),
             )
-            raise ImpervaPluginException(err_msg)
+            raise ThalesPluginException(err_msg)
         except requests.HTTPError as e:
             err_msg = f"HTTP error occurred while {logger_msg}."
             if is_validation:
@@ -300,7 +271,7 @@ class ImpervaPluginHelper:
                 message=f"{self.log_prefix}: {err_msg} Error: {e}",
                 details=traceback.format_exc(),
             )
-            raise ImpervaPluginException(err_msg)
+            raise ThalesPluginException(err_msg)
         except Exception as e:
             err_msg = f"Unexpected error occurred while {logger_msg}."
             if is_validation:
@@ -312,14 +283,14 @@ class ImpervaPluginHelper:
                     message=f"{self.log_prefix}: {err_msg} Error: {e}",
                     details=traceback.format_exc(),
                 )
-                raise ImpervaPluginException(
+                raise ThalesPluginException(
                     f"{err_msg} Check logs for more details."
                 )
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {e}",
                 details=traceback.format_exc(),
             )
-            raise ImpervaPluginException(err_msg)
+            raise ThalesPluginException(err_msg)
 
     def _handle_error(
         self,
@@ -365,7 +336,7 @@ class ImpervaPluginHelper:
                 "required permissions or roles."
             ),
             404: (
-                "Ensure that the Imperva API Base URL is valid."
+                "Ensure that the Thales API Base URL is valid."
             ),
         }
         if is_validation:
@@ -389,7 +360,7 @@ class ImpervaPluginHelper:
                 ),
                 404: (
                     "Received exit code 404 (Resource not found), "
-                    "Verify Imperva API Base URL is valid."
+                    "Verify Thales API Base URL is valid."
                 ),
             }
         if status_code in [200, 201, 202]:
@@ -409,7 +380,7 @@ class ImpervaPluginHelper:
                     details=f"API response: {response.text}",
                     resolution=resolution_dict.get(status_code),
                 )
-                raise ImpervaPluginException(log_error_msg)
+                raise ThalesPluginException(log_error_msg)
             else:
                 err_msg = error_msg + " while " + logger_msg + "."
                 self.logger.error(
@@ -417,7 +388,7 @@ class ImpervaPluginHelper:
                     details=f"API response: {response.text}",
                     resolution=resolution_dict.get(status_code),
                 )
-                raise ImpervaPluginException(err_msg)
+                raise ThalesPluginException(err_msg)
         else:
             err_msg = (
                 "HTTP Server Error"
@@ -435,7 +406,7 @@ class ImpervaPluginHelper:
                 ),
                 details=f"API response: {response.text}",
             )
-            raise ImpervaPluginException(err_msg)
+            raise ThalesPluginException(err_msg)
 
     def _parse_response(
         self,
@@ -468,11 +439,11 @@ class ImpervaPluginHelper:
             )
             if is_validation:
                 err_msg = (
-                    "Verify Imperva API Base URL provided in the "
+                    "Verify Thales API Base URL provided in the "
                     "configuration parameters. "
                     "Check logs for more details."
                 )
-            raise ImpervaPluginException(err_msg)
+            raise ThalesPluginException(err_msg)
         except Exception as exp:
             err_msg = (
                 "Unexpected error occurred while parsing "
@@ -485,11 +456,11 @@ class ImpervaPluginHelper:
             if is_validation:
                 err_msg = (
                     "Unexpected validation error occurred, "
-                    "Verify Imperva API Base URL provided in the "
+                    "Verify Thales API Base URL provided in the "
                     "configuration parameters. "
                     "Check logs for more details."
                 )
-            raise ImpervaPluginException(err_msg)
+            raise ThalesPluginException(err_msg)
 
     def get_configuration_parameters(
         self, configuration: Dict
@@ -516,11 +487,11 @@ class ImpervaPluginHelper:
 
     def get_auth_headers(self, api_id: str, api_key: str) -> Dict:
         """
-        Get the authentication headers for the Imperva plugin.
+        Get the authentication headers for the Thales plugin.
 
         Args:
-            api_id (str): The API ID for the Imperva plugin.
-            api_key (str): The API Key for the Imperva plugin.
+            api_id (str): The API ID for the Thales plugin.
+            api_key (str): The API Key for the Thales plugin.
 
         Returns:
             Dict: A dictionary containing the authentication headers.

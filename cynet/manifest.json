@@ -1,0 +1,65 @@
+{
+    "name": "Cynet",
+    "id": "cynet",
+    "version": "1.0.0",
+    "description": "Cynet plugin fetches Threat IOCs (SHA256, Domain, IP Address and URLs) from Cynet Alerts and also supports Remediation Action on File (SHA256).",
+    "configuration": [
+        {
+            "label": "Base URL",
+            "key": "base_url",
+            "type": "text",
+            "mandatory": true,
+            "default": "",
+            "description": "Base URL of Cynet instance. e.g. https://local.api.cynet.com"
+        },
+        {
+            "label": "Client ID",
+            "key": "client_id",
+            "type": "number",
+            "mandatory": true,
+            "description": "Client ID generated from the Cynet platform. Client ID can be generated from the 'Global Settings > Client Site Manager > Sites Status' page."
+        },
+        {
+            "label": "Username",
+            "key": "user_name",
+            "type": "text",
+            "mandatory": true,
+            "default": "",
+            "description": "Cynet platform's login username."
+        },
+        {
+            "label": "Password",
+            "key": "password",
+            "type": "password",
+            "mandatory": true,
+            "default": "",
+            "description": "Cynet platform's login password."
+        },
+        {
+            "label": "Enable Polling",
+            "key": "is_pull_required",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Yes",
+                    "value": "Yes"
+                },
+                {
+                    "key": "No",
+                    "value": "No"
+                }
+            ],
+            "default": "Yes",
+            "mandatory": true,
+            "description": "Enable/Disable polling Threat IoCs from Cynet. Disable if you only need to perform Remediation Action."
+        },
+        {
+            "label": "Initial Range",
+            "key": "initial_range",
+            "type": "number",
+            "mandatory": true,
+            "default": 7,
+            "description": "Number of days to pull the data for the initial run."
+        }
+    ]
+}

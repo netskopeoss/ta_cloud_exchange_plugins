@@ -1,0 +1,1 @@
+"""Symantec EDR Plugin."""

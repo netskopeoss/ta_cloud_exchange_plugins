@@ -1,0 +1,42 @@
+{
+    "name": "Microsoft Defender Threat Intelligence",
+    "id": "microsoft_defender_threat_intelligence",
+    "version": "1.0.0",
+    "description": "This plugin is used to pull indicators of type URLs (Hostnames and IP Addresses) from Microsoft Defender Threat Intelligence platform from the Intelligence Profiles. The Plugin does not support sharing indicators to Microsoft Defender Threat Intelligence platform.",
+    "patch_supported": false,
+    "push_supported": false,
+    "configuration": [
+        {
+            "label": "Tenant ID",
+            "key": "tenant_id",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "Tenant ID of your Azure application."
+        },
+        {
+            "label": "Application (client) ID",
+            "key": "client_id",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "Application (client) ID of your Azure application."
+        },
+        {
+            "label": "Client Secret",
+            "key": "client_secret",
+            "type": "password",
+            "default": "",
+            "mandatory": true,
+            "description": "Client Secret of your Azure application."
+        },
+        {
+            "label": "Initial Range (in days)",
+            "key": "days",
+            "type": "number",
+            "mandatory": true,
+            "default": 7,
+            "description": "Number of days to pull the data for the initial run."
+        }
+    ]
+}

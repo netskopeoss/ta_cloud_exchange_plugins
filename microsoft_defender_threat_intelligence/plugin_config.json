@@ -1,0 +1,89 @@
+{
+    "name": "Microsoft Defender Threat Intelligence",
+    "id": "microsoft_defender_threat_intelligence",
+    "version": "1.0.0",
+    "description": "This plugin is used to pull indicators of type URLs (hostnames and IP addresses) from Microsoft Defender Threat Intelligence platform using the articles. The Plugin does not support sharing indicators to Microsoft Defender Threat Intelligence platform.",
+    "patch_supported": false,
+    "push_supported": false,
+    "configuration": [
+        {
+            "label": "Base URL",
+            "key": "base_url",
+            "type": "choice",
+            "default": "https://api.securitycenter.microsoft.com",
+            "mandatory": true,
+            "description": "Base URL for Defender for Endpoint.",
+            "choices": "[\n          {\n              \"key\": \"api.securitycenter.microsoft.com\",\n              \"value\": \"https://api.securitycenter.microsoft.com\"\n          },\n          {\n            \"key\": \"api-us.securitycenter.microsoft.com\",\n            \"value\": \"https://api-us.securitycenter.microsoft.com\"\n          },\n          {\n            \"key\": \"api-eu.securitycenter.microsoft.com\",\n            \"value\": \"https://api-eu.securitycenter.microsoft.com\"\n          },\n          {\n            \"key\": \"api-uk.securitycenter.microsoft.com\",\n            \"value\": \"https://api-uk.securitycenter.microsoft.com\"\n          },\n          {\n              \"key\": \"api-gcc.securitycenter.microsoft.us\",\n              \"value\": \"https://api-gcc.securitycenter.microsoft.us\"\n          },\n          {\n            \"key\": \"api-gov.securitycenter.microsoft.us\",\n            \"value\": \"https://api-gov.securitycenter.microsoft.us\"\n          }\n      ]",
+            "validations": {
+                "field_not_empty_check": {
+                    "error_message": "Base URL is a required configuration parameter."
+                },
+                "validate_url_format": {
+                    "error_message": "Invalid Base URL provided in the configuration parameters."
+                },
+                "validate_list_values": {
+                    "error_message": "Invalid Base URL provided in the configuration parameters.",
+                    "supported_values": [
+                        "https://api.securitycenter.microsoft.com",
+                        "https://api-us.securitycenter.microsoft.com",
+                        "https://api-eu.securitycenter.microsoft.com",
+                        "https://api-uk.securitycenter.microsoft.com",
+                        "https://api-gcc.securitycenter.microsoft.us",
+                        "https://api-gov.securitycenter.microsoft.us"
+                    ]
+                },
+                "field_value_type_check": {
+                    "error_message": "Invalid Tenant ID provided."
+                }
+            }
+        },
+        {
+            "label": "Tenant ID",
+            "key": "tenant_id",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "Tenant ID of your Azure application.",
+            "validations": {
+                "field_not_empty_check": {
+                    "error_message": "Tenant ID is a required configuration parameter."
+                },
+                "field_value_type_check": {
+                    "error_message": "Invalid Tenant ID provided."
+                }
+            }
+        },
+        {
+            "label": "Application (client) ID",
+            "key": "client_id",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "Application (client) ID of your Azure application.",
+            "validations": {
+                "field_value_type_check": {
+                    "error_message": "Invalid Client ID provided."
+                },
+                "field_not_empty_check": {
+                    "error_message": "Application (client) ID is a required configuration parameter."
+                }
+            }
+        },
+        {
+            "label": "Client Secret",
+            "key": "client_secret",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "Client Secret of your Azure application.",
+            "validations": {
+                "field_not_empty_check": {
+                    "error_message": "Client Secret is a required configuration parameter."
+                },
+                "field_value_type_check": {
+                    "error_message": "Invalid Client Secret provided."
+                }
+            }
+        }
+    ]
+}

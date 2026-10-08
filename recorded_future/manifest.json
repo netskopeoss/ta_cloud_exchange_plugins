@@ -1,0 +1,67 @@
+{
+  "name": "Recorded Future",
+  "id": "recorded_future",
+  "version": "1.0.0",
+  "description": "This plugin is used to pull indicators of type URL, Domain, IP Addresses (IPv4, IPv6) and Hash (MD5 and SHA256) from the risk list of Recorded Future platform. This plugin does not support sharing of indicators to Recorded Future.",
+  "patch_supported": false,
+  "push_supported": false,
+  "configuration": [
+    {
+      "label": "API Key",
+      "key": "api_key",
+      "type": "password",
+      "mandatory": true,
+      "default": "",
+      "description": "API Key for the Recorded Future platform."
+    },
+    {
+      "label": "Risk Lists",
+      "key": "risk_lists",
+      "type": "multichoice",
+      "choices": [
+        {
+          "key": "Domain",
+          "value": "domain"
+        },
+        {
+          "key": "Hash (MD5 and SHA256)",
+          "value": "hash"
+        },
+        {
+          "key": "IP Addresses (IPv4, IPv6)",
+          "value": "ip"
+        },
+        {
+          "key": "URL",
+          "value": "url"
+        }
+      ],
+      "mandatory": true,
+      "default": [
+        "domain",
+        "hash",
+        "ip",
+        "url"
+      ],
+      "description": "Type of threat indicator you want to pull based on the risk lists available."
+    },
+    {
+      "label": "Fetch Evidences",
+      "key": "fetch_evidences",
+      "type": "choice",
+      "mandatory": true,
+      "default": "yes",
+      "description": "Allow to import all IOC evidence into the comments field.",
+      "choices": [
+        {
+          "key": "Yes",
+          "value": "yes"
+        },
+        {
+          "key": "No",
+          "value": "no"
+        }
+      ]
+    }
+  ]
+}

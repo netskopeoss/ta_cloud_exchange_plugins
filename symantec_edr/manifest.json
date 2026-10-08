@@ -1,0 +1,42 @@
+{
+    "name": "Symantec EDR",
+    "id": "symantec_edr",
+    "version": "1.0.0",
+    "description": "The Symantec EDR (On Prem) plugin fetches IoCs of the type of URL (Domain, IPv4, IPv6), and SHA256 from the Symantec EDR platform. This plugin does not support sharing of indicators.",
+    "patch_supported": false,
+    "push_supported": false,
+    "configuration": [
+        {
+            "label": "Server URL",
+            "key": "server_url",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "Symantec EDR (On Prem) Appliance URL i.e., https://host:port."
+        },
+        {
+            "label": "Client ID",
+            "key": "client_id",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "Client ID from Symantec EDR (On Prem) Appliance."
+        },
+        {
+            "label": "Client Secret",
+            "key": "client_secret",
+            "type": "password",
+            "default": "",
+            "mandatory": true,
+            "description": "Client Secret from Symantec EDR (On Prem) Appliance."
+        },
+        {
+            "label": "Initial Range (in days)",
+            "key": "days",
+            "type": "number",
+            "default": 7,
+            "mandatory": true,
+            "description": "Number of days to pull the data for the initial run."
+        }
+    ]
+}

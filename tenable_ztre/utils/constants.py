@@ -35,13 +35,16 @@ CRE Tenable Plugin Constants module.
 ASSET_PAGE_SIZE = 1000
 VULN_PAGE_SIZE = 50
 PLATFORM_NAME = "Tenable"
-PLUGIN_VERSION = "1.0.0"
+PLUGIN_VERSION = "1.0.1"
 MODULE_NAME = "CRE"
 MAX_RETRIES = 4
 DEFAULT_SLEEP_TIME = 60
 INTEGER_THRESHOLD = 4611686018427387904
 MAXIMUM_CE_VERSION = "5.1.2"
 
+USER_AGENT_STRING = (
+    "Integration/1.0 (Netskope; CRE-Tenable; Build/{ce_version}:{plugin_version})"  # noqa
+)
 CONFIGURATION = "configuration"
 ACTION = "action"
 

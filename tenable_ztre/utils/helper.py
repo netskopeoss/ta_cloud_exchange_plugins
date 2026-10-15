@@ -37,6 +37,7 @@ import traceback
 from typing import Any, Dict, Tuple, Union
 
 import requests
+from netskope.common.api import __version__ as CE_VERSION
 from netskope.common.utils import add_user_agent
 from requests.models import Response
 
@@ -58,6 +59,8 @@ from .constants import (
     TAGS_VALUES_ENDPOINT,
     TAGS_ASSIGNMENTS_ENDPOINT,
     TAGS_API_LIMIT,
+    USER_AGENT_STRING,
+    PLUGIN_VERSION,
 )
 from .exceptions import (
     TenablePluginException,
@@ -99,14 +102,13 @@ class TenableHelper:
         if headers and "User-Agent" in headers:
             return headers
         headers = add_user_agent(headers)
-        ce_added_agent = headers.get("User-Agent", "netskope-ce")
-        user_agent = "{}-{}-{}-v{}".format(
-            ce_added_agent,
-            MODULE_NAME.lower(),
-            self.plugin_name.lower().replace(" ", "-"),
-            self.plugin_version,
+        headers.update(
+            {
+                "User-Agent": USER_AGENT_STRING.format(
+                    ce_version=CE_VERSION, plugin_version=PLUGIN_VERSION
+                )
+            }
         )
-        headers.update({"User-Agent": user_agent})
         return headers
 
     def api_helper(

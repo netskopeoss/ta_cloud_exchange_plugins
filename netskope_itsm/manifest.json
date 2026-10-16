@@ -6,10 +6,10 @@
     "pulling_supported": true,
     "receiving_supported": true,
     "sharing_supported": true,
-    "version": "2.5.0",
+    "version": "2.5.1",
     "module": "CTO",
-    "minimum_version": "6.1.0",
-    "minimum_provider_version": "1.5.0",
+    "minimum_version": "7.0.0",
+    "minimum_provider_version": "1.7.0",
     "provider_id": "netskope_provider",
     "supported_subtypes": {
         "alerts": [

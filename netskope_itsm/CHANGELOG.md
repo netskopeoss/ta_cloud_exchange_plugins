@@ -1,3 +1,7 @@
+# 2.5.1 (Requires minimum Cloud Exchange version 7.0.0 and minimum Netskope Provider version 1.7.0)
+## Fixed
+- Fixed field data normalization so list/dict values (e.g. forensics_dlp_match_info) are stored as valid JSON string instead of a Python-literal string, allowing downstream consumers to JSON-parse them.
+
 # 2.5.0
 ## Added
 - Added support to resolve incidents on Netskope Tenant.

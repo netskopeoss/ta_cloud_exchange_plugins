@@ -35,7 +35,7 @@ Anthropic LLM provider plugin.
 import os
 import sys
 import traceback
-from typing import List, Optional, Sequence, Union
+from typing import List, Optional, Sequence, Union, Tuple
 
 from netskope.common.utils import add_user_agent
 from netskope.common.utils.llm_provider_plugin_base import (
@@ -563,6 +563,13 @@ class AnthropicLLMProviderPlugin(PluginBase):
             )
             raise
         return chat
+
+    def get_model_pricing(self, model: Optional[str]) -> Optional[Tuple[float, float]]:
+        """Return (input_price, output_price) $/1M tokens for `model` from SUPPORTED_MODELS."""
+        spec = SUPPORTED_MODELS.get(model)
+        if not spec or spec.input_price is None or spec.output_price is None:
+            return None
+        return (spec.input_price, spec.output_price)
 
     def get_web_search_tool(self):
         """Return the Anthropic native web search tool dict, or None.

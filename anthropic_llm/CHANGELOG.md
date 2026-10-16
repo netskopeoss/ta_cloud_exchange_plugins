@@ -1,3 +1,8 @@
+# 1.1.0 (Required minimum CE version for this is 7.0.0)
+
+## Added
+- Added model pricing hook.
+
 # 1.0.0 (Required minimum CE version for this is 7.0.0)
 
 ## Added

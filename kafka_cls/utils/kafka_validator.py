@@ -124,6 +124,7 @@ class KafkaValidator(object):
             "properties": {
                 "delimiter": {"type": "string", "minLength": 1, "enum": ["|"]},
                 "cef_version": {"type": "string", "minLength": 1},
+                "kafka_map_version": {"type": "string", "minLength": 1},
                 "taxonomy": {
                     "type": "object",
                     "properties": {
@@ -136,7 +137,12 @@ class KafkaValidator(object):
                     ],
                 },
             },
-            "required": ["delimiter", "taxonomy", "cef_version"],
+            "required": [
+                "delimiter",
+                "taxonomy",
+                "cef_version",
+                "kafka_map_version",
+            ],
         }
 
         # If no exception is raised by validate(), the instance is valid.
@@ -144,8 +150,15 @@ class KafkaValidator(object):
             validate(instance=mappings, schema=schema)
         except JsonSchemaValidationError as err:
             self.logger.error(
-                "{}: Validation error occurred. Error:"
-                " validating JSON schema: {}".format(self.log_prefix, err)
+                message=(
+                    "{}: Error occurred while validating the mapping file "
+                    "schema. Error: {}".format(self.log_prefix, err)
+                ),
+                resolution=(
+                    "Ensure that the mapping file contains valid "
+                    "'delimiter', 'cef_version', 'kafka_map_version' and "
+                    "'taxonomy' values as required by the mapping schema."
+                ),
             )
             return False
 
@@ -159,10 +172,17 @@ class KafkaValidator(object):
                         self.validate_taxonomy(subtype_taxonomy)
                     except JsonSchemaValidationError as err:
                         self.logger.error(
-                            message="{}: Validation error occurred. Error: "
-                            'while validating JSON schema for type "{}" and '
-                            'subtype "{}"'.format(
-                                self.log_prefix, data_type, subtype
+                            message=(
+                                "{}: Error occurred while validating the "
+                                'mapping schema for type "{}" and subtype '
+                                '"{}". Error: {}'.format(
+                                    self.log_prefix, data_type, subtype, err
+                                )
+                            ),
+                            resolution=(
+                                "Ensure that the header and extension "
+                                "mappings for type \"{}\" and subtype "
+                                '"{}" are valid.'.format(data_type, subtype)
                             ),
                             details=str(err),
                         )
@@ -187,7 +207,16 @@ class KafkaValidator(object):
 
         except Exception as err:
             self.logger.error(
-                f"{self.log_prefix}: Validation error occurred. Error: {err}"
+                message=(
+                    "{}: Error occurred while validating the Kafka "
+                    "attribute mapping. Error: {}".format(
+                        self.log_prefix, err
+                    )
+                ),
+                resolution=(
+                    "Ensure that a valid Kafka attribute mapping is "
+                    "configured."
+                ),
             )
 
         return False

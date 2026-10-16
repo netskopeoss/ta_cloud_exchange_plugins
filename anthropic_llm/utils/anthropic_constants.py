@@ -37,7 +37,7 @@ from typing import Optional, Tuple
 
 MODULE_NAME = "LLM-PROVIDER"
 PLUGIN_NAME = "Anthropic"
-PLUGIN_VERSION = "1.0.0"
+PLUGIN_VERSION = "1.1.0"
 
 # Ref: https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool
 ALLOWED_DOMAINS = ["docs.netskope.com"]
@@ -73,6 +73,8 @@ class ModelSpec:
     web_search_version: Optional[str] = None
     max_tokens: int = 16384
     max_tokens_ceiling: int = MAX_OUTPUT_128K
+    input_price: Optional[float] = None
+    output_price: Optional[float] = None
 
 
 # Ref: https://platform.claude.com/docs/en/about-claude/model-deprecations#model-status
@@ -81,13 +83,13 @@ class ModelSpec:
 # a deployment can raise it to the ceiling via the AI_COPILOT_MAX_TOKENS env var.
 SUPPORTED_MODELS: dict = {
     "claude-opus-5": ModelSpec(
-        "Claude Opus 5", FULL_EFFORT, "web_search_20260209"
+        "Claude Opus 5", FULL_EFFORT, "web_search_20260209", input_price=5.0, output_price=25.0
     ),
     "claude-opus-4-8": ModelSpec(
-        "Claude Opus 4.8", FULL_EFFORT, "web_search_20260209"
+        "Claude Opus 4.8", FULL_EFFORT, "web_search_20260209", input_price=5.0, output_price=25.0
     ),
     "claude-sonnet-5": ModelSpec(
-        "Claude Sonnet 5", FULL_EFFORT, "web_search_20260209"
+        "Claude Sonnet 5", FULL_EFFORT, "web_search_20260209", input_price=2.0, output_price=10.0
     ),
 }
 

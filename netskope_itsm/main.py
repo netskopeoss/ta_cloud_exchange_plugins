@@ -390,7 +390,6 @@ class NetskopePlugin(PluginBase):
 
         return ValidationResult(success=True, message="Validation successful.")
 
-
     def get_types_to_pull(self, data_type: str):
         """Get the types of data to pull.
 
@@ -404,19 +403,39 @@ class NetskopePlugin(PluginBase):
 
     def _get_raw_dict(self, data):
         """Get raw dict."""
-        data_item = {
-            k: (
-                str(v)
-                if not (
-                    v is None or isinstance(v, int) or isinstance(v, float) or isinstance(v, bool)
+
+        def _normalize(value):
+            """Normalize a rawData value to a storage-safe scalar.
+
+            None/int/float/bool are kept as-is. list/dict values are
+            serialized with json.dumps so they remain valid JSON for
+            downstream consumers (e.g. forensics_dlp_match_info); using
+            str() here would emit a Python-literal repr (single quotes,
+            True/None) that cannot be parsed as JSON. Everything else
+            falls back to str().
+            """
+            if value is None or isinstance(value, (int, float, bool)):
+                return value
+            try:
+                if isinstance(value, (list, dict)):
+                    return json.dumps(value, default=str)
+            except Exception:
+                self.logger.debug(
+                    f"{self.log_prefix}: Could not JSON-serialize raw "
+                    f"field value of type {type(value)}; falling "
+                    "back to string representation."
                 )
-                else v
-            )
+                return str(value)
+            return str(value)
+
+        data_item = {
+            k: _normalize(v)
             for k, v in data.items()
             if k not in IGNORED_RAW_KEYS
         }
+        assignee = data_item.get("assignee")
         if "assignee" in data_item.keys() and (
-            data_item.get("assignee", "") == "" or data_item.get("assignee", "none").lower() == "none"
+            assignee is None or assignee == "" or assignee.lower() == "none"
         ):
             data_item.update({"assignee": None})
         return data_item

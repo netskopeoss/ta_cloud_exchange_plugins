@@ -262,3 +262,105 @@ def extract_subtypes(mappings, data_type):
     """
     taxonomy = mappings["taxonomy"][data_type]
     return [subtype for subtype in taxonomy]
+
+
+def get_subtype_mapping(mappings, subtype):
+    """Retrieve subtype mappings (mappings for subtypes of alerts/events)
+    case insensitively.
+
+    Shared by both the CEF and JSON transform paths in main.py.
+
+    Args:
+        mappings: Mapping JSON from which subtypes are to be retrieved
+        subtype: Subtype (e.g. DLP for alerts) for which the mapping is
+            to be fetched
+
+    Returns:
+        Fetched mapping JSON object
+    """
+    mappings = {k.lower(): v for k, v in mappings.items()}
+    if subtype.lower() in mappings:
+        return mappings[subtype.lower()]
+    else:
+        return mappings[subtype.upper()]
+
+
+def get_nested_field_value(data, field_path, logger=None, log_prefix=None):
+    """Extract a value from a nested dict using dot notation.
+
+    Used as the fallback lookup for JSON-mode selective field
+    ingestion when a mapped field name (e.g. "host_info.device_make")
+    is not a literal top-level key in the record.
+
+    Args:
+        data: The record dictionary to search.
+        field_path: Dot-separated field path.
+        logger: Optional plugin logger, used to report unexpected
+            lookup errors (e.g. a non-string field_path).
+        log_prefix: Optional plugin log prefix, used with ``logger``.
+
+    Returns:
+        tuple: (value, exists) where exists is True only if every
+        segment of the path resolved.
+    """
+    try:
+        current_data = data
+        for part in field_path.split("."):
+            if isinstance(current_data, dict) and part in current_data:
+                current_data = current_data[part]
+            else:
+                return None, False
+        return current_data, True
+    except Exception as exp:
+        if logger:
+            logger.error(
+                message=(
+                    f"{log_prefix}: Error occurred while getting the "
+                    f"nested field value for '{field_path}'. Error: {exp}"
+                ),
+                resolution=(
+                    "Ensure that the JSON mapping field names use valid "
+                    "dot-notation for nested Netskope fields."
+                ),
+            )
+        return None, False
+
+
+def map_json_data(mappings, data, logger=None, log_prefix=None):
+    """Filter the raw data and returns the filtered data.
+
+    Each listed field name is resolved as a literal top-level key
+    first; if that fails, it falls back to a dot-notation nested
+    lookup (e.g. "host_info.device_make") via
+    :func:`get_nested_field_value`, so selective field ingestion also
+    works for nested Netskope fields. A name that resolves neither way
+    is simply omitted from the output.
+
+    Args:
+        mappings (list): List of fields to be pushed
+        data (dict): Data to be mapped (retrieved from Netskope)
+        logger: Optional plugin logger, forwarded to
+            :func:`get_nested_field_value`.
+        log_prefix: Optional plugin log prefix, forwarded to
+            :func:`get_nested_field_value`.
+
+    Returns:
+        dict: Mapped data based on fields given in mapping file
+    """
+    if not (mappings and data):
+        # If mapping is empty or data is empty return data.
+        return data
+
+    mapped_dict = {}
+    data_keys = data.keys()
+    for key in mappings:
+        if key in data_keys:
+            mapped_dict[key] = data[key]
+        else:
+            value, field_exists = get_nested_field_value(
+                data, key, logger, log_prefix
+            )
+            if field_exists:
+                mapped_dict[key] = value
+
+    return mapped_dict

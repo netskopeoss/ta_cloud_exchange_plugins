@@ -1,6 +1,7 @@
 """CLS Kafka plugin."""
 import sys
 import importlib
+import importlib.machinery
 import os
 
 

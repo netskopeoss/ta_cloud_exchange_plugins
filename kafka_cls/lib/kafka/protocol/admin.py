@@ -1,7 +1,5 @@
-from __future__ import absolute_import
-
 from kafka.protocol.api import Request, Response
-from kafka.protocol.types import Array, Boolean, Bytes, Int8, Int16, Int32, Int64, Schema, String
+from kafka.protocol.types import Array, Boolean, Bytes, Int8, Int16, Int32, Int64, Schema, String, Float64, CompactString, CompactArray, TaggedFields
 
 
 class ApiVersionResponse_v0(Response):
@@ -719,7 +717,7 @@ class DescribeConfigsResponse_v1(Response):
                 ('config_names', String('utf-8')),
                 ('config_value', String('utf-8')),
                 ('read_only', Boolean),
-                ('is_default', Boolean),
+                ('config_source', Int8),
                 ('is_sensitive', Boolean),
                 ('config_synonyms', Array(
                     ('config_name', String('utf-8')),
@@ -787,6 +785,48 @@ DescribeConfigsRequest = [
 DescribeConfigsResponse = [
     DescribeConfigsResponse_v0, DescribeConfigsResponse_v1,
     DescribeConfigsResponse_v2,
+]
+
+
+class DescribeLogDirsResponse_v0(Response):
+    API_KEY = 35
+    API_VERSION = 0
+    FLEXIBLE_VERSION = True
+    SCHEMA = Schema(
+        ('throttle_time_ms', Int32),
+        ('log_dirs', Array(
+            ('error_code', Int16),
+            ('log_dir', String('utf-8')),
+            ('topics', Array(
+                ('name', String('utf-8')),
+                ('partitions', Array(
+                    ('partition_index', Int32),
+                    ('partition_size', Int64),
+                    ('offset_lag', Int64),
+                    ('is_future_key', Boolean)
+                ))
+            ))
+        ))
+    )
+
+
+class DescribeLogDirsRequest_v0(Request):
+    API_KEY = 35
+    API_VERSION = 0
+    RESPONSE_TYPE = DescribeLogDirsResponse_v0
+    SCHEMA = Schema(
+                     ('topics', Array(
+                         ('topic', String('utf-8')),
+                         ('partitions', Int32)
+                         ))
+                 )
+
+
+DescribeLogDirsResponse = [
+    DescribeLogDirsResponse_v0,
+]
+DescribeLogDirsRequest = [
+    DescribeLogDirsRequest_v0,
 ]
 
 
@@ -923,3 +963,132 @@ DeleteGroupsRequest = [
 DeleteGroupsResponse = [
     DeleteGroupsResponse_v0, DeleteGroupsResponse_v1
 ]
+
+
+class DescribeClientQuotasResponse_v0(Response):
+    API_KEY = 48
+    API_VERSION = 0
+    SCHEMA = Schema(
+        ('throttle_time_ms', Int32),
+        ('error_code', Int16),
+        ('error_message', String('utf-8')),
+        ('entries', Array(
+            ('entity', Array(
+                ('entity_type', String('utf-8')),
+                ('entity_name', String('utf-8')))),
+            ('values', Array(
+                ('name', String('utf-8')),
+                ('value', Float64))))),
+    )
+
+
+class DescribeClientQuotasRequest_v0(Request):
+    API_KEY = 48
+    API_VERSION = 0
+    RESPONSE_TYPE = DescribeClientQuotasResponse_v0
+    SCHEMA = Schema(
+        ('components', Array(
+            ('entity_type', String('utf-8')),
+            ('match_type', Int8),
+            ('match', String('utf-8')),
+        )),
+        ('strict', Boolean)
+    )
+
+
+DescribeClientQuotasRequest = [
+    DescribeClientQuotasRequest_v0,
+]
+
+DescribeClientQuotasResponse = [
+    DescribeClientQuotasResponse_v0,
+]
+
+
+class AlterPartitionReassignmentsResponse_v0(Response):
+    API_KEY = 45
+    API_VERSION = 0
+    SCHEMA = Schema(
+        ("throttle_time_ms", Int32),
+        ("error_code", Int16),
+        ("error_message", CompactString("utf-8")),
+        ("responses", CompactArray(
+            ("name", CompactString("utf-8")),
+            ("partitions", CompactArray(
+                ("partition_index", Int32),
+                ("error_code", Int16),
+                ("error_message", CompactString("utf-8")),
+                ("tags", TaggedFields)
+            )),
+            ("tags", TaggedFields)
+        )),
+        ("tags", TaggedFields)
+    )
+
+
+class AlterPartitionReassignmentsRequest_v0(Request):
+    FLEXIBLE_VERSION = True
+    API_KEY = 45
+    API_VERSION = 0
+    RESPONSE_TYPE = AlterPartitionReassignmentsResponse_v0
+    SCHEMA = Schema(
+        ("timeout_ms", Int32),
+        ("topics", CompactArray(
+            ("name", CompactString("utf-8")),
+            ("partitions", CompactArray(
+                ("partition_index", Int32),
+                ("replicas", CompactArray(Int32)),
+                ("tags", TaggedFields)
+            )),
+            ("tags", TaggedFields)
+        )),
+        ("tags", TaggedFields)
+    )
+
+
+AlterPartitionReassignmentsRequest = [AlterPartitionReassignmentsRequest_v0]
+
+AlterPartitionReassignmentsResponse = [AlterPartitionReassignmentsResponse_v0]
+
+
+class ListPartitionReassignmentsResponse_v0(Response):
+    API_KEY = 46
+    API_VERSION = 0
+    SCHEMA = Schema(
+        ("throttle_time_ms", Int32),
+        ("error_code", Int16),
+        ("error_message", CompactString("utf-8")),
+        ("topics", CompactArray(
+            ("name", CompactString("utf-8")),
+            ("partitions", CompactArray(
+                ("partition_index", Int32),
+                ("replicas", CompactArray(Int32)),
+                ("adding_replicas", CompactArray(Int32)),
+                ("removing_replicas", CompactArray(Int32)),
+                ("tags", TaggedFields)
+            )),
+            ("tags", TaggedFields)
+        )),
+        ("tags", TaggedFields)
+    )
+
+
+class ListPartitionReassignmentsRequest_v0(Request):
+    FLEXIBLE_VERSION = True
+    API_KEY = 46
+    API_VERSION = 0
+    RESPONSE_TYPE = ListPartitionReassignmentsResponse_v0
+    SCHEMA = Schema(
+        ("timeout_ms", Int32),
+        ("topics", CompactArray(
+            ("name", CompactString("utf-8")),
+            ("partition_index", CompactArray(Int32)),
+            ("tags", TaggedFields)
+        )),
+        ("tags", TaggedFields)
+    )
+
+
+ListPartitionReassignmentsRequest = [ListPartitionReassignmentsRequest_v0]
+
+ListPartitionReassignmentsResponse = [ListPartitionReassignmentsResponse_v0]

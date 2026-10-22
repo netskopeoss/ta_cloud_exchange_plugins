@@ -1,0 +1,50 @@
+{
+    "name": "AWS CloudWatch",
+    "id": "aws_cloudwatch",
+    "version": "1.0.0",
+    "module": "CLS",
+    "minimum_version": "6.1.0",
+    "mapping": "AWS CloudWatch Default Mappings",
+    "netskope": false,
+    "description": "This plugin supports ingestion of Alerts (DLP, Malware, Policy, Compromised Credential, Malsite, Quarantine, Remediation, Security Assessment, Watchlist, UBA, CTEP, Device, Content, Anomaly, Legal Hold), Events (Page, Application, Audit, Infrastructure, Network, Incident, Endpoint, Client Status), BWAN Events (Authentication, Audit, Client, Gateway, System), WebTx and Logs (Debug, Information, Error, Warning) to AWS CloudWatch. This plugin supports ingestion in CEF and JSON format.",
+    "types": [
+        "alerts",
+        "events",
+        "webtx",
+        "logs"
+    ],
+    "format_options": [
+        {
+            "label": "JSON",
+            "value": "json"
+        },
+        {
+            "label": "CEF",
+            "value": "cef"
+        }
+    ],
+    "configuration": [
+        {
+            "label": "Authentication Method",
+            "key": "authentication_method",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Deployed on AWS",
+                    "value": "deployed_on_aws"
+                },
+                {
+                    "key": "AWS IAM Roles Anywhere",
+                    "value": "aws_iam_roles_anywhere"
+                }
+            ],
+            "default": "deployed_on_aws",
+            "has_api_call": true,
+            "payload_fields": [
+                "authentication_method"
+            ],
+            "mandatory": true,
+            "description": "Select the method to be used for AWS client authentication. 'Deployed on AWS' uses the IAM role attached to the AWS environment where Cloud Exchange runs. 'AWS IAM Roles Anywhere' uses an X.509 certificate and private key to get temporary AWS credentials, and is meant for Cloud Exchange running outside AWS."
+        }
+    ]
+}

@@ -38,7 +38,8 @@ import traceback
 import uuid
 
 
-from typing import List, Dict, Tuple
+from typing import List, Dict, Optional, Tuple
+from urllib.parse import unquote_plus, urlparse
 
 from netskope.integrations.itsm.plugin_base import (
     PluginBase,
@@ -128,6 +129,35 @@ class AzureServiceBusPlugin(PluginBase):
             self.plugin_name.replace(" ", "-").lower(),
             self.plugin_version,
         )
+
+    def _get_proxy_settings(self) -> Optional[Dict]:
+        """Get proxy settings in the format expected by Service Bus client.
+
+        CE provides a requests style proxy dictionary ({"http": url,
+        "https": url}), whereas the Service Bus client expects
+        proxy_hostname, proxy_port and optional username and password.
+
+        Returns:
+            Optional[Dict]: Proxy settings, None if proxy is not configured.
+        """
+        proxy = self.proxy or {}
+        proxy_url = proxy.get("https") or proxy.get("http")
+        if not proxy_url:
+            return None
+        parsed_url = urlparse(proxy_url)
+        proxy_settings = {
+            "proxy_hostname": parsed_url.hostname,
+            "proxy_port": parsed_url.port
+            or (443 if parsed_url.scheme == "https" else 80),
+        }
+        if parsed_url.username or parsed_url.password:
+            proxy_settings["username"] = unquote_plus(
+                parsed_url.username or ""
+            )
+            proxy_settings["password"] = unquote_plus(
+                parsed_url.password or ""
+            )
+        return proxy_settings
 
     def validate_step(
         self, name: str, configuration: dict
@@ -317,7 +347,7 @@ class AzureServiceBusPlugin(PluginBase):
                 conn_str=connection_string,
                 logging_enable=True,
                 user_agent=self._get_user_agent(),
-                http_proxy=self.proxy,
+                http_proxy=self._get_proxy_settings(),
             )
             with servicebus_client:
                 sender = servicebus_client.get_queue_sender(

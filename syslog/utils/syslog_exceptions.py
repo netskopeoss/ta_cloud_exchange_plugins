@@ -38,6 +38,12 @@ class SyslogPluginError(Exception):
     pass
 
 
+class SyslogCertificateError(Exception):
+    """Exception raised when the Syslog Certificate can not be loaded."""
+
+    pass
+
+
 class FormatCEFError(Exception):
     """CEF Format Error class."""
 

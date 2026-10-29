@@ -34,13 +34,12 @@ Syslog Plugin."""
 import logging
 import threading
 import socket
+import ssl
 import json
 import traceback
 import time
 from typing import List, Union, Tuple
 from jsonpath import jsonpath
-from packaging import version
-from netskope.common.api import __version__ as CE_VERSION
 from netskope.common.utils import AlertsHelper
 from netskope.integrations.cls.plugin_base import (
     PluginBase,
@@ -48,10 +47,10 @@ from netskope.integrations.cls.plugin_base import (
     PushResult,
 )
 from .utils.syslog_constants import (
-    MAXIMUM_CORE_VERSION,
     MODULE_NAME,
     PLATFORM_NAME,
     PLUGIN_VERSION,
+    SYSLOG_PORT_RANGE,
     SYSLOG_PROTOCOLS,
     IDENTIFIER_ALLOWED_VALUES,
     VALIDATION_ERROR_MESSAGE,
@@ -62,6 +61,7 @@ from .utils.syslog_exceptions import (
     MappingValidationError,
     EmptyExtensionError,
     FieldNotFoundError,
+    SyslogCertificateError,
     SyslogPluginError,
 )
 from .utils.syslog_cef_generator import CEFGenerator
@@ -103,19 +103,15 @@ class SyslogPlugin(PluginBase):
                     f" getting plugin details. Error: {exp}"
                 ),
                 details=str(traceback.format_exc()),
+                resolution=(
+                    "Ensure that the plugin's manifest.json file is valid."
+                ),
             )
         return (PLATFORM_NAME, PLUGIN_VERSION)
 
     def _transformation_compatibility_check(self, configuration: dict) -> bool:
         """Check whether JSON transformation is enabled."""
-        transform_data_json = False
-        if version.parse(CE_VERSION) <= version.parse(MAXIMUM_CORE_VERSION):
-            if not configuration.get("transformData", True):
-                transform_data_json = True
-        else:
-            if configuration.get("transformData", "json") == "json":
-                transform_data_json = True
-        return transform_data_json
+        return configuration.get("transformData", "json") == "json"
 
     def _get_skip_flag_value(self, configuration: dict, key: str) -> str:
         """Fetch and normalize skip flag value from configuration."""
@@ -184,6 +180,10 @@ class SyslogPlugin(PluginBase):
                     f" getting nested field value. Error: {exp}"
                 ),
                 details=str(traceback.format_exc()),
+                resolution=(
+                    "Ensure that the mapping fields provided in the "
+                    "mapping file are valid."
+                ),
             )
             return None, False
 
@@ -420,9 +420,17 @@ class SyslogPlugin(PluginBase):
             return data
 
         mapped_dict = {}
+        data_keys = data.keys()
         for key in mappings:
-            if key in data:
+            if key in data_keys:
                 mapped_dict[key] = data[key]
+            else:
+                (
+                    value,
+                    field_exist
+                ) = self.get_nested_field_value(data, key)
+                if field_exist:
+                    mapped_dict[key] = value
 
         return mapped_dict
 
@@ -464,6 +472,10 @@ class SyslogPlugin(PluginBase):
         ) or not syslog_validator.validate_syslog_map(mappings):
             self.logger.error(
                 f"{validation_err_msg} {err_msg}",
+                resolution=(
+                    "Ensure that the valid mapping is provided for the "
+                    "mapping configuration."
+                ),
             )
             return ValidationResult(
                 success=False,
@@ -486,6 +498,10 @@ class SyslogPlugin(PluginBase):
                         f"{mapping_validation_error}"
                     ),
                     details=str(traceback.format_exc()),
+                    resolution=(
+                        "Ensure that the valid mapping is provided for the "
+                        "mapping configuration."
+                    ),
                 )
                 return ValidationResult(
                     success=False,
@@ -519,14 +535,6 @@ class SyslogPlugin(PluginBase):
             skip_log_source_identifier_field = "no"
         if transform_data_json:
             try:
-                if version.parse(CE_VERSION) <= version.parse(
-                    MAXIMUM_CORE_VERSION
-                ):
-                    validate_syslog_mappings(
-                        self.mappings,
-                        data_type,
-                        self.name,
-                    )
                 delimiter, cef_version, syslog_mappings = get_syslog_mappings(
                     self.mappings
                 )
@@ -538,6 +546,10 @@ class SyslogPlugin(PluginBase):
                 self.logger.error(
                     message=(f"{self.log_prefix}: {error_msg} Error: {err}"),
                     details=str(traceback.format_exc()),
+                    resolution=(
+                        "Ensure that the mapping file contains the mappings "
+                        "for the data type and subtype."
+                    ),
                 )
                 raise SyslogPluginError(error_msg)
             except MappingValidationError as err:
@@ -548,6 +560,10 @@ class SyslogPlugin(PluginBase):
                 self.logger.error(
                     message=(f"{self.log_prefix}: {error_msg} {err}"),
                     details=str(traceback.format_exc()),
+                    resolution=(
+                        "Ensure that the valid mapping is provided for the "
+                        "mapping configuration."
+                    ),
                 )
                 raise SyslogPluginError(error_msg)
             except Exception as err:
@@ -559,6 +575,10 @@ class SyslogPlugin(PluginBase):
                 self.logger.error(
                     message=(f"{self.log_prefix}: {error_msg} Error: {err}"),
                     details=str(traceback.format_exc()),
+                    resolution=(
+                        "Ensure that the valid JSON mapping is provided for "
+                        "the mapping configuration."
+                    ),
                 )
                 raise SyslogPluginError(error_msg)
 
@@ -613,6 +633,10 @@ class SyslogPlugin(PluginBase):
                 self.logger.error(
                     message=(f"{self.log_prefix}: {error_msg} Error: {err}"),
                     details=str(traceback.format_exc()),
+                    resolution=(
+                        "Ensure that the mapping file contains the JSON "
+                        "mappings for the data type and subtype."
+                    ),
                 )
                 raise SyslogPluginError(error_msg)
 
@@ -662,14 +686,6 @@ class SyslogPlugin(PluginBase):
             return transformed_data
         else:
             try:
-                if version.parse(CE_VERSION) <= version.parse(
-                    MAXIMUM_CORE_VERSION
-                ):
-                    validate_syslog_mappings(
-                        self.mappings,
-                        data_type,
-                        self.name,
-                    )
                 delimiter, cef_version, syslog_mappings = get_syslog_mappings(
                     self.mappings
                 )
@@ -682,6 +698,10 @@ class SyslogPlugin(PluginBase):
                 self.logger.error(
                     message=(f"{self.log_prefix}: {error_msg} Error: {err}"),
                     details=str(traceback.format_exc()),
+                    resolution=(
+                        "Ensure that the mapping file contains the mappings "
+                        "for the data type and subtype."
+                    ),
                 )
                 raise SyslogPluginError(error_msg)
             except MappingValidationError as err:
@@ -692,6 +712,10 @@ class SyslogPlugin(PluginBase):
                 self.logger.error(
                     message=(f"{self.log_prefix}: {error_msg} {err}"),
                     details=str(traceback.format_exc()),
+                    resolution=(
+                        "Ensure that the valid mapping is provided for the "
+                        "mapping configuration."
+                    ),
                 )
                 raise SyslogPluginError(error_msg)
             except Exception as err:
@@ -703,6 +727,10 @@ class SyslogPlugin(PluginBase):
                 self.logger.error(
                     message=(f"{self.log_prefix}: {error_msg} Error: {err}"),
                     details=str(traceback.format_exc()),
+                    resolution=(
+                        "Ensure that the valid mapping is provided for the "
+                        "mapping configuration."
+                    ),
                 )
                 raise SyslogPluginError(error_msg)
 
@@ -736,6 +764,10 @@ class SyslogPlugin(PluginBase):
                 self.logger.error(
                     message=(f"{self.log_prefix}: {error_msg} Error: {err}"),
                     details=str(traceback.format_exc()),
+                    resolution=(
+                        "Ensure that the mapping file contains the CEF "
+                        "mappings for the data type and subtype."
+                    ),
                 )
                 raise SyslogPluginError(error_msg)
 
@@ -759,6 +791,10 @@ class SyslogPlugin(PluginBase):
                             " be skipped."
                         ),
                         details=str(traceback.format_exc()),
+                        resolution=(
+                            "Ensure that the CEF header mappings provided "
+                            "in the mapping file are valid."
+                        ),
                     )
                     count += 1
                     continue
@@ -776,6 +812,10 @@ class SyslogPlugin(PluginBase):
                             "will be skipped."
                         ),
                         details=str(traceback.format_exc()),
+                        resolution=(
+                            "Ensure that the CEF extension mappings "
+                            "provided in the mapping file are valid."
+                        ),
                     )
                     count += 1
                     continue
@@ -802,6 +842,11 @@ class SyslogPlugin(PluginBase):
                             "Transformation of current record will be skipped."
                         ),
                         details=str(traceback.format_exc()),
+                        resolution=(
+                            "Ensure that the CEF extension mappings "
+                            "provided in the mapping file map the fields "
+                            "present in the data."
+                        ),
                     )
                     count += 1
                 except Exception as err:
@@ -812,6 +857,11 @@ class SyslogPlugin(PluginBase):
                             f" Error: {err}"
                         ),
                         details=str(traceback.format_exc()),
+                        resolution=(
+                            "Ensure that the mappings provided in the "
+                            "mapping file are valid. Check the details for "
+                            "more information."
+                        ),
                     )
                     count += 1
             if count > 0:
@@ -914,6 +964,14 @@ class SyslogPlugin(PluginBase):
         successful_log_push_counter, skipped_logs = 0, 0
         try:
             syslogger = self.init_handler(self.configuration)
+        except (SyslogCertificateError, ssl.SSLCertVerificationError) as err:
+            error_msg, resolution = self._get_certificate_error(err)
+            self.logger.error(
+                message=f"{self.log_prefix}: {error_msg} Error: {err}",
+                details=str(traceback.format_exc()),
+                resolution=resolution,
+            )
+            raise SyslogPluginError(error_msg)
         except (TimeoutError, ConnectionRefusedError, Exception) as err:
             error_msg = {
                 TimeoutError: (
@@ -928,6 +986,12 @@ class SyslogPlugin(PluginBase):
             self.logger.error(
                 message=f"{self.log_prefix}: {error_msg} {err}.",
                 details=str(traceback.format_exc()),
+                resolution=(
+                    "Ensure that the Syslog server is reachable from Cloud "
+                    "Exchange and the configured Syslog Server, Syslog "
+                    "Protocol, Syslog Port and Syslog Certificate (for TLS "
+                    "protocol) are correct."
+                ),
             )
             raise SyslogPluginError(error_msg)
 
@@ -966,6 +1030,11 @@ class SyslogPlugin(PluginBase):
             self.logger.error(
                 message=(f"{self.log_prefix}: {error_msg} Error: {err}"),
                 details=str(traceback.format_exc()),
+                resolution=(
+                    "Ensure that the Syslog server is reachable from Cloud "
+                    "Exchange and is accepting the data on the configured "
+                    "Syslog Port."
+                ),
             )
             raise SyslogPluginError(error_msg)
 
@@ -981,10 +1050,48 @@ class SyslogPlugin(PluginBase):
                     f"{self.log_prefix}: {error_msg} Error: {err}"
                 )
 
+    def _get_certificate_error(self, err):
+        """Get the error message and resolution for a TLS certificate error.
+
+        Args:
+            err (Exception): SyslogCertificateError or
+                ssl.SSLCertVerificationError.
+
+        Returns:
+            tuple: Error message and resolution.
+        """
+        if isinstance(err, SyslogCertificateError):
+            return (
+                "Invalid Syslog Certificate provided.",
+                (
+                    "Ensure that the Syslog Certificate is the complete PEM "
+                    "encoded certificate, including the '-----BEGIN "
+                    "CERTIFICATE-----' and '-----END CERTIFICATE-----' "
+                    "lines, without any indentation."
+                ),
+            )
+        return (
+            "Syslog server certificate could not be verified with the "
+            "configured Syslog Certificate.",
+            (
+                "Ensure that the Syslog Certificate is the certificate of the "
+                "Syslog server, or of the CA that signed it, and that the "
+                "certificate has not expired."
+            ),
+        )
+
     def test_server_connectivity(self, configuration):
         """Tests whether the configured syslog server is reachable or not."""
         try:
             syslogger = self.init_handler(configuration)
+        except (SyslogCertificateError, ssl.SSLCertVerificationError) as err:
+            error_msg, resolution = self._get_certificate_error(err)
+            self.logger.error(
+                message=(f"{self.log_prefix}: {error_msg} Error: {err}"),
+                resolution=resolution,
+                details=str(traceback.format_exc()),
+            )
+            raise SyslogPluginError(error_msg)
         except Exception as err:
             error_msg = (
                 "Error occurred while establishing "
@@ -1206,7 +1313,7 @@ class SyslogPlugin(PluginBase):
             field_type=int,
             is_required=True,
             range_validation=True,
-            range_values=(0, 65535),
+            range_values=SYSLOG_PORT_RANGE,
             validation_err_msg=validation_err_msg,
         ):
             return port_result

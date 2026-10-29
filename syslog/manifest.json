@@ -1,8 +1,9 @@
 {
     "name": "Syslog",
     "id": "syslog",
-    "version": "4.1.1",
+    "version": "4.2.0",
     "module": "CLS",
+    "minimum_version": "6.1.0",
     "mapping": "Syslog Default Mappings",
     "format_options": [
         {
@@ -20,7 +21,7 @@
         "webtx",
         "logs"
     ],
-    "description": "This plugin supports ingestion of Alerts (DLP, Malware, Policy, Compromised Credential, Malsite, Quarantine, Remediation, Security Assessment, Watchlist, UBA, CTEP, Device, Content), Events (Page, Application, Audit, Infrastructure, Network, Incident, Endpoint, Client Status), BWAN Events (Authentication, Audit, Client, Gateway, System), WebTx and Logs (Debug, Information, Error, Warning). The data will be ingested in SIEM platform. This plugin supports ingestion in CEF and JSON format.",
+    "description": "This plugin supports ingestion of Alerts (DLP, Malware, Policy, Compromised Credential, Malsite, Quarantine, Remediation, Security Assessment, Watchlist, UBA, CTEP, Device, Content), Events (Page, Application, Audit, Infrastructure, Network, Incident, Endpoint, Client Status), BWAN Events (Authentication, Audit, Client, Gateway, System, Network (Flow/Traffic Logs)), BWAN Alert (Alert(V2)), WebTx and Logs (Debug, Information, Error, Warning). The data will be ingested in SIEM platform. This plugin supports ingestion in CEF and JSON format.",
     "configuration": [
         {
             "label": "Syslog Server",
@@ -58,7 +59,7 @@
             "type": "number",
             "default": "",
             "mandatory": true,
-            "description": "Syslog port"
+            "description": "Port of the Syslog server. Valid range is 1 to 65535."
         },
         {
             "label": "Syslog Certificate",

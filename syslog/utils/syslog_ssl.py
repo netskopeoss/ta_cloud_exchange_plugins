@@ -32,14 +32,14 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 Syslog Plugin SSL Log Handler."""
 
 
-import os
 import codecs
 import logging
 import logging.handlers
 import ssl
 import socket
 
-from tempfile import NamedTemporaryFile
+from .syslog_constants import TLS_CLOSE_TIMEOUT
+from .syslog_exceptions import SyslogCertificateError
 
 
 class SSLSysLogHandler(logging.handlers.SysLogHandler):
@@ -151,28 +151,74 @@ class SSLSysLogHandler(logging.handlers.SysLogHandler):
             self.facility = facility
 
             self.unixsocket = 0
+            self.socket = None
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            try:
+                # ssl.wrap_socket() was removed in Python 3.12, hence
+                # SSLContext is used.
+                context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+                # Preserve the original behaviour of not validating the
+                # server hostname against the certificate.
+                context.check_hostname = False
 
-            if certs:
-                cert = NamedTemporaryFile(delete=False)
-
-                cert.write(str.encode(certs))
-                cert.flush()
-                self.socket = ssl.wrap_socket(
-                    s, ca_certs=cert.name, cert_reqs=ssl.CERT_REQUIRED
-                )
-                cert.close()
-                os.unlink(cert.name)
-            else:
-                self.socket = ssl.wrap_socket(s, cert_reqs=ssl.CERT_NONE)
-            self.socket.connect(address)
+                if certs:
+                    # Load the PEM certificate directly from the configured
+                    # string instead of writing it to a temporary file.
+                    context.verify_mode = ssl.CERT_REQUIRED
+                    try:
+                        context.load_verify_locations(cadata=certs)
+                    except (ssl.SSLError, ValueError) as err:
+                        raise SyslogCertificateError(
+                            "Unable to load the Syslog Certificate. "
+                            f"Error: {err}"
+                        ) from err
+                else:
+                    context.verify_mode = ssl.CERT_NONE
+                self.socket = context.wrap_socket(s)
+                self.socket.connect(address)
+            except Exception:
+                # Close the socket, as the handler is not returned to the
+                # caller and hence close() is never called for it.
+                # wrap_socket() detaches the plain socket, so closing it
+                # is a no-op once the TLS socket exists.
+                if self.socket:
+                    self.socket.close()
+                s.close()
+                logging.Handler.close(self)
+                raise
 
         else:
             super().__init__(address=address, socktype=socktype)
 
     def close(self):
         """Close method."""
-        self.socket.close()
+        # The socket is not set (or is None) when the connection could not
+        # be established.
+        sock = getattr(self, "socket", None)
+        if self.protocol == "TLS" and sock:
+            # With TLS 1.3 the server sends session tickets after the
+            # handshake which are never read by this client. Closing a
+            # socket having unread data resets the connection, which can
+            # make the Syslog server drop the messages it has not read yet.
+            # Hence, read the pending data and close the connection
+            # gracefully.
+            try:
+                sock.setblocking(False)
+                while sock.recv(4096):
+                    pass
+            except (ssl.SSLError, BlockingIOError, OSError):
+                pass
+            # unwrap() sends the TLS close_notify alert and waits for the
+            # server's close_notify for up to TLS_CLOSE_TIMEOUT seconds.
+            # shutdown() is not used, as it drops the TLS layer without
+            # sending close_notify.
+            try:
+                sock.settimeout(TLS_CLOSE_TIMEOUT)
+                sock.unwrap()
+            except (ssl.SSLError, OSError, ValueError):
+                pass
+        if sock:
+            sock.close()
         logging.Handler.close(self)
 
     def emit(self, record):

@@ -1,3 +1,22 @@
+# 4.2.0 (Requires minimum Cloud Exchange version 6.1.0)
+## Added
+- Added "details" field to the default CEF mapping of Audit events.
+- Added "last_seen_device_event" fields (event, actor, event details, NPA status, service name, status, status v2, timestamp) to the default CEF mapping of Client Status events.
+- Added resolution to the error logs.
+- Added mapping for BWAN Network Events (Flow/Traffic logs) and BWAN Alert (Alert(v2)) logs.
+## Changed
+- Logs type and Device Event Class ID are now mapped from the "ce_log_type" field in the default mapping of Logs.
+- Changed warning logs to debug logs.
+- Syslog Port is now validated to be in the range 1 to 65535.
+## Fixed
+- Fixed TLS protocol support for Python 3.12 and later by replacing the removed ssl.wrap_socket() with SSLContext.
+
+# 4.1.2
+## Changed
+- Updated WebTx mappings to support Transaction Events universal field updates.
+## Fixed
+- Fixed ingestion for selected field in JSON format.
+
 # 4.1.1
 ## Added
 - Added support for skipping the priority from the JSON-formatted data.

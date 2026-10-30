@@ -1,3 +1,21 @@
+# 4.0.0 (Requires minimum Cloud Exchange version 6.1.0)
+## Added
+- Added configuration parameters Exclude Timestamp Field, Exclude Log Source Identifier Field and Exclude Priority Field.
+- Added support for the Device and Content alert types and the Endpoint event type, the Client Status event type and the Debug logs type, along with the Supporting Data and Details fields for the Audit events, the Activity field for the other Alerts and Events, the Publisher fields for the Network events, and the JA3 fields for the Application events and WebTx, to the default mappings.
+- Added the CEF and JSON format options.
+- Added connection timeout and retry handling for data ingestion.
+- Added resolutions to the error logs.
+## Changed
+- Added the syslog header to JSON-formatted data.
+- Updated the default WebTx and Logs mappings.
+- Removed the QRadar Format parameter.
+- Changed warning logs to debug logs.
+## Fixed
+- Fixed TLS support for Python 3.12 and later.
+- Fixed data loss when ingestion to QRadar fails.
+- Fixed mapping of nested fields.
+- Fixed ingestion of logs in JSON format.
+
 # 3.1.0
 ## Added
 - Added support for webtx JSON format to send specific fields to SIEM platform.

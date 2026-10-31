@@ -33,27 +33,74 @@ Provides constants for Microsoft Azure Log Analytics plugin."""
 
 
 GENERATE_TOKEN_BASE_URL = (
-   "https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
+   "https://{login_host}/{tenant_id}/oauth2/v2.0/token"
 )
-API_SCOPE = "https://monitor.azure.com/.default"
+# Microsoft Entra ID authority host and Azure Monitor token scope per
+# national cloud. The token must be requested from the same cloud the
+# app registration lives in, otherwise Entra ID rejects it with
+# AADSTS900382 (Confidential Client is not supported in Cross Cloud request).
+AZURE_CLOUD_PUBLIC = "public"
+AZURE_CLOUD_US_GOVERNMENT = "us_government"
+AZURE_CLOUD_CHINA = "china"
+# Any other Azure cloud: the Entra ID authority host and the token scope
+# are provided by the user ('Custom Authority Host' and 'Custom Token Scope'
+# configuration parameters).
+AZURE_CLOUD_CUSTOM = "custom"
+AZURE_CLOUD_LABELS = {
+    AZURE_CLOUD_PUBLIC: "Azure Public (Commercial)",
+    AZURE_CLOUD_US_GOVERNMENT: "Azure US Government",
+    AZURE_CLOUD_CHINA: "Azure China (21Vianet)",
+    AZURE_CLOUD_CUSTOM: "Custom Cloud",
+}
+AZURE_CLOUD_ENVIRONMENTS = {
+    AZURE_CLOUD_PUBLIC: {
+        "login_host": "login.microsoftonline.com",
+        "dce_domain": "ingest.monitor.azure.com",
+        "scope": "https://monitor.azure.com/.default",
+    },
+    AZURE_CLOUD_US_GOVERNMENT: {
+        "login_host": "login.microsoftonline.us",
+        "dce_domain": "ingest.monitor.azure.us",
+        "scope": "https://monitor.azure.us/.default",
+    },
+    AZURE_CLOUD_CHINA: {
+        "login_host": "login.chinacloudapi.cn",
+        "dce_domain": "ingest.monitor.azure.cn",
+        "scope": "https://monitor.azure.cn/.default",
+    },
+}
 GRANT_TYPE = "client_credentials"
 PUSH_DATA_ENDPOINT = (
    "{dce_uri}/dataCollectionRules/{dcr_immutable_id}/streams/"
    "Custom-{custom_log_table_name}?api-version=2023-01-01"
 )
+# Logs Ingestion API accepts at most 1 MB per call. Chunks are sized with a
+# fast estimate against this limit; a chunk whose actual JSON body is larger
+# (e.g. non-ASCII data) is re-split by its exact size before it is sent.
+MAX_CHUNK_SIZE_BYTES = 1024 * 1024
+TOKEN_SCOPE_SUFFIX = "/.default"
+HOSTNAME_LABEL_RE = r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$"
+
+# Microsoft Entra ID error codes (AADSTS) returned by the token endpoint
+AADSTS_CODE_RE = r"AADSTS(\d+)"
+AADSTS_CROSS_CLOUD_CODES = ("900382", "900432")
+AADSTS_TENANT_NOT_FOUND_CODE = "90002"
+AADSTS_INVALID_TENANT_CODES = ("900023",)
+AADSTS_INVALID_APP_CODE = "700016"
+AADSTS_INVALID_SECRET_CODE = "7000215"
 
 MAX_RETRIES = 3
 RETRY_SLEEP_TIME = 60
 MAX_WAIT_TIME = 120
 MODULE_NAME = "CLS"
 PLUGIN_NAME = "Microsoft Azure Log Analytics"
-PLUGIN_VERSION = "1.0.0"
+PLUGIN_VERSION = "1.1.0"
 
 # Ingestion mode values (must match manifest.json choice values)
 INGESTION_MODE_SINGLE_TABLE = "single_table"
 INGESTION_MODE_PER_DATA_TYPE = "per_data_type"
 
-# Supported data types (must match manifest 'types' and multichoice values)
+# Supported data types (must match manifest 'types')
 DATA_TYPE_ALERTS = "alerts"
 DATA_TYPE_EVENTS = "events"
 DATA_TYPE_WEBTX = "webtx"
@@ -99,81 +146,37 @@ SPECIAL_RENAMES = {
    "Type": "TypeField",
 }
 
-SINGLE_TABLE_DYNAMIC_FIELDS = [
-    {
-        "label": "Custom Log Table Name",
-        "key": "custom_log_table_name",
-        "type": "text",
-        "default": "",
-        "mandatory": True,
-        "description": (
-            "Custom Log Table name for ingesting all data. "
-            "Every record (Alerts, Events and WebTx) is pushed "
-            "into this table inside a 'RawData' column. "
-            "The table must already exist in the Log Analytics "
-            "Workspace."
-        ),
-    },
-]
+# Configuration keys of the parameters that are mandatory only for the
+# 'Custom Cloud' option (must match manifest.json)
+CONFIG_CUSTOM_AUTHORITY_HOST = "custom_authority_host"
+CONFIG_CUSTOM_TOKEN_SCOPE = "custom_token_scope"
 
-PER_DATA_TYPE_DYNAMIC_FIELDS = [
-    {
-        "label": "Data Types to Ingest",
-        "key": "data_types",
-        "type": "multichoice",
-        "choices": [
-            {"key": "Alerts", "value": DATA_TYPE_ALERTS},
-            {"key": "Events", "value": DATA_TYPE_EVENTS},
-            {"key": "WebTx",  "value": DATA_TYPE_WEBTX},
-        ],
-        "default": [
-            DATA_TYPE_ALERTS, DATA_TYPE_EVENTS, DATA_TYPE_WEBTX,
-        ],
+# Configuration key of the 'Data Types to Ingest' multichoice (per_data_type
+# mode). It is the only field that triggers get_dynamic_fields().
+CONFIG_DATA_TYPES = "data_types"
+
+# Table name fields returned by get_dynamic_fields() for the data types
+# selected in 'Data Types to Ingest'. The condition hides them again when
+# 'Ingestion Mode' is switched back to 'Single Table'.
+PER_DATA_TYPE_TABLE_FIELDS = {
+    data_type: {
+        "label": f"{label} Custom Log Table Name",
+        "key": PER_DATA_TYPE_TABLE_KEY[data_type],
+        "type": "text",
+        "default": "",
         "mandatory": True,
+        "condition": {
+            "key": "ingestion_mode",
+            "values": [INGESTION_MODE_PER_DATA_TYPE],
+        },
         "description": (
-            "Select which Netskope data types should be "
-            "ingested. A separate custom log table is used "
-            "for each selected type — provide the matching "
-            "table name(s) below."
+            f"Custom Log Table name that will receive {label}. The table "
+            "must already exist in the Log Analytics Workspace."
         ),
-    },
-    {
-        "label": "Alerts Custom Log Table Name",
-        "key": "alerts_table_name",
-        "type": "text",
-        "default": "",
-        "mandatory": False,
-        "description": (
-            "Custom Log Table name that will receive Alerts. "
-            "Required only when 'Alerts' is selected above. "
-            "The table must already exist in the Log Analytics "
-            "Workspace."
-        ),
-    },
-    {
-        "label": "Events Custom Log Table Name",
-        "key": "events_table_name",
-        "type": "text",
-        "default": "",
-        "mandatory": False,
-        "description": (
-            "Custom Log Table name that will receive Events. "
-            "Required only when 'Events' is selected above. "
-            "The table must already exist in the Log Analytics "
-            "Workspace."
-        ),
-    },
-    {
-        "label": "WebTx Custom Log Table Name",
-        "key": "webtx_table_name",
-        "type": "text",
-        "default": "",
-        "mandatory": False,
-        "description": (
-            "Custom Log Table name that will receive WebTx "
-            "transactions. Required only when 'WebTx' is "
-            "selected above. The table must already exist "
-            "in the Log Analytics Workspace."
-        ),
-    },
-]
+    }
+    for data_type, label in (
+        (DATA_TYPE_ALERTS, "Alerts"),
+        (DATA_TYPE_EVENTS, "Events"),
+        (DATA_TYPE_WEBTX, "WebTx"),
+    )
+}

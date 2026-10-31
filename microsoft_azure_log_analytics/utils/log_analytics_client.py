@@ -34,19 +34,34 @@ Microsoft Azure Log Analytics Client.
 
 
 import hashlib
+import re
 import requests
 import traceback
 import json
 import time
-from typing import Dict, Union
+from typing import Dict, Tuple, Union
 
 from netskope.common.utils import add_user_agent
 from requests.models import Response
 from .log_analytics_exception import (
     MicrosoftAzureLogAnalyticsPluginException,
 )
+from .log_analytics_helper import (
+    normalize_authority_host,
+    normalize_token_scope,
+)
 from .log_analytics_constants import (
-    API_SCOPE,
+    AADSTS_CODE_RE,
+    AADSTS_CROSS_CLOUD_CODES,
+    AADSTS_INVALID_APP_CODE,
+    AADSTS_INVALID_SECRET_CODE,
+    AADSTS_INVALID_TENANT_CODES,
+    AADSTS_TENANT_NOT_FOUND_CODE,
+    AZURE_CLOUD_CUSTOM,
+    AZURE_CLOUD_ENVIRONMENTS,
+    AZURE_CLOUD_PUBLIC,
+    CONFIG_CUSTOM_AUTHORITY_HOST,
+    CONFIG_CUSTOM_TOKEN_SCOPE,
     GENERATE_TOKEN_BASE_URL,
     GRANT_TYPE,
     MODULE_NAME,
@@ -60,6 +75,7 @@ from .log_analytics_constants import (
     INGESTION_MODE_PER_DATA_TYPE,
     SUPPORTED_DATA_TYPES,
     PER_DATA_TYPE_TABLE_KEY,
+    CONFIG_DATA_TYPES,
 )
 
 
@@ -183,9 +199,7 @@ class AzureLogAnalyticsClient:
                         configuration
                     )
                     auth_header = self.generate_auth_token(
-                        tenant_id=parsed_config["tenant_id"],
-                        app_id=parsed_config["app_id"],
-                        app_secret=parsed_config["app_secret"],
+                        parsed_config=parsed_config,
                         is_validation=is_validation,
                     )
                     storage.update(
@@ -478,6 +492,7 @@ class AzureLogAnalyticsClient:
             )
             error_val = error_response.get("error", {})
             err_msg = error_dict[status_code]
+            resolution_msg = None
             if isinstance(error_val, dict):
                 err_code = error_val.get("code")
                 err_message = error_val.get("message")
@@ -518,8 +533,32 @@ class AzureLogAnalyticsClient:
                     )
                     resolution_msg = None
             elif isinstance(error_val, str):
-                text_response = response.text
-                if "90002" in text_response:
+                aadsts_code = self._get_aadsts_code(
+                    error_response, response.text
+                )
+                if aadsts_code in AADSTS_CROSS_CLOUD_CODES:
+                    err_msg = err_msg + (
+                        "The Microsoft Entra ID application does not belong "
+                        "to the selected Azure Cloud."
+                    )
+                    resolution_msg = (
+                        "Ensure that the 'Azure Cloud' matches the cloud in "
+                        "which the Microsoft Entra ID application is "
+                        "registered. Select 'Custom Cloud' if your Azure "
+                        "cloud is not listed."
+                    )
+                elif aadsts_code == AADSTS_TENANT_NOT_FOUND_CODE:
+                    err_msg = err_msg + (
+                        "Directory (tenant) ID not found in the selected "
+                        "Azure Cloud."
+                    )
+                    resolution_msg = (
+                        "Ensure that the Directory (tenant) ID provided in "
+                        "the configuration parameters is correct and the "
+                        "'Azure Cloud' matches the cloud in which the "
+                        "tenant exists."
+                    )
+                elif aadsts_code in AADSTS_INVALID_TENANT_CODES:
                     err_msg = err_msg + (
                         "Invalid Directory (tenant) ID provided in "
                         "the configuration parameters."
@@ -528,7 +567,7 @@ class AzureLogAnalyticsClient:
                         "Ensure that the Directory (tenant) ID provided in "
                         "the configuration parameters is correct."
                     )
-                elif "700016" in text_response:
+                elif aadsts_code == AADSTS_INVALID_APP_CODE:
                     err_msg = err_msg + (
                         "Invalid Application (client) ID provided in "
                         "the configuration parameters."
@@ -537,7 +576,7 @@ class AzureLogAnalyticsClient:
                         "Ensure that the Application (client) ID provided in "
                         "the configuration parameters is correct."
                     )
-                elif "7000215" in text_response:
+                elif aadsts_code == AADSTS_INVALID_SECRET_CODE:
                     err_msg = err_msg + (
                         "Invalid Client Secret provided in "
                         "the configuration parameters."
@@ -555,7 +594,9 @@ class AzureLogAnalyticsClient:
                     resolution_msg = (
                         "Ensure that the Directory (tenant) ID, "
                         "Application (client) ID, or Client Secret "
-                        "provided in the configuration parameters is correct."
+                        "provided in the configuration parameters is correct "
+                        "and the 'Azure Cloud' matches the cloud in which "
+                        "the Microsoft Entra ID application is registered."
                     )
             _log_error_message(resolution=resolution_msg)
         elif status_code >= 400 and status_code < 500:
@@ -568,31 +609,111 @@ class AzureLogAnalyticsClient:
             err_msg = "HTTP Error"
             _log_error_message()
 
+    @staticmethod
+    def _get_aadsts_code(
+        error_response: Union[Dict, None], response_text: str
+    ) -> Union[str, None]:
+        """Extract the Microsoft Entra ID error code (AADSTS<code>) from
+        the token endpoint error response.
+
+        Args:
+            error_response (dict): Parsed error response.
+            response_text (str): Raw error response.
+
+        Returns:
+            str: The numeric code (e.g. "900382"), None if not found.
+        """
+        description = (
+            error_response.get("error_description")
+            if isinstance(error_response, dict)
+            else None
+        )
+        for text in (description, response_text):
+            match = re.search(AADSTS_CODE_RE, str(text or ""))
+            if match:
+                return match.group(1)
+        return None
+
+    def get_cloud_endpoints(self, parsed_config: Dict) -> Tuple[str, str]:
+        """Resolve the Microsoft Entra ID authority host and the token
+        scope for the configured Azure cloud.
+
+        Args:
+            parsed_config (Dict): Output of
+                :meth:`get_configuration_parameters`.
+
+        Returns:
+            Tuple[str, str]: (authority host, token scope).
+
+        Raises:
+            MicrosoftAzureLogAnalyticsPluginException: If the Azure cloud is
+                unknown or the custom cloud values are invalid.
+        """
+        azure_cloud = parsed_config["azure_cloud"]
+        if azure_cloud == AZURE_CLOUD_CUSTOM:
+            login_host = normalize_authority_host(
+                parsed_config.get(CONFIG_CUSTOM_AUTHORITY_HOST)
+            )
+            scope = normalize_token_scope(
+                parsed_config.get(CONFIG_CUSTOM_TOKEN_SCOPE)
+            )
+            if not (login_host and scope):
+                err_msg = (
+                    "Invalid 'Custom Authority Host' or 'Custom Token Scope' "
+                    "provided in the configuration parameters."
+                )
+                self.logger.error(
+                    message=f"{self.log_prefix}: {err_msg}",
+                    resolution=(
+                        "Ensure that 'Custom Authority Host' is a valid "
+                        "hostname and 'Custom Token Scope' is a valid https "
+                        "URL."
+                    ),
+                )
+                raise MicrosoftAzureLogAnalyticsPluginException(err_msg)
+            return login_host, scope
+
+        cloud = AZURE_CLOUD_ENVIRONMENTS.get(azure_cloud)
+        if not cloud:
+            err_msg = (
+                "Invalid value provided for the configuration parameter "
+                "'Azure Cloud'."
+            )
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg}",
+                resolution="Select a valid value for 'Azure Cloud'.",
+            )
+            raise MicrosoftAzureLogAnalyticsPluginException(err_msg)
+        return cloud["login_host"], cloud["scope"]
+
     def generate_auth_token(
         self,
-        tenant_id: str,
-        app_id: str,
-        app_secret: str,
+        parsed_config: Dict,
         is_validation: bool = False,
     ) -> Dict:
         """
         Generate authentication header for Microsoft Azure LogAnalytics.
 
+        The access token is requested from the Microsoft Entra ID endpoint
+        of the configured Azure cloud.
+
         Args:
-            tenant_id (str): Tenant ID.
-            app_id (str): App ID.
-            app_secret (str): App secret.
+            parsed_config (Dict): Output of
+                :meth:`get_configuration_parameters`.
             is_validation (bool): Is validation.
 
         Returns:
             dict: Authentication header.
         """
         try:
-            url = GENERATE_TOKEN_BASE_URL.format(tenant_id=tenant_id)
+            login_host, scope = self.get_cloud_endpoints(parsed_config)
+            url = GENERATE_TOKEN_BASE_URL.format(
+                login_host=login_host, tenant_id=parsed_config["tenant_id"]
+            )
             body = {
-                "client_id": app_id,
-                "client_secret": app_secret,
-                "scope": API_SCOPE,
+                "client_id": parsed_config["app_id"],
+                "client_secret": parsed_config["app_secret"],
+                "scope": scope,
                 "grant_type": GRANT_TYPE,
             }
             headers = {
@@ -618,7 +739,7 @@ class AzureLogAnalyticsClient:
                 )
                 self.logger.error(
                     message=f"{self.log_prefix}: {err_msg}",
-                    details=str(response.text),
+                    details=str(response),
                 )
                 raise MicrosoftAzureLogAnalyticsPluginException(err_msg)
             return {
@@ -675,10 +796,13 @@ class AzureLogAnalyticsClient:
 
         Returns:
             dict with keys:
-                tenant_id, app_id, app_secret, dce_uri, dcr_immutable_id,
+                tenant_id, app_id, app_secret, azure_cloud,
+                custom_authority_host, custom_token_scope (custom cloud
+                only), dce_uri (without trailing slash), dcr_immutable_id,
                 log_source_identifier, ingestion_mode,
                 single_table_name (str, single_table mode only),
-                data_types (list[str], per_data_type mode only),
+                data_types (list[str], per_data_type mode only; the data
+                types selected in 'Data Types to Ingest'),
                 tables (dict[data_type -> table_name], per_data_type only).
         """
         configuration = configuration or {}
@@ -686,11 +810,21 @@ class AzureLogAnalyticsClient:
             configuration.get("ingestion_mode")
         ) or INGESTION_MODE_SINGLE_TABLE
 
+        dce_uri = self._safe_str(configuration.get("dce_uri"))
+        if isinstance(dce_uri, str):
+            dce_uri = dce_uri.rstrip("/")
+        azure_cloud = self._safe_str(
+            configuration.get("azure_cloud")
+        ) or AZURE_CLOUD_PUBLIC
+
         parsed = {
             "tenant_id": self._safe_str(configuration.get("tenantid")),
             "app_id": self._safe_str(configuration.get("appid")),
             "app_secret": configuration.get("appsecret"),
-            "dce_uri": self._safe_str(configuration.get("dce_uri")),
+            "azure_cloud": azure_cloud,
+            CONFIG_CUSTOM_AUTHORITY_HOST: "",
+            CONFIG_CUSTOM_TOKEN_SCOPE: "",
+            "dce_uri": dce_uri,
             "dcr_immutable_id": self._safe_str(
                 configuration.get("dcr_immutable_id")
             ),
@@ -703,15 +837,24 @@ class AzureLogAnalyticsClient:
             "tables": {},
         }
 
+        # The custom cloud values are ignored for the other Azure clouds.
+        if azure_cloud == AZURE_CLOUD_CUSTOM:
+            for key in (
+                CONFIG_CUSTOM_AUTHORITY_HOST, CONFIG_CUSTOM_TOKEN_SCOPE
+            ):
+                parsed[key] = self._safe_str(configuration.get(key))
+
         if ingestion_mode == INGESTION_MODE_PER_DATA_TYPE:
-            raw_types = configuration.get("data_types") or []
-            parsed["data_types"] = [
-                t for t in raw_types if t in SUPPORTED_DATA_TYPES
-            ]
             parsed["tables"] = {
                 dt: self._safe_str(configuration.get(key))
                 for dt, key in PER_DATA_TYPE_TABLE_KEY.items()
             }
+            selected = configuration.get(CONFIG_DATA_TYPES) or []
+            if isinstance(selected, str):
+                selected = [selected]
+            parsed["data_types"] = [
+                dt for dt in SUPPORTED_DATA_TYPES if dt in selected
+            ]
         else:
             parsed["single_table_name"] = self._safe_str(
                 configuration.get("custom_log_table_name")
@@ -724,7 +867,7 @@ class AzureLogAnalyticsClient:
         given the parsed configuration dict.
 
         Returns an empty string if no table is configured for this data_type
-        (e.g. per_data_type mode with the data_type not selected).
+        (e.g. per_data_type mode with no table name provided for it).
         """
         if parsed_config.get("ingestion_mode") == INGESTION_MODE_PER_DATA_TYPE:
             return parsed_config.get("tables", {}).get(data_type, "")
@@ -739,6 +882,9 @@ class AzureLogAnalyticsClient:
             f"{parsed_config.get('tenant_id','')}"
             f"{parsed_config.get('app_id','')}"
             f"{parsed_config.get('app_secret','')}"
+            f"{parsed_config.get('azure_cloud','')}"
+            f"{parsed_config.get(CONFIG_CUSTOM_AUTHORITY_HOST, '')}"
+            f"{parsed_config.get(CONFIG_CUSTOM_TOKEN_SCOPE, '')}"
             f"{parsed_config.get('dce_uri','')}"
             f"{parsed_config.get('dcr_immutable_id','')}"
             f"{parsed_config.get('ingestion_mode','')}"
@@ -792,9 +938,7 @@ class AzureLogAnalyticsClient:
         if auth_header and storage.get("config_hash") == current_config_hash:
             return auth_header, storage
         auth_header = self.generate_auth_token(
-            tenant_id=parsed_config["tenant_id"],
-            app_id=parsed_config["app_id"],
-            app_secret=parsed_config["app_secret"],
+            parsed_config=parsed_config,
             is_validation=is_validation,
         )
         storage.update(

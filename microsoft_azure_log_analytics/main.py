@@ -31,11 +31,13 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 Microsoft Azure Log Analytics Plugin."""
 
+import copy
 import datetime
 import re
 import traceback
 import json
 from typing import Dict, List, Tuple, Union
+from urllib.parse import urlparse
 from jsonpath import jsonpath
 
 from netskope.integrations.cls.plugin_base import (
@@ -50,7 +52,11 @@ from .utils.log_analytics_client import AzureLogAnalyticsClient
 from .utils.log_analytics_helper import (
     validate_log_analytics_mappings,
     get_log_analytics_mappings,
-    split_into_size
+    split_into_size,
+    split_by_json_size,
+    is_valid_dce_uri,
+    normalize_authority_host,
+    normalize_token_scope,
 )
 from .utils.log_analytics_exception import (
     FieldNotFoundError,
@@ -63,15 +69,22 @@ from .utils.log_analytics_constants import (
     PLUGIN_VERSION,
     MODULE_NAME,
     PUSH_DATA_ENDPOINT,
+    MAX_CHUNK_SIZE_BYTES,
     VALIDATION_ERROR_MSG,
     INGESTION_MODE_SINGLE_TABLE,
     INGESTION_MODE_PER_DATA_TYPE,
     JSON_MAPPED_DATA_TYPES,
+    SUPPORTED_DATA_TYPES,
     COLUMN_NAME_INVALID_CHAR_RE,
     RESERVED_NAMES,
     SPECIAL_RENAMES,
-    SINGLE_TABLE_DYNAMIC_FIELDS,
-    PER_DATA_TYPE_DYNAMIC_FIELDS,
+    PER_DATA_TYPE_TABLE_FIELDS,
+    CONFIG_DATA_TYPES,
+    AZURE_CLOUD_CUSTOM,
+    AZURE_CLOUD_ENVIRONMENTS,
+    AZURE_CLOUD_LABELS,
+    CONFIG_CUSTOM_AUTHORITY_HOST,
+    CONFIG_CUSTOM_TOKEN_SCOPE,
 )
 
 
@@ -124,24 +137,25 @@ class AzureLogAnalyticsPlugin(PluginBase):
         return PLUGIN_NAME, PLUGIN_VERSION
 
     def get_dynamic_fields(self):
-        """Return configuration fields that depend on the selected
-        Ingestion Mode.
+        """Return a table name field for each data type selected in
+        'Data Types to Ingest'.
 
-        - single_table: a single custom_log_table_name text field
-          (matches monitor behaviour: every record is pushed to this one
-          table inside a RawData envelope).
-        - per_data_type: a multi-choice data_types selector
-          plus three table-name fields, one per supported data type.
-          The table-name fields are presented as non-mandatory at the
-          manifest layer; their conditional-mandatory check is enforced
-          in :meth:`validate` based on which data types are selected.
+        'Data Types to Ingest' is the last static field in manifest.json and
+        the only field with 'has_api_call', so the platform renders these
+        fields directly below it. All other conditional fields are shown or
+        hidden by their 'condition' in manifest.json, without an API call.
+        Each returned field also carries a condition on 'Ingestion Mode', so
+        it is hidden again when 'Single Table' is selected.
         """
-        ingestion_mode = self.configuration.get(
-            "ingestion_mode", INGESTION_MODE_SINGLE_TABLE
-        )
-        if ingestion_mode == INGESTION_MODE_PER_DATA_TYPE:
-            return PER_DATA_TYPE_DYNAMIC_FIELDS
-        return SINGLE_TABLE_DYNAMIC_FIELDS
+        selected = (self.configuration or {}).get(CONFIG_DATA_TYPES) or []
+        if isinstance(selected, str):
+            selected = [selected]
+        # Hand out copies so the caller can never change the constants.
+        return [
+            copy.deepcopy(PER_DATA_TYPE_TABLE_FIELDS[data_type])
+            for data_type in SUPPORTED_DATA_TYPES
+            if data_type in selected
+        ]
 
     def get_subtype_mapping(self, mappings, subtype):
         """Retrieve subtype mappings (mappings for subtypes of alerts/events) \
@@ -173,8 +187,10 @@ class AzureLogAnalyticsPlugin(PluginBase):
                 self.configuration
             )
 
-            is_per_type = parsed_config["ingestion_mode"] == INGESTION_MODE_PER_DATA_TYPE     # noqa
-            if is_per_type and data_type not in parsed_config["data_types"]:
+            if (
+                parsed_config["ingestion_mode"] == INGESTION_MODE_PER_DATA_TYPE
+                and data_type not in parsed_config["data_types"]
+            ):
                 log_msg = (
                     f"[{data_type}][{subtype}] Skipping push for data type "
                     f"'{data_type}' as it is not selected in "
@@ -237,15 +253,36 @@ class AzureLogAnalyticsPlugin(PluginBase):
 
         skipped_count = 0
         total_count = 0
-        for page, chunk in enumerate(chunks, start=1):
+        page = 0
+        pending = list(chunks)
+        while pending:
+            chunk = pending.pop(0)
+            page += 1
             try:
+                body = json.dumps(chunk)
+                if len(body) > MAX_CHUNK_SIZE_BYTES and len(chunk) > 1:
+                    # Fallback: the fast size estimate of split_into_size
+                    # can be lower than the body for non-ASCII data, which
+                    # is escaped to \uXXXX. Re-split this chunk by its exact
+                    # JSON size so that no request exceeds the API limit.
+                    parts = split_by_json_size(chunk)
+                    self.logger.debug(
+                        f"{self.log_prefix}: [{data_type}][{subtype}] "
+                        f"Chunk {page} of {len(chunk)} record(s) is "
+                        f"{len(body)} bytes, above the API limit of "
+                        f"{MAX_CHUNK_SIZE_BYTES} bytes. Splitting it into "
+                        f"{len(parts)} chunks."
+                    )
+                    pending[0:0] = parts
+                    page -= 1
+                    continue
                 self.log_analytics_client.api_helper(
                     logger_msg=(
                         f"ingesting data to {PLUGIN_NAME} for chunk {page}"
                     ),
                     url=url_endpoint,
                     method="POST",
-                    data=json.dumps(chunk),
+                    data=body,
                     headers=auth_header,
                     verify=self.ssl_validation,
                     proxies=self.proxy,
@@ -1019,6 +1056,138 @@ class AzureLogAnalyticsPlugin(PluginBase):
                 message=err_msg,
             )
 
+    def _validate_dce_cloud_match(
+        self, dce_uri: str, azure_cloud: str
+    ) -> Union[ValidationResult, None]:
+        """Ensure the DCE URI belongs to the selected Azure Cloud.
+
+        A token issued by one cloud's Entra ID is not accepted by another
+        cloud's ingestion endpoint, and requesting it from the wrong cloud
+        fails with AADSTS900382. DCE hosts on an unrecognised domain are
+        not blocked, and the check is skipped for 'Custom Cloud'.
+
+        Args:
+            dce_uri (str): DCE URI.
+            azure_cloud (str): Selected Azure cloud.
+
+        Returns:
+            ValidationResult: Failure result on mismatch, otherwise None.
+        """
+        if azure_cloud == AZURE_CLOUD_CUSTOM:
+            return None
+        host = (urlparse(dce_uri).hostname or "").lower()
+        detected_cloud = next(
+            (
+                cloud
+                for cloud, details in AZURE_CLOUD_ENVIRONMENTS.items()
+                if host.endswith(f".{details['dce_domain']}")
+            ),
+            None,
+        )
+        if not detected_cloud or detected_cloud == azure_cloud:
+            return None
+        err_msg = (
+            f"DCE URI belongs to '{AZURE_CLOUD_LABELS[detected_cloud]}' "
+            f"but 'Azure Cloud' is set to "
+            f"'{AZURE_CLOUD_LABELS[azure_cloud]}'."
+        )
+        self.logger.error(
+            message=f"{self.log_prefix}: {VALIDATION_ERROR_MSG}{err_msg}",
+            resolution=(
+                f"Set 'Azure Cloud' to '{AZURE_CLOUD_LABELS[detected_cloud]}'"
+                " or provide a DCE URI from the selected Azure cloud."
+            ),
+        )
+        return ValidationResult(success=False, message=err_msg)
+
+    def _validate_dce_uri(self, dce_uri: str) -> Union[ValidationResult, None]:
+        """Ensure the DCE URI is an https URL (e.g.
+        https://<name>.<region>.ingest.monitor.azure.com).
+
+        Args:
+            dce_uri (str): DCE URI.
+
+        Returns:
+            ValidationResult: Failure result if invalid, otherwise None.
+        """
+        if is_valid_dce_uri(dce_uri):
+            return None
+        err_msg = (
+            "Invalid value provided for the configuration parameter "
+            "'DCE URI'."
+        )
+        self.logger.error(
+            message=f"{self.log_prefix}: {VALIDATION_ERROR_MSG}{err_msg}",
+            resolution=(
+                "Ensure that the DCE URI is a valid URL starting with "
+                "'https://', e.g. "
+                "'https://<name>.<region>.ingest.monitor.azure.com'."
+            ),
+        )
+        return ValidationResult(success=False, message=err_msg)
+
+    def _validate_custom_cloud(
+        self, parsed_config: Dict
+    ) -> Union[ValidationResult, None]:
+        """Validate 'Custom Authority Host' and 'Custom Token Scope'.
+
+        Both are mandatory only when 'Azure Cloud' is 'Custom Cloud'.
+
+        Args:
+            parsed_config (Dict): Parsed configuration parameters.
+
+        Returns:
+            ValidationResult: Failure result if invalid, otherwise None.
+        """
+        if parsed_config["azure_cloud"] != AZURE_CLOUD_CUSTOM:
+            return None
+
+        for field_name, key, normalizer, resolution in (
+            (
+                "Custom Authority Host",
+                CONFIG_CUSTOM_AUTHORITY_HOST,
+                normalize_authority_host,
+                "Provide only the hostname of the Microsoft Entra ID "
+                "authority, e.g. 'login.microsoftonline.us'.",
+            ),
+            (
+                "Custom Token Scope",
+                CONFIG_CUSTOM_TOKEN_SCOPE,
+                normalize_token_scope,
+                "Provide the https URL of the Azure Monitor token audience, "
+                "e.g. 'https://monitor.azure.us/.default'.",
+            ),
+        ):
+            value = parsed_config[key]
+            if not value:
+                err_msg = (
+                    f"'{field_name}' is required when 'Azure Cloud' is set "
+                    "to 'Custom Cloud'."
+                )
+                self.logger.error(
+                    message=(
+                        f"{self.log_prefix}: {VALIDATION_ERROR_MSG}{err_msg}"
+                    ),
+                    resolution=(
+                        f"Provide the {field_name} or select a different "
+                        "'Azure Cloud'."
+                    ),
+                )
+                return ValidationResult(success=False, message=err_msg)
+            if not normalizer(value):
+                err_msg = (
+                    f"Invalid value provided for the configuration "
+                    f"parameter '{field_name}'."
+                )
+                self.logger.error(
+                    message=(
+                        f"{self.log_prefix}: {VALIDATION_ERROR_MSG}{err_msg}"
+                    ),
+                    resolution=resolution,
+                )
+                return ValidationResult(success=False, message=err_msg)
+        return None
+
     def _validate_connectivity(
         self,
         configuration: Dict,
@@ -1028,7 +1197,7 @@ class AzureLogAnalyticsPlugin(PluginBase):
         confirm auth + DCR + table all line up.
 
         In ``single_table`` mode this is one POST. In ``per_data_type``
-        mode every distinct, non-empty table name selected by the user
+        mode every distinct, non-empty table name provided by the user
         is tested.
         """
         self.logger.debug(
@@ -1041,9 +1210,8 @@ class AzureLogAnalyticsPlugin(PluginBase):
             == INGESTION_MODE_PER_DATA_TYPE
         ):
             tables_to_test = [
-                (dt, parsed_config["tables"].get(dt, ""))
+                (dt, parsed_config["tables"][dt])
                 for dt in parsed_config["data_types"]
-                if parsed_config["tables"].get(dt)
             ]
         else:
             tables_to_test = [
@@ -1237,21 +1405,21 @@ class AzureLogAnalyticsPlugin(PluginBase):
             )
             return ValidationResult(success=False, message=err_msg)
 
-        for dt in data_types:
-            table_name = parsed_config["tables"].get(dt, "")
-            if not table_name:
-                pretty = dt.capitalize() if dt != "webtx" else "WebTx"
+        for data_type in data_types:
+            if not parsed_config["tables"].get(data_type):
+                label = PER_DATA_TYPE_TABLE_FIELDS[data_type]["label"]
+                pretty = label.split(" ")[0]
                 err_msg = (
-                    f"'{pretty} Custom Log Table Name' is required when "
-                    f"'{pretty}' is selected under 'Data Types to Ingest'."
+                    f"'{label}' is required when '{pretty}' is selected in "
+                    "'Data Types to Ingest'."
                 )
                 self.logger.error(
                     message=(
                         f"{self.log_prefix}: {VALIDATION_ERROR_MSG}{err_msg}"
                     ),
                     resolution=(
-                        f"Provide the Custom Log Table Name for {pretty} "
-                        "or remove it from 'Data Types to Ingest'."
+                        f"Provide the {label} or remove {pretty} from "
+                        "'Data Types to Ingest'."
                     ),
                 )
                 return ValidationResult(success=False, message=err_msg)
@@ -1301,6 +1469,32 @@ class AzureLogAnalyticsPlugin(PluginBase):
                 field_type=str,
             ):
                 return validation_result
+
+        if dce_uri_result := self._validate_dce_uri(parsed_config["dce_uri"]):
+            return dce_uri_result
+
+        if parsed_config["azure_cloud"] not in AZURE_CLOUD_LABELS:
+            err_msg = (
+                "Invalid value provided for the configuration "
+                "parameter 'Azure Cloud'."
+            )
+            self.logger.error(
+                message=f"{self.log_prefix}: {VALIDATION_ERROR_MSG}{err_msg}",
+                resolution=(
+                    "Ensure that Azure Cloud is one of: "
+                    f"{', '.join(AZURE_CLOUD_LABELS.values())}."
+                ),
+            )
+            return ValidationResult(success=False, message=err_msg)
+
+        if custom_cloud_result := self._validate_custom_cloud(parsed_config):
+            return custom_cloud_result
+
+        if cloud_result := self._validate_dce_cloud_match(
+            dce_uri=parsed_config["dce_uri"],
+            azure_cloud=parsed_config["azure_cloud"],
+        ):
+            return cloud_result
 
         if mode_result := self._ingestion_mode_validation(
             parsed_config=parsed_config,

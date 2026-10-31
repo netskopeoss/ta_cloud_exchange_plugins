@@ -36,14 +36,13 @@ import traceback
 import json
 import sys
 from typing import Dict, List, Tuple, Union
+from urllib.parse import urlparse
 from jsonpath import jsonpath
-from packaging import version
 
-from netskope.common.api import __version__ as CE_VERSION
 from netskope.integrations.cls.plugin_base import (
     PluginBase,
     ValidationResult,
-    PushResult
+    PushResult,
 )
 from netskope.common.utils import AlertsHelper
 from .utils.monitor_cef_generator import CEFGenerator
@@ -52,7 +51,11 @@ from .utils.monitor_client import AzureMonitorClient
 from .utils.monitor_helper import (
     validate_monitor_mappings,
     get_monitor_mappings,
-    split_into_size
+    split_into_size,
+    split_by_json_size,
+    is_valid_dce_uri,
+    normalize_authority_host,
+    normalize_token_scope,
 )
 from .utils.monitor_exceptions import (
     FieldNotFoundError,
@@ -66,7 +69,10 @@ from .utils.monitor_constants import (
     MODULE_NAME,
     PUSH_DATA_ENDPOINT,
     VALIDATION_ERROR_MSG,
-    MAXIMUM_CE_VERSION,
+    MAX_CHUNK_SIZE_BYTES,
+    AZURE_CLOUD_CUSTOM,
+    AZURE_CLOUD_ENVIRONMENTS,
+    AZURE_CLOUD_LABELS,
 )
 
 
@@ -84,46 +90,8 @@ class AzureMonitorPlugin(PluginBase):
             *args,
             **kwargs,
         )
-        # Flag to check if CE version is more than v5.1.2
-        self._is_ce_post_v512 = self._check_ce_version()
-        # Method to decide which logger to use with or without
-        # resolutions based on the CE version
-        self._patch_error_logger()
         self.plugin_name, self.plugin_version = self._get_plugin_info()
         self.log_prefix = f"{MODULE_NAME} {self.plugin_name} [{name}]"
-
-    def _check_ce_version(self):
-        """Check if CE version is greater than v5.1.2.
-
-        Returns:
-            bool: True if CE version is greater than v5.1.2, False otherwise.
-        """
-        return version.parse(CE_VERSION) > version.parse(MAXIMUM_CE_VERSION)
-
-    def _patch_error_logger(self):
-        """Monkey patch logger methods to handle resolution parameter
-        compatibility.
-        """
-        # Store original methods
-        original_error = self.logger.error
-
-        def patched_error(
-            message=None,
-            details=None,
-            resolution=None,
-            **kwargs,
-        ):
-            """Patched error method that handles resolution compatibility."""
-            log_kwargs = {"message": message}
-            if details:
-                log_kwargs["details"] = details
-            if resolution and self._is_ce_post_v512:
-                log_kwargs["resolution"] = resolution
-            log_kwargs.update(kwargs)
-            return original_error(**log_kwargs)
-
-        # Replace logger methods with patched versions
-        self.logger.error = patched_error
 
     def _get_plugin_info(self) -> tuple:
         """Get plugin name and version from manifest.
@@ -207,6 +175,7 @@ class AzureMonitorPlugin(PluginBase):
                 dcr_immutable_id=dcr_immutable_id,
                 custom_log_table_name=custom_log_table_name,
                 monitor_client=monitor_client,
+                configuration=self.configuration,
             )
 
             url_endpoint = PUSH_DATA_ENDPOINT.format(
@@ -218,10 +187,30 @@ class AzureMonitorPlugin(PluginBase):
             skipped_count = 0
             total_count = 0
             page = 0
+            pending = list(transformed_data)
 
-            for chunk in transformed_data:
+            while pending:
+                chunk = pending.pop(0)
                 page += 1
                 try:
+                    body = json.dumps(chunk)
+                    if len(body) > MAX_CHUNK_SIZE_BYTES and len(chunk) > 1:
+                        # Fallback: the fast size estimate of split_into_size
+                        # can be lower than the body for non-ASCII data,
+                        # which is escaped to \uXXXX. Re-split this chunk by
+                        # its exact JSON size so that no request exceeds the
+                        # API limit.
+                        parts = split_by_json_size(chunk)
+                        self.logger.debug(
+                            f"{self.log_prefix}: [{data_type}][{subtype}] "
+                            f"Page {page} of {len(chunk)} record(s) is "
+                            f"{len(body)} bytes, above the API limit of "
+                            f"{MAX_CHUNK_SIZE_BYTES} bytes. Splitting it "
+                            f"into {len(parts)} pages."
+                        )
+                        pending[0:0] = parts
+                        page -= 1
+                        continue
                     logger_msg = (
                         f"ingesting data to {PLUGIN_NAME} for page {page}"
                     )
@@ -229,7 +218,7 @@ class AzureMonitorPlugin(PluginBase):
                         logger_msg=logger_msg,
                         url=url_endpoint,
                         method="POST",
-                        data=json.dumps(chunk),
+                        data=body,
                         headers=auth_header,
                         verify=self.ssl_validation,
                         proxies=self.proxy,
@@ -376,10 +365,9 @@ class AzureMonitorPlugin(PluginBase):
         for cef_header, header_mapping in header_mappings.items():
             try:
                 (
-                    headers[cef_header], mapped_field,
-                ) = self.get_field_value_from_data(
-                    header_mapping, data, False
-                )
+                    headers[cef_header],
+                    mapped_field,
+                ) = self.get_field_value_from_data(header_mapping, data, False)
                 if mapped_field:
                     mapped_field_flag = mapped_field
 
@@ -410,7 +398,7 @@ class AzureMonitorPlugin(PluginBase):
 
         try:
             current_data = data
-            field_parts = field_path.split('.')
+            field_parts = field_path.split(".")
 
             for i, part in enumerate(field_parts):
 
@@ -432,10 +420,7 @@ class AzureMonitorPlugin(PluginBase):
             return None, False
 
     def get_field_value_from_data(
-        self,
-        extension_mapping,
-        data,
-        is_json_path=False
+        self, extension_mapping, data, is_json_path=False
     ) -> Tuple[Union[str, int], bool]:
         """To Fetch the value of extension based on \
             "mapping" and "default" fields.
@@ -485,7 +470,9 @@ class AzureMonitorPlugin(PluginBase):
             else:
                 # If mapping is present in data, map that field,
                 # else skip by raising exception
-                if extension_mapping["mapping_field"] in data:  # case #1 and case #4  # noqa
+                if (
+                    extension_mapping["mapping_field"] in data
+                ):  # case #1 and case #4  # noqa
                     if (
                         extension_mapping.get("transformation") == "Time Stamp"
                         and data[extension_mapping["mapping_field"]]
@@ -509,7 +496,8 @@ class AzureMonitorPlugin(PluginBase):
 
                     if field_exists:
                         if (
-                            extension_mapping.get("transformation") == "Time Stamp"  # noqa
+                            extension_mapping.get("transformation")
+                            == "Time Stamp"  # noqa
                             and nested_value
                         ):
                             try:
@@ -556,10 +544,7 @@ class AzureMonitorPlugin(PluginBase):
             if key in data_keys:
                 mapped_dict[key] = data[key]
             else:
-                (
-                    value,
-                    field_exist
-                ) = self.get_nested_field_value(data, key)
+                value, field_exist = self.get_nested_field_value(data, key)
                 if field_exist:
                     mapped_dict[key] = value
         return mapped_dict
@@ -572,14 +557,7 @@ class AzureMonitorPlugin(PluginBase):
         log_source_identifier = self.configuration.get(
             "log_source_identifier", "Netskope CE"
         )
-        transform_data_json = False
-        if version.parse(CE_VERSION) <= version.parse(MAXIMUM_CE_VERSION):
-            if not self.configuration.get("transformData", True):
-                transform_data_json = True
-        else:
-            if self.configuration.get("transformData", "json") == "json":
-                transform_data_json = True
-        if transform_data_json:
+        if self.configuration.get("transformData", "json") == "json":
             formatted_raw_data = []
             if data_type not in ["alerts", "events"]:
                 for data in raw_data:
@@ -595,21 +573,11 @@ class AzureMonitorPlugin(PluginBase):
                 return formatted_raw_data
 
             try:
-                if (
-                    version.parse(CE_VERSION) <=
-                    version.parse(MAXIMUM_CE_VERSION)
-                ):
-                    validate_monitor_mappings(
-                        self.mappings,
-                        data_type,
-                    )
                 (
                     delimiter,
                     cef_version,
                     monitor_mappings,
-                ) = get_monitor_mappings(
-                    self.mappings
-                )
+                ) = get_monitor_mappings(self.mappings)
             except KeyError as err:
                 self.logger.error(
                     message=(
@@ -680,19 +648,11 @@ class AzureMonitorPlugin(PluginBase):
 
         else:
             try:
-                if (
-                    version.parse(CE_VERSION) <=
-                    version.parse(MAXIMUM_CE_VERSION)
-                ):
-                    validate_monitor_mappings(
-                        self.mappings,
-                        data_type,
-                    )
                 (
-                    delimiter, cef_version, monitor_mappings,
-                ) = get_monitor_mappings(
-                    self.mappings
-                )
+                    delimiter,
+                    cef_version,
+                    monitor_mappings,
+                ) = get_monitor_mappings(self.mappings)
             except KeyError as err:
                 self.logger.error(
                     message=(
@@ -726,7 +686,7 @@ class AzureMonitorPlugin(PluginBase):
                 delimiter,
                 cef_version,
                 self.logger,
-                self.log_prefix
+                self.log_prefix,
             )
 
             try:
@@ -848,7 +808,8 @@ class AzureMonitorPlugin(PluginBase):
         dcr_immutable_id: str,
         custom_log_table_name: str,
         monitor_client: AzureMonitorClient,
-        is_validation: bool = False
+        configuration: Dict,
+        is_validation: bool = False,
     ) -> Tuple[Dict, Dict]:
         """
         Get authentication header and storage.
@@ -861,6 +822,8 @@ class AzureMonitorPlugin(PluginBase):
             dcr_immutable_id (str): DCR Immutable ID.
             custom_log_table_name (str): Custom log table name.
             monitor_client (AzureMonitorClient): Monitor client.
+            configuration (Dict): Configuration, used for the Azure cloud
+                parameters.
             is_validation (bool, optional): Is validation. Defaults to False.
 
         Returns:
@@ -870,10 +833,16 @@ class AzureMonitorPlugin(PluginBase):
         auth_header = storage.get("auth_header")
         stored_config_hash = storage.get("config_hash")
 
+        (
+            azure_cloud,
+            custom_authority_host,
+            custom_token_scope,
+        ) = monitor_client.get_cloud_configuration(configuration)
         current_config_hash = monitor_client.hash_string(
             string=(
                 f"{tenant_id}{app_id}{app_secret}"
                 f"{dce_uri}{dcr_immutable_id}{custom_log_table_name}"
+                f"{azure_cloud}{custom_authority_host}{custom_token_scope}"
             )
         )
         if auth_header and stored_config_hash == current_config_hash:
@@ -883,6 +852,7 @@ class AzureMonitorPlugin(PluginBase):
                 tenant_id=tenant_id,
                 app_id=app_id,
                 app_secret=app_secret,
+                configuration=configuration,
                 is_validation=is_validation,
             )
             storage.update(
@@ -926,13 +896,11 @@ class AzureMonitorPlugin(PluginBase):
         if field_type is str and isinstance(field_value, str):
             field_value = field_value.strip()
         if (
-            is_required and
-            not isinstance(field_value, int) and
-            not field_value
+            is_required
+            and not isinstance(field_value, int)
+            and not field_value
         ):
-            err_msg = (
-                f"'{field_name}' is a required configuration parameter."
-            )
+            err_msg = f"'{field_name}' is a required configuration parameter."
             self.logger.error(
                 message=f"{self.log_prefix}: {VALIDATION_ERROR_MSG}{err_msg}",
                 resolution=(
@@ -950,14 +918,134 @@ class AzureMonitorPlugin(PluginBase):
             )
             self.logger.error(
                 message=f"{self.log_prefix}: {VALIDATION_ERROR_MSG}{err_msg}",
-                resolution=(
-                    f"Ensure that {field_name} field value is valid."
-                ),
+                resolution=(f"Ensure that {field_name} field value is valid."),
             )
             return ValidationResult(
                 success=False,
                 message=err_msg,
             )
+
+    def _validation_error(
+        self, err_msg: str, resolution: str
+    ) -> ValidationResult:
+        """Log a validation error and return the failed result.
+
+        Args:
+            err_msg (str): Error message.
+            resolution (str): Resolution for the error.
+
+        Returns:
+            ValidationResult: Failed validation result.
+        """
+        self.logger.error(
+            message=f"{self.log_prefix}: {VALIDATION_ERROR_MSG}{err_msg}",
+            resolution=resolution,
+        )
+        return ValidationResult(success=False, message=err_msg)
+
+    def _validate_azure_cloud(
+        self,
+        configuration: Dict,
+        dce_uri: str,
+        monitor_client: AzureMonitorClient,
+    ) -> Union[ValidationResult, None]:
+        """Validate 'Azure Cloud' and its dependent parameters.
+
+        - 'Azure Cloud' must be one of the supported values.
+        - 'Custom Authority Host' and 'Custom Token Scope' are mandatory
+          only when 'Azure Cloud' is 'Custom Cloud'.
+        - The DCE URI must belong to the selected Azure cloud. A token
+          issued by one cloud's Entra ID is not accepted by another cloud's
+          ingestion endpoint. DCE hosts on an unrecognised domain are not
+          blocked, and the check is skipped for 'Custom Cloud'.
+
+        Args:
+            configuration (Dict): Configuration parameters.
+            dce_uri (str): DCE URI.
+            monitor_client (AzureMonitorClient): Monitor client.
+
+        Returns:
+            ValidationResult: Failure result if invalid, otherwise None.
+        """
+        (
+            azure_cloud,
+            custom_authority_host,
+            custom_token_scope,
+        ) = monitor_client.get_cloud_configuration(configuration)
+
+        if azure_cloud not in AZURE_CLOUD_LABELS:
+            return self._validation_error(
+                err_msg=(
+                    "Invalid value provided for the configuration "
+                    "parameter 'Azure Cloud'."
+                ),
+                resolution=(
+                    "Ensure that Azure Cloud is one of: "
+                    f"{', '.join(AZURE_CLOUD_LABELS.values())}."
+                ),
+            )
+
+        if azure_cloud == AZURE_CLOUD_CUSTOM:
+            for field_name, value, normalizer, resolution in (
+                (
+                    "Custom Authority Host",
+                    custom_authority_host,
+                    normalize_authority_host,
+                    "Provide only the hostname of the Microsoft Entra ID "
+                    "authority, e.g. 'login.microsoftonline.us'.",
+                ),
+                (
+                    "Custom Token Scope",
+                    custom_token_scope,
+                    normalize_token_scope,
+                    "Provide the https URL of the Azure Monitor token "
+                    "audience, e.g. 'https://monitor.azure.us/.default'.",
+                ),
+            ):
+                if not value:
+                    return self._validation_error(
+                        err_msg=(
+                            f"'{field_name}' is required when 'Azure Cloud' "
+                            "is set to 'Custom Cloud'."
+                        ),
+                        resolution=(
+                            f"Provide the {field_name} or select a "
+                            "different 'Azure Cloud'."
+                        ),
+                    )
+                if not normalizer(value):
+                    return self._validation_error(
+                        err_msg=(
+                            "Invalid value provided for the configuration "
+                            f"parameter '{field_name}'."
+                        ),
+                        resolution=resolution,
+                    )
+            return None
+
+        host = urlparse(dce_uri).hostname or ""
+        detected_cloud = next(
+            (
+                cloud
+                for cloud, details in AZURE_CLOUD_ENVIRONMENTS.items()
+                if host.endswith(f".{details['dce_domain']}")
+            ),
+            None,
+        )
+        if detected_cloud and detected_cloud != azure_cloud:
+            return self._validation_error(
+                err_msg=(
+                    f"DCE URI belongs to '{AZURE_CLOUD_LABELS[detected_cloud]}"
+                    f"' but 'Azure Cloud' is set to "
+                    f"'{AZURE_CLOUD_LABELS[azure_cloud]}'."
+                ),
+                resolution=(
+                    "Set 'Azure Cloud' to "
+                    f"'{AZURE_CLOUD_LABELS[detected_cloud]}' or provide a "
+                    "DCE URI from the selected Azure cloud."
+                ),
+            )
+        return None
 
     def _validate_connectivity(
         self,
@@ -1000,6 +1088,7 @@ class AzureMonitorPlugin(PluginBase):
                 dcr_immutable_id=dcr_immutable_id,
                 custom_log_table_name=custom_log_table_name,
                 monitor_client=monitor_client,
+                configuration=configuration,
                 is_validation=True,
             )
 
@@ -1024,11 +1113,10 @@ class AzureMonitorPlugin(PluginBase):
                 "Successfully validated "
                 f"credentials for {PLUGIN_NAME} platform."
             )
-            self.logger.debug(
-                f"{self.log_prefix}: {logger_msg}"
-            )
+            self.logger.debug(f"{self.log_prefix}: {logger_msg}")
             return ValidationResult(
-                success=True, message=logger_msg,
+                success=True,
+                message=logger_msg,
             )
         except MicrosoftAzureMonitorPluginException as exp:
             err_msg = f"Validation error occurred. Error: {exp}"
@@ -1038,7 +1126,7 @@ class AzureMonitorPlugin(PluginBase):
             )
             return ValidationResult(
                 success=False,
-                message=f"{str(exp)} Check logs for more details."
+                message=f"{str(exp)} Check logs for more details.",
             )
         except Exception as exp:
             err_msg = "Unexpected validation error occurred."
@@ -1084,10 +1172,9 @@ class AzureMonitorPlugin(PluginBase):
                 message=str(err),
             )
 
-        if (
-            not isinstance(mappings, dict)
-            or not monitor_validator.validate_monitor_map(mappings)
-        ):
+        if not isinstance(
+            mappings, dict
+        ) or not monitor_validator.validate_monitor_map(mappings):
             self.logger.error(f"{validation_err_msg} {err_msg}")
             return ValidationResult(
                 success=False,
@@ -1179,6 +1266,26 @@ class AzureMonitorPlugin(PluginBase):
             field_name="DCE URI",
             field_value=dce_uri,
             field_type=str,
+        ):
+            return validation_result
+        if not is_valid_dce_uri(dce_uri):
+            return self._validation_error(
+                err_msg=(
+                    "Invalid value provided for the configuration "
+                    "parameter 'DCE URI'."
+                ),
+                resolution=(
+                    "Ensure that the DCE URI is a valid URL starting with "
+                    "'https://', e.g. "
+                    "'https://<name>.<region>.ingest.monitor.azure.com'."
+                ),
+            )
+
+        # Validate Azure Cloud and its dependent parameters
+        if validation_result := self._validate_azure_cloud(
+            configuration=configuration,
+            dce_uri=dce_uri,
+            monitor_client=monitor_client,
         ):
             return validation_result
 

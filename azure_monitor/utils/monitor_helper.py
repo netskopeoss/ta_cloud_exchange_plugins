@@ -32,11 +32,21 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 Azure Monitor Plugin Helper."""
 
 
+import ipaddress
+import json
+import re
 import sys
+from typing import List, Union
+from urllib.parse import ParseResult, urlparse
 from jsonschema import validate
 
 from .monitor_exceptions import (
     MappingValidationError,
+)
+from .monitor_constants import (
+    HOSTNAME_LABEL_RE,
+    MAX_CHUNK_SIZE_BYTES,
+    TOKEN_SCOPE_SUFFIX,
 )
 from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
 
@@ -271,6 +281,10 @@ def split_into_size(data_list):
     """
     Split a list into parts, each approximately with a target size in MB.
 
+    The size is a fast in-memory estimate. It can be lower than the actual
+    request body for non-ASCII data, so the caller re-splits a part with
+    :func:`split_by_json_size` when its body exceeds the API limit.
+
     Parameters:
     - data_list: The list of data to be split.
 
@@ -288,7 +302,8 @@ def split_into_size(data_list):
             current_part.append(item)
             current_size_mb += item_size_mb
         else:
-            result.append(current_part)
+            if current_part:
+                result.append(current_part)
             current_part = [item]
             current_size_mb = item_size_mb
 
@@ -296,3 +311,158 @@ def split_into_size(data_list):
         result.append(current_part)
 
     return result
+
+
+def split_by_json_size(
+    data_list: List, max_bytes: int = MAX_CHUNK_SIZE_BYTES
+) -> List:
+    """
+    Split a list into parts so that the JSON request body of each part
+    stays within ``max_bytes``.
+
+    Used as a fallback for a part from :func:`split_into_size` whose
+    actual request body exceeds the API limit. The size of every item is
+    measured on its serialized JSON form, the same way the request body is
+    built (``json.dumps``), so non-ASCII data, which is escaped to
+    ``\\uXXXX`` in the body, is accounted for.
+
+    Parameters:
+    - data_list: The list of data to be split.
+    - max_bytes: Maximum size in bytes of the JSON body of a part.
+
+    Returns:
+    A list of parts. A single item larger than ``max_bytes`` is placed in
+    a part of its own.
+    """
+    result = []
+    current_part = []
+    current_size = 2  # enclosing "[" and "]"
+
+    for item in data_list:
+        # default=str keeps the size estimate from raising on a value that
+        # is not JSON serializable; such a part then fails on its own when
+        # the request body is built, as before.
+        item_size = len(json.dumps(item, default=str)) + 2  # item and ", "
+        if current_part and current_size + item_size > max_bytes:
+            result.append(current_part)
+            current_part = []
+            current_size = 2
+        current_part.append(item)
+        current_size += item_size
+
+    if current_part:
+        result.append(current_part)
+
+    return result
+
+
+def _is_valid_hostname(host: str) -> bool:
+    """Check that the host is a DNS name (not an IP address)."""
+    if not host or len(host) > 253:
+        return False
+    try:
+        ipaddress.ip_address(host)
+        return False
+    except ValueError:
+        pass
+    labels = host.split(".")
+    return len(labels) > 1 and all(
+        re.match(HOSTNAME_LABEL_RE, label) for label in labels
+    )
+
+
+def _parse_https_url(
+    value, strict_hostname: bool = True
+) -> Union[ParseResult, None]:
+    """Parse an https URL without userinfo, query or fragment.
+
+    Args:
+        value: Value to parse. Anything other than a string is invalid.
+        strict_hostname (bool): Require a DNS hostname (not an IP address
+            or a single label); otherwise any non-empty hostname is
+            accepted.
+
+    Returns:
+        ParseResult: Parsed URL, or None if invalid.
+    """
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = urlparse(value.strip())
+        parsed.port  # raises ValueError for an invalid port
+    except ValueError:
+        return None
+    hostname = parsed.hostname or ""
+    if (
+        parsed.scheme != "https"
+        or parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+        or not hostname
+        or (strict_hostname and not _is_valid_hostname(hostname))
+    ):
+        return None
+    return parsed
+
+
+def normalize_authority_host(value: Union[str, None]) -> str:
+    """Normalize the Microsoft Entra ID authority host of a custom cloud.
+
+    Accepts a bare hostname or an https URL of the host (e.g.
+    ``login.microsoftonline.us`` or ``https://login.microsoftonline.us/``).
+
+    Args:
+        value (str): Value provided by the user.
+
+    Returns:
+        str: Lowercase hostname, or an empty string if the value is not a
+            valid https hostname (e.g. http scheme, port, userinfo, path
+            or an IP address).
+    """
+    if not isinstance(value, str) or not value.strip():
+        return ""
+    value = value.strip()
+    if "://" not in value:
+        value = f"https://{value}"
+    parsed = _parse_https_url(value)
+    if not parsed or parsed.port or parsed.path.strip("/") or parsed.params:
+        return ""
+    return parsed.hostname
+
+
+def normalize_token_scope(value: Union[str, None]) -> str:
+    """Normalize the token scope (audience) of a custom cloud.
+
+    ``/.default`` is appended when it is not already present, so both
+    ``https://monitor.azure.us`` and ``https://monitor.azure.us/.default``
+    are accepted.
+
+    Args:
+        value (str): Value provided by the user.
+
+    Returns:
+        str: Scope, or an empty string if the value is not a valid https
+            URL.
+    """
+    if not _parse_https_url(value):
+        return ""
+    scope = value.strip().rstrip("/")
+    if scope.endswith(TOKEN_SCOPE_SUFFIX):
+        return scope
+    return scope + TOKEN_SCOPE_SUFFIX
+
+
+def is_valid_dce_uri(value: Union[str, None]) -> bool:
+    """Check that the DCE URI is an https URL with a hostname.
+
+    The hostname format itself is not restricted, so that any endpoint
+    host accepted by Azure keeps working.
+
+    Args:
+        value (str): DCE URI.
+
+    Returns:
+        bool: True if valid.
+    """
+    return _parse_https_url(value, strict_hostname=False) is not None

@@ -46,18 +46,15 @@ from .utils.constants import (
     PLUGIN_NAME,
     PLUGIN_VERSION,
     EVENT_TYPES,
+    ALERT_TYPES,
 )
 
 # from netskope.common.utils import DBConnector, AlertsHelper
 from netskope.common.utils.alerts_helper import AlertsHelper
-
-# from netskope.common.utils.plugin_provider_helper import PluginProviderHelper
+from netskope.common.utils.plugin_provider_helper import PluginProviderHelper
 
 helper = AlertsHelper()
-
-# connector = DBConnector()
-# alerts_helper = AlertsHelper()
-# plugin_provider_helper = PluginProviderHelper()
+plugin_provider_helper = PluginProviderHelper()
 
 
 class NetskopeBWANCLSPlugin(PluginBase):
@@ -130,11 +127,11 @@ class NetskopeBWANCLSPlugin(PluginBase):
         Returns:
             List of sub types to pull
         """
-        types = []
         if data_type == "events":
             return self.configuration.get("events_types", [])
-        else:
-            return types
+        elif data_type == "alerts":
+            return self.configuration.get("alert_types", [])
+        return []
 
     def validate(
         self, configuration: dict, tenant_name=None
@@ -142,9 +139,10 @@ class NetskopeBWANCLSPlugin(PluginBase):
         """Validate the configuration parameters dict."""
 
         event_types = configuration.get("events_types", [])
-        if not event_types:
+        alert_types = configuration.get("alert_types", [])
+        if not event_types and not alert_types:
             err_msg = (
-                "Atleast one event types is required in the "
+                "At least one Event Type or Alert Type is required in the "
                 "configuration parameters."
             )
             self.logger.error(f"{self.log_prefix}: {err_msg}")
@@ -169,39 +167,125 @@ class NetskopeBWANCLSPlugin(PluginBase):
             )
             return ValidationResult(success=False, message=error_msg)
 
+        if alert_types and (not isinstance(alert_types, list) or not (
+            all(
+                indicator_type in ALERT_TYPES
+                for indicator_type in alert_types
+            )
+        )):
+            error_msg = (
+                "Invalid Alert Types provided in the "
+                "configuration parameters. Please select the "
+                "Alert Types from the available options."
+            )
+            self.logger.error(
+                f"{self.log_prefix}: Validation error occurred. Error: "
+                f"{error_msg}",
+            )
+            return ValidationResult(success=False, message=error_msg)
+
         hours = configuration.get("hours", 0)
-        if hours is None:
-            err_msg = (
-                "Initial Range in hours is a required "
-                "configuration parameters."
-            )
-            self.logger.error(f"{self.log_prefix}: {err_msg}")
-            return ValidationResult(
-                success=False,
-                message=err_msg,
-            )
-        elif not isinstance(hours, int):
-            err_msg = (
-                "Invalid Initial Range in hours provided in "
-                "the configuration parameters."
-            )
-            self.logger.error(f"{self.log_prefix}: {err_msg}")
-            return ValidationResult(
-                success=False,
-                message=err_msg,
-            )
-        elif hours < 0 or hours > 8760:
-            err_msg = (
-                "Invalid Initial Range in hours provided in the configuration "
-                "parameters. The value should be in range 0 to 8760."
-            )
-            self.logger.error(f"{self.log_prefix}: {err_msg}")
-            return ValidationResult(
-                success=False,
-                message=err_msg,
-            )
+        # 'hours' is the Initial Range for Events, so it is validated only
+        # when at least one Event Type is selected (Event Types is optional).
+        if event_types:
+            if hours is None:
+                err_msg = (
+                    "Initial Range for Events (in hours) is a required "
+                    "configuration parameter."
+                )
+                self.logger.error(f"{self.log_prefix}: {err_msg}")
+                return ValidationResult(
+                    success=False,
+                    message=err_msg,
+                )
+            # bool is a subclass of int, so exclude it explicitly: True/False
+            # must not pass as 1/0.
+            elif isinstance(hours, bool) or not isinstance(hours, int):
+                err_msg = (
+                    "Invalid Initial Range for Events (in hours) provided "
+                    "in the configuration parameters."
+                )
+                self.logger.error(f"{self.log_prefix}: {err_msg}")
+                return ValidationResult(
+                    success=False,
+                    message=err_msg,
+                )
+            elif hours < 0 or hours > 8760:
+                err_msg = (
+                    "Invalid Initial Range for Events (in hours) provided "
+                    "in the configuration parameters. The value should be "
+                    "in range 0 to 8760."
+                )
+                self.logger.error(f"{self.log_prefix}: {err_msg}")
+                return ValidationResult(
+                    success=False,
+                    message=err_msg,
+                )
+
+        days = configuration.get("days", 0)
+        # 'days' is the Initial Range for Alerts, so it is validated only
+        # when at least one Alert Type is selected (Alert Types is optional).
+        if alert_types:
+            if days is None:
+                err_msg = (
+                    "Initial Range for Alerts (in days) is a required "
+                    "configuration parameter."
+                )
+                self.logger.error(f"{self.log_prefix}: {err_msg}")
+                return ValidationResult(
+                    success=False,
+                    message=err_msg,
+                )
+            # bool is a subclass of int, so exclude it explicitly: True/False
+            # must not pass as 1/0.
+            elif isinstance(days, bool) or not isinstance(days, int):
+                err_msg = (
+                    "Invalid Initial Range for Alerts (in days) provided "
+                    "in the configuration parameters."
+                )
+                self.logger.error(f"{self.log_prefix}: {err_msg}")
+                return ValidationResult(
+                    success=False,
+                    message=err_msg,
+                )
+            elif days < 0 or days > 365:
+                err_msg = (
+                    "Invalid Initial Range for Alerts (in days) provided "
+                    "in the configuration parameters. The value should be "
+                    "in range 0 to 365."
+                )
+                self.logger.error(f"{self.log_prefix}: {err_msg}")
+                return ValidationResult(
+                    success=False,
+                    message=err_msg,
+                )
 
         if not tenant_name:
-            tenant_name = helper.get_tenant_cls(self.name).name
+            tenant = helper.get_tenant_cls(self.name)
+            if not tenant:
+                err_msg = (
+                    "Unable to resolve the Netskope Borderless WAN Tenant "
+                    "for this configuration."
+                )
+                self.logger.error(f"{self.log_prefix}: {err_msg}")
+                return ValidationResult(success=False, message=err_msg)
+            tenant_name = tenant.name
+
+        # Verify the Auth Token can read the selected dedicated endpoints
+        # (Monitor > Flows and Alerts (V2)). The tenant's validate_token only
+        # probes /v2/auditevents, so without this a token missing those
+        # permissions would pass validation and then fail silently at pull
+        # time (and, with the per-subtype isolation, be skipped).
+        try:
+            provider = plugin_provider_helper.get_provider(
+                tenant_name=tenant_name
+            )
+            provider.permission_check(
+                {"events": event_types, "alerts": alert_types},
+                plugin_name=self.plugin_name,
+                configuration_name=self.name,
+            )
+        except Exception as exp:
+            return ValidationResult(success=False, message=str(exp))
 
         return ValidationResult(success=True, message="Validation successful.")

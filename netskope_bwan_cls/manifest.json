@@ -2,32 +2,37 @@
     "name": "Netskope Borderless WAN",
     "id": "netskope_bwan_cls",
     "netskope": true,
-    "version": "1.1.0",
+    "version": "1.2.0",
     "module": "CLS",
-    "minimum_version": "5.1.1",
-    "minimum_provider_version": "1.1.0",
+    "minimum_version": "6.1.0",
+    "minimum_provider_version": "1.2.0",
     "provider_id": "netskope_bwan_tenant",
     "patch_supported": true,
     "types": [
+        "alerts",
         "events"
     ],
     "mapping": "",
-    "description": "This plugin is used to fetch Events (Audit, Authentication, Client, Gateway, System) from the Monitor > Events page of Netskope Borderless WAN Tenant. The Plugin fetches the data in JSON format.",
+    "description": "This plugin is used to fetch Events (Audit, Authentication, Client, Gateway, System) from the Monitor > Events page, Network Events (Flow/Traffic logs) from the Monitor > Flows page, and Alerts from the Monitor > Alerts(V2) page of Netskope Borderless WAN Tenant.",
     "supported_subtypes": {
+        "alerts": [
+            "bwan_alert_v2"
+        ],
         "events": [
             "bwan_audit",
             "bwan_authentication",
             "bwan_client",
             "bwan_gateway",
-            "bwan_system"
+            "bwan_system",
+            "bwan_network_event"
         ]
     },
     "configuration": [
         {
             "label": "Event Types",
             "key": "events_types",
-            "mandatory": true,
-            "description": "Selected types of events will be fetched. If kept empty, all event types will be fetched.",
+            "mandatory": false,
+            "description": "Selected types of events will be fetched. At least one Event Type or Alert Type must be selected.",
             "type": "multichoice",
             "choices": [
                 {
@@ -49,6 +54,10 @@
                 {
                     "key": "System",
                     "value": "bwan_system"
+                },
+                {
+                    "key": "Network",
+                    "value": "bwan_network_event"
                 }
             ],
             "default": [
@@ -56,16 +65,41 @@
                 "bwan_authentication",
                 "bwan_client",
                 "bwan_gateway",
-                "bwan_system"
+                "bwan_system",
+                "bwan_network_event"
             ]
         },
         {
-            "label": "Initial Range (in hours)",
+            "label": "Initial Range for Events (in hours)",
             "key": "hours",
             "type": "number",
             "mandatory": true,
             "default": 1,
-            "description": "Number of hours to pull the event data for the initial run."
+            "description": "Number of hours to pull the events data for the initial run. Valid values are in the range 0 to 8760 hours."
+        },
+        {
+            "label": "Alert Types",
+            "key": "alert_types",
+            "mandatory": false,
+            "description": "Selected types of alerts will be fetched. At least one Event Type or Alert Type must be selected.",
+            "type": "multichoice",
+            "choices": [
+                {
+                    "key": "Alert (v2)",
+                    "value": "bwan_alert_v2"
+                }
+            ],
+            "default": [
+                "bwan_alert_v2"
+            ]
+        },
+        {
+            "label": "Initial Range for Alerts (in days)",
+            "key": "days",
+            "type": "number",
+            "mandatory": true,
+            "default": 7,
+            "description": "Number of days to pull the alerts data for the initial run. Valid values are in the range 0 to 365 days."
         }
     ]
 }

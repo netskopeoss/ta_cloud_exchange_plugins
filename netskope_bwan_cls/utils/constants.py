@@ -34,11 +34,15 @@ CLS Borderless WAN plugin constants.
 
 MODULE_NAME = "CLS"
 PLUGIN_NAME = "Netskope Borderless WAN"
-PLUGIN_VERSION = "1.1.0"
+PLUGIN_VERSION = "1.2.0"
 EVENT_TYPES = [
     "bwan_audit",
     "bwan_authentication",
     "bwan_client",
     "bwan_gateway",
-    "bwan_system"
+    "bwan_system",
+    "bwan_network_event"
+]
+ALERT_TYPES = [
+    "bwan_alert_v2"
 ]

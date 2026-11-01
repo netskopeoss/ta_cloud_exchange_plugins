@@ -1,8 +1,8 @@
 {
     "name": "Microsoft Azure Monitor",
     "id": "azure_monitor",
-    "version": "2.0.0",
-    "minimum_version": "5.1.2",
+    "version": "2.1.0",
+    "minimum_version": "6.1.0",
     "mapping": "Azure Monitor Default Mappings",
     "module": "CLS",
     "format_options": [
@@ -46,12 +46,62 @@
             "description": "Client Secret of Microsoft Entra ID application."
         },
         {
+            "label": "Azure Cloud",
+            "key": "azure_cloud",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Azure Public (Commercial)",
+                    "value": "public"
+                },
+                {
+                    "key": "Azure US Government",
+                    "value": "us_government"
+                },
+                {
+                    "key": "Azure China (21Vianet)",
+                    "value": "china"
+                },
+                {
+                    "key": "Custom Cloud",
+                    "value": "custom"
+                }
+            ],
+            "default": "public",
+            "mandatory": true,
+            "description": "Azure cloud in which the Microsoft Entra ID application and Log Analytics Workspace are hosted. The access token is requested from the selected cloud's Entra ID endpoint. Select 'Custom Cloud' for any other Azure cloud and provide the 'Custom Authority Host' and 'Custom Token Scope'."
+        },
+        {
+            "label": "Custom Authority Host",
+            "key": "custom_authority_host",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "condition": {
+                "key": "azure_cloud",
+                "values": ["custom"]
+            },
+            "description": "Microsoft Entra ID authority host of the Azure cloud, e.g. 'login.microsoftonline.us'. Provide the hostname only. Required only when 'Azure Cloud' is 'Custom Cloud'."
+        },
+        {
+            "label": "Custom Token Scope",
+            "key": "custom_token_scope",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "condition": {
+                "key": "azure_cloud",
+                "values": ["custom"]
+            },
+            "description": "Azure Monitor token audience (scope) of the Azure cloud, e.g. 'https://monitor.azure.us/.default'. '/.default' is added automatically if it is not provided. Required only when 'Azure Cloud' is 'Custom Cloud'."
+        },
+        {
             "label": "DCE URI",
             "key": "dce_uri",
             "type": "text",
             "default": "",
             "mandatory": true,
-            "description": "URI of Data Collector Endpoint."
+            "description": "URI of the Data Collection Endpoint (DCE), e.g. 'https://<dce-name>.<region>-1.ingest.monitor.azure.com'. The DCE must be in the selected 'Azure Cloud'."
         },
         {
             "label": "DCR Immutable ID",

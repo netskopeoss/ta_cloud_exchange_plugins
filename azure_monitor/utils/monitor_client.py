@@ -34,6 +34,7 @@ Microsoft Azure Monitor Client.
 
 
 import hashlib
+import re
 import requests
 import traceback
 import json
@@ -45,8 +46,22 @@ from requests.models import Response
 from .monitor_exceptions import (
     MicrosoftAzureMonitorPluginException,
 )
+from .monitor_helper import (
+    normalize_authority_host,
+    normalize_token_scope,
+)
 from .monitor_constants import (
-    API_SCOPE,
+    AADSTS_CODE_RE,
+    AADSTS_CROSS_CLOUD_CODES,
+    AADSTS_INVALID_APP_CODE,
+    AADSTS_INVALID_SECRET_CODE,
+    AADSTS_INVALID_TENANT_CODES,
+    AADSTS_TENANT_NOT_FOUND_CODE,
+    AZURE_CLOUD_CUSTOM,
+    AZURE_CLOUD_ENVIRONMENTS,
+    AZURE_CLOUD_PUBLIC,
+    CONFIG_CUSTOM_AUTHORITY_HOST,
+    CONFIG_CUSTOM_TOKEN_SCOPE,
     GENERATE_TOKEN_BASE_URL,
     GRANT_TYPE,
     MODULE_NAME,
@@ -186,6 +201,7 @@ class AzureMonitorClient:
                         tenant_id=tenant_id,
                         app_id=app_id,
                         app_secret=app_secret,
+                        configuration=configuration,
                         is_validation=is_validation,
                     )
                     storage.update(
@@ -240,8 +256,8 @@ class AzureMonitorClient:
                         )
                         time.sleep(RETRY_SLEEP_TIME)
                         continue
-                    diff_retry_after = round(abs(retry_after - time.time()), 2)
-                    if diff_retry_after > MAX_WAIT_TIME:
+                    # Retry-After is a number of seconds to wait.
+                    if retry_after > MAX_WAIT_TIME:
                         err_msg = (
                             f"'Retry-After' value received from "
                             f"response headers while {logger_msg} "
@@ -264,7 +280,7 @@ class AzureMonitorClient:
                         message=f"{self.log_prefix}: {err_msg}",
                         details=api_err_msg,
                     )
-                    time.sleep(diff_retry_after)
+                    time.sleep(retry_after)
                 else:
                     return (
                         self.handle_error(
@@ -477,6 +493,7 @@ class AzureMonitorClient:
             )
             error_val = error_response.get("error", {})
             err_msg = error_dict[status_code]
+            resolution_msg = None
             if isinstance(error_val, dict):
                 err_code = error_val.get("code")
                 err_message = error_val.get("message")
@@ -517,8 +534,32 @@ class AzureMonitorClient:
                     )
                     resolution_msg = None
             elif isinstance(error_val, str):
-                text_response = response.text
-                if "90002" in text_response:
+                aadsts_code = self._get_aadsts_code(
+                    error_response, response.text
+                )
+                if aadsts_code in AADSTS_CROSS_CLOUD_CODES:
+                    err_msg = err_msg + (
+                        "The Microsoft Entra ID application does not belong "
+                        "to the selected Azure Cloud."
+                    )
+                    resolution_msg = (
+                        "Ensure that the 'Azure Cloud' matches the cloud in "
+                        "which the Microsoft Entra ID application is "
+                        "registered. Select 'Custom Cloud' if your Azure "
+                        "cloud is not listed."
+                    )
+                elif aadsts_code == AADSTS_TENANT_NOT_FOUND_CODE:
+                    err_msg = err_msg + (
+                        "Directory (tenant) ID not found in the selected "
+                        "Azure Cloud."
+                    )
+                    resolution_msg = (
+                        "Ensure that the Directory (tenant) ID provided in "
+                        "the configuration parameters is correct and the "
+                        "'Azure Cloud' matches the cloud in which the "
+                        "tenant exists."
+                    )
+                elif aadsts_code in AADSTS_INVALID_TENANT_CODES:
                     err_msg = err_msg + (
                         "Invalid Directory (tenant) ID provided in "
                         "the configuration parameters."
@@ -527,7 +568,7 @@ class AzureMonitorClient:
                         "Ensure that the Directory (tenant) ID provided in "
                         "the configuration parameters is correct."
                     )
-                elif "700016" in text_response:
+                elif aadsts_code == AADSTS_INVALID_APP_CODE:
                     err_msg = err_msg + (
                         "Invalid Application (client) ID provided in "
                         "the configuration parameters."
@@ -536,7 +577,7 @@ class AzureMonitorClient:
                         "Ensure that the Application (client) ID provided in "
                         "the configuration parameters is correct."
                     )
-                elif "7000215" in text_response:
+                elif aadsts_code == AADSTS_INVALID_SECRET_CODE:
                     err_msg = err_msg + (
                         "Invalid Client Secret provided in "
                         "the configuration parameters."
@@ -554,7 +595,9 @@ class AzureMonitorClient:
                     resolution_msg = (
                         "Ensure that the Directory (tenant) ID, "
                         "Application (client) ID, or Client Secret "
-                        "provided in the configuration parameters is correct."
+                        "provided in the configuration parameters is correct "
+                        "and the 'Azure Cloud' matches the cloud in which "
+                        "the Microsoft Entra ID application is registered."
                     )
             _log_error_message(resolution=resolution_msg)
         elif status_code >= 400 and status_code < 500:
@@ -567,31 +610,147 @@ class AzureMonitorClient:
             err_msg = "HTTP Error"
             _log_error_message()
 
+    @staticmethod
+    def _get_aadsts_code(
+        error_response: Union[Dict, None], response_text: str
+    ) -> Union[str, None]:
+        """Extract the Microsoft Entra ID error code (AADSTS<code>) from
+        the token endpoint error response.
+
+        Args:
+            error_response (dict): Parsed error response.
+            response_text (str): Raw error response.
+
+        Returns:
+            str: The numeric code (e.g. "900382"), None if not found.
+        """
+        description = (
+            error_response.get("error_description")
+            if isinstance(error_response, dict)
+            else None
+        )
+        for text in (description, response_text):
+            match = re.search(AADSTS_CODE_RE, str(text or ""))
+            if match:
+                return match.group(1)
+        return None
+
+    def get_cloud_configuration(
+        self, configuration: Union[Dict, None]
+    ) -> Tuple[str, str, str]:
+        """Get the Azure cloud configuration parameters.
+
+        Configurations created before 'Azure Cloud' was added default to
+        the public cloud. The custom cloud values are ignored for the other
+        Azure clouds.
+
+        Args:
+            configuration (Dict): Configuration.
+
+        Returns:
+            Tuple[str, str, str]: Azure Cloud, Custom Authority Host,
+                Custom Token Scope.
+        """
+        configuration = configuration or {}
+        azure_cloud = configuration.get("azure_cloud")
+        azure_cloud = (
+            str(azure_cloud).strip() if azure_cloud is not None else ""
+        ) or AZURE_CLOUD_PUBLIC
+        if azure_cloud != AZURE_CLOUD_CUSTOM:
+            return azure_cloud, "", ""
+        return (
+            azure_cloud,
+            self._safe_str(configuration.get(CONFIG_CUSTOM_AUTHORITY_HOST)),
+            self._safe_str(configuration.get(CONFIG_CUSTOM_TOKEN_SCOPE)),
+        )
+
+    def get_cloud_endpoints(
+        self, configuration: Union[Dict, None]
+    ) -> Tuple[str, str]:
+        """Resolve the Microsoft Entra ID authority host and the token
+        scope for the configured Azure cloud.
+
+        Args:
+            configuration (Dict): Configuration.
+
+        Returns:
+            Tuple[str, str]: (authority host, token scope).
+
+        Raises:
+            MicrosoftAzureMonitorPluginException: If the Azure cloud is
+                unknown or the custom cloud values are invalid.
+        """
+        (
+            azure_cloud,
+            custom_authority_host,
+            custom_token_scope,
+        ) = self.get_cloud_configuration(configuration)
+        if azure_cloud == AZURE_CLOUD_CUSTOM:
+            login_host = normalize_authority_host(custom_authority_host)
+            scope = normalize_token_scope(custom_token_scope)
+            if not (login_host and scope):
+                err_msg = (
+                    "Invalid 'Custom Authority Host' or 'Custom Token Scope' "
+                    "provided in the configuration parameters."
+                )
+                self.logger.error(
+                    message=f"{self.log_prefix}: {err_msg}",
+                    resolution=(
+                        "Ensure that 'Custom Authority Host' is a valid "
+                        "hostname and 'Custom Token Scope' is a valid https "
+                        "URL."
+                    ),
+                )
+                raise MicrosoftAzureMonitorPluginException(err_msg)
+            return login_host, scope
+
+        cloud = AZURE_CLOUD_ENVIRONMENTS.get(azure_cloud)
+        if not cloud:
+            err_msg = (
+                "Invalid value provided for the configuration parameter "
+                "'Azure Cloud'."
+            )
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg}",
+                resolution="Select a valid value for 'Azure Cloud'.",
+            )
+            raise MicrosoftAzureMonitorPluginException(err_msg)
+        return cloud["login_host"], cloud["scope"]
+
     def generate_auth_token(
         self,
         tenant_id: str,
         app_id: str,
         app_secret: str,
+        configuration: Union[Dict, None] = None,
         is_validation: bool = False,
     ) -> Dict:
         """
         Generate authentication header for Microsoft Azure Monitor.
 
+        The access token is requested from the Microsoft Entra ID endpoint
+        of the configured Azure cloud.
+
         Args:
             tenant_id (str): Tenant ID.
             app_id (str): App ID.
             app_secret (str): App secret.
+            configuration (Dict): Configuration, used for the Azure cloud
+                parameters.
             is_validation (bool): Is validation.
 
         Returns:
             dict: Authentication header.
         """
         try:
-            url = GENERATE_TOKEN_BASE_URL.format(tenant_id=tenant_id)
+            login_host, scope = self.get_cloud_endpoints(configuration)
+            url = GENERATE_TOKEN_BASE_URL.format(
+                login_host=login_host, tenant_id=tenant_id
+            )
             body = {
                 "client_id": app_id,
                 "client_secret": app_secret,
-                "scope": API_SCOPE,
+                "scope": scope,
                 "grant_type": GRANT_TYPE,
             }
             headers = {
@@ -617,7 +776,7 @@ class AzureMonitorClient:
                 )
                 self.logger.error(
                     message=f"{self.log_prefix}: {err_msg}",
-                    details=str(response.text),
+                    details=str(response),
                 )
                 raise MicrosoftAzureMonitorPluginException(err_msg)
             return {
@@ -641,7 +800,7 @@ class AzureMonitorClient:
             )
             raise MicrosoftAzureMonitorPluginException(err_msg)
 
-    def _get_retry_after(self, headers: Dict) -> int:
+    def _get_retry_after(self, headers: Dict) -> Union[int, None]:
         """
         Get the retry after value from the headers.
 
@@ -649,9 +808,26 @@ class AzureMonitorClient:
             headers (Dict): Headers.
 
         Returns:
-            int: Retry after value.
+            int | None: Seconds to wait, or None if the header is absent.
+                A value that is not a number of seconds falls back to
+                RETRY_SLEEP_TIME.
         """
-        return int(headers.get("Retry-After", RETRY_SLEEP_TIME))
+        value = headers.get("Retry-After")
+        if value is None:
+            return None
+        try:
+            return max(int(value), 0)
+        except (ValueError, TypeError):
+            return RETRY_SLEEP_TIME
+
+    @staticmethod
+    def _safe_str(value) -> str:
+        """Return a stripped string, treating None as empty."""
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            return value.strip()
+        return value
 
     def get_configuration_parameters(
         self, configuration: Dict
@@ -667,17 +843,21 @@ class AzureMonitorClient:
                 App Secret, DCE URI, DCR Immutable ID, \
                 Custom Log Table Name, Log Source Identifier.
         """
-        tenant_id = configuration.get("tenantid").strip()
-        app_id = configuration.get("appid").strip()
+        tenant_id = self._safe_str(configuration.get("tenantid"))
+        app_id = self._safe_str(configuration.get("appid"))
         app_secret = configuration.get("appsecret")
-        dce_uri = configuration.get("dce_uri").strip()
-        dcr_immutable_id = configuration.get("dcr_immutable_id").strip()
-        custom_log_table_name = configuration.get(
-            "custom_log_table_name"
-        ).strip()
-        log_source_identifier = configuration.get(
-            "log_source_identifier"
-        ).strip()
+        dce_uri = self._safe_str(configuration.get("dce_uri"))
+        if isinstance(dce_uri, str):
+            dce_uri = dce_uri.rstrip("/")
+        dcr_immutable_id = self._safe_str(
+            configuration.get("dcr_immutable_id")
+        )
+        custom_log_table_name = self._safe_str(
+            configuration.get("custom_log_table_name")
+        )
+        log_source_identifier = self._safe_str(
+            configuration.get("log_source_identifier")
+        )
         return (
             tenant_id,
             app_id,

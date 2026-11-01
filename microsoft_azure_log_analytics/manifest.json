@@ -1,8 +1,8 @@
 {
     "name": "Microsoft Azure Log Analytics",
     "id": "microsoft_azure_log_analytics",
-    "version": "1.0.0",
-    "minimum_version": "6.0.0",
+    "version": "1.1.0",
+    "minimum_version": "6.1.0",
     "mapping": "Microsoft Azure Log Analytics Default Mappings",
     "module": "CLS",
     "format_options": [
@@ -47,6 +47,56 @@
             "description": "Client Secret of Microsoft Entra ID application."
         },
         {
+            "label": "Azure Cloud",
+            "key": "azure_cloud",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Azure Public (Commercial)",
+                    "value": "public"
+                },
+                {
+                    "key": "Azure US Government",
+                    "value": "us_government"
+                },
+                {
+                    "key": "Azure China (21Vianet)",
+                    "value": "china"
+                },
+                {
+                    "key": "Custom Cloud",
+                    "value": "custom"
+                }
+            ],
+            "default": "public",
+            "mandatory": true,
+            "description": "Azure cloud in which the Microsoft Entra ID application and Log Analytics Workspace are hosted. The access token is requested from the selected cloud's Entra ID endpoint. Select 'Custom Cloud' for any other Azure cloud and provide the 'Custom Authority Host' and 'Custom Token Scope'."
+        },
+        {
+            "label": "Custom Authority Host",
+            "key": "custom_authority_host",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "condition": {
+                "key": "azure_cloud",
+                "values": ["custom"]
+            },
+            "description": "Microsoft Entra ID authority host of the Azure cloud, e.g. 'login.microsoftonline.us'. Provide the hostname only. Required only when 'Azure Cloud' is 'Custom Cloud'."
+        },
+        {
+            "label": "Custom Token Scope",
+            "key": "custom_token_scope",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "condition": {
+                "key": "azure_cloud",
+                "values": ["custom"]
+            },
+            "description": "Azure Monitor token audience (scope) of the Azure cloud, e.g. 'https://monitor.azure.us/.default'. '/.default' is added automatically if it is not provided. Required only when 'Azure Cloud' is 'Custom Cloud'."
+        },
+        {
             "label": "DCE URI",
             "key": "dce_uri",
             "type": "text",
@@ -85,10 +135,48 @@
                 }
             ],
             "default": "single_table",
-            "has_api_call": true,
-            "payload_fields": ["ingestion_mode"],
             "mandatory": true,
-            "description": "Choose 'Single Table' to push every record into a single custom table inside a 'RawData' column. Choose 'Per Data Type' to push Alerts, Events and WebTx into separate custom tables with one column per Netskope field — you must upload the schemas from the plugin guide to Azure before selecting the Ingestion Mode."
+            "description": "Choose 'Single Table' to push every record into a single custom table inside a 'RawData' column. Choose 'Per Data Type' to push the selected data types into separate custom tables with one column per Netskope field. You must upload the schemas from the plugin guide to Azure before selecting the Ingestion Mode."
+        },
+        {
+            "label": "Custom Log Table Name",
+            "key": "custom_log_table_name",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "condition": {
+                "key": "ingestion_mode",
+                "values": ["single_table"]
+            },
+            "description": "Custom Log Table name for ingesting all data. Every record (Alerts, Events and WebTx) is pushed into this table inside a 'RawData' column. The table must already exist in the Log Analytics Workspace."
+        },
+        {
+            "label": "Data Types to Ingest",
+            "key": "data_types",
+            "type": "multichoice",
+            "choices": [
+                {
+                    "key": "Alerts",
+                    "value": "alerts"
+                },
+                {
+                    "key": "Events",
+                    "value": "events"
+                },
+                {
+                    "key": "WebTx",
+                    "value": "webtx"
+                }
+            ],
+            "default": ["alerts", "events", "webtx"],
+            "has_api_call": true,
+            "payload_fields": ["data_types"],
+            "mandatory": true,
+            "condition": {
+                "key": "ingestion_mode",
+                "values": ["per_data_type"]
+            },
+            "description": "Select the Netskope data types to ingest. A separate Custom Log Table is used for each selected data type; provide the table names below."
         }
     ]
 }

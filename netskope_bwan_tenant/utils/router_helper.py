@@ -9,6 +9,10 @@ def get_all_subtypes():
             "BWAN_Authentication": "bwan_authentication",
             "BWAN_Client": "bwan_client",
             "BWAN_Gateway": "bwan_gateway",
-            "BWAN_System": "bwan_system"
+            "BWAN_System": "bwan_system",
+            "BWAN_Network_Event": "bwan_network_event"
+        },
+        "alerts": {
+            "bwan_alert_v2": "bwan_alert_v2"
         }
     }

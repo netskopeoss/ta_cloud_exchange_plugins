@@ -1,13 +1,13 @@
 {
     "name": "Netskope Borderless WAN",
     "id": "netskope_bwan_ztre",
-    "version": "1.0.0",
+    "version": "2.0.0",
     "module": "CRE",
-    "minimum_version": "6.1.0",
-    "minimum_provider_version": "1.1.0",
+    "minimum_version": "7.0.0",
+    "minimum_provider_version": "1.2.0",
     "provider_id": "netskope_bwan_tenant",
     "netskope": true,
-    "description": "This plugin is used to perform the Add to Address Group and Remove from Address Group actions for IPv4 addresses and IPv4 CIDR ranges on the Netskope Borderless WAN (BWAN) platform. This plugin does not fetch any records from the Netskope Borderless WAN platform.",
+    "description": "This plugin fetches Clients and Gateways from the Netskope Borderless WAN (BWAN) platform. It supports the Add to Custom App, Add to Address Group and Remove from Address Group actions on the Netskope Borderless WAN platform.\n\nThe Netskope Borderless WAN platform exposes no risk score on Clients or Gateways, hence the plugin does not set the Netskope Normalized Score.",
     "configuration": [
         {
             "label": "API Token (Optional)",

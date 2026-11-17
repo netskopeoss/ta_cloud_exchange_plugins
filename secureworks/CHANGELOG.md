@@ -1,3 +1,20 @@
+# 2.2.0 (Requires minimum Cloud Exchange version 6.1.0)
+## Added
+- Added support for Device and Content in alerts and Endpoint and Client Status in events.
+- Added configuration parameters Exclude Timestamp Field and Exclude Log Source Identifier Field for JSON-formatted data.
+- Added the CEF and JSON format options.
+- Added connection timeout and retry handling for data ingestion.
+- Added resolutions to the error logs.
+## Changed
+- Renamed the plugin from Secureworks to Sophos Fusion.
+- Updated the default mappings.
+- Added the syslog header to JSON-formatted data.
+- Changed warning logs to debug logs.
+## Fixed
+- Fixed TLS protocol support for Python 3.12 and later by replacing the removed ssl.wrap_socket() with SSLContext.
+- Fixed data loss when ingestion to Sophos Fusion fails.
+- Fixed mapping of nested fields.
+
 # 2.1.0
 ## Added
 - Added support for webtx JSON format to send specific fields to SIEM platform

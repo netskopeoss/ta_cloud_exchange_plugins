@@ -39,6 +39,12 @@ class Rapid7PluginError(Exception):
     pass
 
 
+class Rapid7CertificateError(Exception):
+    """Exception raised when the Rapid7 Certificate can not be loaded."""
+
+    pass
+
+
 class FormatCEFError(Exception):
     """CEF Format Error class."""
 

@@ -37,12 +37,12 @@ import collections
 import socket
 import time
 import traceback
-from .rapid7_constants import (
+from .constants import (
     SEVERITY_MAP,
     SEVERITY_UNKNOWN,
     AUDIT_SEVERITY_MAP,
 )
-from .rapid7_exceptions import Rapid7PluginError
+from .exceptions import Rapid7PluginError
 from netskope.integrations.cls.utils.sanitizer import *
 from netskope.integrations.cls.utils.converter import *
 
@@ -115,6 +115,10 @@ class CEFGenerator(object):
             self.logger.error(
                 message=(f"{self.log_prefix}: {error_msg} Error: {err}"),
                 details=str(traceback.format_exc()),
+                resolution=(
+                    "Ensure that valid transformation values are provided for "
+                    "the fields in the mapping file."
+                ),
             )
             raise Rapid7PluginError(error_msg)
 
@@ -156,6 +160,10 @@ class CEFGenerator(object):
             self.logger.error(
                 message=(f"{self.log_prefix}: {error_msg} Error: {err}"),
                 details=str(traceback.format_exc()),
+                resolution=(
+                    "Ensure that valid transformation values are provided for "
+                    "the fields in the mapping file."
+                ),
             )
             raise Rapid7PluginError(error_msg)
 
@@ -188,7 +196,7 @@ class CEFGenerator(object):
         """
         for configured_header in list(headers.keys()):
             if configured_header not in possible_headers:
-                self.logger.warn(
+                self.logger.debug(
                     f"{self.log_prefix}: [{data_type}][{subtype}]- "
                     "Found invalid header configured in rapid7 mapping file: "
                     f"{configured_header}. Header field will be ignored."
@@ -233,7 +241,7 @@ class CEFGenerator(object):
                 )
 
             except KeyError:
-                self.logger.warn(
+                self.logger.debug(
                     message=(
                         f"{self.log_prefix}: [{data_type}][{subtype}] An error"
                         f" occurred while generating CEF data for field:"
@@ -244,7 +252,7 @@ class CEFGenerator(object):
                 )
                 continue
             except Exception as err:
-                self.logger.warn(
+                self.logger.debug(
                     message=(
                         f"{self.log_prefix}: [{data_type}][{subtype}] An error"
                         f" occurred while generating CEF data for field:"
@@ -267,7 +275,7 @@ class CEFGenerator(object):
                     sanitized_value
                 )
             except KeyError:
-                self.logger.warn(
+                self.logger.debug(
                     message=(
                         f"{self.log_prefix}: [{data_type}][{subtype}] An error"
                         f" occurred while generating CEF data for field:"
@@ -277,7 +285,7 @@ class CEFGenerator(object):
                     details=str(traceback.format_exc()),
                 )
             except Exception as err:
-                self.logger.warn(
+                self.logger.debug(
                     message=(
                         f"{self.log_prefix}: [{data_type}][{subtype}] An error"
                         f" occurred while generating CEF data for field:"
@@ -327,7 +335,7 @@ class CEFGenerator(object):
                     )
 
                 except Exception as err:
-                    self.logger.warn(
+                    self.logger.debug(
                         "{}: [{}][{}] An error occurred while generating "
                         'CEF data for header field: "{}". Error: {}. '
                         "Field will be ignored.".format(

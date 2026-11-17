@@ -1,3 +1,16 @@
+# 3.2.0 (Requires minimum Cloud Exchange version 6.1.0)
+## Added
+- Added support for Device and Content in alerts and Endpoint and Client Status in events.
+- Added configuration parameters Exclude Timestamp Field, Exclude Log Source Identifier Field and Exclude Priority Field for JSON-formatted data.
+- Added the CEF and JSON format options.
+- Added resolutions to the error logs.
+## Changed
+- Updated the default mappings.
+- Changed warning logs to debug logs.
+## Fixed
+- Fixed TLS protocol support for Python 3.12 and later by replacing the removed ssl.wrap_socket() with SSLContext.
+- Fixed mapping of nested fields.
+
 # 3.1.1
 ## Added
 - Enhancement in the error handling.

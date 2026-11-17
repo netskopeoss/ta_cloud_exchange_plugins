@@ -49,32 +49,6 @@ class Rapid7Validator(object):
         self.log_prefix = log_prefix
         self.logger = logger
 
-    def validate_rapid7_port(self, rapid7_port):
-        """Validate rapid7 port.
-
-        Args:
-            rapid7_port: the rapid7 port to be validated
-
-        Returns:
-            Whether the provided value is valid or not.
-            True in case of valid value, False otherwise
-        """
-        if rapid7_port or rapid7_port == 0:
-            try:
-                rapid7_port = int(rapid7_port)
-                if not (0 <= rapid7_port <= 65535):
-                    return False
-                return True
-            except ValueError:
-                err_msg = "Validation error occurred."
-                self.logger.error(
-                    message=f"{self.log_prefix}: {err_msg}",
-                    details=str(traceback.format_exc()),
-                )
-                return False
-        else:
-            return False
-
     def validate_taxonomy(self, instance):
         """Validate the schema of given taxonomy JSON.
 
@@ -151,10 +125,16 @@ class Rapid7Validator(object):
             validate(instance=mappings, schema=schema)
         except JsonSchemaValidationError as err:
             self.logger.error(
-                "{}: Validation error occurred. "
-                "Error: validating JSON schema: {}".format(
-                    self.log_prefix, err
-                )
+                message=(
+                    "{}: Validation error occurred. "
+                    "Error: validating JSON schema: {}".format(
+                        self.log_prefix, err
+                    )
+                ),
+                resolution=(
+                    "Ensure that the valid mapping is provided for the "
+                    "mapping configuration."
+                ),
             )
             return False
 
@@ -168,11 +148,17 @@ class Rapid7Validator(object):
                         self.validate_taxonomy(subtype_taxonomy)
                     except JsonSchemaValidationError as err:
                         self.logger.error(
-                            "{}: Validation error occurred. "
-                            "Error: while validating JSON schema for "
-                            'type "{}" and subtype "{}": "{}"'.format(
-                                self.log_prefix, data_type, subtype, err
-                            )
+                            message=(
+                                "{}: Validation error occurred. "
+                                "Error: while validating JSON schema for "
+                                'type "{}" and subtype "{}": "{}"'.format(
+                                    self.log_prefix, data_type, subtype, err
+                                )
+                            ),
+                            resolution=(
+                                "Ensure that the valid mapping is provided "
+                                "for the mapping configuration."
+                            ),
                         )
                         return False
         return True

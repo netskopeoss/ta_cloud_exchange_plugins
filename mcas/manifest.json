@@ -1,10 +1,13 @@
 {
     "name": "Microsoft Defender for Cloud Apps",
     "id": "mcas",
-    "version": "1.0.1",
-    "description": "This plugin is used to fetch unsanctioned data from the Microsoft Defender for Cloud Apps Platform. This plugin does not support sharing of Indicators to Microsoft Defender for Cloud Apps Platform.",
+    "version": "1.1.0",
+    "minimum_version": "6.0.0",
+    "description": "This plugin is used to pull IOCs of type Domains(Domains, FQDNs and Hostnames) from Show navigation > Cloud apps > Cloud app catalog under Microsoft Defender platform. The plugin supports pull retraction of IOCs from Microsoft Defender. This plugin does not support sharing of IOCs to Microsoft Defender platform.",
     "patch_supported": false,
     "push_supported": false,
+    "fetch_retraction_info": true,
+    "module": "CTE",
     "configuration": [
         {
             "label": "URL",
@@ -12,14 +15,42 @@
             "type": "text",
             "default": "",
             "mandatory": true,
-            "description": "Microsoft Defender for Cloud Apps instance URL."
+            "placeholder": "https://your-instance.portal.cloudappsecurity.com",
+            "description": "Microsoft Defender Cloud Apps instance URL. To obtain the instance URL, navigate to Settings > API tokens in the Microsoft Defender Cloud Apps portal and copy the portal URL displayed. Example: https://your-instance.portal.cloudappsecurity.com"
         },
         {
             "label": "API Token",
             "key": "token",
             "type": "password",
-            "mandatory": false,
-            "description": "Your Cloud App Security API token."
+            "mandatory": true,
+            "placeholder": "Enter your API token",
+            "description": "Microsoft Defender Cloud Apps API token with Read-only permissions. To generate a token, navigate to Settings > API tokens in the Microsoft Defender Cloud Apps portal and create a token with Read-only permission to access Cloud app catalog."
+        },
+        {
+            "label": "Status",
+            "key": "status",
+            "type": "multichoice",
+            "choices": [
+                {
+                    "key": "Unsanctioned (Banned)",
+                    "value": "unsanctioned"
+                },
+                {
+                    "key": "Sanctioned",
+                    "value": "sanctioned"
+                },
+                {
+                    "key": "Protected",
+                    "value": "protected"
+                },
+                {
+                    "key": "Allow",
+                    "value": "allow"
+                }
+            ],
+            "default": ["unsanctioned", "sanctioned", "protected"],
+            "mandatory": true,
+            "description": "Select Cloud App status types to pull IOCs from. Note: When the Allow status is selected, all indicators associated with apps, except Sanctioned, Unsanctioned and Protected apps are pulled from Cloud app catalog page into Cloud Exchange and are assigned with `allow` tag."
         },
         {
             "label": "Enable Tagging",
@@ -37,15 +68,27 @@
             ],
             "default": "yes",
             "mandatory": true,
-            "description": "Enable/Disable tagging functionality."
+            "description": "Enable/Disable tagging functionality. When Yes is selected, status-specific tags will be added to the pulled IOCs."
         },
         {
-            "label": "Tag Name",
-            "key": "tag",
-            "type": "text",
-            "default": "MCAS Unsanctioned",
+            "label": "Add Wildcard Prefix to IOCs",
+            "key": "add_wildcard_prefix",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Yes",
+                    "value": "yes"
+                },
+                {
+                    "key": "No",
+                    "value": "no"
+                }
+            ],
+            "default": "no",
+            "has_api_call": true,
+            "payload_fields": ["add_wildcard_prefix"],
             "mandatory": true,
-            "description": "Tag name to be used for tagging indicators."
+            "description": "Add Wildcard Prefix functionality. When Yes is selected, a wildcard character will be prepended to each pulled IOC."
         }
     ]
 }

@@ -29,70 +29,79 @@ CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-AWS S3 Events, Alerts Plugin.
+AWS S3 Events, Alerts Plugin helper utilities.
 """
 
-from typing import Dict, List
-from jsonschema import validate
-from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
-
-from .aws_s3_events_alerts_exception import (
-    MappingValidationError,
-)
+from typing import Dict, Tuple
 
 
-def map_data(mappings: Dict, data: List) -> Dict:
-    """Filter the raw data and returns the filtered data,
-    which will be further pushed to AWS S3.
+def get_mappings(mappings: Dict, data_type: str) -> Dict:
+    """Return the subtype-keyed mapping dict for the given data type.
 
     Args:
-        mappings (Dict): List of fields to be pushed to AWS S3
-      (read from mapping string)
-        data (List): Data to be mapped (retrieved from Netskope)
+        mappings (Dict): Full mappings dict (parsed from mappings.json).
+        data_type (str): Data type — 'alerts', 'events', or 'webtx'.
 
     Returns:
-        Dict: Mapped Dictionary.
+        Dict: Subtype-keyed mapping dict for the given data type.
     """
+    return mappings["taxonomy"]["json"][data_type]
+
+
+def get_nested_field_value(data: Dict, field_path: str) -> Tuple:
+    """Extract a value from a nested dict using dot-notation path.
+
+    Some Netskope records expose values only under nested keys like
+    ``host_info.device_make``, while the configured mapping references
+    the field as a single dotted string. This walks the dict one segment
+    at a time and returns the leaf value when the full path resolves.
+
+    Args:
+        data (Dict): The data dictionary.
+        field_path (str): Dot-separated field path
+            (e.g. 'host_info.device_make').
+
+    Returns:
+        Tuple: (value, True) if the path resolves, (None, False)
+            otherwise.
+    """
+    try:
+        current = data
+        for part in field_path.split("."):
+            if isinstance(current, dict) and part in current:
+                current = current[part]
+            else:
+                return None, False
+        return current, True
+    except Exception:
+        return None, False
+
+
+def map_json_data(mappings, data: Dict) -> Dict:
+    """Filter raw Netskope data to only the fields listed in mappings.
+
+    Supports both flat keys and dot-notation nested field paths
+    (e.g. ``host_info.device_make``).
+
+    Args:
+        mappings: List of field names to retain, or [] to keep all
+            fields.
+        data (Dict): Raw record from Netskope.
+
+    Returns:
+        Dict: Record containing only the mapped fields, or the original
+            data if mappings is empty or data is falsy.
+    """
+    if mappings == [] or not data:
+        return data
+
     mapped_dict = {}
-    ignored_fields = []
+    data_keys = data.keys()
     for key in mappings:
-        if key in data:
+        if key in data_keys:
             mapped_dict[key] = data[key]
         else:
-            ignored_fields.append(key)
+            value, field_exist = get_nested_field_value(data, key)
+            if field_exist:
+                mapped_dict[key] = value
     return mapped_dict
-
-
-def validate_subtype(instance):
-    """Validate the subtype object mapped in mapping JSON files.
-
-    Args:
-        instance: The subtype object to be validated
-    """
-    schema = {
-        "type": "array",
-    }
-
-    validate(instance=instance, schema=schema)
-
-
-def get_mappings(mappings: Dict, data_type: str, log_prefix) -> Dict:
-    """Return the dict of mappings to be applied to raw data.
-
-    Args:
-        mappings (Dict): Mapping String
-        data_type (str): Data type (alert/event) for which the
-        mappings are to be fetched
-
-    Returns:
-        Dict: Read mappings
-    """
-    mappings = mappings["taxonomy"]["json"][data_type]
-
-    # Validate each subtype
-    for subtype, subtype_map in mappings.items():
-        try:
-            validate_subtype(subtype_map)
-        except JsonSchemaValidationError as err:
-            raise MappingValidationError(err)
-    return mappings

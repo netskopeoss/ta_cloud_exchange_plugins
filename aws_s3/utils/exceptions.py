@@ -29,10 +29,22 @@ CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-AWS S3 WebTx plugin exceptions module.
+AWS S3 WebTx plugin exceptions.
 """
 
 
-class AWSS3WebTXException(Exception):
-    "Custom Exception class for AWS S3 WebTX Plugin."
-    pass
+class AWSS3WebTxException(Exception):
+    """Exception raised by the AWS S3 WebTx plugin.
+
+    The message is the error text that was already logged (without the
+    log prefix), so it can be shown to the user as it is.
+    """
+
+    def __init__(self, message: str = "") -> None:
+        """Initialize the exception.
+
+        Args:
+            message (str): Error message without the log prefix.
+        """
+        self.message = message
+        super().__init__(message)

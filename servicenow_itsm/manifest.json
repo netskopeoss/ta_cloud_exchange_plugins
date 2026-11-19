@@ -2,7 +2,7 @@
   "name": "ServiceNow",
   "description": "This plugin is used to create incidents on the Incident > All page, security incidents on the Security Incident > Incidents > Show All Incidents page, GRC issues on the Policy and Compliance > Issues > All Issues page and records on the Custom Table record page of the ServiceNow platform. It also supports updating incidents/issues and syncing their status. This plugin is NOT the same as ServiceNow's DLP Incident Response product, nor does this plugin works with that solution.",
   "id": "servicenow_itsm",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "module": "CTO",
   "minimum_version": "6.0.0",
   "pulling_supported": false,

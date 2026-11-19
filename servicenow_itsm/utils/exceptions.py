@@ -29,33 +29,11 @@ CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-ServiceNow ITSM Plugin constants.
+ServiceNow ITSM plugin exception class.
 """
-MODULE_NAME = "CTO"
-PLATFORM_NAME = "ServiceNow"
-PLUGIN_VERSION = "2.2.0"
-DEFAULT_WAIT_TIME = 60
-MAX_API_CALLS = 4
-LIMIT = 1000
 
-MAIN_ATTRS = [
-   "id",
-   "alertName",
-   "alertType",
-   "eventType",
-   "app",
-   "appCategory",
-   "user",
-   "type",
-   "fileType",
-   "timestamp"
-]
 
-CUSTOM_TABLE_CONFIG_FIELDS = {
-   "custom_table_name": "Custom Table Name",
-   "custom_status": "Custom Status",
-   "custom_severity": "Custom Severity",
-   "custom_assignee": "Custom Assignee",
-   "custom_group": "Custom Group",
-   "custom_update": "Custom Update",
-}
+class ServiceNowITSMPluginException(Exception):
+    """ServiceNow ITSM plugin custom exception class."""
+
+    pass

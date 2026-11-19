@@ -1,3 +1,10 @@
+# 2.3.0 (Required minimum CE version for this is 6.0.0)
+## Added
+- Added support for assign ticket to Manager.
+- Added resolution for error logs.
+## Changed
+- Updated validation checks and refactored code to improve maintainability.
+
 # 2.2.0
 ## Added
 - Added support for mapping custom status and severity fields.

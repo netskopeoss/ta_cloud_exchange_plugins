@@ -29,28 +29,24 @@ CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-Scality Plugin.
+
+Scality Plugin Exceptions.
 """
 
 
-class Error(Exception):
-    """Base class for exceptions in this module."""
+class ScalityException(Exception):
+    """Scality plugin custom exception class."""
 
     pass
 
 
-class MappingValidationError(Error):
-    """Exception raised when validation fails for scality mappings file.
+class BucketNotFoundError(ScalityException):
+    """Raised when the configured bucket does not exist on Scality."""
 
-    :attribute: message -- explanation of the error
-    """
-
-    def __init__(self, message):
-        """Initialize."""
-        self.message = message
+    pass
 
 
-class ScalityException(Exception):
-    """Scality plugin Custom Exception class."""
+class BucketNameAlreadyTaken(ScalityException):
+    """Raised when the bucket exists in a different region."""
 
     pass

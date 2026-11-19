@@ -1,8 +1,10 @@
 {
   "name": "HaloITSM",
-  "description": "This plugin is used to create tickets on the HaloITSM platform. Only supports ticket creation and ticket status syncing. Note: Updating tickets on HaloITSM platform is not supported.",
   "id": "halo_itsm",
-  "version": "1.0.0",
+  "version": "2.0.0",
+  "module": "CTO",
+  "minimum_version": "6.0.0",
+  "description": "This plugin is used to create tickets on Incident > All incidents on the HaloITSM platform. It also supports updating tickets and syncing their status.",
   "pulling_supported": false,
   "receiving_supported": true,
   "configuration": [
@@ -17,7 +19,15 @@
           "type": "text",
           "default": "",
           "mandatory": true,
-          "description": "Name of the tenant used to authorize HaloITSM Platform."
+          "description": "The subdomain of your HaloITSM instance URL. For example, if your instance URL is 'https://mycompany.haloitsm.com', the Tenant Name is 'mycompany'. Navigate to Configuration > Integrations > HaloITSM API."
+        },
+        {
+          "label": "Client ID",
+          "key": "client_id",
+          "type": "text",
+          "default": "",
+          "mandatory": true,
+          "description": "The Client ID of the OAuth2 application registered in HaloITSM. Navigate to Configuration > Integrations > HaloITSM API > View Applications. Select the client ID based on the Authentication Method or create a new application and use that client ID."
         },
         {
           "label": "Authentication Method",
@@ -35,15 +45,31 @@
           ],
           "default": "password",
           "mandatory": true,
-          "description": "Select the option based on the authentication method selected on the HaloITSM instance. Note: we only support 'Username and Password' and 'Client ID and Secret (Services)' authentication methods."
+          "description": "Select the OAuth2 grant type used to authenticate with HaloITSM. Choose 'Username and Password' to authenticate as a named agent user. Choose 'Client ID and Secret (Services)' for a service application configured under Configuration > Integrations > API Applications in HaloITSM."
         },
         {
-          "label": "Client ID",
-          "key": "client_id",
+          "label": "Client Secret",
+          "key": "client_secret",
+          "type": "password",
+          "default": "",
+          "mandatory": false,
+          "description": "Only required when Authentication Method is 'Client ID and Secret (Services)'. Navigate to Configuration > Integrations > HaloITSM API > View Applications. Select the application and copy the Client Secret."
+        },
+        {
+          "label": "Username",
+          "key": "username",
           "type": "text",
           "default": "",
-          "mandatory": true,
-          "description": "The Client ID associated with the HaloITSM platform Application."
+          "mandatory": false,
+          "description": "Only required when Authentication Method is 'Username and Password'. Navigate to Configuration > Teams & Agents > Agents. Click on the agent and check the Username on the Account Details page."
+        },
+        {
+          "label": "Password",
+          "key": "password",
+          "type": "password",
+          "default": "",
+          "mandatory": false,
+          "description": "Only required when Authentication Method is 'Username and Password'. The password for the HaloITSM agent account specified above."
         }
       ]
     },

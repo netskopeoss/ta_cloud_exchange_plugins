@@ -1,16 +1,17 @@
 {
     "name": "Illumio",
     "id": "illumio_ztre",
-    "version": "1.0.1",
-    "minimum_version": "5.1.0",
+    "version": "1.0.2",
+    "minimum_version": "6.1.0",
     "module": "CRE",
-    "description": "This plugin is used to fetch hosts from **Illumio > Servers and Endpoints > Workloads**. This plugin does not support any actions on hosts.",
+    "description": "This plugin is used to fetch Hosts from Servers and Endpoints > Workloads on Illumio platform. This plugin does not support any actions on hosts.",
     "configuration": [
         {
             "label": "PCE URL",
             "key": "pce_url",
             "type": "text",
             "default": "",
+            "placeholder": "https://my.pce.com",
             "mandatory": true,
             "description": "Base URL of your Illumio Platform - e.g. https://my.pce.com"
         },

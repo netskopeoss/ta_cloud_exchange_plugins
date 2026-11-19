@@ -1,0 +1,5 @@
+{
+    "name": "Snowflake Default Mappings",
+    "jsonData": "{\n  \"snowflake_map_version\": \"1.0.0\",\n  \"taxonomy\": {\n    \"json\": {\n      \"alerts\": {\n        \"anomaly\": [],\n        \"Compromised Credential\": [],\n        \"content\": [],\n        \"ctep\": [],\n        \"device\": [],\n        \"dlp\": [],\n        \"Legal Hold\": [],\n        \"malsite\": [],\n        \"malware\": [],\n        \"policy\": [],\n        \"Quarantine\": [],\n        \"Remediation\": [],\n        \"Security Assessment\": [],\n        \"uba\": [],\n        \"Watchlist\": []\n      },\n      \"events\": {\n        \"application\": [],\n        \"audit\": [],\n        \"clientstatus\": [],\n        \"endpoint\": [],\n        \"incident\": [],\n        \"infrastructure\": [],\n        \"network\": [],\n        \"page\": []\n      },\n      \"webtx\": {\n        \"v2\": []\n      }\n    }\n  }\n}",
+    "isDefault": true
+}

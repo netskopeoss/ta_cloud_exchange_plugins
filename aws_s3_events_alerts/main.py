@@ -31,17 +31,16 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 AWS S3 Events, Alerts Plugin.
 """
+
 import json
+import os
+import traceback
+from tempfile import NamedTemporaryFile
+from typing import List, Union
+
 from cryptography import x509
 from cryptography.hazmat.primitives import serialization
 
-import os
-import traceback
-from typing import List, Dict
-from tempfile import NamedTemporaryFile
-from packaging import version
-
-from netskope.common.api import __version__ as CE_VERSION
 from netskope.integrations.cls.plugin_base import (
     PluginBase,
     ValidationResult,
@@ -52,19 +51,22 @@ from .utils.aws_s3_events_alerts_validator import (
 )
 from .utils.aws_s3_events_alerts_client import (
     AWSS3EventsAlertsClient,
-    BucketNameAlreadyTaken,
 )
 from .utils.aws_s3_events_alerts_exception import (
     AWSS3EventsAlertsException,
-    MappingValidationError,
 )
-from .utils.aws_s3_events_alerts_helper import get_mappings, map_data
+from .utils.aws_s3_events_alerts_helper import (
+    get_mappings,
+    map_json_data,
+)
 from .utils.aws_s3_events_alerts_constants import (
     MODULE_NAME,
+    PLATFORM_NAME,
     PLUGIN_NAME,
     PLUGIN_VERSION,
+    REGION_CHOICES,
     USER_AGENT,
-    MAXIMUM_CORE_VERSION
+    VALIDATION_ERROR_MESSAGE,
 )
 
 
@@ -77,20 +79,22 @@ class AWSS3EventsAlertsPlugin(PluginBase):
         *args,
         **kwargs,
     ):
-        """Initialize AWS S3 WebTx Plugin class."""
-        super().__init__(
-            name,
-            *args,
-            **kwargs,
-        )
+        """Initialize AWSS3EventsAlertsPlugin.
+
+        Args:
+            name (str): Configuration name.
+        """
+        super().__init__(name, *args, **kwargs)
         self.plugin_name, self.plugin_version = self._get_plugin_info()
-        self.log_prefix = f"{MODULE_NAME} {self.plugin_name} [{name}]"
+        self.log_prefix = f"{MODULE_NAME} {self.plugin_name}"
+        if name:
+            self.log_prefix = f"{self.log_prefix} [{name}]"
 
     def _get_plugin_info(self) -> tuple:
-        """Get plugin name and version from manifest.
+        """Get plugin name and version from manifest metadata.
 
         Returns:
-            tuple: Tuple of plugin's name and version fetched from manifest.
+            tuple: (plugin_name, plugin_version)
         """
         try:
             manifest_json = AWSS3EventsAlertsPlugin.metadata
@@ -101,36 +105,225 @@ class AWSS3EventsAlertsPlugin(PluginBase):
             self.logger.error(
                 message=(
                     f"{MODULE_NAME} {PLUGIN_NAME}: Error occurred while"
-                    f" getting plugin details. Error: {exp}"
+                    f" getting plugin details. {exp}"
                 ),
                 details=str(traceback.format_exc()),
             )
         return PLUGIN_NAME, PLUGIN_VERSION
 
-    @staticmethod
-    def get_subtype_mapping(mappings: Dict, subtype: str) -> Dict:
-        """Retrieve subtype mappings (mappings for subtypes of alerts/events)
-        case insensitively.
+    def _get_config_params(
+        self,
+        configuration: dict,
+        params_to_get: List[str] = None,
+    ):
+        """Get required configuration parameters.
 
         Args:
-            mappings (Dict): Mapping JSON from which subtypes are to
-            be retrieved
-            subtype (str): Subtype (e.g. DLP for alerts) for which the
-            subtype mapping is to be fetched
+            configuration (dict): Plugin configuration dict.
+            params_to_get (List[str]): Subset of param keys to return.
+                If None, returns all params as a tuple.
 
         Returns:
-            Dict: Fetched mapping JSON object
+            tuple or single value of the requested parameters.
         """
-        mappings = {k.lower(): v for k, v in mappings.items()}
-        if subtype.lower() in mappings:
-            return mappings[subtype.lower()]
-        else:
-            return mappings[subtype.upper()]
+        all_params = {
+            "authentication_method": configuration.get(
+                "authentication_method", ""
+            ).strip(),
+            "private_key_file": configuration.get(
+                "private_key_file", ""
+            ).strip(),
+            "public_certificate_file": configuration.get(
+                "public_certificate_file", ""
+            ).strip(),
+            "pass_phrase": configuration.get("pass_phrase"),
+            "profile_arn": configuration.get(
+                "profile_arn", ""
+            ).strip(),
+            "role_arn": configuration.get("role_arn", "").strip(),
+            "trust_anchor_arn": configuration.get(
+                "trust_anchor_arn", ""
+            ).strip(),
+            "region_name": configuration.get(
+                "region_name", ""
+            ).strip(),
+            "bucket_name": configuration.get(
+                "bucket_name", ""
+            ).strip(),
+            "externally_provisioned_bucket": configuration.get(
+                "externally_provisioned_bucket", "no"
+            ).strip().lower(),
+        }
 
-    def get_dynamic_fields(self):
-        """Get the dynamic fields from plugin."""
-        authentication_method = self.configuration.get("authentication_method", None)
-        if authentication_method and authentication_method == "aws_iam_roles_anywhere":
+        if not params_to_get:
+            return tuple(all_params.values())
+
+        result = [all_params.get(param) for param in params_to_get]
+        return result[0] if len(result) == 1 else tuple(result)
+
+    def _validate_configuration_parameters(
+        self,
+        field_name: str,
+        field_value,
+        field_type: type,
+        is_required: bool = True,
+        allowed_values: list = None,
+        validation_err_msg: str = VALIDATION_ERROR_MESSAGE,
+        required_field_message: str = None,
+    ) -> Union[ValidationResult, None]:
+        """Validate a configuration field.
+
+        Args:
+            field_name (str): Name of the field to validate.
+            field_value: Value of the field to validate.
+            field_type (type): Expected type of the field.
+            is_required (bool): Whether the field is required.
+            allowed_values (list): List of allowed values for the field.
+            validation_err_msg (str): Base validation error message.
+            required_field_message (str): Custom message when field is
+                required but empty.
+
+        Returns:
+            ValidationResult on failure, None on success.
+        """
+        if field_type is str and isinstance(field_value, str):
+            field_value = field_value.strip()
+
+        if is_required and not isinstance(field_value, int) and \
+                not field_value:
+            err_msg = (
+                required_field_message
+                if required_field_message
+                else (
+                    f"{field_name} is a required"
+                    " configuration parameter."
+                )
+            )
+            self.logger.error(
+                message=(
+                    f"{self.log_prefix}: {validation_err_msg} {err_msg}"
+                ),
+                resolution=(
+                    f"Ensure that {field_name} value is provided in"
+                    " the configuration parameters."
+                ),
+            )
+            return ValidationResult(success=False, message=err_msg)
+
+        if field_value and not isinstance(field_value, field_type):
+            err_msg = (
+                f"Invalid value provided for the configuration"
+                f" parameter '{field_name}'."
+            )
+            self.logger.error(
+                message=(
+                    f"{self.log_prefix}: {validation_err_msg} {err_msg}"
+                ),
+                resolution=(
+                    f"Ensure that valid value for {field_name} is"
+                    " provided in the configuration parameters."
+                ),
+            )
+            return ValidationResult(success=False, message=err_msg)
+
+        if (
+            allowed_values
+            and field_type is str
+            and field_value not in allowed_values
+        ):
+            err_msg = (
+                f"Invalid value provided for the configuration"
+                f" parameter '{field_name}'. Allowed values are"
+                f" {', '.join(str(v) for v in allowed_values)}."
+            )
+            self.logger.error(
+                message=(
+                    f"{self.log_prefix}: {validation_err_msg} {err_msg}"
+                ),
+                resolution=(
+                    f"Ensure that valid value for {field_name} is"
+                    " provided in the configuration parameters and it"
+                    " should be one of"
+                    f" {', '.join(str(v) for v in allowed_values)}."
+                ),
+            )
+            return ValidationResult(success=False, message=err_msg)
+
+        return None
+
+    @staticmethod
+    def get_subtype_mapping(mappings: dict, subtype: str) -> dict:
+        """Retrieve subtype mappings case-insensitively.
+
+        Args:
+            mappings (dict): Mapping dict keyed by subtype name.
+            subtype (str): Subtype name to look up.
+
+        Returns:
+            dict: Mapping for the given subtype, or {} if not found.
+        """
+        lower_mappings = {k.lower(): v for k, v in mappings.items()}
+        return lower_mappings.get(subtype.lower(), {})
+
+    def get_dynamic_fields(self) -> list:
+        """Return dynamic configuration fields for the selected auth method.
+
+        Returns:
+            list: List of dynamic field definitions.
+        """
+        authentication_method = self._get_config_params(
+            self.configuration, ["authentication_method"]
+        )
+        region_field = {
+            "label": "AWS S3 Bucket Region Name",
+            "key": "region_name",
+            "type": "choice",
+            "choices": REGION_CHOICES,
+            "default": "us-east-1",
+            "mandatory": True,
+            "description": (
+                "AWS region where the target S3 bucket resides."
+                " Make sure the region matches the region in the"
+                " Profile ARN and Trust Anchor ARN when using"
+                " IAM Roles Anywhere."
+            ),
+        }
+        bucket_field = {
+            "label": "AWS S3 Bucket Name",
+            "key": "bucket_name",
+            "type": "text",
+            "default": "",
+            "mandatory": True,
+            "description": (
+                "Name of the target AWS S3 bucket where Netskope"
+                " Alerts, Events data will be stored."
+                " Example: netskope-alerts-bucket."
+            ),
+        }
+        ep_field = {
+            "label": "Externally Provisioned Bucket",
+            "key": "externally_provisioned_bucket",
+            "type": "choice",
+            "choices": [
+                {"key": "Yes", "value": "yes"},
+                {"key": "No", "value": "no"},
+            ],
+            "default": "no",
+            "mandatory": True,
+            "description": (
+                "Select 'Yes' if the S3 bucket is located in an"
+                " external AWS account. Select 'No' if the bucket is"
+                " in your own AWS account. If 'No' is selected and"
+                " the bucket does not already exist, the plugin will"
+                " create it. If 'Yes' is selected, the bucket must"
+                " already exist, as the plugin will not create it."
+            ),
+        }
+
+        if (
+            authentication_method
+            and authentication_method == "aws_iam_roles_anywhere"
+        ):
             return [
                 {
                     "label": "Private Key",
@@ -138,7 +331,11 @@ class AWSS3EventsAlertsPlugin(PluginBase):
                     "type": "textarea",
                     "default": "",
                     "mandatory": True,
-                    "description": "Private Key for decrypting the AWS Private CA Certificate. Required for 'AWS IAM Roles Anywhere' authentication type."
+                    "description": (
+                        "PEM-encoded private key used to decrypt the"
+                        " AWS Private CA Certificate. Required for"
+                        " 'AWS IAM Roles Anywhere' authentication."
+                    ),
                 },
                 {
                     "label": "Certificate Body",
@@ -146,7 +343,11 @@ class AWSS3EventsAlertsPlugin(PluginBase):
                     "type": "textarea",
                     "default": "",
                     "mandatory": True,
-                    "description": "Certificate Body for AWS Public/Private CA Certificate. Required for 'AWS IAM Roles Anywhere' authentication type."
+                    "description": (
+                        "PEM-encoded X.509 certificate body issued by"
+                        " your AWS Private or Public CA. Required for"
+                        " 'AWS IAM Roles Anywhere' authentication."
+                    ),
                 },
                 {
                     "label": "Password Phrase",
@@ -154,7 +355,11 @@ class AWSS3EventsAlertsPlugin(PluginBase):
                     "type": "password",
                     "default": "",
                     "mandatory": True,
-                    "description": "Password Phrase for decrypting the CA Certificate. Required for 'AWS IAM Roles Anywhere' authentication type."
+                    "description": (
+                        "Passphrase used to decrypt the CA certificate"
+                        " if it is encrypted. Required for 'AWS IAM"
+                        " Roles Anywhere' authentication."
+                    ),
                 },
                 {
                     "label": "Profile ARN",
@@ -162,7 +367,13 @@ class AWSS3EventsAlertsPlugin(PluginBase):
                     "type": "text",
                     "default": "",
                     "mandatory": True,
-                    "description": "AWS Profile ARN for AWS client authentication. Required for 'AWS IAM Roles Anywhere' authentication type."
+                    "description": (
+                        "ARN of the IAM Roles Anywhere profile."
+                        " Format: arn:aws:rolesanywhere:{region}:"
+                        "{account-id}:profile/{profile-id}."
+                        " Required for 'AWS IAM Roles Anywhere'"
+                        " authentication."
+                    ),
                 },
                 {
                     "label": "Role ARN",
@@ -170,7 +381,12 @@ class AWSS3EventsAlertsPlugin(PluginBase):
                     "type": "text",
                     "default": "",
                     "mandatory": True,
-                    "description": "AWS Role ARN for AWS client authentication. Required for 'AWS IAM Roles Anywhere' authentication type."
+                    "description": (
+                        "ARN of the IAM role to be assumed."
+                        " Format: arn:aws:iam::{account-id}:role/"
+                        "{role-name}. Required for 'AWS IAM Roles"
+                        " Anywhere' authentication."
+                    ),
                 },
                 {
                     "label": "Trust Anchor ARN",
@@ -178,419 +394,178 @@ class AWSS3EventsAlertsPlugin(PluginBase):
                     "type": "text",
                     "default": "",
                     "mandatory": True,
-                    "description": "AWS Trust Anchor ARN for AWS client authentication. Required for 'AWS IAM Roles Anywhere' authentication type."
+                    "description": (
+                        "ARN of the IAM Roles Anywhere trust anchor."
+                        " Format: arn:aws:rolesanywhere:{region}:"
+                        "{account-id}:trust-anchor/{anchor-id}."
+                        " Required for 'AWS IAM Roles Anywhere'"
+                        " authentication."
+                    ),
                 },
-                {
-                    "label": "AWS S3 Bucket Region Name",
-                    "key": "region_name",
-                    "type": "choice",
-                    "choices": [
-                        {
-                            "key": "US East (N. Virginia) [us-east-1]",
-                            "value": "us-east-1"
-                        },
-                        {
-                            "key": "US East (Ohio) [us-east-2]",
-                            "value": "us-east-2"
-                        },
-                        {
-                            "key": "US West (N. California) [us-west-1]",
-                            "value": "us-west-1"
-                        },
-                        {
-                            "key": "US West (Oregon) [us-west-2]",
-                            "value": "us-west-2"
-                        },
-                        {
-                            "key": "Africa (Cape Town) [af-south-1]",
-                            "value": "af-south-1"
-                        },
-                        {
-                            "key": "Asia Pacific (Hong Kong) [ap-east-1]",
-                            "value": "ap-east-1"
-                        },
-                        {
-                            "key": "Asia Pacific (Mumbai) [ap-south-1]",
-                            "value": "ap-south-1"
-                        },
-                        {
-                            "key": "Asia Pacific (Tokyo) [ap-northeast-1]",
-                            "value": "ap-northeast-1"
-                        },
-                        {
-                            "key": "Asia Pacific (Seoul) [ap-northeast-2]",
-                            "value": "ap-northeast-2"
-                        },
-                        {
-                            "key": "Asia Pacific (Melbourne) [ap-southeast-4]",
-                            "value": "ap-southeast-4"
-                        },
-                        {
-                            "key": "Asia Pacific (Thailand) [ap-southeast-7]",
-                            "value": "ap-southeast-7"
-                        },
-                        {
-                            "key": "Canada (Calgary) [ca-west-1]",
-                            "value": "ca-west-1"
-                        },
-                        {
-                            "key": "Asia Pacific (Osaka) [ap-northeast-3]",
-                            "value": "ap-northeast-3"
-                        },
-                        {
-                            "key": "Asia Pacific (Singapore) [ap-southeast-1]",
-                            "value": "ap-southeast-1"
-                        },
-                        {
-                            "key": "Asia Pacific (Sydney) [ap-southeast-2]",
-                            "value": "ap-southeast-2"
-                        },
-                        {
-                            "key": "Canada (Central) [ca-central-1]",
-                            "value": "ca-central-1"
-                        },
-                        {
-                            "key": "Canada (Calgary) [ca-west1]",
-                            "value": "ca-west1"
-                        },
-                        {
-                            "key": "China (Beijing) [cn-north-1]",
-                            "value": "cn-north-1"
-                        },
-                        {
-                            "key": "China (Ningxia) [cn-northwest-1]",
-                            "value": "cn-northwest-1"
-                        },
-                        {
-                            "key": "Europe (Frankfurt) [eu-central-1]",
-                            "value": "eu-central-1"
-                        },
-                        {
-                            "key": "Europe (Ireland) [eu-west-1]",
-                            "value": "eu-west-1"
-                        },
-                        {
-                            "key": "Europe (London) [eu-west-2]",
-                            "value": "eu-west-2"
-                        },
-                        {
-                            "key": "Europe (Paris) [eu-west-3]",
-                            "value": "eu-west-3"
-                        },
-                        {
-                            "key": "Europe (Milan) [eu-south-1]",
-                            "value": "eu-south-1"
-                        },
-                        {
-                            "key": "Europe (Stockholm) [eu-north-1]",
-                            "value": "eu-north-1"
-                        },
-                        {
-                            "key": "Israel (Tel Aviv) [il-central-1]",
-                            "value": "il-central-1"
-                        },
-                        {
-                            "key": "Middle East (Bahrain) [me-south-1]",
-                            "value": "me-south-1"
-                        },
-                        {
-                            "key": "South America (São Paulo) [sa-east-1]",
-                            "value": "sa-east-1"
-                        },
-                        {
-                            "key": "Asia Pacific (Hyderabad) [ap-south-2]",
-                            "value": "ap-south-2"
-                        },
-                        {
-                            "key": "Asia Pacific (Jakarta) [ap-southeast-3]",
-                            "value": "ap-southeast-3"
-                        },
-                        {
-                            "key": "Asia Pacific (Malaysia) [ap-southeast-5]",
-                            "value": "ap-southeast-5"
-                        },
-                        {
-                            "key": "Europe (Spain) [eu-south-2]",
-                            "value": "eu-south-2"
-                        },
-                        {
-                            "key": "Europe (Zurich) [eu-central-2]",
-                            "value": "eu-central-2"
-                        },
-                        {
-                            "key": "Mexico (Central) mx-central-1",
-                            "value": "mx-central-1"
-                        },
-                        {
-                            "key": "Middle East (UAE) [me-central-1]",
-                            "value": "me-central-1"
-                        }
-                    ],
-                    "default": "us-east-1",
-                    "mandatory": True,
-                    "description": "AWS S3 Bucket Region Name from where to get the AWS S3 Bucket. Make sure that the region name matches the region in the Profile ARN and Trust Anchor ARN."
-                },
-                {
-                    "label": "AWS S3 Bucket Name",
-                    "key": "bucket_name",
-                    "type": "text",
-                    "default": "",
-                    "mandatory": True,
-                    "description": "AWS S3 Bucket Name in which the data object will be stored."
-                }
+                ep_field,
+                region_field,
+                bucket_field,
             ]
         else:
             return [
-                {
-                    "label": "AWS S3 Bucket Region Name",
-                    "key": "region_name",
-                    "type": "choice",
-                    "choices": [
-                        {
-                            "key": "US East (N. Virginia) [us-east-1]",
-                            "value": "us-east-1"
-                        },
-                        {
-                            "key": "US East (Ohio) [us-east-2]",
-                            "value": "us-east-2"
-                        },
-                        {
-                            "key": "US West (N. California) [us-west-1]",
-                            "value": "us-west-1"
-                        },
-                        {
-                            "key": "US West (Oregon) [us-west-2]",
-                            "value": "us-west-2"
-                        },
-                        {
-                            "key": "Africa (Cape Town) [af-south-1]",
-                            "value": "af-south-1"
-                        },
-                        {
-                            "key": "Asia Pacific (Hong Kong) [ap-east-1]",
-                            "value": "ap-east-1"
-                        },
-                        {
-                            "key": "Asia Pacific (Mumbai) [ap-south-1]",
-                            "value": "ap-south-1"
-                        },
-                        {
-                            "key": "Asia Pacific (Tokyo) [ap-northeast-1]",
-                            "value": "ap-northeast-1"
-                        },
-                        {
-                            "key": "Asia Pacific (Seoul) [ap-northeast-2]",
-                            "value": "ap-northeast-2"
-                        },
-                        {
-                            "key": "Asia Pacific (Melbourne) [ap-southeast-4]",
-                            "value": "ap-southeast-4"
-                        },
-                        {
-                            "key": "Asia Pacific (Thailand) [ap-southeast-7]",
-                            "value": "ap-southeast-7"
-                        },
-                        {
-                            "key": "Canada (Calgary) [ca-west-1]",
-                            "value": "ca-west-1"
-                        },
-                        {
-                            "key": "Asia Pacific (Osaka) [ap-northeast-3]",
-                            "value": "ap-northeast-3"
-                        },
-                        {
-                            "key": "Asia Pacific (Singapore) [ap-southeast-1]",
-                            "value": "ap-southeast-1"
-                        },
-                        {
-                            "key": "Asia Pacific (Sydney) [ap-southeast-2]",
-                            "value": "ap-southeast-2"
-                        },
-                        {
-                            "key": "Canada (Central) [ca-central-1]",
-                            "value": "ca-central-1"
-                        },
-                        {
-                            "key": "Canada (Calgary) [ca-west1]",
-                            "value": "ca-west1"
-                        },
-                        {
-                            "key": "China (Beijing) [cn-north-1]",
-                            "value": "cn-north-1"
-                        },
-                        {
-                            "key": "China (Ningxia) [cn-northwest-1]",
-                            "value": "cn-northwest-1"
-                        },
-                        {
-                            "key": "Europe (Frankfurt) [eu-central-1]",
-                            "value": "eu-central-1"
-                        },
-                        {
-                            "key": "Europe (Ireland) [eu-west-1]",
-                            "value": "eu-west-1"
-                        },
-                        {
-                            "key": "Europe (London) [eu-west-2]",
-                            "value": "eu-west-2"
-                        },
-                        {
-                            "key": "Europe (Paris) [eu-west-3]",
-                            "value": "eu-west-3"
-                        },
-                        {
-                            "key": "Europe (Milan) [eu-south-1]",
-                            "value": "eu-south-1"
-                        },
-                        {
-                            "key": "Europe (Stockholm) [eu-north-1]",
-                            "value": "eu-north-1"
-                        },
-                        {
-                            "key": "Israel (Tel Aviv) [il-central-1]",
-                            "value": "il-central-1"
-                        },
-                        {
-                            "key": "Middle East (Bahrain) [me-south-1]",
-                            "value": "me-south-1"
-                        },
-                        {
-                            "key": "South America (São Paulo) [sa-east-1]",
-                            "value": "sa-east-1"
-                        },
-                        {
-                            "key": "Asia Pacific (Hyderabad) [ap-south-2]",
-                            "value": "ap-south-2"
-                        },
-                        {
-                            "key": "Asia Pacific (Jakarta) [ap-southeast-3]",
-                            "value": "ap-southeast-3"
-                        },
-                        {
-                            "key": "Asia Pacific (Malaysia) [ap-southeast-5]",
-                            "value": "ap-southeast-5"
-                        },
-                        {
-                            "key": "Europe (Spain) [eu-south-2]",
-                            "value": "eu-south-2"
-                        },
-                        {
-                            "key": "Europe (Zurich) [eu-central-2]",
-                            "value": "eu-central-2"
-                        },
-                        {
-                            "key": "Mexico (Central) mx-central-1",
-                            "value": "mx-central-1"
-                        },
-                        {
-                            "key": "Middle East (UAE) [me-central-1]",
-                            "value": "me-central-1"
-                        }
-                    ],
-                    "default": "us-east-1",
-                    "mandatory": True,
-                    "description": "AWS S3 Bucket Region Name from where to get the AWS S3 Bucket. Make sure that the region name matches the region in the Profile ARN and Trust Anchor ARN."
-                },
-                {
-                    "label": "AWS S3 Bucket Name",
-                    "key": "bucket_name",
-                    "type": "text",
-                    "default": "",
-                    "mandatory": True,
-                    "description": "AWS S3 Bucket Name in which the data object will be stored."
-                }
+                ep_field,
+                region_field,
+                bucket_field,
             ]
 
-    def transform(self, raw_data, data_type, subtype) -> List:
-        """Transform the raw netskope JSON data into target platform supported
-        data formats.
+    def validate_mappings(self) -> ValidationResult:
+        """Validate the mappings for all data types.
 
-        Args:
-            raw_data (list): The raw data to be transformed.
-            data_type (str): The type of data to be ingested (alert/event)
-            subtype (str): The subtype of data to be ingested
-            (DLP, anomaly etc. in case of alerts)
-
-        Raises:
-            NotImplementedError: If the method is not implemented.
+        Parses the jsonData mapping string, checks it is non-empty, and
+        validates the taxonomy.json structure.
 
         Returns:
-            List: list of transformed data.
+            ValidationResult: Success or failure with a descriptive
+                message.
+        """
+        aws_validator = AWSS3EventsAlertsValidator(
+            logger=self.logger,
+            log_prefix=self.log_prefix,
+        )
+
+        def _validate_json_data(json_string):
+            try:
+                json_object = json.loads(json_string)
+                if not bool(json_object):
+                    raise ValueError("JSON data should not be empty.")
+            except json.decoder.JSONDecodeError as err:
+                raise ValueError(f"Invalid JSON: {err}")
+            except Exception as err:
+                raise ValueError(
+                    f"Error occurred while validating JSON: {err}."
+                )
+            return json_object
+
+        try:
+            mappings = _validate_json_data(self.mappings.get("jsonData"))
+        except Exception as err:
+            return ValidationResult(success=False, message=str(err))
+
+        if not aws_validator.validate_mappings(mappings):
+            err_msg = (
+                "Invalid mapping configuration. Please check the"
+                " mapping settings in Settings > Log Shipper."
+            )
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg}",
+                resolution=(
+                    "Ensure that the mapping configuration is valid and"
+                    " correctly structured under"
+                    " Settings > Log Shipper."
+                ),
+            )
+            return ValidationResult(success=False, message=err_msg)
+
+        return ValidationResult(
+            success=True, message="Mappings validation successful."
+        )
+
+    # ─────────────────────── TRANSFORM FLOW ──────────────────────────
+
+    def transform(self, raw_data, data_type, subtype) -> List:
+        """Transform raw Netskope JSON data using configured mappings.
+
+        Args:
+            raw_data (list): Raw records from Netskope.
+            data_type (str): Data type — 'alerts', 'events', or 'webtx'.
+            subtype (str): Subtype — e.g. 'dlp', 'page', 'v2'.
+
+        Returns:
+            List: Transformed records ready for S3 upload.
         """
         skipped_logs = 0
         try:
-            mappings = get_mappings(self.mappings, data_type, self.log_prefix)
-        except MappingValidationError as err:
-            err_msg = "Mapping validation error occurred."
-            self.logger.error(
-                message=(
-                    f"{self.log_prefix}: [{data_type}][{subtype}]"
-                    f" {err_msg}. Error: {err}"
-                ),
-                details=traceback.format_exc(),
-            )
-            raise AWSS3EventsAlertsException(err_msg)
+            mappings = get_mappings(self.mappings, data_type)
         except Exception as err:
             err_msg = (
-                f"An error occurred while mapping data using "
-                f"given mapping [{data_type}][{subtype}]."
+                f"[{data_type}][{subtype}] "
+                "An error occurred while fetching mappings."
             )
             self.logger.error(
-                message=(
-                    f"{self.log_prefix}: [{data_type}][{subtype}] "
-                    f"{err_msg} Error: {err}"
-                ),
+                message=f"{self.log_prefix}: {err_msg} {err}",
                 details=traceback.format_exc(),
             )
             raise AWSS3EventsAlertsException(err_msg)
+
         transformed_data = []
-        subtype_mappings = self.get_subtype_mapping(mappings, subtype)
+        try:
+            subtype_mappings = self.get_subtype_mapping(
+                mappings, subtype
+            )
+        except Exception as err:
+            err_msg = (
+                f"[{data_type}][{subtype}] An error occurred while"
+                " fetching subtype mappings."
+            )
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg} {err}",
+                details=traceback.format_exc(),
+            )
+            raise AWSS3EventsAlertsException(err_msg)
+
         if not subtype_mappings:
             return raw_data
+
         for data in raw_data:
+            if not data:
+                skipped_logs += 1
+                continue
             try:
-                data = map_data(subtype_mappings, data)
-                if data:
-                    transformed_data.append(data)
+                mapped = map_json_data(subtype_mappings, data)
+                if mapped:
+                    transformed_data.append(mapped)
                 else:
                     skipped_logs += 1
             except Exception as err:
                 self.logger.error(
                     message=(
-                        f"{self.log_prefix}: Could not transform data of"
-                        f" [{data_type}][{subtype}]. Error: {err}"
+                        f"{self.log_prefix}: [{data_type}][{subtype}]"
+                        " An error occurred while transforming record."
+                        f" {err}"
                     ),
                     details=traceback.format_exc(),
                 )
                 skipped_logs += 1
+
         if skipped_logs > 0:
             self.logger.debug(
-                "{}: [{}][{}] Plugin couldn't process {} records because they "
-                "either had no data or contained invalid/missing "
-                "fields according to the configured JSON mapping. "
-                "Therefore, the transformation and ingestion for those "
-                "records were skipped.".format(
-                    self.log_prefix, data_type, subtype, skipped_logs
-                )
+                f"{self.log_prefix}: [{data_type}][{subtype}]"
+                f" Plugin couldn't process {skipped_logs} record(s)"
+                " because they either had no data or contained"
+                " invalid/missing fields according to the configured"
+                " JSON mapping. Those records were skipped."
             )
         return transformed_data
+
+    # ─────────────────────── PUSH FLOW ───────────────────────────────
 
     def push(
         self, transformed_data: List, data_type: str, subtype: str
     ) -> PushResult:
-        """Push the transformed_data to the 3rd party platform.
+        """Push transformed data to the AWS S3 bucket as NDJSON.
 
         Args:
-            transformed_data (List): Transformed Data
-            data_type (str): The type of data to be ingested (alert/event)
-            subtype (str): The subtype of data to be ingested
-            (DLP, anomaly etc. in case of alerts)
+            transformed_data (List): Transformed log records.
+            data_type (str): Data type — 'alerts', 'events', or 'webtx'.
+            subtype (str): Subtype — e.g. 'dlp', 'page', 'v2'.
 
         Returns:
-            PushResult: Push result object with message and status.
+            PushResult: Result with success flag and message.
         """
+        self.logger.debug(
+            f"{self.log_prefix}: [{data_type}][{subtype}]"
+            f" Initializing the sharing of {len(transformed_data)}"
+            f" log(s) to {PLATFORM_NAME} AWS S3 Bucket."
+        )
+        bucket_name = self._get_config_params(
+            self.configuration, ["bucket_name"]
+        )
         try:
-            bucket_name = self.configuration.get("bucket_name", "").strip()
             aws_client = AWSS3EventsAlertsClient(
                 self.configuration,
                 self.logger,
@@ -600,369 +575,97 @@ class AWSS3EventsAlertsPlugin(PluginBase):
                 USER_AGENT,
             )
             aws_client.set_credentials()
-            filtered_list = list(filter(lambda d: bool(d), transformed_data))
+
+            filtered_list = list(
+                filter(lambda d: bool(d), transformed_data)
+            )
             empty_dict_count = len(transformed_data) - len(filtered_list)
+            if empty_dict_count > 0:
+                self.logger.debug(
+                    f"{self.log_prefix}: Received empty log(s) from"
+                    " tenant or failed to write to the object file"
+                    f" for {empty_dict_count} log(s) — ingestion of"
+                    " those log(s) was skipped."
+                )
+            if not filtered_list:
+                log_msg = (
+                    f"[{data_type}][{subtype}] No log(s) to push to"
+                    f" {self.plugin_name} AWS S3 Bucket {bucket_name}."
+                )
+                self.logger.info(f"{self.log_prefix}: {log_msg}")
+                return PushResult(success=True, message=log_msg)
+
+            temp_obj_file = None
             try:
                 temp_obj_file = NamedTemporaryFile("w", delete=False)
                 temp_obj_file.write(json.dumps(filtered_list))
                 temp_obj_file.flush()
-                aws_client.push(temp_obj_file.name, data_type, subtype)
+                aws_client.push(
+                    temp_obj_file.name, data_type, subtype
+                )
             except Exception as err:
-                raise AWSS3EventsAlertsException(err)
+                err_msg = (
+                    f"[{data_type}][{subtype}] An error occurred while"
+                    f" pushing log(s) to {PLATFORM_NAME} AWS S3"
+                    f" Bucket {bucket_name}."
+                )
+                self.logger.error(
+                    message=f"{self.log_prefix}: {err_msg}",
+                    details=str(err),
+                )
+                raise AWSS3EventsAlertsException(err_msg)
             finally:
-                temp_obj_file.close()
-                os.unlink(temp_obj_file.name)
-            if empty_dict_count > 0:
-                self.logger.debug(
-                    f"{self.log_prefix}: Received empty log(s) from tenant "
-                    f"or failed to write to the object file for {empty_dict_count}"
-                    " log(s) hence ingestion of those log(s) were skipped."
-                )
+                if temp_obj_file:
+                    temp_obj_file.close()
+                    os.unlink(temp_obj_file.name)
+
             log_msg = (
-                "[{}] [{}] Successfully ingested {} log(s)"
-                " to {} AWS S3 Bucket {}.".format(
-                    data_type,
-                    subtype,
-                    len(filtered_list),
-                    self.plugin_name,
-                    bucket_name,
-                )
+                f"[{data_type}][{subtype}] Successfully ingested"
+                f" {len(filtered_list)} log(s) to {self.plugin_name}"
+                f" AWS S3 Bucket {bucket_name}."
             )
             self.logger.info(f"{self.log_prefix}: {log_msg}")
-            return PushResult(
-                success=True,
-                message=log_msg,
-            )
+            return PushResult(success=True, message=log_msg)
+        except AWSS3EventsAlertsException:
+            raise
         except Exception as exp:
             err_msg = (
-                "Error occurred while pushing "
-                f"log(s) to AWS S3 Bucket {bucket_name}."
+                f"Error occurred while pushing log(s) to AWS S3"
+                f" Bucket {bucket_name}."
             )
             self.logger.error(
-                message=(f"{self.log_prefix}: {err_msg} Error: {exp}"),
+                message=f"{self.log_prefix}: {err_msg} {exp}",
                 details=str(traceback.format_exc()),
             )
             raise AWSS3EventsAlertsException(err_msg)
 
-    def validate(self, configuration: dict) -> ValidationResult:
-        """Validate the configuration parameters dict.
+    # ─────────────────────── CONNECTIVITY VALIDATION ─────────────────
+
+    def _validate_connectivity(
+        self,
+        configuration: dict,
+        aws_validator: "AWSS3EventsAlertsValidator",
+        bucket_name: str,
+    ) -> Union[ValidationResult, None]:
+        """Validate connectivity to AWS S3.
+
+        Runs two checks in order:
+          1. AWS credentials (HeadBucket)
+          2. S3 bucket accessible, created if needed, region verified
 
         Args:
             configuration (dict): Plugin configuration parameters.
+            aws_validator (AWSS3EventsAlertsValidator): Validator
+                instance.
+            bucket_name (str): Configured S3 bucket name.
 
         Returns:
-            ValidationResult: Validation Result.
+            ValidationResult: Failure result if any check fails.
+            None: All checks passed.
         """
-        aws_validator = AWSS3EventsAlertsValidator(
-            configuration,
-            self.logger,
-            self.proxy,
-            self.storage,
-            self.log_prefix,
-        )
-        transform_data_json = False
-        if version.parse(CE_VERSION) <= version.parse(MAXIMUM_CORE_VERSION):
-            if not configuration.get("transformData", True):
-                transform_data_json = True
-        else:
-            if configuration.get("transformData", "json") == "json":
-                transform_data_json = True
-        if not transform_data_json:
-            err_msg = (
-                "This Plugin is designed to send JSON data to S3 Bucket "
-                "- Please select the format as 'JSON' to continue."
-            )
-            self.logger.error(
-                f"{self.log_prefix}: Validation error occurred. "
-                f"Error: {err_msg}"
-            )
-            return ValidationResult(
-                success=False,
-                message=err_msg,
-            )
+        validation_err_msg = VALIDATION_ERROR_MESSAGE
 
-        # Validate Authentication Method
-        authentication_method = configuration.get(
-            "authentication_method", ""
-        ).strip()
-        if not authentication_method:
-            err_msg = (
-                "Authentication Method is a required configuration parameter."
-            )
-            self.logger.error(
-                f"{self.log_prefix}: Validation error occurred. "
-                f"Error: {err_msg}"
-            )
-            return ValidationResult(success=False, message=err_msg)
-        if authentication_method not in [
-            "aws_iam_roles_anywhere",
-            "deployed_on_aws",
-        ]:
-            error_msg = (
-                "Invalid value for Authentication Method provided. "
-                "Allowed values are "
-                "'AWS IAM Roles Anywhere' or 'Deployed on AWS'."
-            )
-            self.logger.error(
-                f"{self.log_prefix}: Validation error occurred."
-                f" Error: {error_msg}"
-            )
-            return ValidationResult(
-                success=False,
-                message=f"{error_msg}",
-            )
-        if authentication_method == "aws_iam_roles_anywhere":
-            pass_phrase = configuration.get("pass_phrase")
-            if not pass_phrase:
-                err_msg = (
-                    "Password Phrase is a required configuration parameter"
-                    " when 'AWS IAM Roles Anywhere' is selected as "
-                    "Authentication Method."
-                )
-                self.logger.error(
-                    f"{self.log_prefix}: Validation error occurred. "
-                    f"Error: {err_msg}"
-                )
-                return ValidationResult(
-                    success=False,
-                    message=f"{err_msg}",
-                )
-            elif not isinstance(pass_phrase, str):
-                self.logger.error(
-                    f"{self.log_prefix}: Validation error occurred. "
-                    "Error: Invalid Password Phrase found in the "
-                    "configuration parameters."
-                )
-                return ValidationResult(
-                    success=False,
-                    message="Invalid Password Phrase provided.",
-                )
-            # Validate Private Key File.
-            private_key_file = configuration.get(
-                "private_key_file", ""
-            ).strip()
-            if not private_key_file:
-                error_msg = (
-                    "Private Key is a required configuration parameter"
-                    " when 'AWS IAM Roles Anywhere' is selected as "
-                    "Authentication Method."
-                )
-                self.logger.error(
-                    f"{self.log_prefix} Validation error occurred. Error: "
-                    f"{error_msg}"
-                )
-                return ValidationResult(
-                    success=False,
-                    message=f"{error_msg}",
-                )
-            elif not isinstance(private_key_file, str):
-                self.logger.error(
-                    f"{self.log_prefix}: Validation error occurred. "
-                    "Error: Invalid Private Key found in the "
-                    "configuration parameters."
-                )
-                return ValidationResult(
-                    success=False,
-                    message="Invalid Private Key provided.",
-                )
-            else:
-                try:
-                    serialization.load_pem_private_key(
-                        private_key_file.encode("utf-8"), None
-                    )
-                except Exception:
-                    try:
-                        serialization.load_pem_private_key(
-                            private_key_file.encode("utf-8"),
-                            password=str.encode(pass_phrase),
-                        )
-                    except Exception:
-                        err_msg = (
-                            "Invalid Private Key or Password Phrase provided."
-                            " Verify the Private Key and Password Phrase."
-                            " Private Key should be in a valid PEM format."
-                        )
-                        self.logger.error(
-                            message=(
-                                f"{self.log_prefix}: Validation error "
-                                f"occurred. Error: {err_msg}"
-                            ),
-                            details=traceback.format_exc(),
-                        )
-                        return ValidationResult(
-                            success=False,
-                            message=f"{err_msg}",
-                        )
-
-            # Validate Certificate Body.
-            public_certificate_file = configuration.get(
-                "public_certificate_file", ""
-            ).strip()
-            if not public_certificate_file:
-                error_msg = (
-                    "Certificate Body is a required configuration"
-                    " parameter when 'AWS IAM Roles Anywhere' "
-                    "is selected as Authentication Method."
-                )
-                self.logger.error(
-                    f"{self.log_prefix} Validation error occurred. Error: "
-                    f"{error_msg}"
-                )
-                return ValidationResult(
-                    success=False,
-                    message=f"{error_msg}",
-                )
-            elif not isinstance(public_certificate_file, str):
-                self.logger.error(
-                    f"{self.log_prefix}: Validation error occurred. Error: "
-                    "Invalid Certificate Body found in "
-                    "the configuration parameters."
-                )
-                return ValidationResult(
-                    success=False,
-                    message="Invalid Certificate Body provided.",
-                )
-            else:
-                try:
-                    x509.load_pem_x509_certificate(
-                        public_certificate_file.encode()
-                    )
-                except Exception:
-                    err_msg = (
-                        "Invalid Certificate Body provided. "
-                        "Certificate Body should be in valid PEM Format."
-                    )
-                    self.logger.error(
-                        message=(
-                            f"{self.log_prefix}: Validation error occurred. "
-                            f"Error: {err_msg}"
-                        ),
-                        details=str(traceback.format_exc()),
-                    )
-                    return ValidationResult(
-                        success=False,
-                        message=f"{err_msg}",
-                    )
-
-            # Validate Profile ARN.
-            profile_arn = configuration.get("profile_arn", "").strip()
-            if not profile_arn:
-                error_msg = (
-                    "Profile ARN is a required configuration parameter when "
-                    "'AWS IAM Roles Anywhere' is selected as "
-                    "Authentication Method."
-                )
-                self.logger.error(
-                    f"{self.log_prefix}: Validation error occurred. Error: "
-                    f"{error_msg}"
-                )
-                return ValidationResult(success=False, message=f"{error_msg}")
-            elif not isinstance(profile_arn, str):
-                self.logger.error(
-                    f"{self.log_prefix}: Validation error occurred. Error: "
-                    "Invalid Profile ARN found in the "
-                    "configuration parameters."
-                )
-                return ValidationResult(
-                    success=False, message="Invalid Profile ARN provided."
-                )
-
-            # Validate Role ARN.
-            role_arn = configuration.get("role_arn", "").strip()
-            if not role_arn:
-                error_msg = (
-                    "Role ARN is a required configuration parameter when "
-                    "'AWS IAM Roles Anywhere' is selected as "
-                    "Authentication Method."
-                )
-                self.logger.error(
-                    f"{self.log_prefix}: Validation error occurred. Error: "
-                    f"{error_msg}"
-                )
-                return ValidationResult(success=False, message=f"{error_msg}")
-
-            elif not isinstance(role_arn, str):
-                self.logger.error(
-                    f"{self.log_prefix}: Validation error occurred. Error: "
-                    f"Invalid Role ARN found in the configuration parameters."
-                )
-                return ValidationResult(
-                    success=False, message="Invalid Role ARN provided."
-                )
-
-            # Validate Trust Anchor ARN.
-            trust_anchor_arn = configuration.get(
-                "trust_anchor_arn", ""
-            ).strip()
-            if not trust_anchor_arn:
-                error_msg = (
-                    "Trust Anchor ARN is a required configuration parameter "
-                    "when 'AWS IAM Roles Anywhere' is selected as "
-                    "Authentication Method."
-                )
-                self.logger.error(
-                    f"{self.log_prefix}: Validation error occurred. Error: "
-                    f"{error_msg}"
-                )
-                return ValidationResult(success=False, message=f"{error_msg}")
-
-            elif not isinstance(trust_anchor_arn, str):
-                self.logger.error(
-                    f"{self.log_prefix}: Validation error occurred. Error: "
-                    "Invalid Trust Anchor ARN found in the "
-                    "configuration parameters."
-                )
-                return ValidationResult(
-                    success=False, message="Invalid Trust Anchor ARN provided."
-                )
-
-        # Validate Region Name.
-        region_name = configuration.get("region_name", "").strip()
-        if not region_name:
-            error_msg = (
-                "AWS S3 Bucket Region Name is a "
-                "required configuration parameter."
-            )
-            self.logger.error(
-                f"{self.log_prefix}: Validation error occurred. "
-                f"Error: {error_msg}"
-            )
-            return ValidationResult(success=False, message=error_msg)
-        elif not (
-            isinstance(region_name, str)
-            and aws_validator.validate_region_name(region_name)
-        ):
-            error_msg = (
-                "Invalid AWS S3 Bucket Region Name found in "
-                "the configuration parameters."
-            )
-            self.logger.error(
-                f"{self.log_prefix}: Validation error occurred."
-                f" Error: {error_msg}"
-            )
-            return ValidationResult(success=False, message=error_msg)
-
-        bucket_name = configuration.get("bucket_name", "").strip()
-        if not bucket_name:
-            err_msg = (
-                "AWS S3 Bucket Name is a required configuration parameter."
-            )
-            self.logger.error(
-                f"{self.log_prefix}: Validation error occurred. Error: "
-                f"{err_msg}"
-            )
-            return ValidationResult(success=False, message=err_msg)
-        elif not isinstance(bucket_name, str):
-            self.logger.error(
-                f"{self.log_prefix}: Validation error occurred. Error: "
-                "Invalid AWS S3 Bucket Name found in the"
-                " configuration parameters."
-            )
-            return ValidationResult(
-                success=False, message="Invalid AWS S3 Bucket Name provided."
-            )
-
-        # Validate Auth Credentials.
+        # 1. Validate AWS credentials via HeadBucket
         try:
             aws_client = AWSS3EventsAlertsClient(
                 configuration,
@@ -975,83 +678,372 @@ class AWSS3EventsAlertsPlugin(PluginBase):
             aws_client.set_credentials()
             aws_validator.validate_credentials(aws_client)
         except AWSS3EventsAlertsException as exp:
-            self.logger.error(
-                message=(
-                    f"{self.log_prefix}: Validation error occurred. {exp}"
-                ),
-                details=traceback.format_exc(),
-            )
-            return ValidationResult(
-                success=False,
-                message=f"Validation error occurred. {exp}",
-            )
-        except Exception as err:
-            error_msg = (
-                "Invalid authentication parameters provided."
-                " Check logs for more details."
-            )
-            self.logger.error(
-                message=(
-                    f"{self.log_prefix}: Validation error occurred."
-                    f" Error: {err}"
-                ),
-                details=traceback.format_exc(),
-            )
-            return ValidationResult(
-                success=False,
-                message=f"{error_msg}",
-            )
-        try:
-            aws_client.get_bucket()
-        except BucketNameAlreadyTaken:
             err_msg = (
-                "Provided AWS S3 Bucket Name already exists at a "
-                "different region. Please try with different name or "
-                "use the correct region."
-            )
-            error_msg = (
-                f"{self.log_prefix}: Validation error occurred. {err_msg}"
+                f"Error occurred while validating AWS credentials. {exp}"
             )
             self.logger.error(
-                message=error_msg, details=traceback.format_exc()
+                message=(
+                    f"{self.log_prefix}: {validation_err_msg} {err_msg}"
+                ),
+                resolution=(
+                    "Ensure that the AWS credentials are correct and"
+                    " the IAM role or instance profile has the required"
+                    " S3 permissions."
+                ),
+                details=traceback.format_exc(),
             )
-            return ValidationResult(success=False, message=err_msg)
-        except AWSS3EventsAlertsException as exp:
-            err_msg = f"Validation error occurred. {exp}"
+            return ValidationResult(success=False, message=str(exp))
+        except Exception as err:
+            err_msg = (
+                "Error occurred while validating AWS credentials."
+            )
             self.logger.error(
-                message=f"{self.log_prefix}: {err_msg}",
+                message=(
+                    f"{self.log_prefix}: {validation_err_msg}"
+                    f" {err_msg} {err}"
+                ),
+                resolution=(
+                    "Ensure that the AWS authentication parameters are"
+                    " correct and the IAM role has the required"
+                    " permissions."
+                ),
                 details=traceback.format_exc(),
             )
             return ValidationResult(success=False, message=err_msg)
-        except ValueError as err:
-            error_msg = (
-                f"{self.log_prefix}: Validation error occurred. "
-                f"Error: {err}"
-            )
+
+        # 2. Verify S3 bucket (existence, creation if needed, region)
+        try:
+            if not aws_client.verify_bucket_exists():
+                err_msg = (
+                    f"AWS S3 Bucket '{bucket_name}' does not exist or"
+                    " is not accessible."
+                )
+                self.logger.error(
+                    message=(
+                        f"{self.log_prefix}: {validation_err_msg}"
+                        f" {err_msg}"
+                    ),
+                    resolution=(
+                        "Recreate the S3 bucket or provide a valid"
+                        " existing bucket name in the configuration."
+                        " Also make sure that IAM role has"
+                        " s3:GetBucketLocation, s3:PutObject,"
+                        " s3:ListBucket permissions."
+                    ),
+                )
+                return ValidationResult(
+                    success=False, message=err_msg
+                )
+        except AWSS3EventsAlertsException as exp:
             self.logger.error(
-                message=error_msg, details=traceback.format_exc()
-            )
-            return ValidationResult(
-                success=False,
                 message=(
-                    "Validation error occurred. "
-                    "Check logs for more details."
+                    f"{self.log_prefix}: {validation_err_msg} {exp}"
                 ),
+                details=traceback.format_exc(),
             )
+            return ValidationResult(success=False, message=str(exp))
         except Exception as err:
-            error_msg = f"{self.log_prefix}: Validation error occurred. {err}"
-            self.logger.error(
-                message=error_msg, details=traceback.format_exc()
+            err_msg = (
+                "Error occurred while verifying AWS S3 bucket."
             )
-            return ValidationResult(
-                success=False,
+            self.logger.error(
                 message=(
-                    "Validation error occurred. Check logs"
-                    " for more details."
+                    f"{self.log_prefix}: {validation_err_msg}"
+                    f" {err_msg} {err}"
+                ),
+                resolution=(
+                    "Ensure that the AWS IAM role has permission to"
+                    " access the S3 bucket."
+                ),
+                details=traceback.format_exc(),
+            )
+            return ValidationResult(success=False, message=err_msg)
+
+        return None
+
+    # ─────────────────────── VALIDATION FLOW ─────────────────────────
+
+    def validate(self, configuration: dict) -> ValidationResult:
+        """Validate all plugin configuration parameters.
+
+        Validation order:
+          1. transformData format check (JSON-only plugin)
+          2. Authentication Method
+          3. Conditional IAM Roles Anywhere parameters
+          4. AWS S3 Bucket Region Name
+          5. AWS S3 Bucket Name
+          6. Externally Provisioned Bucket
+          7. Mappings structure
+          8. Connectivity: AWS credentials → S3 bucket
+
+        Args:
+            configuration (dict): Plugin configuration parameters.
+
+        Returns:
+            ValidationResult: Validation result with success flag and
+                message.
+        """
+        validation_err_msg = VALIDATION_ERROR_MESSAGE
+
+        # Extract all configuration parameters up-front
+        (
+            authentication_method,
+            private_key_file,
+            public_certificate_file,
+            pass_phrase,
+            profile_arn,
+            role_arn,
+            trust_anchor_arn,
+            region_name,
+            bucket_name,
+            externally_provisioned_bucket,
+        ) = self._get_config_params(configuration)
+
+        aws_validator = AWSS3EventsAlertsValidator(
+            logger=self.logger,
+            log_prefix=self.log_prefix,
+        )
+
+        # 1. Validate transformData — JSON-only plugin
+        if configuration.get("transformData", "json") != "json":
+            err_msg = (
+                "This Plugin is designed to send JSON data to S3"
+                " Bucket. Please select the format as 'JSON' to"
+                " continue."
+            )
+            self.logger.error(
+                message=(
+                    f"{self.log_prefix}: {validation_err_msg} {err_msg}"
+                ),
+                resolution=(
+                    "Select 'JSON' as the data format in the plugin"
+                    " configuration."
                 ),
             )
+            return ValidationResult(success=False, message=err_msg)
+
+        # 2. Validate Authentication Method
+        if auth_result := self._validate_configuration_parameters(
+            field_name="Authentication Method",
+            field_value=authentication_method,
+            field_type=str,
+            is_required=True,
+            allowed_values=[
+                "deployed_on_aws",
+                "aws_iam_roles_anywhere",
+            ],
+            validation_err_msg=validation_err_msg,
+        ):
+            return auth_result
+
+        # 3. Conditional IAM Roles Anywhere parameters
+        if authentication_method == "aws_iam_roles_anywhere":
+
+            # Password Phrase (validated first — needed to parse key)
+            if phrase_result := self._validate_configuration_parameters(
+                field_name="Password Phrase",
+                field_value=pass_phrase,
+                field_type=str,
+                is_required=True,
+                required_field_message=(
+                    "Password Phrase is a required configuration"
+                    " parameter when 'AWS IAM Roles Anywhere' is"
+                    " selected as Authentication Method."
+                ),
+                validation_err_msg=validation_err_msg,
+            ):
+                return phrase_result
+
+            # Private Key — required then PEM parse
+            if key_result := self._validate_configuration_parameters(
+                field_name="Private Key",
+                field_value=private_key_file,
+                field_type=str,
+                is_required=True,
+                required_field_message=(
+                    "Private Key is a required configuration parameter"
+                    " when 'AWS IAM Roles Anywhere' is selected as"
+                    " Authentication Method."
+                ),
+                validation_err_msg=validation_err_msg,
+            ):
+                return key_result
+            try:
+                serialization.load_pem_private_key(
+                    private_key_file.encode("utf-8"), None
+                )
+            except Exception:
+                try:
+                    serialization.load_pem_private_key(
+                        private_key_file.encode("utf-8"),
+                        password=str.encode(pass_phrase),
+                    )
+                except Exception:
+                    err_msg = (
+                        "Invalid Private Key or Password Phrase"
+                        " provided. Private Key must be in valid"
+                        " PEM format."
+                    )
+                    self.logger.error(
+                        message=(
+                            f"{self.log_prefix}: {validation_err_msg}"
+                            f" {err_msg}"
+                        ),
+                        resolution=(
+                            "Ensure that the Private Key is in valid"
+                            " PEM format and the Password Phrase"
+                            " matches the key encryption."
+                        ),
+                        details=traceback.format_exc(),
+                    )
+                    return ValidationResult(
+                        success=False, message=err_msg
+                    )
+
+            # Certificate Body — required then PEM parse
+            if cert_result := self._validate_configuration_parameters(
+                field_name="Certificate Body",
+                field_value=public_certificate_file,
+                field_type=str,
+                is_required=True,
+                required_field_message=(
+                    "Certificate Body is a required configuration"
+                    " parameter when 'AWS IAM Roles Anywhere' is"
+                    " selected as Authentication Method."
+                ),
+                validation_err_msg=validation_err_msg,
+            ):
+                return cert_result
+            try:
+                x509.load_pem_x509_certificate(
+                    public_certificate_file.encode()
+                )
+            except Exception:
+                err_msg = (
+                    "Invalid Certificate Body provided. Certificate"
+                    " Body must be in valid PEM format."
+                )
+                self.logger.error(
+                    message=(
+                        f"{self.log_prefix}: {validation_err_msg}"
+                        f" {err_msg}"
+                    ),
+                    resolution=(
+                        "Ensure that the Certificate Body is a valid"
+                        " PEM-encoded X.509 certificate."
+                    ),
+                    details=traceback.format_exc(),
+                )
+                return ValidationResult(success=False, message=err_msg)
+
+            # Profile ARN
+            if profile_result := self._validate_configuration_parameters(
+                field_name="Profile ARN",
+                field_value=profile_arn,
+                field_type=str,
+                is_required=True,
+                required_field_message=(
+                    "Profile ARN is a required configuration parameter"
+                    " when 'AWS IAM Roles Anywhere' is selected as"
+                    " Authentication Method."
+                ),
+                validation_err_msg=validation_err_msg,
+            ):
+                return profile_result
+
+            # Role ARN
+            if role_result := self._validate_configuration_parameters(
+                field_name="Role ARN",
+                field_value=role_arn,
+                field_type=str,
+                is_required=True,
+                required_field_message=(
+                    "Role ARN is a required configuration parameter"
+                    " when 'AWS IAM Roles Anywhere' is selected as"
+                    " Authentication Method."
+                ),
+                validation_err_msg=validation_err_msg,
+            ):
+                return role_result
+
+            # Trust Anchor ARN
+            if anchor_result := self._validate_configuration_parameters(
+                field_name="Trust Anchor ARN",
+                field_value=trust_anchor_arn,
+                field_type=str,
+                is_required=True,
+                required_field_message=(
+                    "Trust Anchor ARN is a required configuration"
+                    " parameter when 'AWS IAM Roles Anywhere' is"
+                    " selected as Authentication Method."
+                ),
+                validation_err_msg=validation_err_msg,
+            ):
+                return anchor_result
+
+        # 4. Validate AWS S3 Bucket Region Name
+        if region_result := self._validate_configuration_parameters(
+            field_name="AWS S3 Bucket Region Name",
+            field_value=region_name,
+            field_type=str,
+            is_required=True,
+            validation_err_msg=validation_err_msg,
+        ):
+            return region_result
+        if not aws_validator.validate_region_name(region_name):
+            err_msg = (
+                "Invalid AWS S3 Bucket Region Name found in the"
+                " configuration parameters."
+            )
+            self.logger.error(
+                message=(
+                    f"{self.log_prefix}: {validation_err_msg} {err_msg}"
+                ),
+                resolution=(
+                    "Select a valid AWS region from the available"
+                    " choices in the configuration."
+                ),
+            )
+            return ValidationResult(success=False, message=err_msg)
+
+        # 5. Validate AWS S3 Bucket Name
+        if bucket_result := self._validate_configuration_parameters(
+            field_name="AWS S3 Bucket Name",
+            field_value=bucket_name,
+            field_type=str,
+            is_required=True,
+            validation_err_msg=validation_err_msg,
+        ):
+            return bucket_result
+
+        # 6. Validate Externally Provisioned Bucket
+        if ep_result := self._validate_configuration_parameters(
+            field_name="Externally Provisioned Bucket",
+            field_value=externally_provisioned_bucket,
+            field_type=str,
+            is_required=True,
+            allowed_values=["yes", "no"],
+            validation_err_msg=validation_err_msg,
+        ):
+            return ep_result
+
+        # 7. Validate mappings structure
+        mappings_result = self.validate_mappings()
+        if not mappings_result.success:
+            return mappings_result
+
+        # 8. Connectivity: AWS credentials + S3 bucket verification
+        if connectivity_result := self._validate_connectivity(
+            configuration=configuration,
+            aws_validator=aws_validator,
+            bucket_name=bucket_name,
+        ):
+            return connectivity_result
+
         self.logger.debug(
-            f"{self.log_prefix}: Successfully validated"
-            " configuration parameters."
+            f"{self.log_prefix}: Successfully validated configuration"
+            " parameters."
         )
-        return ValidationResult(success=True, message="Validation successful.")
+        return ValidationResult(
+            success=True, message="Validation successful."
+        )

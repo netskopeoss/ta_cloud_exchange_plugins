@@ -1,3 +1,12 @@
+# 1.3.0 (Minimum required CE version 6.0.0)
+## Added
+- Added support for external provisioned buckets.
+- Added resolutions for error logs.
+## Changed
+- Changed bucket existence and connectivity checks to use HeadBucket,
+  which requires only the `s3:ListBucket` permission on the target
+  bucket instead of the account-wide `s3:ListAllMyBuckets` permission.
+
 # 1.2.0
 ## Added
 - Added support for dynamic field population based on selected Authentication Method. To use the dynamic field population feature update your CE version to 6.0.0.

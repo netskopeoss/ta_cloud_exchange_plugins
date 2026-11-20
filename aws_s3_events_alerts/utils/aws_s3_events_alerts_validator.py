@@ -29,99 +29,173 @@ CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-AWS S3 Events, Alerts validator.
+AWS S3 Events, Alerts Validator.
 """
 
+import traceback
 
-import boto3
-from botocore.exceptions import NoCredentialsError
-from botocore.config import Config
+from botocore.exceptions import ClientError, NoCredentialsError
+from jsonschema import validate
+from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
+
 from .aws_s3_events_alerts_constants import REGIONS
 from .aws_s3_events_alerts_exception import AWSS3EventsAlertsException
 
 
-class AWSS3EventsAlertsValidator(object):
-    """AWS S3 Events, Alerts validator class."""
+class AWSS3EventsAlertsValidator:
+    """Validator class for the AWS S3 Events, Alerts CLS plugin."""
 
-    def __init__(self, configuration, logger, proxy, storage, log_prefix):
-        """Initialize."""
-        super().__init__()
-        self.configuration = configuration
-        self.logger = logger
-        self.proxy = proxy
-        self.storage = storage
-        self.log_prefix = log_prefix
-        self.aws_public_key = None
-        self.aws_private_key = None
-        self.aws_session_token = None
-
-    def validate_region_name(self, region_name):
-        """Validate region name.
+    def __init__(self, logger, log_prefix: str):
+        """Initialize AWSS3EventsAlertsValidator.
 
         Args:
-            region_name: the region name to be validated
+            logger: Logger object.
+            log_prefix (str): Log prefix for messages.
+        """
+        self.logger = logger
+        self.log_prefix = log_prefix
+
+    def validate_region_name(self, region_name: str) -> bool:
+        """Validate that the AWS region name is a recognised value.
+
+        Args:
+            region_name (str): AWS region name to validate.
 
         Returns:
-            Whether the provided value is valid or not.
-            True in case of valid value, False otherwise
+            bool: True if valid, False otherwise.
         """
-        if region_name:
-            try:
-                if region_name == "None":
-                    return True
-                if region_name in REGIONS:
-                    return True
-                return False
-            except ValueError:
-                return False
-        else:
+        if not region_name:
+            return False
+        return region_name in REGIONS
+
+    def validate_mappings(self, mappings: dict) -> bool:
+        """Validate the mappings JSON structure using jsonschema.
+
+        Checks that taxonomy.json exists and that each data_type maps
+        subtypes to lists of field names. Only JSON format is validated.
+
+        Args:
+            mappings (dict): Parsed mappings dict from mappings.json.
+
+        Returns:
+            bool: True if structure is valid, False otherwise.
+        """
+        if not isinstance(mappings, dict):
+            return False
+        try:
+            schema = {
+                "type": "object",
+                "properties": {
+                    "taxonomy": {
+                        "type": "object",
+                        "properties": {
+                            "json": {
+                                "type": "object",
+                                "patternProperties": {
+                                    ".*": {
+                                        "type": "object",
+                                        "patternProperties": {
+                                            ".*": {"type": "array"}
+                                        },
+                                    }
+                                },
+                            }
+                        },
+                        "required": ["json"],
+                    }
+                },
+                "required": ["taxonomy"],
+            }
+            validate(instance=mappings, schema=schema)
+            return True
+        except JsonSchemaValidationError as err:
+            self.logger.error(
+                message=(
+                    f"{self.log_prefix}: Mapping validation error."
+                    f" {err.message}"
+                ),
+                details=str(err),
+            )
             return False
 
-    def validate_credentials(self, aws_client):
-        """Validate credentials.
+    def validate_credentials(self, aws_client) -> bool:
+        """Validate AWS credentials using HeadBucket on the configured
+        bucket.
+
+        Uses HeadBucket which requires only s3:ListBucket on the target
+        bucket, avoiding the account-wide s3:ListAllMyBuckets permission.
+        A 403 or 404 response still confirms credentials are valid — only
+        auth-level errors indicate bad credentials.
 
         Args:
-            aws_public_key: the aws public key to establish connection
-            with AWS S3.
-            aws_private_key: the aws private key to establish connection
-            with AWS S3.
+            aws_client: AWSS3EventsAlertsClient instance with credentials
+                set.
 
         Returns:
-            Whether the provided value is valid or not. True in case of
-            valid value, False otherwise
+            bool: True if credentials are valid and S3 is reachable.
+
+        Raises:
+            AWSS3EventsAlertsException: If credentials are missing or
+                invalid.
         """
         try:
-            s3_resource = boto3.resource(
-                "s3",
-                aws_access_key_id=aws_client.aws_public_key,
-                aws_secret_access_key=aws_client.aws_private_key,
-                aws_session_token=aws_client.aws_session_token,
-                region_name=self.configuration.get("region_name"),
-                config=Config(proxies=self.proxy),
-            )
-
-            for _ in s3_resource.buckets.all():
-                break
+            bucket_name = aws_client.configuration.get(
+                "bucket_name", ""
+            ).strip()
+            s3_client = aws_client.get_aws_client()
+            s3_client.head_bucket(Bucket=bucket_name)
             return True
-        except NoCredentialsError as exp:
+        except ClientError as err:
+            err_code = err.response["Error"]["Code"]
+            if err_code in (
+                "403",
+                "404",
+                "AccessDenied",
+                "NoSuchBucket",
+            ):
+                return True
             err_msg = (
-                "No AWS Credentials were found in the environment."
-                " Deploy the plugin into AWS environment or use AWS IAM "
-                "Roles Anywhere authentication method."
+                "Error occurred while validating AWS credentials."
             )
             self.logger.error(
-                message=f"{self.log_prefix}: {err_msg}.",
-                details=f"Error: {exp}",
+                message=f"{self.log_prefix}: {err_msg}",
+                details=f"Error: {err}",
+                resolution=(
+                    "Ensure that the AWS credentials are correct and"
+                    " the IAM role has s3:ListBucket permission on"
+                    " the bucket."
+                ),
             )
             raise AWSS3EventsAlertsException(err_msg)
-        except Exception as exp:
+        except NoCredentialsError as err:
             err_msg = (
-                "Error occurred while validating credentials. "
-                "Make sure all the required bucket permissions "
-                "are attached to the user."
+                "No AWS Credentials were found in the environment."
+                " Deploy the plugin into an AWS environment or use"
+                " AWS IAM Roles Anywhere authentication."
             )
             self.logger.error(
-                message=f"{self.log_prefix}: {err_msg}.",
-                details=f"Error: {exp}",
+                message=f"{self.log_prefix}: {err_msg}",
+                details=f"Error: {err}",
+                resolution=(
+                    "Ensure that the plugin is deployed in an AWS"
+                    " environment or configure AWS IAM Roles Anywhere"
+                    " authentication."
+                ),
+            )
+            raise AWSS3EventsAlertsException(err_msg)
+        except AWSS3EventsAlertsException:
+            raise
+        except Exception as err:
+            err_msg = (
+                "Error occurred while validating AWS credentials."
+            )
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg} {err}",
+                details=traceback.format_exc(),
+                resolution=(
+                    "Ensure that the AWS authentication parameters are"
+                    " correct and the IAM role has the required"
+                    " permissions."
+                ),
             )
             raise AWSS3EventsAlertsException(err_msg)

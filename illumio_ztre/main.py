@@ -27,39 +27,31 @@ DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
 SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
 CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-OF THIS SOFTWARE, EVEN IF IDVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 CRE Illumio Plugin.
 """
 
-import json
 import traceback
-from typing import List, Tuple, Dict, Union
-from urllib.parse import urlparse
+from typing import List, Tuple
 
-from netskope.common.utils import add_user_agent
 from netskope.integrations.crev2.models import Action, ActionWithoutParams
 from netskope.integrations.crev2.plugin_base import (
-    PluginBase,
-    ValidationResult,
     Entity,
     EntityField,
     EntityFieldType,
+    PluginBase,
+    ValidationResult,
 )
 
 from illumio import PolicyComputeEngine
+from illumio.exceptions import IllumioApiException
 
-from .utils.functions import IllumioPluginHelper
+from .utils.constants import MODULE_NAME, PLUGIN_NAME, PLUGIN_VERSION
 from .utils.exceptions import IllumioPluginException
+from .utils.helper import IllumioPluginHelper
 
-from .utils.constants import (
-    MODULE_NAME,
-    PLUGIN_NAME,
-    PLUGIN_VERSION,
-    MAX_PORT_NUMBER,
-    MIN_PORT_NUMBER,
-    HOST_FIELD_MAPPING,
-)
+SUPPORTED_ENTITY = "Hosts"
 
 
 class IllumioPlugin(PluginBase):
@@ -164,52 +156,6 @@ class IllumioPlugin(PluginBase):
         )
         return ValidationResult(success=True, message="Validation successful.")
 
-    def _add_user_agent(self, headers: Union[Dict, None] = None) -> Dict:
-        """Add User-Agent in the headers of any request.
-
-        Args:
-            header: Headers needed to pass to the Third Party Platform.
-
-        Returns:
-            Dict: Dictionary containing the User-Agent.
-        """
-        if headers and "User-Agent" in headers:
-            return headers
-
-        headers = add_user_agent(header=headers)
-        ce_added_agent = headers.get("User-Agent", "netskope-ce")
-        user_agent = "{}-{}-{}-v{}".format(
-            ce_added_agent,
-            MODULE_NAME.lower(),
-            self.plugin_name.lower().replace(" ", "-"),
-            self.plugin_version,
-        )
-        headers.update({"User-Agent": user_agent})
-        return headers
-
-    def _validate_url(self, url: str) -> bool:
-        """Validate the given URL."""
-        parsed = urlparse(url.strip())
-        return parsed.scheme.strip() != "" and parsed.netloc.strip() != ""
-
-    def _get_credentials(self, configuration):
-        """Get credentials from the configuration."""
-        base_url = configuration.get("pce_url", "").strip().strip("/")
-        pce_port = configuration.get("pce_port")
-        org_id = configuration.get("org_id")
-        api_username = configuration.get("api_username", "").strip()
-        api_secret = configuration.get("api_secret")
-        label_scope = configuration.get("label_scope", "").strip()
-
-        return (
-            base_url,
-            pce_port,
-            org_id,
-            api_username,
-            api_secret,
-            label_scope,
-        )
-
     def validate(self, configuration: dict) -> ValidationResult:
         """Validate the plugin configuration parameters.
 
@@ -219,7 +165,6 @@ class IllumioPlugin(PluginBase):
         Returns:
             ValidationResult: Validation result with success flag and message.
         """
-
         (
             base_url,
             pce_port,
@@ -227,107 +172,55 @@ class IllumioPlugin(PluginBase):
             api_username,
             api_secret,
             label_scope,
-        ) = self._get_credentials(configuration)
+        ) = self.illumio_helper.get_credentials(configuration)
 
-        validation_msg = "Validation error occurred."
-
-        # BASE URL
-        if not base_url:
-            error_message = "PCE URL is a required configuration parameter."
-            self.logger.error(f"{validation_msg} {error_message}")
-            return ValidationResult(success=False, message=error_message)
-        elif not (isinstance(base_url, str) and self._validate_url(base_url)):
-            error_message = (
-                "Invalid PCE URL provided in the configuration parameters."
-            )
-            self.logger.error(f"{validation_msg} {error_message}")
-            return ValidationResult(success=False, message=error_message)
-
-        # PCE PORT
-        if not pce_port:
-            error_message = (
-                "PCE Port Number is a required configuration parameter."
-            )
-            self.logger.error(f"{validation_msg} {error_message}")
-            return ValidationResult(success=False, message=error_message)
-        elif not isinstance(pce_port, int) or not (
-            MIN_PORT_NUMBER <= pce_port <= MAX_PORT_NUMBER
+        if validation_result := self.illumio_helper.validate_parameters(
+            field_name="PCE URL",
+            field_value=base_url,
+            field_type=str,
+            custom_validation_func=self.illumio_helper._validate_url,
         ):
-            error_message = (
-                "Invalid PCE Port Number found in the configuration "
-                "parameters. PCE Port Number should be between"
-                f" {MIN_PORT_NUMBER} to {MAX_PORT_NUMBER}."
-            )
-            self.logger.error(f"{validation_msg} {error_message}")
-            return ValidationResult(success=False, message=error_message)
+            return validation_result
 
-        # Organization ID
-        if not org_id:
-            error_message = (
-                "PCE Organization ID is a required configuration parameter."
-            )
-            self.logger.error(f"{validation_msg} {error_message}")
-            return ValidationResult(success=False, message=error_message)
-        elif not isinstance(org_id, int) or org_id <= 0:
-            error_message = (
-                "Invalid PCE Organization ID found in the configuration "
-                "parameters. PCE Organization ID should "
-                "an integer greater than 0."
-            )
-            self.logger.error(f"{validation_msg} {error_message}")
-            return ValidationResult(success=False, message=error_message)
+        if validation_result := self.illumio_helper.validate_parameters(
+            field_name="PCE Port Number",
+            field_value=pce_port,
+            field_type=int,
+            custom_validation_func=self.illumio_helper.validate_port_number,
+        ):
+            return validation_result
 
-        # API Username
-        if not api_username:
-            error_message = (
-                "API Authentication Username is a required "
-                "configuration parameter."
-            )
-            self.logger.error(f"{validation_msg} {error_message}")
-            return ValidationResult(success=False, message=error_message)
-        elif not isinstance(api_username, str):
-            error_message = (
-                "Invalid API Authentication Username found in the "
-                "configuration parameters."
-            )
-            self.logger.error(f"{validation_msg} {error_message}")
-            return ValidationResult(success=False, message=error_message)
+        if validation_result := self.illumio_helper.validate_parameters(
+            field_name="PCE Organization ID",
+            field_value=org_id,
+            field_type=int,
+            custom_validation_func=self.illumio_helper.validate_org_id,
+        ):
+            return validation_result
 
-        # API Secret
-        if not api_secret:
-            error_message = "API Secret is a required configuration parameter."
-            self.logger.error(f"{validation_msg} {error_message}")
-            return ValidationResult(success=False, message=error_message)
-        elif not isinstance(api_secret, str):
-            error_message = (
-                "Invalid API Secret found in the configuration parameters."
-            )
-            self.logger.error(f"{validation_msg} {error_message}")
-            return ValidationResult(success=False, message=error_message)
+        if validation_result := self.illumio_helper.validate_parameters(
+            field_name="API Authentication Username",
+            field_value=api_username,
+            field_type=str,
+        ):
+            return validation_result
 
-        # Label Scope
-        if not label_scope:
-            error_message = (
-                "Label Scope is a required configuration parameter."
-            )
-            self.logger.error(f"{validation_msg} {error_message}")
-            return ValidationResult(success=False, message=error_message)
-        elif not isinstance(label_scope, str):
-            error_message = (
-                "Invalid Label Scope found in the configuration parameters."
-            )
-            self.logger.error(f"{validation_msg} {error_message}")
-            return ValidationResult(success=False, message=error_message)
-        else:
-            try:
-                logger_message = "parsing label references for validation"
-                self.illumio_helper.parse_label_scope(
-                    logger_message, label_scope, is_validation=True
-                )
-            except IllumioPluginException as err:
-                return ValidationResult(success=False, message=str(err))
-            except Exception as e:
-                return ValidationResult(success=False, message=str(e))
+        if validation_result := self.illumio_helper.validate_parameters(
+            field_name="API Secret",
+            field_value=api_secret,
+            field_type=str,
+        ):
+            return validation_result
+
+        if validation_result := self.illumio_helper.validate_parameters(
+            field_name="Label Scope",
+            field_value=label_scope,
+            field_type=str,
+            custom_validation_func=(
+                self.illumio_helper.validate_label_scope_format
+            ),
+        ):
+            return validation_result
 
         return self.validate_auth_params(configuration)
 
@@ -348,7 +241,7 @@ class IllumioPlugin(PluginBase):
                 configuration,
                 verify=self.ssl_validation,
                 proxies=self.proxy,
-                headers=self._add_user_agent(),
+                headers=self.illumio_helper._add_user_agent(),
                 # fail quickly if PCE connection params are invalid
                 retry_count=1,
                 request_timeout=5,
@@ -357,116 +250,21 @@ class IllumioPlugin(PluginBase):
             return ValidationResult(success=False, message=str(err))
         except Exception as err:
             err_msg = (
-                "Error occurred while Connecting to PCE."
+                "Error occurred while connecting to PCE. "
                 "Validate the provided configuration parameters."
             )
-
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {err}",
                 details=str(traceback.format_exc()),
-            )
-            return ValidationResult(success=False, message=f"{err_msg}")
-        return ValidationResult(success=True, message="Validation successful")
-
-    def add_field(self, fields_dict: dict, field_name: str, value):
-        """Function to add field to the extracted_fields dictionary.
-
-        Args:
-            fields_dict (dict): Field dictionary to update.
-            field_name (str): Field name to add.
-            value: Field to add.
-        """
-        if isinstance(value, int):
-            fields_dict[field_name] = value
-            return
-        if value:
-            fields_dict[field_name] = value
-
-    def _extract_field_from_event(
-        self, key: str, workload, default=None, transformation=None
-    ):
-        """Extract field from event.
-
-        Args:
-            key (str): Key to fetch.
-            workload (dict): Workload.
-            default (str,None): Default value to set.
-            transformation (str, None, optional): Transformation
-                to perform on key. Defaults to None.
-
-        Returns:
-            Any: Value of the key from event.
-        """
-        value = getattr(workload, key, None)
-        if key == "href" and value:
-            value = value.split("/")[-1]
-
-        if isinstance(value, str):
-            return value
-
-        return default
-
-    def _extract_each_workload_fields(
-        self,
-        hostname=None,
-        workload=None,
-        include_tags=False,
-    ) -> dict:
-        """Extract each workload fields.
-
-        Args:
-            workload_id (str, optional): Workload id.
-            hostname (str, optional): Workload hostname.
-            workload (Workload, optional): Workload object.
-            include_tags (bool, optional): Include tags or not ? Defaults to False.
-
-        Returns:
-            dict: Extracted fields dictionary.
-        """
-        extracted_fields = {}
-        skipped_tags = []
-        label_list = []
-        for field_name, field_value in HOST_FIELD_MAPPING.items():
-            key, default, transformation = (
-                field_value.get("key"),
-                field_value.get("default"),
-                field_value.get("transformation"),
-            )
-            self.add_field(
-                extracted_fields,
-                field_name,
-                self._extract_field_from_event(
-                    key, workload, default, transformation
+                resolution=(
+                    "Ensure that the configuration parameters provided are"
+                    " correct and that the PCE server is reachable."
                 ),
             )
-        self.add_field(
-            extracted_fields,
-            "Host",
-            hostname,
+            return ValidationResult(success=False, message=f"{err_msg}")
+        return ValidationResult(
+            success=True, message="Validation successful."
         )
-        if include_tags and workload.labels:
-            labels = workload.labels
-            label_list = list(
-                {
-                    f"{label.key}:{label.value}"
-                    for label in labels
-                    if label.key and label.value
-                }
-            )
-            skipped_tags = list(
-                {
-                    f"{label.key}:{label.value}"
-                    for label in labels
-                    if not label.key and label.value
-                }
-            )
-            self.add_field(
-                extracted_fields,
-                "Labels",
-                label_list,
-            )
-
-        return extracted_fields, len(skipped_tags)
 
     def fetch_records(self, entity: str) -> List:
         """Fetch Records from illumio.
@@ -475,166 +273,55 @@ class IllumioPlugin(PluginBase):
             List: List of records.
         """
         try:
-            total_records = []
-            if entity == "Hosts":
-                entity_name = entity.lower()
-                self.logger.info(
-                    f"{self.log_prefix}: Fetching {entity_name} from "
-                    f"{PLUGIN_NAME} platform."
-                )
-                label_scope = self.configuration.get("label_scope").strip()
-                logger_msg = f"connecting to PCE for fetching {entity_name}"
-                self.pce = self.illumio_helper.connect_to_pce(
-                    logger_msg,
+            self.illumio_helper.validate_entity(entity, SUPPORTED_ENTITY)
+            self.logger.info(
+                f"{self.log_prefix}: Fetching {entity.lower()} records from"
+                f" {PLUGIN_NAME} platform."
+            )
+            label_scope = self.configuration.get("label_scope").strip()
+            self.pce, workloads = (
+                self.illumio_helper.connect_and_fetch_workloads(
                     self.configuration,
-                    verify=self.ssl_validation,
-                    proxies=self.proxy,
-                    headers=self._add_user_agent(),
+                    self.ssl_validation,
+                    self.proxy,
+                    label_scope,
                 )
-                logger_msg = "parsing label scopes"
-                label = self.illumio_helper.parse_label_scope(
-                    logger_msg, label_scope
-                )
-                logger_msg = "get label reference"
-                refs = self._get_label_refs(label)
-                workloads = self.pce.workloads.get_async(
-                    # the labels query param takes a JSON-formatted
-                    # nested list of
-                    # label HREFs - each inner list represents a separate scope
-                    params={
-                        "labels": json.dumps(refs),
-                        # include label keys/values in the response data
-                        "representation": "workload_labels",
-                    }
-                )
-                if not workloads:
-                    self.logger.info(
-                        f"No Workloads found containing the Label Scope(s) - "
-                        f"'{label_scope}'."
-                    )
-                    return total_records
+            )
+            if not workloads:
+                return []
 
-                self.logger.debug(
-                    f"{self.log_prefix}: Total {len(workloads)} Workload(s) "
-                    "fetched containing the Label Scope(s) - "
-                    f"'{label_scope}'. These Workloads will be used to "
-                    "check for updates."
+            records, stats = (
+                self.illumio_helper.extract_records_from_workloads(
+                    workloads, include_tags=False
                 )
-                skip_records = 0
-                successfully_fetched_record_count = 0
-                address_count = 0
-                total_hostname_count = 0
-                total_address_fetched_count = 0
-                for workload in workloads:
-                    workload_id = workload.href.split("/")[-1]
-                    self.logger.debug(
-                        f"{self.log_prefix}: Extracting records(s) "
-                        f"from workload with ID '{workload_id}'."
-                    )
-                    hosts_list = [
-                        str(intf.address) for intf in workload.interfaces
-                    ]
-                    if workload.hostname:
-                        try:
-                            extracted_fields, _ = (
-                                self._extract_each_workload_fields(
-                                    hostname=workload.hostname,
-                                    workload=workload,
-                                    include_tags=False,
-                                )
-                            )
-                            if extracted_fields:
-                                total_records.append(extracted_fields)
-                                total_hostname_count += 1
-                            else:
-                                skip_records += 1
-                        except IllumioPluginException:
-                            skip_records += 1
-                        except Exception as err:
-                            hostname = workload.hostname
-                            err_msg = (
-                                "Unable to extract fields from host "
-                                f"{hostname} having Workload "
-                                f'ID "{workload_id}".'
-                            )
-                            self.logger.error(
-                                message=(
-                                    f"{self.log_prefix}: {err_msg}"
-                                    f" Error: {err}"
-                                ),
-                                details=str(traceback.format_exc()),
-                            )
-                            skip_records += 1
-
-                    address_count = 0
-                    for host in hosts_list:
-                        try:
-                            extracted_fields, _ = (
-                                self._extract_each_workload_fields(
-                                    hostname=host,
-                                    workload=workload,
-                                    include_tags=False,
-                                )
-                            )
-                            if extracted_fields:
-                                total_records.append(extracted_fields)
-                                address_count += 1
-                            else:
-                                skip_records += 1
-                        except IllumioPluginException:
-                            skip_records += 1
-                        except Exception as err:
-                            hostname = workload.hostname
-                            err_msg = (
-                                "Unable to extract fields from host "
-                                f"{host} having Workload "
-                                f'ID "{workload_id}".'
-                            )
-                            self.logger.error(
-                                message=(
-                                    f"{self.log_prefix}: {err_msg}"
-                                    f" Error: {err}"
-                                ),
-                                details=str(traceback.format_exc()),
-                            )
-                            skip_records += 1
-
-                    total_address_fetched_count += address_count
-                    self.logger.info(
-                        f"{self.log_prefix}: Successfully fetched "
-                        f"{address_count} addresses with hostname "
-                        f"{workload.hostname} and workload ID '{workload_id}'."
-                        " Total addresses fetched till now - "
-                        f"{total_address_fetched_count}."
-                        "Total hostnames fetches till now - "
-                        f"{total_hostname_count}"
-                    )
-
-                successfully_fetched_record_count = (
-                    total_address_fetched_count + total_hostname_count
-                )
-                info_msg = (
-                    f"Successfully fetched {successfully_fetched_record_count}"
-                    f" record(s) from {PLUGIN_NAME} platform."
-                )
-                if skip_records > 0:
-                    info_msg += f" Skipped {skip_records} record(s)."
-                self.logger.info(f"{self.log_prefix}: {info_msg}")
-            else:
-                err_msg = (
-                    f"Invalid entity found. {PLUGIN_NAME}"
-                    " only supports Hosts entity."
-                )
-                self.logger.error(f"{self.log_prefix}: {err_msg}")
-                raise IllumioPluginException(err_msg)
-            return total_records
-
-        except IllumioPluginException as err:
-            raise err
+            )
+            fetched_count = stats["hostname_count"] + stats["address_count"]
+            info_msg = (
+                f"Successfully fetched {fetched_count} record(s) from"
+                f" {PLUGIN_NAME} platform."
+            )
+            if stats["skipped_records"] > 0:
+                info_msg += f" Skipped {stats['skipped_records']} record(s)."
+            self.logger.info(f"{self.log_prefix}: {info_msg}")
+            return records
+        except IllumioPluginException:
+            raise
         except Exception as err:
-            error_msg = f"Error occurred while {logger_msg}."
+            error_msg = (
+                f"Unexpected error occurred while fetching {entity} records."
+            )
+            if isinstance(
+                err, IllumioApiException
+            ) and self.illumio_helper.is_duplicate_async_job_error(err):
+                err = (
+                    "A previous Workloads fetch job is still running on"
+                    " the PCE. Skipping this fetch cycle."
+                )
+            log_message = f"{self.log_prefix}: {error_msg}"
+            if err:
+                log_message += f" Error: {err}"
             self.logger.error(
-                message=f"{self.log_prefix}: {error_msg} Error: {err}",
+                message=log_message,
                 details=str(traceback.format_exc()),
             )
             raise IllumioPluginException(error_msg)
@@ -643,213 +330,98 @@ class IllumioPlugin(PluginBase):
         """Update host from illumio.
 
         Args:
-            users (List): List of users.
+            entity (str): Entity name.
+            records (list[dict]): List of records to update.
 
         Returns:
-            List: List of users with scores assigned.
+            List: List of updated records.
         """
         try:
-            updated_records = []
-            entity_name = entity.lower()
-
-            if entity == "Hosts":
-                self.logger.info(
-                    f"{self.log_prefix}: Updating {len(records)}"
-                    f" {entity.lower()} records from {PLUGIN_NAME}."
+            self.illumio_helper.validate_entity(entity, SUPPORTED_ENTITY)
+            self.logger.info(
+                f"{self.log_prefix}: Updating {len(records)}"
+                f" {entity.lower()} records from {PLUGIN_NAME}."
+            )
+            updatable_count = self.illumio_helper.count_matchable_records(
+                records
+            )
+            skipped_input_count = len(records) - updatable_count
+            log_msg = (
+                f"{updatable_count} host record(s) will be updated out of"
+                f" {len(records)} records."
+            )
+            if skipped_input_count > 0:
+                log_msg += (
+                    f" Skipped {skipped_input_count} host(s) as they do not"
+                    " have Workload ID or Host field in them."
                 )
-                label_scope = self.configuration.get("label_scope").strip()
-                id_list = []
-                for record in records:
-                    if record.get("Workload ID") and record.get("Host"):
-                        unique_id = (
-                            f'{record.get("Workload ID")}_{record.get("Host")}'
-                        )
-                        id_list.append(unique_id)
+            self.logger.info(f"{self.log_prefix}: {log_msg}")
 
-                log_msg = (
-                    f"{len(id_list)} host record(s) will be updated out"
-                    f" of {len(records)} records."
-                )
-
-                if len(records) - len(id_list) > 0:
-                    log_msg += (
-                        f" Skipped {len(records) - len(id_list)} host(s) as"
-                        " they do not have Workload ID or Host field in them."
-                    )
-
-                self.logger.info(f"{self.log_prefix}: {log_msg}")
-
-                logger_msg = f"connecting to PCE for fetching {entity_name}"
-                self.pce = self.illumio_helper.connect_to_pce(
-                    logger_msg,
+            label_scope = self.configuration.get("label_scope").strip()
+            self.pce, workloads = (
+                self.illumio_helper.connect_and_fetch_workloads(
                     self.configuration,
-                    verify=self.ssl_validation,
-                    proxies=self.proxy,
-                    headers=self._add_user_agent(),
+                    self.ssl_validation,
+                    self.proxy,
+                    label_scope,
                 )
-                logger_msg = "parsing label scopes"
-                label = self.illumio_helper.parse_label_scope(
-                    logger_msg, label_scope
-                )
-                logger_msg = "get label reference"
-                refs = self._get_label_refs(label)
-                workloads = self.pce.workloads.get_async(
-                    # the labels query param takes a JSON-formatted nested
-                    # list of
-                    # label HREFs - each inner list represents a separate scope
-                    params={
-                        "labels": json.dumps(refs),
-                        # include label keys/values in the response data
-                        "representation": "workload_labels",
-                    }
-                )
-                if not workloads:
-                    self.logger.info(
-                        f"No Workloads found containing the Label Scope(s) - "
-                        f"'{label_scope}'."
-                    )
-                    return updated_records
+            )
+            if not workloads:
+                return []
 
-                self.logger.debug(
-                    f"{self.log_prefix}: Total {len(workloads)} Workload(s) "
-                    "fetched containing the Label Scope(s) - "
-                    f"'{label_scope}'. These Workloads will be used to "
-                    "check for updates."
+            updated_records, stats = (
+                self.illumio_helper.extract_records_from_workloads(
+                    workloads, include_tags=True
                 )
-                skip_records = 0
-                total_skipped_tags = 0
-                successfully_updated_record_count = 0
-                total_address_update_count = 0
-                address_count = 0
-                total_hostname_update_count = 0
-                for workload in workloads:
-                    workload_id = workload.href.split("/")[-1]
-                    self.logger.debug(
-                        f"{self.log_prefix}: Extracting records(s) "
-                        f"from workload with ID '{workload_id}'."
-                    )
-                    hosts_list = [
-                        str(intf.address) for intf in workload.interfaces
-                    ]
-                    if workload.hostname:
-                        try:
-                            extracted_fields, skipped_tags = (
-                                self._extract_each_workload_fields(
-                                    hostname=workload.hostname,
-                                    workload=workload,
-                                    include_tags=True,
-                                )
-                            )
-                            total_skipped_tags += skipped_tags
-                            if extracted_fields:
-                                updated_records.append(extracted_fields)
-                                total_hostname_update_count += 1
-                            else:
-                                skip_records += 1
-                        except IllumioPluginException:
-                            skip_records += 1
-                        except Exception as err:
-                            hostname = workload.hostname
-                            err_msg = (
-                                "Unable to extract fields from host "
-                                f"{hostname} having Workload "
-                                f'ID "{workload_id}".'
-                            )
-                            self.logger.error(
-                                message=(
-                                    f"{self.log_prefix}: {err_msg}"
-                                    f" Error: {err}"
-                                ),
-                                details=str(traceback.format_exc()),
-                            )
-                            skip_records += 1
-
-                    address_count = 0
-                    for host in hosts_list:
-                        try:
-                            extracted_fields, skipped_tags = (
-                                self._extract_each_workload_fields(
-                                    hostname=host,
-                                    workload=workload,
-                                    include_tags=True,
-                                )
-                            )
-                            total_skipped_tags += skipped_tags
-                            if extracted_fields:
-                                updated_records.append(extracted_fields)
-                                address_count += 1
-                            else:
-                                skip_records += 1
-                        except IllumioPluginException:
-                            skip_records += 1
-                        except Exception as err:
-                            hostname = workload.hostname
-                            err_msg = (
-                                "Unable to extract fields from host "
-                                f"{host} having Workload "
-                                f'ID "{workload_id}".'
-                            )
-                            self.logger.error(
-                                message=(
-                                    f"{self.log_prefix}: {err_msg}"
-                                    f" Error: {err}"
-                                ),
-                                details=str(traceback.format_exc()),
-                            )
-                            skip_records += 1
-
-                    total_address_update_count += address_count
-                    self.logger.info(
-                        f"{self.log_prefix}: Successfully updated "
-                        f"{address_count} addresses with hostname "
-                        f"{workload.hostname} and workload ID '{workload_id}'."
-                        " Total addresses updated till now - "
-                        f"{total_address_update_count}."
-                        "Total hostnames updated till now - "
-                        f"{total_hostname_update_count}"
-                    )
-
-                if total_skipped_tags > 0:
-                    self.logger.info(
-                        f"{self.log_prefix}: {total_skipped_tags} tag(s) "
-                        "skipped due to some other exceptions that"
-                        " occurred while updating them."
-                    )
-                successfully_updated_record_count = (
-                    total_address_update_count + total_hostname_update_count
+            )
+            if stats["skipped_tags"] > 0:
+                self.logger.info(
+                    f"{self.log_prefix}: {stats['skipped_tags']} tag(s) "
+                    "skipped due to some other exceptions that"
+                    " occurred while updating them."
                 )
-                info_msg = (
-                    f"Successfully updated {successfully_updated_record_count}"
-                    f" record(s) out of {len(records)} record(s)"
-                    f" from {PLUGIN_NAME}."
+            updated_count = (
+                stats["hostname_count"] + stats["address_count"]
+            )
+            info_msg = (
+                f"Successfully updated {updated_count} record(s) out of"
+                f" {len(records)} record(s) from {PLUGIN_NAME}."
+            )
+            if stats["skipped_records"] > 0:
+                info_msg += (
+                    f" Skipped {stats['skipped_records']} record(s) as they"
+                    " might not contain Workload ID or Host field in them."
                 )
-                if skip_records > 0:
-                    info_msg += (
-                        f" Skipped {skip_records} record(s) as they"
-                        " might not contain Worload ID or Host field in them."
-                    )
-                self.logger.info(f"{self.log_prefix}: {info_msg}")
-            else:
-                err_msg = (
-                    f"Invalid entity found. {PLUGIN_NAME}"
-                    " only supports Hosts entity."
-                )
-                self.logger.error(f"{self.log_prefix}: {err_msg}")
-                raise IllumioPluginException(err_msg)
-
+            self.logger.info(f"{self.log_prefix}: {info_msg}")
             return updated_records
-        except IllumioPluginException as err:
-            raise err
+        except IllumioPluginException:
+            raise
         except Exception as err:
-            error_msg = f"Error occurred while {logger_msg}."
+            error_msg = (
+                f"Unexpected error occurred while updating {entity} records."
+            )
+            if isinstance(
+                err, IllumioApiException
+            ) and self.illumio_helper.is_duplicate_async_job_error(err):
+                err = (
+                    "A previous Workloads fetch job is still running on"
+                    " the PCE. Skipping this update cycle."
+                )
+            log_message = f"{self.log_prefix}: {error_msg}"
+            if err:
+                log_message += f" Error: {err}"
             self.logger.error(
-                message=f"{self.log_prefix}: {error_msg} Error: {err}",
+                message=log_message,
                 details=str(traceback.format_exc()),
             )
             raise IllumioPluginException(error_msg)
 
-    def get_entities(self) -> list[Entity]:
-        """Get available entities."""
+    def get_entities(self) -> List[Entity]:
+        """Get available entities.
+
+        Returns:
+            List[Entity]: List of Entity objects.
+        """
         return [
             Entity(
                 name="Hosts",
@@ -857,62 +429,98 @@ class IllumioPlugin(PluginBase):
                     EntityField(
                         name="Workload ID",
                         type=EntityFieldType.STRING,
+                        description=(
+                            "Unique identifier of the Illumio Workload."
+                        ),
                         required=True,
                     ),
                     EntityField(
                         name="Host",
                         type=EntityFieldType.STRING,
+                        description=(
+                            "Hostname or interface IP address of the"
+                            " Workload."
+                        ),
                         required=True,
                     ),
-                    EntityField(name="Labels", type=EntityFieldType.LIST),
-                    EntityField(name="OS ID", type=EntityFieldType.STRING),
+                    EntityField(
+                        name="Public IP",
+                        type=EntityFieldType.STRING,
+                        description=(
+                            "The public IP address of the"
+                            " Workload."
+                        ),
+                    ),
+                    EntityField(
+                        name="Agent Mode",
+                        type=EntityFieldType.STRING,
+                        description=(
+                            "Operating mode configured on the Workload's"
+                            " VEN agent."
+                        ),
+                    ),
+                    EntityField(
+                        name="Agent Status",
+                        type=EntityFieldType.STRING,
+                        description=(
+                            "Current health/connectivity status reported by"
+                            " the VEN agent."
+                        ),
+                    ),
+                    EntityField(
+                        name="Agent Version",
+                        type=EntityFieldType.STRING,
+                        description="Version of the Workload's VEN agent.",
+                    ),
+                    EntityField(
+                        name="Online",
+                        type=EntityFieldType.BOOLEAN,
+                        description=(
+                            "Whether the Workload is currently online."
+                        ),
+                    ),
+                    EntityField(
+                        name="Deleted",
+                        type=EntityFieldType.BOOLEAN,
+                        description="Whether the Workload has been deleted.",
+                    ),
+                    EntityField(
+                        name="Labels",
+                        type=EntityFieldType.LIST,
+                        description=(
+                            "Illumio labels assigned to the Workload in the"
+                            " 'key:value' format."
+                        ),
+                    ),
+                    EntityField(
+                        name="Enforcement Mode",
+                        type=EntityFieldType.STRING,
+                        description=(
+                            "Illumio segmentation enforcement state."
+                        ),
+                    ),
+                    EntityField(
+                        name="OS ID",
+                        type=EntityFieldType.STRING,
+                        description=(
+                            "Operating system identifier of the Workload"
+                        ),
+                    ),
                     EntityField(
                         name="OS Detail",
                         type=EntityFieldType.STRING,
+                        description=(
+                            "Detailed operating system information reported"
+                            " for the Workload."
+                        ),
                     ),
                     EntityField(
                         name="OS Type",
                         type=EntityFieldType.STRING,
+                        description=(
+                            "Operating system of the Workload"
+                        ),
                     ),
                 ],
             )
         ]
-
-    def _get_label_refs(self, labels: dict) -> List[str]:
-        """Retrieve Label object HREFs from the PCE.
-
-        Args:
-            labels (dict): label key:value pairs to look up.
-
-        Returns:
-            List[str]: List of HREFs.
-
-        Raises:
-            ValueError: if a label with the given key:value can't be found.
-        """
-        refs = []
-        try:
-            for key, value in labels.items():
-                labels = self.pce.labels.get(
-                    params={"key": key, "value": value}
-                )
-                if labels and labels[0].value == value:
-                    # only expect to match a single label for each k:v pair
-                    refs.append([labels[0].href])
-                else:
-                    # if we don't raise an error, we risk pulling workloads
-                    # outside the expected scope and blocking legitimate access
-                    msg = (
-                        f"Failed to find label Href for {key}:{value} - "
-                        "Verify that the provided Label Scope is "
-                        f"present on the {PLUGIN_NAME} platform."
-                    )
-                    self.logger.error(f"{self.log_prefix}: {msg}")
-                    raise IllumioPluginException(msg)
-            return refs
-        except IllumioPluginException:
-            raise
-        except Exception as err:
-            err_msg = "Error occurred while fetching label reference."
-            self.logger.error(f"{self.log_prefix}: {err_msg}. Error: {err}")
-            raise IllumioPluginException(err_msg)

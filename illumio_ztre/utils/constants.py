@@ -27,19 +27,26 @@ DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
 SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
 CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-OF THIS SOFTWARE, EVEN IF IDVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 CRE Illumio Plugin.
 """
 
 MODULE_NAME = "CRE"
 PLUGIN_NAME = "Illumio"
-PLUGIN_VERSION = "1.0.1"
+PLUGIN_VERSION = "1.0.2"
 MAX_PORT_NUMBER = 65535
 MIN_PORT_NUMBER = 1
 HOST_FIELD_MAPPING = {
     "Workload ID": {"key": "href"},
+    "Public IP": {"key": "public_ip"},
+    "Agent Mode": {"key": "agent.config.mode"},
+    "Agent Status": {"key": "agent.status.status"},
+    "Agent Version": {"key": "agent.status.agent_version"},
+    "Online": {"key": "online"},
+    "Deleted": {"key": "deleted"},
     "OS ID": {"key": "os_id"},
     "OS Detail": {"key": "os_detail"},
     "OS Type": {"key": "os_type"},
+    "Enforcement Mode": {"key": "enforcement_mode"},
 }

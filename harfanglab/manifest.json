@@ -1,26 +1,141 @@
 {
-  "name": "HarfangLab",
-  "id": "HarfangLab",
-  "version": "1.0.0",
-  "description": "This plugin is used to share indicators of type MD5, SHA256 and URLs (IPv4, IPv6, Domains, URLs) to IOC List (Threat Intelligence > IOC List) on HarfangLab. This plugin does not support pulling of indicators.",
-  "patch_supported": true,
-  "push_supported": true,
-  "configuration": [
-    {
-      "label": "Tenant URL",
-      "key": "fqdn",
-      "type": "text",
-      "default": "",
-      "mandatory": true,
-      "description": "Tenant URL of your HarfangLab platform."
-    },
-    {
-      "label": "API Token",
-      "key": "apikey",
-      "type": "password",
-      "default": "",
-      "description": "API Token of your user available from Administration > Users.",
-      "mandatory": true
-    }
-  ]
+    "name": "HarfangLab",
+    "id": "harfanglab",
+    "version": "2.0.0",
+    "module": "CTE",
+    "minimum_version": "6.0.0",
+    "description": "This plugin is used to pull IOCs of type Domain, FQDN, Hostname, IPv4, IPv6, URL, SHA256 and MD5 from Threat intelligence > IOC Sources page and SHA256, MD5 from Threat intelligence > Driver Block List page on the HarfangLab platform. This plugin also supports sharing IOCs of type Domain, FQDN, Hostname, IPv4, IPv6, URL, SHA256 and MD5 back to HarfangLab's Threat intelligence > IOC Sources page. This plugin supports pull and push retraction of IOCs for Threat intelligence > IOC Sources page from HarfangLab.",
+    "patch_supported": true,
+    "push_supported": true,
+    "fetch_retraction_info": true,
+    "delete_supported": true,
+    "configuration": [
+        {
+            "label": "Tenant URL",
+            "key": "fqdn",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "placeholder": "e.g. https://<instance_id>.hurukai.io:<port>",
+            "description": "Base URL of HarfangLab instance. e.g. https://<instance_id>.hurukai.io:<port>"
+        },
+        {
+            "label": "API Token",
+            "key": "apikey",
+            "type": "password",
+            "default": "",
+            "mandatory": true,
+            "description": "API Token for authenticating to HarfangLab. To get API Token navigate to Home > Personal Settings."
+        },
+        {
+            "label": "Source Type",
+            "key": "source_type",
+            "type": "multichoice",
+            "choices": [
+                {
+                    "key": "IOC Sources",
+                    "value": "ioc_sources"
+                },
+                {
+                    "key": "Driver Block List",
+                    "value": "driver_block_list"
+                }
+            ],
+            "default": [
+                "ioc_sources",
+                "driver_block_list"
+            ],
+            "mandatory": true,
+            "description": "Select the source(s) to pull Threat IoCs from HarfangLab. At least one source must be selected."
+        },
+        {
+            "label": "Type of Threat data to pull",
+            "key": "threat_data_type",
+            "type": "multichoice",
+            "choices": [
+                {"key": "SHA256", "value": "sha256"},
+                {"key": "MD5", "value": "md5"},
+                {"key": "Domain", "value": "domain"},
+                {"key": "FQDN", "value": "fqdn"},
+                {"key": "Hostname", "value": "hostname"},
+                {"key": "IPv4", "value": "ipv4"},
+                {"key": "IPv6", "value": "ipv6"},
+                {"key": "URL", "value": "url"}
+            ],
+            "default": ["sha256", "md5", "domain", "fqdn", "hostname", "ipv4", "ipv6", "url"],
+            "mandatory": false,
+            "description": "Type of Threat IoCs to pull from HarfangLab. Allowed values are SHA256, MD5, Domain, FQDN, Hostname, IPv4, IPv6, URL. Driver Block List only supports SHA256 and MD5. Leave empty to pull all supported types."
+        },
+        {
+            "label": "IOC Sources Name",
+            "key": "ioc_source_list_names",
+            "type": "text",
+            "default": "",
+            "mandatory": false,
+            "description": "Comma-separated names of IOC Sources to pull from HarfangLab. Leave empty to pull from all available IOC Sources. Applicable only when IOC Sources is selected as Source Type."
+        },
+        {
+            "label": "Initial Range (in days)",
+            "key": "days",
+            "type": "number",
+            "default": 7,
+            "mandatory": false,
+            "description": "Number of days Threat IoCs to pull from IOC Sources in the initial run. Valid values are in range from 0 to 100000 days. Applicable only when IOC Sources is selected as Source Type."
+        },
+        {
+            "label": "Enable Retraction",
+            "key": "enable_retraction",
+            "type": "choice",
+            "choices": [
+                {"key": "Yes", "value": "yes"},
+                {"key": "No", "value": "no"}
+            ],
+            "default": "no",
+            "mandatory": true,
+            "description": "Enable retraction for pulled indicators. When 'Yes', indicators no longer present on HarfangLab will be retracted in Cloud Exchange. For IOC Sources, a Retraction Interval must also be configured. This parameter is only considered if 'IoC(s) Retraction' is enabled in Threat Exchange Settings."
+        },
+        {
+            "label": "Retraction Interval (in days)",
+            "key": "retraction_interval",
+            "type": "number",
+            "mandatory": false,
+            "description": "Number of days to use as the retraction interval for IOC Sources retraction. Valid values are in range from 1 to 100000 days. Required when Enable Retraction is 'Yes' and IOC Sources is selected as Source Type. This parameter will only be considered if 'IoC(s) Retraction' is enabled in Threat Exchange Settings."
+        },
+        {
+            "label": "Enable Tagging",
+            "key": "enable_tagging",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Yes",
+                    "value": "yes"
+                },
+                {
+                    "key": "No",
+                    "value": "no"
+                }
+            ],
+            "default": "yes",
+            "mandatory": true,
+            "description": "Enable/Disable tagging of pulled indicators. When enabled, indicators pulled from IOC Sources are tagged with the IOC Source name and indicators pulled from Driver Block List are tagged with 'HarfangLab-Driver-Block-List'."
+        },
+        {
+            "label": "Enable Polling",
+            "key": "is_pull_required",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Yes",
+                    "value": "Yes"
+                },
+                {
+                    "key": "No",
+                    "value": "No"
+                }
+            ],
+            "default": "Yes",
+            "mandatory": true,
+            "description": "Enable/Disable polling Threat IoCs from HarfangLab. Disable if you only need to push Threat IoCs to HarfangLab."
+        }
+    ]
 }

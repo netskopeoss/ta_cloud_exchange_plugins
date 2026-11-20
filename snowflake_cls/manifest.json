@@ -1,0 +1,76 @@
+{
+    "name": "Snowflake",
+    "id": "snowflake_cls",
+    "version": "1.0.0",
+    "module": "CLS",
+    "minimum_version": "6.1.0",
+    "mapping": "Snowflake Default Mappings",
+    "description": "This plugin is used to send Netskope Alerts (DLP, Malware, Policy, Compromised Credential, Malsite, Quarantine, Remediation, Security Assessment, Watchlist, UBA, CTEP, Device, Content), Events (Page, Application, Audit, Infrastructure, Network, Incident, Endpoint, Client Status) and WebTx data to Snowflake via the Snowflake Snowpipe Streaming REST API. This plugin supports ingestion in JSON format only. This plugin does not create or alter tables in Snowflake; create the target table(s) there before saving this configuration.",
+    "types": [
+        "alerts",
+        "events",
+        "webtx"
+    ],
+    "format_options": [
+        {
+            "label": "JSON",
+            "value": "json"
+        }
+    ],
+    "configuration": [
+        {
+            "label": "Account URL",
+            "key": "base_url",
+            "type": "text",
+            "mandatory": true,
+            "default": "",
+            "description": "Snowflake account URL. To obtain this URL click on your User Profile (bottom right) > Account > View Account Details and copy the Account/Server URL'. Make sure you add https:// at the beginning of the URL."
+        },
+        {
+            "label": "Programmatic Access Token",
+            "key": "programmatic_access_token",
+            "type": "password",
+            "mandatory": true,
+            "default": "",
+            "description": "Programmatic Access Token for the Snowflake user. To obtain the Programmatic Access Token click on your User Profile (bottom right) > Settings > Authentication and under Programmatic Access Token click Generate Token."
+        },
+        {
+            "label": "Database",
+            "key": "database",
+            "type": "text",
+            "mandatory": true,
+            "default": "",
+            "description": "Snowflake database holding the target table(s). The database name provided must exactly match what is present on Snowflake."
+        },
+        {
+            "label": "Schema",
+            "key": "schema",
+            "type": "text",
+            "mandatory": true,
+            "default": "",
+            "description": "Snowflake schema within the Database above. The schema name provided must exactly match what is present on Snowflake."
+        },
+        {
+            "label": "Ingestion Mode",
+            "key": "ingestion_mode",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Single Table",
+                    "value": "single_table"
+                },
+                {
+                    "key": "Per Data Type (One Table Per Type)",
+                    "value": "per_data_type"
+                }
+            ],
+            "default": "single_table",
+            "mandatory": true,
+            "description": "How many tables this configuration writes to. 'Single Table' sends Alerts, Events and WebTx to one table. 'Per Data Type' sends each selected data type to its own table.",
+            "has_api_call": true,
+            "payload_fields": [
+                "ingestion_mode"
+            ]
+        }
+    ]
+}

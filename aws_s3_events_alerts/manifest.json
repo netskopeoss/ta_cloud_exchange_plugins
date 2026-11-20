@@ -1,7 +1,7 @@
 {
     "name": "AWS S3 Events, Alerts",
     "id": "aws_s3_events_alerts",
-    "version": "1.2.0",
+    "version": "1.3.0",
     "mapping": "AWS S3 Events, Alerts Default Mappings",
     "netskope": false,
     "module": "CLS",
@@ -10,7 +10,7 @@
         "events",
         "alerts"
     ],
-    "description": "This plugin is used to send Netskope Alerts (DLP, Malware, Policy, Compromised Credential, Malsite, Quarantine, Remediation, Security Assessment, Watchlist, UBA, CTEP, Device, and Content) and Events (Page, Application, Audit, Infrastructure, Network, Incident, Endpoint and Client Status) logs to the specified AWS S3 bucket. Note: This plugin is designed to send only JSON formatted data to S3 bucket.",
+    "description": "This plugin is used to send Netskope Alerts (DLP, Malware, Policy, Compromised Credential, Malsite, Quarantine, Remediation, Security Assessment, Watchlist, UBA, CTEP, Device, Content) and Events (Page, Application, Audit, Infrastructure, Network, Incident, Endpoint, Client Status) logs to the specified AWS S3 bucket. Note: This plugin is designed to send only JSON formatted data to S3 bucket.",
     "format_options": [
         {
             "label": "JSON",
@@ -39,4 +39,4 @@
             "description": "Select the method to be used for AWS client authentication."
         }
     ]
-}
+} 

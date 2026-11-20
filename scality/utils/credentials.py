@@ -29,37 +29,58 @@ CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-Get credentials for Scality.
+
+Scality Plugin Credentials.
 """
+
+from typing import Any, Dict, Tuple
+
+from . import constants as CONST
 
 
 class ScalityCredentials:
-    """Scality get credential class."""
+    """Read the Scality connection parameters from the configuration."""
 
-    def __init__(self, configuration, logger, proxy, log_prefix, user_agent):
-        """Init method.
-        args:
-            configuration: the configuration object.
-            logger: the logger object.
-            proxy: the proxy object.
-            log_prefix: the log prefix.
-            user_agent: the user agent.
-        """
-        self.configuration = configuration
-        self.logger = logger
-        self.proxy = proxy
-        self.log_prefix = log_prefix
-        self.user_agent = user_agent
+    @staticmethod
+    def _get_stripped_value(configuration: Dict, key: str) -> Any:
+        """Return a configuration value, stripping strings only.
 
-    def get_credentials(self, configuration):
-        """Get credentials from the environment variables.
+        A missing or non string value is returned as received so that
+        ``validate`` can report it instead of raising an
+        ``AttributeError``.
+
+        Args:
+            configuration (Dict): Plugin configuration parameters.
+            key (str): Configuration key to read.
 
         Returns:
-            Tuple of access key and secret key.
+            Any: The configuration value.
         """
-        endpoint_url = configuration.get("endpoint_url", "").strip().strip("/")
-        access_key = configuration.get("access_key").strip()
-        secret_access_key = configuration.get("secret_access_key")
-        bucket_name = configuration.get("bucket_name").strip()
+        value = configuration.get(key)
+        return value.strip() if isinstance(value, str) else value
+
+    @staticmethod
+    def get_credentials(configuration: Dict) -> Tuple:
+        """Get the Scality connection parameters.
+
+        Args:
+            configuration (Dict): Plugin configuration parameters.
+
+        Returns:
+            Tuple: Endpoint URL, Access Key, Secret Access Key and
+                Bucket Name.
+        """
+        endpoint_url = ScalityCredentials._get_stripped_value(
+            configuration, CONST.CONFIG_ENDPOINT_URL
+        )
+        if isinstance(endpoint_url, str):
+            endpoint_url = endpoint_url.rstrip("/")
+        access_key = ScalityCredentials._get_stripped_value(
+            configuration, CONST.CONFIG_ACCESS_KEY
+        )
+        secret_access_key = configuration.get(CONST.CONFIG_SECRET_ACCESS_KEY)
+        bucket_name = ScalityCredentials._get_stripped_value(
+            configuration, CONST.CONFIG_BUCKET_NAME
+        )
 
         return endpoint_url, access_key, secret_access_key, bucket_name

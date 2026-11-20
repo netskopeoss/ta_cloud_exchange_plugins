@@ -29,52 +29,50 @@ CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+
 Scality Client Class.
 """
 
 import re
+from typing import Any, Dict, NoReturn, Optional
+
 import boto3
-import traceback
-import threading
-from botocore.exceptions import ClientError, ReadTimeoutError
-from boto3.exceptions import S3UploadFailedError
-from datetime import datetime
 from botocore.config import Config
 
-from .credentials import (
-    ScalityCredentials,
+from . import constants as CONST
+from .credentials import ScalityCredentials
+from .exceptions import (
+    BucketNameAlreadyTaken,
+    BucketNotFoundError,
+    ScalityException,
 )
-from .exception import ScalityException
-from .constants import (
-    REGIONS,
-    EXTRACT_AWS_REGION_REGEX,
-    VALIDATION_MAX_RETRIES,
-    MAX_RETRIES,
-    READ_TIMEOUT,
-    PLUGIN_NAME,
+from .helper import (
+    build_object_key,
+    describe_boto_error,
+    log_and_raise,
+    log_error,
 )
-
-
-class BucketNameAlreadyTaken(Exception):
-    pass
-
-
-class BucketNotFoundError(Exception):
-    pass
 
 
 class ScalityClient:
-    """Scality Client Class."""
+    """Scality client class."""
 
-    def __init__(self, configuration, logger, proxy, log_prefix, user_agent):
-        """Init method.
+    def __init__(
+        self,
+        configuration: Dict,
+        logger,
+        proxy: Dict,
+        log_prefix: str,
+        user_agent: str,
+    ) -> None:
+        """Initialize ScalityClient.
 
         Args:
-            configuration: the configuration object.
-            logger: the logger object.
-            proxy: the proxy object.
-            log_prefix: the log prefix.
-            user_agent: the user agent.
+            configuration (dict): Plugin configuration parameters.
+            logger: Cloud Exchange logger object.
+            proxy (dict): Proxy configuration.
+            log_prefix (str): Log prefix of the plugin configuration.
+            user_agent (str): User agent sent with every request.
         """
         self.configuration = configuration
         self.logger = logger
@@ -82,329 +80,326 @@ class ScalityClient:
         self.log_prefix = log_prefix
         self.useragent = user_agent
 
-    def get_aws_resource(self):
-        """To get scality resource."""
+    def _get_region_name(self, endpoint_url: Any) -> Optional[str]:
+        """Extract the AWS region from an AWS style endpoint URL.
+
+        A Scality endpoint URL does not match the pattern, so no region
+        is sent to boto3 - the behaviour of version 1.0.0.
+
+        Args:
+            endpoint_url (str): Configured endpoint URL.
+
+        Returns:
+            Optional[str]: The region name, or None.
+        """
+        if not isinstance(endpoint_url, str):
+            return None
+        region_name = re.search(CONST.EXTRACT_AWS_REGION_REGEX, endpoint_url)
+        return region_name.group(1) if region_name else None
+
+    def _raise_boto_error(
+        self, error: BaseException, action: str, resolution: str
+    ) -> NoReturn:
+        """Log a boto3 failure and raise ``ScalityException``.
+
+        The resolution of the error itself wins over the one of the
+        caller, so a connection failure is never reported with a
+        credentials resolution.
+
+        Args:
+            error (BaseException): The error raised by boto3.
+            action (str): What was being done.
+            resolution (str): Resolution used when the error says
+                nothing more specific; starts with ``Ensure that``.
+
+        Raises:
+            ScalityException: Always.
+        """
+        cause, mapped_resolution = describe_boto_error(error)
+        log_and_raise(
+            self.logger,
+            self.log_prefix,
+            action,
+            mapped_resolution or resolution,
+            cause=cause,
+        )
+
+    def get_aws_resource(self) -> Any:
+        """Create the Scality S3 resource object.
+
+        Returns:
+            boto3 resource: The S3 resource object.
+
+        Raises:
+            ScalityException: When the resource cannot be created.
+        """
+        action = f"creating the {CONST.PLATFORM_NAME} resource object"
+        resolution = (
+            f"Ensure that the {CONST.PLATFORM_NAME} Endpoint URL, Access Key"
+            " and Secret Access Key provided in the configuration"
+            " parameters are correct."
+        )
         try:
-            region_name = None
-            s3_resource = None
             endpoint_url, access_key, secret_access_key, _ = (
-                ScalityCredentials.get_credentials(self, self.configuration)
+                ScalityCredentials.get_credentials(self.configuration)
             )
-
-            region_name = re.search(EXTRACT_AWS_REGION_REGEX, endpoint_url)
-
-            if region_name:
-                region_name = region_name.group(1)
-
+            region_name = self._get_region_name(endpoint_url)
             retries = {
-                "max_attempts": VALIDATION_MAX_RETRIES,
-                "mode": "standard",
+                "max_attempts": CONST.VALIDATION_MAX_RETRIES,
+                "mode": CONST.RETRY_MODE,
             }
-
-            if region_name and region_name in REGIONS:
-                s3_resource = boto3.resource(
-                    "s3",
+            config = Config(
+                proxies=self.proxy,
+                user_agent=self.useragent,
+                retries=retries,
+            )
+            if region_name and region_name in CONST.REGIONS:
+                return boto3.resource(
+                    CONST.S3_SERVICE_NAME,
                     aws_access_key_id=access_key,
                     aws_secret_access_key=secret_access_key,
                     endpoint_url=endpoint_url,
                     region_name=region_name,
-                    config=Config(
-                        proxies=self.proxy,
-                        user_agent=self.useragent,
-                        retries=retries,
-                    ),
+                    config=config,
                 )
-            else:
-                s3_resource = boto3.resource(
-                    "s3",
-                    aws_access_key_id=access_key,
-                    aws_secret_access_key=secret_access_key,
-                    endpoint_url=endpoint_url,
-                    config=Config(
-                        proxies=self.proxy,
-                        user_agent=self.useragent,
-                        retries=retries,
-                    ),
-                )
-            return s3_resource
-        except ReadTimeoutError as exp:
-            err_msg = (
-                "Read timeout error occurred while creating "
-                f"{PLUGIN_NAME} resource object."
+            return boto3.resource(
+                CONST.S3_SERVICE_NAME,
+                aws_access_key_id=access_key,
+                aws_secret_access_key=secret_access_key,
+                endpoint_url=endpoint_url,
+                config=config,
             )
-            self.logger.error(
-                message=f"{self.log_prefix}: {err_msg} Error: {exp}",
-                details=str(traceback.format_exc()),
-            )
-            raise ScalityException(str(exp))
-        except ClientError as error:
-            if (
-                hasattr(error, "response")
-                and error.response
-                and error.response.get("Error", {}).get("Message")
-            ):
-                err_msg = error.response["Error"].get("Message")
-                self.logger.error(
-                    message=f"{self.log_prefix}: {err_msg}",
-                    details=traceback.format_exc(),
-                )
-                raise ScalityException(err_msg)
-            else:
-                self.logger.error(
-                    message=f"{self.log_prefix}: {str(error)}",
-                    details=traceback.format_exc(),
-                )
-                raise ScalityException(str(error))
         except Exception as exp:
-            err_msg = (
-                f"Error occurred while creating {PLUGIN_NAME} resource object."
-            )
-            self.logger.error(
-                message=f"{self.log_prefix}: {err_msg} Error: {exp}",
-                details=traceback.format_exc(),
-            )
-            raise ScalityException(err_msg)
+            self._raise_boto_error(exp, action, resolution)
 
-    def get_aws_client(self, validation_retries=None):
-        """To get scality client."""
+    def get_aws_client(
+        self, validation_retries: Optional[int] = None
+    ) -> Any:
+        """Create the Scality S3 client object.
+
+        Args:
+            validation_retries (Optional[int]): Retry count used during
+                validation.
+
+        Returns:
+            boto3 client: The S3 client object.
+
+        Raises:
+            ScalityException: When the client cannot be created.
+        """
+        action = f"creating the {CONST.PLATFORM_NAME} client object"
+        resolution = (
+            f"Ensure that the {CONST.PLATFORM_NAME} Endpoint URL, Access Key"
+            " and Secret Access Key provided in the configuration"
+            " parameters are correct."
+        )
         try:
-            region_name = None
-            s3_client = None
             endpoint_url, access_key, secret_access_key, _ = (
-                ScalityCredentials.get_credentials(self, self.configuration)
+                ScalityCredentials.get_credentials(self.configuration)
             )
-
-            region_name = re.search(EXTRACT_AWS_REGION_REGEX, endpoint_url)
-
-            if region_name:
-                region_name = region_name.group(1)
-
+            region_name = self._get_region_name(endpoint_url)
             retries = {
                 "max_attempts": (
                     validation_retries
                     if validation_retries is not None
-                    else MAX_RETRIES
+                    else CONST.MAX_RETRIES
                 ),
-                "mode": "standard",
+                "mode": CONST.RETRY_MODE,
             }
-
-            if region_name and region_name in REGIONS:
-                s3_client = boto3.client(
-                    "s3",
+            config = Config(
+                proxies=self.proxy,
+                user_agent=self.useragent,
+                read_timeout=CONST.READ_TIMEOUT,
+                retries=retries,
+            )
+            if region_name and region_name in CONST.REGIONS:
+                return boto3.client(
+                    CONST.S3_SERVICE_NAME,
                     aws_access_key_id=access_key,
                     aws_secret_access_key=secret_access_key,
                     endpoint_url=endpoint_url,
                     region_name=region_name,
-                    config=Config(
-                        proxies=self.proxy,
-                        user_agent=self.useragent,
-                        read_timeout=READ_TIMEOUT,
-                        retries=retries,
-                    ),
+                    config=config,
                 )
-            else:
-                s3_client = boto3.client(
-                    "s3",
-                    aws_access_key_id=access_key,
-                    aws_secret_access_key=secret_access_key,
-                    endpoint_url=endpoint_url,
-                    config=Config(
-                        proxies=self.proxy,
-                        user_agent=self.useragent,
-                        read_timeout=READ_TIMEOUT,
-                        retries=retries,
-                    ),
-                )
-            return s3_client
-        except ReadTimeoutError as exp:
-            err_msg = (
-                "Read timeout error occurred while creating "
-                f"{PLUGIN_NAME} client object."
+            return boto3.client(
+                CONST.S3_SERVICE_NAME,
+                aws_access_key_id=access_key,
+                aws_secret_access_key=secret_access_key,
+                endpoint_url=endpoint_url,
+                config=config,
             )
-            self.logger.error(
-                message=f"{self.log_prefix}: {err_msg} Error: {exp}",
-                details=str(traceback.format_exc()),
-            )
-            raise ScalityException(str(exp))
-        except ClientError as error:
-            if (
-                hasattr(error, "response")
-                and error.response
-                and error.response.get("Error", {}).get("Message")
-            ):
-                err_msg = error.response["Error"].get("Message")
-                self.logger.error(
-                    message=f"{self.log_prefix}: {err_msg}",
-                    details=traceback.format_exc(),
-                )
-                raise ScalityException(err_msg)
-            else:
-                self.logger.error(
-                    message=f"{self.log_prefix}: {str(error)}",
-                    details=traceback.format_exc(),
-                )
-                raise ScalityException(str(error))
-
         except Exception as exp:
-            err_msg = (
-                f"Error occurred while creating {PLUGIN_NAME} client object."
-            )
-            self.logger.error(
-                message=f"{self.log_prefix}: {err_msg} Error: {exp}",
-                details=str(traceback.format_exc()),
-            )
-            raise ScalityException(err_msg)
+            self._raise_boto_error(exp, action, resolution)
 
-    def is_bucket_exists(self, s3_client, bucket_name, region_name):
-        """To check if a bucket exists or not on scality.
+    def is_bucket_exists(
+        self,
+        s3_client: Any,
+        bucket_name: str,
+        region_name: Optional[str],
+    ) -> bool:
+        """Check whether the configured bucket exists on Scality.
 
         Args:
-            s3_client : scality client
-            bucket_name : scality bucket name
-            region_name : scality region name
+            s3_client: Scality S3 client object.
+            bucket_name (str): Configured bucket name.
+            region_name (Optional[str]): Region of an AWS style
+                endpoint URL.
 
         Returns:
-            boolean: True or False
-        """
-        try:
-            buckets = s3_client.list_buckets().get("Buckets", [])
-            if region_name and region_name in REGIONS:
-                for bucket in buckets:
-                    if bucket_name == bucket.get("Name", ""):
-                        bucket_location = s3_client.get_bucket_location(
-                            Bucket=bucket.get("Name", "")
-                        )["LocationConstraint"]
-                        if bucket_location is None:
-                            bucket_location = "us-east-1"
-                        if str(region_name) == str(bucket_location):
-                            return True
-                        err_msg = (
-                            "Provided bucket name already exists in another"
-                            " region. Provide valid bucket name."
-                        )
-                        self.logger.error(
-                            message=f"{self.log_prefix}: {err_msg}",
-                            details=traceback.format_exc(),
-                        )
-                        raise BucketNameAlreadyTaken(err_msg)
-                return False
-            else:
-                for bucket in buckets:
-                    if bucket_name == bucket.get("Name", ""):
-                        return True
-                err_msg = (
-                    f"Provided bucket does not exist on {PLUGIN_NAME}. "
-                    "Provide valid bucket name."
-                )
-                self.logger.error(
-                    message=f"{self.log_prefix}: {err_msg}",
-                    details=traceback.format_exc(),
-                )
-                raise BucketNotFoundError(err_msg)
+            bool: True when the bucket exists.
 
-        except BucketNotFoundError:
-            raise
-        except BucketNameAlreadyTaken:
-            raise
+        Raises:
+            BucketNotFoundError: When the bucket does not exist on a
+                Scality endpoint.
+            BucketNameAlreadyTaken: When the bucket exists in another
+                region of an AWS style endpoint.
+            ScalityException: On any other failure.
+        """
+        action = f"verifying {CONST.PLATFORM_NAME} Bucket '{bucket_name}'"
+        try:
+            buckets = s3_client.list_buckets().get(CONST.BUCKETS_KEY, [])
+            if region_name and region_name in CONST.REGIONS:
+                for bucket in buckets:
+                    if bucket_name != bucket.get(CONST.BUCKET_NAME_KEY, ""):
+                        continue
+                    bucket_location = s3_client.get_bucket_location(
+                        Bucket=bucket.get(CONST.BUCKET_NAME_KEY, "")
+                    )[CONST.LOCATION_CONSTRAINT_KEY]
+                    if bucket_location is None:
+                        bucket_location = CONST.DEFAULT_REGION
+                    if str(region_name) == str(bucket_location):
+                        return True
+                    raise BucketNameAlreadyTaken(
+                        log_error(
+                            self.logger,
+                            self.log_prefix,
+                            action,
+                            (
+                                "Ensure that the Endpoint URL points to"
+                                " the region where the bucket exists,"
+                                " or provide a different Bucket Name."
+                            ),
+                            cause=(
+                                f"The bucket exists in region"
+                                f" '{bucket_location}' and not in region"
+                                f" '{region_name}'."
+                            ),
+                        )
+                    )
+                return False
+            for bucket in buckets:
+                if bucket_name == bucket.get(CONST.BUCKET_NAME_KEY, ""):
+                    return True
+            raise BucketNotFoundError(
+                log_error(
+                    self.logger,
+                    self.log_prefix,
+                    action,
+                    (
+                        "Ensure that the bucket exists on"
+                        f" {CONST.PLATFORM_NAME} and that the Bucket Name"
+                        " provided in the configuration parameters is"
+                        " correct."
+                    ),
+                    cause=(
+                        f"The bucket does not exist on {CONST.PLATFORM_NAME}."
+                    ),
+                )
+            )
         except ScalityException:
             raise
         except Exception as exp:
-            err_msg = "Error occurred while checking existence of bucket."
-            self.logger.error(
-                message=f"{self.log_prefix}: {err_msg} Error: {exp}",
-                details=str(traceback.format_exc()),
+            self._raise_boto_error(
+                exp,
+                action,
+                (
+                    "Ensure that the user has permission to list the"
+                    f" buckets of the {CONST.PLATFORM_NAME} instance."
+                ),
             )
-            raise ScalityException(err_msg)
 
-    def get_bucket(self, validation_retries=None):
-        """To get bucket if exists or create bucket."""
+    def get_bucket(
+        self, validation_retries: Optional[int] = None
+    ) -> Optional[Dict]:
+        """Return the configured bucket, creating it when possible.
+
+        A bucket is created only for an AWS style endpoint URL, exactly
+        as in version 1.0.0. On a Scality endpoint a missing bucket
+        raises ``BucketNotFoundError``.
+
+        Args:
+            validation_retries (Optional[int]): Retry count used during
+                validation.
+
+        Returns:
+            dict: The created bucket, or None when the bucket exists.
+
+        Raises:
+            ScalityException: When the bucket cannot be verified or
+                created.
+        """
+        endpoint_url, _, _, bucket_name = (
+            ScalityCredentials.get_credentials(self.configuration)
+        )
+        action = (
+            f"getting or creating {CONST.PLATFORM_NAME} Bucket"
+            f" '{bucket_name}'"
+        )
         try:
-            region_name = None
-            s3_client = None
-            endpoint_url, _, _, bucket_name = (
-                ScalityCredentials.get_credentials(self, self.configuration)
-            )
             s3_client = self.get_aws_client(
                 validation_retries=validation_retries
             )
-            region_name = re.search(EXTRACT_AWS_REGION_REGEX, endpoint_url)
-            if region_name:
-                region_name = region_name.group(1)
+            region_name = self._get_region_name(endpoint_url)
 
-            if not self.is_bucket_exists(
-                s3_client,
-                bucket_name,
-                region_name,
-            ):
-                log_msg = (
-                    "The bucket provided in the configuration parameter"
-                    f"does not exist on {PLUGIN_NAME} hence "
-                    f"creating bucket: {bucket_name}."
-                )
-                self.logger.info(message=f"{self.log_prefix}: {log_msg}")
-                if region_name == "us-east-1":
-                    bucket = s3_client.create_bucket(
-                        Bucket=bucket_name,
-                    )
-                else:
-                    location = {"LocationConstraint": region_name}
-                    bucket = s3_client.create_bucket(
-                        Bucket=bucket_name,
-                        CreateBucketConfiguration=location,
-                    )
-                return bucket
-        except ClientError as error:
-            if (
-                hasattr(error, "response")
-                and error.response
-                and error.response.get("Error", {}).get("Message")
-            ):
-                err_msg = error.response["Error"].get("Message")
-                self.logger.error(
-                    message=f"{self.log_prefix}: {err_msg}",
-                    details=traceback.format_exc(),
-                )
-                raise ScalityException(err_msg)
-            else:
-                self.logger.error(
-                    message=f"{self.log_prefix}: {str(error)}",
-                    details=traceback.format_exc(),
-                )
-                raise ScalityException(str(error))
-        except BucketNameAlreadyTaken:
-            raise
-        except BucketNotFoundError:
-            raise
+            if self.is_bucket_exists(s3_client, bucket_name, region_name):
+                return None
+
+            self.logger.info(
+                f"{self.log_prefix}: The bucket provided in the"
+                f" configuration parameters does not exist on"
+                f" {CONST.PLATFORM_NAME} hence creating bucket:"
+                f" {bucket_name}."
+            )
+            if region_name == CONST.DEFAULT_REGION:
+                return s3_client.create_bucket(Bucket=bucket_name)
+            return s3_client.create_bucket(
+                Bucket=bucket_name,
+                CreateBucketConfiguration={
+                    CONST.LOCATION_CONSTRAINT_KEY: region_name
+                },
+            )
         except ScalityException:
             raise
         except Exception as exp:
-            err_msg = (
-                "Error occurred while getting/creating bucket."
-                f" Bucket Name: {bucket_name}"
+            self._raise_boto_error(
+                exp,
+                action,
+                (
+                    "Ensure that the user has permission to create"
+                    " buckets and that the Bucket Name is unique."
+                ),
             )
-            self.logger.error(
-                message=f"{self.log_prefix}: {err_msg}. Error: {exp}",
-                details=str(traceback.format_exc()),
-            )
-            raise ScalityException(err_msg)
 
-    def push(self, file_name: str, data_type: str, subtype: str):
-        """Push method.
+    def push(self, file_name: str, data_type: str, subtype: str) -> str:
+        """Upload a local object file to the Scality bucket.
 
         Args:
-            file_name (str): Name of the file.
-            data_type (str): Data type.
-            subtype (str): Sub type.
-        """
-        curr_time = datetime.now()
-        object_name_prefix = f"{data_type}/feedname={subtype}/year={curr_time.year}/month={curr_time.month}/day={curr_time.day}/hour={curr_time.hour}/{int(curr_time.timestamp())}_{threading.get_ident()}"  # noqa
-        if data_type == "webtx":
-            object_name = f"{object_name_prefix}.gz"
-        else:
-            object_name = f"{object_name_prefix}.txt"
+            file_name (str): Local path of the file to upload.
+            data_type (str): Data type - ``alerts``, ``events`` or
+                ``webtx``.
+            subtype (str): Subtype of the pushed logs.
 
+        Returns:
+            str: The object key the file was uploaded to.
+
+        Raises:
+            ScalityException: When the upload fails.
+        """
+        _, _, _, bucket_name = ScalityCredentials.get_credentials(
+            self.configuration
+        )
+        object_name = build_object_key(data_type, subtype)
         try:
-            bucket_name = self.configuration.get("bucket_name", "").strip()
             s3_client = self.get_aws_client()
             s3_client.upload_file(
                 file_name,
@@ -412,23 +407,25 @@ class ScalityClient:
                 object_name,
             )
             self.logger.debug(
-                f"{self.log_prefix}: Successfully Uploaded log(s) to"
-                f" {PLUGIN_NAME} bucket {bucket_name} as object file."
+                f"{self.log_prefix}: Successfully uploaded log(s) to"
+                f" {CONST.PLATFORM_NAME} Bucket {bucket_name} as object file."
                 f" Object File Name: {object_name}"
             )
-        except S3UploadFailedError as err:
-            err_msg = f"Error occurred while uploading file to {PLUGIN_NAME}."
-            self.logger.error(
-                message=f"{self.log_prefix}: {err_msg} Error: {err}",
-                details=str(traceback.format_exc()),
-            )
-            raise ScalityException(str(err))
-        except ScalityException as err:
-            raise err
+            return object_name
+        except ScalityException:
+            raise
         except Exception as exp:
-            err_msg = f"Error occurred while pushing logs to {PLUGIN_NAME}."
-            self.logger.error(
-                message=f"{self.log_prefix}: {err_msg} Error: {exp}",
-                details=str(traceback.format_exc()),
+            self._raise_boto_error(
+                exp,
+                (
+                    f"uploading the object file to {CONST.PLATFORM_NAME}"
+                    f" Bucket '{bucket_name}'. Object:"
+                    f" '{object_name}'"
+                ),
+                (
+                    "Ensure that the bucket exists, that the user has"
+                    " permission to put objects in it and that"
+                    f" {CONST.PLATFORM_NAME} is reachable from Cloud"
+                    " Exchange."
+                ),
             )
-            raise ScalityException(str(exp))

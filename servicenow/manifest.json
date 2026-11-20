@@ -1,41 +1,166 @@
 {
-    "name": "ServiceNow Threat Intelligence Plugin",
+    "name": "ServiceNow Threat Intelligence",
     "id": "servicenow",
-    "version": "1.0.0",
-    "description": "ServiceNow Threat Intelligence application has Observables table that stores the indicators observed across the enterprise. This plugin provides mechanism to query the Observables(sn_ti_observables) table for MD5, SHA256 and URL type of observables and sharing new observables. This plugin requires ServiceNow account details which has access to Threat Intelligence application.",
+    "version": "2.0.0",
+    "module": "CTE",
+    "minimum_version": "6.0.0",
+    "description": "This plugin is used to pull indicators of type MD5, SHA256, URL, IPv4, IPv6, Domain, and FQDN from the ServiceNow Threat Intelligence Observables (sn_ti_observable) table, and shares indicators of the same types back to the Observables table. The plugin supports pull retraction and push retraction of indicators. This plugin requires a ServiceNow account with access to the Threat Intelligence Observables table.",
     "patch_supported": true,
+    "push_supported": true,
+    "fetch_retraction_info": true,
+    "delete_supported": true,
     "configuration": [
         {
-            "label": "ServiceNow Instance URL (e.g. https://<INSTANCE_NAME>.service-now.com)",
+            "label": "ServiceNow Instance URL",
             "key": "url",
             "type": "text",
-            "mandatory": true,
             "default": "",
-            "description": ""
+            "mandatory": true,
+            "description": "ServiceNow instance URL, for example https://<instance>.service-now.com."
         },
         {
             "label": "Username",
             "key": "username",
             "type": "text",
-            "mandatory": true,
             "default": "",
-            "description": "The ServiceNow user having access to read Observables(sn_ti_observables) table."
+            "mandatory": true,
+            "description": "ServiceNow username with access to the Threat Intelligence Observables table."
         },
         {
             "label": "Password",
             "key": "password",
             "type": "password",
-            "mandatory": true,
             "default": "",
-            "description": ""
+            "mandatory": true,
+            "description": "Password for the ServiceNow username."
+        },
+        {
+            "label": "Type of Threat Data to Pull",
+            "key": "threat_type",
+            "type": "multichoice",
+            "choices": [
+                {
+                    "key": "MD5",
+                    "value": "MD5"
+                },
+                {
+                    "key": "SHA256",
+                    "value": "SHA256"
+                },
+                {
+                    "key": "URL",
+                    "value": "URL"
+                },
+                {
+                    "key": "IPv4",
+                    "value": "ipv4-addr"
+                },
+                {
+                    "key": "IPv6",
+                    "value": "ipv6-addr"
+                },
+                {
+                    "key": "Domain",
+                    "value": "Domain name"
+                },
+                {
+                    "key": "FQDN",
+                    "value": "FQDN"
+                }
+            ],
+            "default": [
+                "MD5",
+                "SHA256",
+                "URL",
+                "ipv4-addr",
+                "ipv6-addr",
+                "Domain name",
+                "FQDN"
+            ],
+            "mandatory": false,
+            "description": "Indicator types to pull. If left blank, all supported indicator types will be retrieved."
+        },
+        {
+            "label": "Type of Finding to Pull",
+            "key": "finding",
+            "type": "multichoice",
+            "choices": [
+                {
+                    "key": "Malicious",
+                    "value": "Malicious"
+                },
+                {
+                    "key": "Suspicious",
+                    "value": "Suspicious"
+                },
+                {
+                    "key": "Unknown",
+                    "value": "Unknown"
+                },
+                {
+                    "key": "Clean",
+                    "value": "Clean"
+                }
+            ],
+            "default": [
+                "Malicious",
+                "Suspicious",
+                "Unknown",
+                "Clean"
+            ],
+            "mandatory": false,
+            "description": "ServiceNow finding statuses to pull. If left blank, findings with all statuses will be retrieved."
+        },
+        {
+            "label": "Enable Polling",
+            "key": "is_pull_required",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Yes",
+                    "value": "Yes"
+                },
+                {
+                    "key": "No",
+                    "value": "No"
+                }
+            ],
+            "default": "Yes",
+            "mandatory": true,
+            "description": "Enable/Disable polling indicators from ServiceNow. Disable if you only need to push indicators to ServiceNow."
+        },
+        {
+            "label": "Enable Push Retraction",
+            "key": "enable_push_retraction",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Yes",
+                    "value": "Yes"
+                },
+                {
+                    "key": "No",
+                    "value": "No"
+                }
+            ],
+            "default": "No",
+            "mandatory": true,
+            "description": "Enable/Disable push retraction of indicator(s) from ServiceNow. When enabled, previously pushed indicator(s) to ServiceNow will be deleted when retracted in CE. Note: The observable record is permanently deleted from your Threat Intelligence Observables table."
+        },
+        {
+            "label": "Retraction Interval (in days)",
+            "key": "retraction_interval",
+            "type": "number",
+            "mandatory": false,
+            "description": "Number of days to use as the retraction interval for ServiceNow indicator(s) retraction. This parameter applies only when IOC(s) Retraction is enabled in Threat Exchange Settings. Valid values range from 1 to 100000 days."
         },
         {
             "label": "Initial Range (in days)",
             "key": "days",
             "type": "number",
-            "mandatory": true,
             "default": 7,
-            "description": "Number of days to pull the data for the initial run."
+            "mandatory": true,
+            "description": "Number of days to pull the data for the initial run. Value must be between 1 and 365."
         }
     ]
 }

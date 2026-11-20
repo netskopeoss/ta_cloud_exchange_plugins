@@ -1,3 +1,16 @@
+# 1.3.0 (Requires minimum Cloud Exchange version 6.1.0)
+## Added
+- Added support for Custom Region and Externally Provisioned Bucket in the configuration parameters.
+- Added resolutions for error logs.
+- Added the JSON format option.
+
+## Changed
+- Updated the object file name format to <epoch>_<thread_id>_<uuid>.gz to prevent data overwrite when data is ingested at the exact same time.
+
+## Fixed
+- Fixed the error observed while sharing WebTx data using NLS.
+- Fixed proxy settings not being applied to AWS IAM Roles Anywhere requests.
+
 # 1.2.0
 ## Added
 - Added two new authentication methods.

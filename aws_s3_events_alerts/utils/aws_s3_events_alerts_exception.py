@@ -33,24 +33,6 @@ AWS S3 Events, Alerts Plugin.
 """
 
 
-class Error(Exception):
-    """Base class for exceptions in this module."""
-
-    pass
-
-
-class MappingValidationError(Error):
-    """Exception raised when validation fails for AWS S3 Events,
-      Alerts mappings file.
-
-    :attribute: message -- explanation of the error
-    """
-
-    def __init__(self, message):
-        """Initialize."""
-        self.message = message
-
-
 class AWSS3EventsAlertsException(Exception):
     """AWS S3 Events, Alerts plugin Custom Exception class."""
 

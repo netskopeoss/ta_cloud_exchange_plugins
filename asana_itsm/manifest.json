@@ -1,0 +1,41 @@
+{
+  "name": "Asana",
+  "id": "asana_itsm",
+  "version": "1.0.0",
+  "module": "CTO",
+  "minimum_version": "6.0.0",
+  "description": "This plugin is used to create tasks on Asana platform. It also supports updating tasks, syncing their status and severity.",
+  "pulling_supported": false,
+  "receiving_supported": true,
+  "configuration": [
+    {
+      "label": "Authentication",
+      "name": "auth",
+      "type": "step",
+      "fields": [
+        {
+          "label": "API Base URL",
+          "key": "base_url",
+          "type": "text",
+          "default": "https://app.asana.com/api/1.0",
+          "mandatory": true,
+          "placeholder": "e.g. https://app.asana.com/api/1.0",
+          "description": "Base URL of the Asana REST API. Default: https://app.asana.com/api/1.0."
+        },
+        {
+          "label": "Token",
+          "key": "token",
+          "type": "password",
+          "default": "",
+          "mandatory": true,
+          "description": "Asana Personal Access Token. The token can be created from the [Asana Developer Console](https://app.asana.com/0/my-apps) > Personal access tokens > Create new token."
+        }
+      ]
+    },
+    {
+      "label": "Configuration Parameters",
+      "name": "params",
+      "type": "dynamic_step"
+    }
+  ]
+}

@@ -1,0 +1,43 @@
+{
+    "name": "Databricks",
+    "id": "databricks",
+    "version": "1.0.0",
+    "module": "CLS",
+    "minimum_version": "6.0.0",
+    "mapping": "Databricks Default Mappings",
+    "netskope": false,
+    "description": "This plugin is used to send Netskope Alerts (DLP, Malware, Policy, Compromised Credential, Malsite, Quarantine, Remediation, Security Assessment, Watchlist, UBA, CTEP, Device, Content), Events (Page, Application, Audit, Infrastructure, Network, Incident, Endpoint, Client Status) and WebTx data to an AWS S3 bucket. This plugin supports ingestion in JSON format only. To view the data on databricks, make sure the S3 bucket is linked with the Databricks External Location.",
+    "types": [
+        "events",
+        "alerts",
+        "webtx"
+    ],
+    "format_options": [
+        {
+            "label": "JSON",
+            "value": "json"
+        }
+    ],
+    "configuration": [
+        {
+            "label": "Authentication Method",
+            "key": "authentication_method",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Deployed on AWS",
+                    "value": "deployed_on_aws"
+                },
+                {
+                    "key": "AWS IAM Roles Anywhere",
+                    "value": "aws_iam_roles_anywhere"
+                }
+            ],
+            "default": "deployed_on_aws",
+            "has_api_call": true,
+            "payload_fields": ["authentication_method"],
+            "mandatory": true,
+            "description": "Select the method to be used for AWS client authentication. 'Deployed on AWS' uses the IAM instance profile or role attached to the AWS environment. 'AWS IAM Roles Anywhere' uses an X.509 certificate and private key to obtain temporary AWS credentials — use this when CE is running outside AWS."
+        }
+    ]
+}

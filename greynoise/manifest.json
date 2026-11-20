@@ -1,0 +1,138 @@
+{
+    "name": "GreyNoise",
+    "id": "greynoise_cte",
+    "version": "1.0.0",
+    "description": "This plugin is used to pull threat indicators of type IPv4 and File Hash (MD5, SHA256) from Query page in the GreyNoise platform. This plugin supports pull retraction of indicators from the GreyNoise platform. This plugin does not support sharing of indicators to the GreyNoise platform.",
+    "fetch_retraction_info": true,
+    "push_supported": false,
+    "module": "CTE",
+    "minimum_version": "6.0.0",
+    "configuration": [
+        {
+            "label": "Base URL",
+            "key": "base_url",
+            "type": "text",
+            "default": "https://api.greynoise.io",
+            "mandatory": true,
+            "placeholder": "https://api.greynoise.io",
+            "description": "Base URL of the GreyNoise API. e.g. https://api.greynoise.io"
+        },
+        {
+            "label": "API Key",
+            "key": "api_key",
+            "type": "password",
+            "default": "",
+            "mandatory": true,
+            "description": "API Key for authenticating with the GreyNoise platform. Navigate to Account > API Key to generate the API Key."
+        },
+        {
+            "label": "Enable Tagging",
+            "key": "enable_tagging",
+            "type": "choice",
+            "choices": [
+                {"key": "Yes", "value": "Yes"},
+                {"key": "No", "value": "No"}
+            ],
+            "default": "Yes",
+            "mandatory": true,
+            "description": "Enable/Disable tagging functionality. When Yes is selected, tags will be added to the pulled IOCs."
+        },
+        {
+            "label": "IOC Types",
+            "key": "ioc_types",
+            "type": "multichoice",
+            "choices": [
+                {"key": "IP", "value": "ip"},
+                {"key": "Callback IP", "value": "callback_ip"},
+                {"key": "MD5", "value": "md5"},
+                {"key": "SHA256", "value": "sha256"}
+            ],
+            "default": ["ip", "callback_ip"],
+            "mandatory": true,
+            "description": "Select the types of IOC(s) to pull from GreyNoise. 'IP' and 'Callback IP' pulls IPv4 indicators via the GNQL API (Classification field will appear). 'MD5' and 'SHA256' pull malware file hashes from Callback IP records (Callback Stages field will appear)."
+        },
+        {
+            "label": "Classification",
+            "key": "classification",
+            "type": "multichoice",
+            "choices": [
+                {"key": "Malicious", "value": "malicious"},
+                {"key": "Suspicious", "value": "suspicious"},
+                {"key": "Unknown", "value": "unknown"},
+                {"key": "Benign", "value": "benign"}
+            ],
+            "default": ["malicious", "suspicious"],
+            "mandatory": false,
+            "description": "Select the IP classification(s) to pull from GreyNoise Platform."
+        },
+        {
+            "label": "Stage 1 (file downloaded from this IP)",
+            "key": "callback_stage_1",
+            "type": "choice",
+            "choices": [
+                {"key": "Yes", "value": "Yes"},
+                {"key": "No", "value": "No"}
+            ],
+            "default": "Yes",
+            "mandatory": false,
+            "description": "Set to Yes to pull Stage 1 callback indicators (file downloaded from this IP) when pulling Callback IP, MD5 or SHA256 indicators. Selecting both Stage 1 and Stage 2 as Yes pulls only the IPs that are classified as both Stage 1 and Stage 2 simultaneously (intersection), rather than the union of Stage 1 and Stage 2 IPs."   
+        },
+        {
+            "label": "Stage 2 (suspected C2 based on VT/sandbox analysis)",
+            "key": "callback_stage_2",
+            "type": "choice",
+            "choices": [
+                {"key": "Yes", "value": "Yes"},
+                {"key": "No", "value": "No"}
+            ],
+            "default": "Yes",
+            "mandatory": false,
+            "description": "Set to Yes to Pull Stage 2 callback indicators (suspected Command-and-Control(C2) based on VT/sandbox analysis) when pulling Callback IP, MD5 or SHA256 indicators. Selecting both Stage 1 and Stage 2 as Yes pulls only the IPs that are classified as both Stage 1 and Stage 2 simultaneously (intersection), rather than the union of Stage 1 and Stage 2 IPs."
+        },
+        {
+            "label": "Initial Range",
+            "key": "initial_range",
+            "type": "choice",
+            "choices": [
+                {"key": "Today", "value": "today"},
+                {"key": "Last Day (1d)", "value": "1d"},
+                {"key": "Last Week (1w)", "value": "1w"},
+                {"key": "Last Month (1m)", "value": "1m"},
+                {"key": "Last Year (1y)", "value": "1y"},
+                {"key": "Custom", "value": "custom"}
+            ],
+            "default": "1d",
+            "mandatory": true,
+            "description": "Time window for the initial pull. After the initial pull, the plugin automatically retrieves data since the last successful run, ensuring no data is missed. Select 'Custom' to specify a number of days (1-365) in the 'Initial Range (Days)' field below."
+        },
+        {
+            "label": "Initial Range (Days)",
+            "key": "initial_range_days",
+            "type": "number",
+            "mandatory": false,
+            "description": "Number of days for the initial pull window. Must be between 1 and 365. Applicable only when Initial Range is set to 'Custom'."
+        },
+        {
+            "label": "Retraction Interval",
+            "key": "retraction_interval",
+            "type": "choice",
+            "choices": [
+                {"key": "Today", "value": "today"},
+                {"key": "Last Day (1d)", "value": "1d"},
+                {"key": "Last Week (1w)", "value": "1w"},
+                {"key": "Last Month (1m)", "value": "1m"},
+                {"key": "Last Year (1y)", "value": "1y"},
+                {"key": "Custom", "value": "custom"}
+            ],
+            "mandatory": false,
+            "description": "Time window to use when performing pull retraction. Applicable only if 'IoC(s) Retraction' is enabled in Threat Exchange Settings. Select 'Custom' to specify a number of days (1-365) in the 'Retraction Interval (Days)' field below."
+        },
+        {
+            "label": "Retraction Interval (Days)",
+            "key": "retraction_interval_days",
+            "type": "number",
+            "mandatory": false,
+            "description": "Number of days for the retraction window. Must be between 1 and 365. Applicable only when Retraction Interval is set to 'Custom'."
+        }
+    ]
+}

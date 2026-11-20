@@ -1,0 +1,130 @@
+{
+    "name": "VMRay",
+    "id": "vmray_cte",
+    "version": "1.0.0",
+    "description": "This plugin is used to pull IOC(s) of type Domain (FQDN, Domain), IPv4, URL and File Hash (MD5, SHA256) from Malicious and Suspicious Sample IOCs of submissions in VMRay platform. This plugin supports sharing IOC(s) of type URL (Domain, FQDN, URL and IPv4) to Upload File or URL submission page. This plugin supports pull and push retraction of indicators from VMRay.",
+    "patch_supported": true,
+    "delete_supported": true,
+    "fetch_retraction_info": true,
+    "push_supported": true,
+    "minimum_version": "6.0.0",
+    "module": "CTE",
+    "configuration": [
+        {
+            "label": "Base URL",
+            "key": "base_url",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "placeholder": "https://<region>.cloud.vmray.com",
+            "description": "Base URL of the VMRay instance. e.g. https://<region>.cloud.vmray.com"
+        },
+        {
+            "label": "API Token",
+            "key": "api_token",
+            "type": "password",
+            "default": "",
+            "mandatory": true,
+            "description": "API Token for authenticating with the VMRay platform. Navigate to 'Settings > Analysis > Interfaces > API KEYS' to generate the API Token."
+        },
+        {
+            "label": "Type of Verdict",
+            "key": "sample_verdicts",
+            "type": "multichoice",
+            "choices": [
+                {
+                    "key": "Malicious",
+                    "value": "malicious"
+                },
+                {
+                    "key": "Suspicious",
+                    "value": "suspicious"
+                }
+            ],
+            "default": ["malicious", "suspicious"],
+            "mandatory": true,
+            "description": "Select the verdict types of IOC(s) to pull from VMRay submissions."
+        },
+        {
+            "label": "Type of Threat Data to Pull",
+            "key": "ioc_types",
+            "type": "multichoice",
+            "choices": [
+                {
+                    "key": "Domains",
+                    "value": "domains"
+                },
+                {
+                    "key": "IPv4",
+                    "value": "ipv4"
+                },
+                {
+                    "key": "URLs",
+                    "value": "urls"
+                },
+                {
+                    "key": "MD5",
+                    "value": "md5"
+                },
+                {
+                    "key": "SHA256",
+                    "value": "sha256"
+                }
+            ],
+            "default": ["domains", "ipv4", "urls", "md5", "sha256"],
+            "mandatory": false,
+            "description": "Select the types of IOC(s) to pull from VMRay. Leave empty to pull all supported IOC(s) types."
+        },
+        {
+            "label": "Enable Polling",
+            "key": "is_pull_required",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Yes",
+                    "value": "Yes"
+                },
+                {
+                    "key": "No",
+                    "value": "No"
+                }
+            ],
+            "default": "Yes",
+            "mandatory": true,
+            "description": "Enable/Disable polling Threat IOC(s) from VMRay. Disable if you only need to push Threat IOC(s) to VMRay."
+        },
+        {
+            "label": "Enable Push Retraction",
+            "key": "enable_push_retraction",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Yes",
+                    "value": "Yes"
+                },
+                {
+                    "key": "No",
+                    "value": "No"
+                }
+            ],
+            "default": "No",
+            "mandatory": true,
+            "description": "Enable/Disable push retraction of IOC(s) from VMRay. When enabled, previously pushed IOC(s) to VMRay will be deleted when retracted in CE. Note: All related submission data and analyses will be deleted from your account as well."
+        },
+        {
+            "label": "Retraction Interval (in days)",
+            "key": "retraction_interval",
+            "type": "number",
+            "mandatory": false,
+            "description": "Number of days to use as the retraction interval for VMRay submissions retraction. This parameter is applicable only if 'IoC(s) Retraction' is enabled in Threat Exchange Settings. Valid values are in range from 1 to 100000 days."
+        },
+        {
+            "label": "Initial Range (in days)",
+            "key": "initial_range",
+            "type": "number",
+            "mandatory": true,
+            "default": 7,
+            "description": "Number of days to pull indicators for the initial run. Valid values are in range from 1 to 100000 days."
+        }
+    ]
+}

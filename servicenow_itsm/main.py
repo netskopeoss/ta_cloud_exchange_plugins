@@ -34,39 +34,49 @@ ServiceNow ITSM plugin.
 
 import re
 import traceback
-from typing import List, Tuple, Union
-from urllib.parse import urlparse
+from typing import Dict, List, Tuple, Union
 
-from netskope.integrations.itsm.plugin_base import (
-    PluginBase,
-    ValidationResult,
-    MappingField,
-)
 from netskope.integrations.itsm.models import (
+    Alert,
+    CustomFieldMapping,
+    CustomFieldsSectionWithMappings,
+    Event,
     FieldMapping,
     Queue,
+    Severity,
     Task,
     TaskStatus,
-    Severity,
-    Alert,
-    Event,
     UpdatedTaskValues,
-    CustomFieldsSectionWithMappings,
-    CustomFieldMapping
+)
+from netskope.integrations.itsm.plugin_base import (
+    MappingField,
+    PluginBase,
+    ValidationResult,
 )
 
-from .utils.servicenow_itsm_constants import (
-    PLATFORM_NAME,
-    PLUGIN_VERSION,
-    MODULE_NAME,
+from .utils.constants import (
+    BATCH_SIZE,
+    CUSTOM_TABLE,
+    CUSTOM_TABLE_CONFIG_FIELDS,
+    GRC_ISSUE_TABLE,
+    IMPACT_FIELD,
+    INCIDENT_TABLE,
     LIMIT,
     MAIN_ATTRS,
-    CUSTOM_TABLE_CONFIG_FIELDS
+    MANAGER_ASSIGNEE_FIELD,
+    MANAGER_ASSIGNEE_LABEL,
+    MODULE_NAME,
+    PLATFORM_NAME,
+    PLUGIN_VERSION,
+    SECURITY_INCIDENT_TABLE,
+    SYS_DICTIONARY_ENDPOINT,
+    SYS_USER_GROUP_ENDPOINT,
+    TABLE_ENDPOINT,
+    USER_EMAIL_CACHE_KEY,
+    VALID_TABLES,
 )
-from .utils.servicenow_itsm_helper import (
-    ServiceNowITSMPluginHelper,
-    ServiceNowITSMPluginException,
-)
+from .utils.exceptions import ServiceNowITSMPluginException
+from .utils.helper import ServiceNowITSMPluginHelper
 
 
 class ServiceNowITSMPlugin(PluginBase):
@@ -78,7 +88,7 @@ class ServiceNowITSMPlugin(PluginBase):
         *args,
         **kwargs,
     ):
-        """Service Now plugin initializer.
+        """ServiceNow plugin initializer.
 
         Args:
             name (str): Plugin configuration name.
@@ -118,8 +128,102 @@ class ServiceNowITSMPlugin(PluginBase):
             )
         return (PLATFORM_NAME, PLUGIN_VERSION)
 
+    # ------------------------------------------------------------------
+    # Shared helpers
+    # ------------------------------------------------------------------
+
+    def _get_storage(self) -> dict:
+        """Return the persistent storage dictionary.
+
+        Returns:
+            dict: CE persistent storage; an empty dict when storage is
+                unavailable (caching then degrades to a no-op for that
+                call without affecting correctness).
+        """
+        return self.storage if self.storage is not None else {}
+
+    def _get_event_type(self, alert: Union[Alert, Event]) -> str:
+        """Return 'Event' for Event objects and 'Alert' otherwise.
+
+        Args:
+            alert (Union[Alert, Event]): The triggering alert or event.
+
+        Returns:
+            str: "Event" or "Alert".
+        """
+        return "Event" if "eventType" in alert.model_dump() else "Alert"
+
+    def _get_ticket_type(self, table: str) -> str:
+        """Return the human-readable ticket type for the given table.
+
+        Args:
+            table (str): Destination table name.
+
+        Returns:
+            str: "issue" for the GRC Issue table, else "incident".
+        """
+        return "issue" if table == GRC_ISSUE_TABLE else "incident"
+
+    def _build_sysparm_fields(self, table_config) -> str:
+        """Build the sysparm_fields query value for a ticket lookup.
+
+        Args:
+            table_config (TableConfig): Resolved table configuration.
+
+        Returns:
+            str: Comma-separated field list, including the impact field for
+                the GRC Issue table.
+        """
+        fields = (
+            f"sys_id,{table_config.status_field},"
+            f"{table_config.severity_field},{table_config.assignee_field}"
+        )
+        if table_config.table == GRC_ISSUE_TABLE:
+            fields += f",{IMPACT_FIELD}"
+        return fields
+
+    def _severity_from_result(self, result: dict, table_config) -> str:
+        """Extract the severity value from a ServiceNow ticket record.
+
+        The GRC Issue table stores severity in the 'impact' field; all
+        other tables use the configured severity field.
+
+        Args:
+            result (dict): Ticket record returned by ServiceNow.
+            table_config (TableConfig): Resolved table configuration.
+
+        Returns:
+            str: Severity value from the record.
+        """
+        if table_config.table == GRC_ISSUE_TABLE:
+            return result.get(IMPACT_FIELD, "")
+        return result.get(table_config.severity_field, "")
+
+    def _build_task_data(self, result: dict, table_config) -> dict:
+        """Build the status/severity/assignee dict from a ticket record.
+
+        Args:
+            result (dict): Ticket record returned by ServiceNow, with the
+                'user_name' key already populated by
+                fetch_assignee_usernames.
+            table_config (TableConfig): Resolved table configuration.
+
+        Returns:
+            dict: Mapping of the configured status, severity and assignee
+                field names to their values.
+        """
+        return {
+            table_config.status_field: result.get(
+                table_config.status_field, ""
+            ),
+            table_config.severity_field: self._severity_from_result(
+                result, table_config
+            ),
+            table_config.assignee_field: result.get("user_name", ""),
+        }
+
     def substitute_vars(self, message, alert):
-        """Replace variables in a string with values from alert.
+        """Replace variables in a string with values from the alert.
 
         Args:
             message (str): String containing variables.
@@ -135,7 +239,9 @@ class ServiceNowITSMPlugin(PluginBase):
             if match.group(1) in MAIN_ATTRS:
                 return getattr(alert, match.group(1), "value_unavailable")
             else:
-                return getattr(alert, raw_key).get(match.group(1), "value_unavailable")
+                return getattr(alert, raw_key).get(
+                    match.group(1), "value_unavailable"
+                )
 
         var_regex = r"(?<!\\)\$([a-zA-Z0-9_]+)"
         return re.sub(
@@ -145,8 +251,7 @@ class ServiceNowITSMPlugin(PluginBase):
         )
 
     def map_values(self, alert, mappings):
-        """Generate a mapped dictionary based on \
-            the given alert and field mappings.
+        """Generate a mapped dictionary from the alert and field mappings.
 
         Args:
             alert (Alert): Alert object.
@@ -164,9 +269,9 @@ class ServiceNowITSMPlugin(PluginBase):
                         alert, mapping.extracted_field, None
                     )
                 else:
-                    result[mapping.destination_field] = getattr(alert, raw_key).get(
-                        mapping.extracted_field, None
-                    )
+                    result[mapping.destination_field] = getattr(
+                        alert, raw_key
+                    ).get(mapping.extracted_field, None)
             else:
                 result[mapping.destination_field] = self.substitute_vars(
                     mapping.custom_message, alert
@@ -175,83 +280,352 @@ class ServiceNowITSMPlugin(PluginBase):
                 result.pop(mapping.destination_field)
         return result
 
-    def _get_custom_table_fields(self, custom_fields):
-        """Get custom table fields.
+    # ------------------------------------------------------------------
+    # Task shaping
+    # ------------------------------------------------------------------
 
-        Returns:
-            Tuple: Tuple of custom table fields.
-        """
-        table = custom_fields.get(
-            "custom_table_name", ""
-        ).strip()
-        status_field = custom_fields.get(
-            "custom_status", "state"
-        ).strip()
-        severity_field = custom_fields.get(
-            "custom_severity", "severity"
-        ).strip()
-        assignee_field = custom_fields.get(
-            "custom_assignee", "assignee"
-        ).strip()
-        assignment_group_field = custom_fields.get(
-            "custom_group", "assignment_group"
-        ).strip()
-        update_field = custom_fields.get(
-            "custom_update", "work_notes"
-        ).strip()
+    def _mark_task_deleted(self, task: Task) -> Task:
+        """Mark a CE task as DELETED and update its updatedValues.
 
-        return (
-            table,
-            status_field,
-            severity_field,
-            assignee_field,
-            assignment_group_field,
-            update_field
-        )
-
-    def create_task(self, alert, mappings, queue) -> Task:
-        """Create an incident/issue on ServiceNow platform.
+        Called whenever a ticket no longer exists on ServiceNow (404) or is
+        missing from a sync response.
 
         Args:
-            alert (Alert): Alert object.
+            task (Task): CE task to mark as deleted.
+
+        Returns:
+            Task: Task with status set to TaskStatus.DELETED.
+        """
+        current_status = (
+            task.updatedValues.status if task.updatedValues else None
+        )
+        if current_status and current_status != TaskStatus.DELETED:
+            old_status = current_status
+        else:
+            old_status = TaskStatus.DELETED
+
+        if task.updatedValues:
+            task.updatedValues.oldStatus = old_status
+            task.updatedValues.status = TaskStatus.DELETED
+        else:
+            task.updatedValues = UpdatedTaskValues(
+                oldStatus=old_status, status=TaskStatus.DELETED
+            )
+        task.status = TaskStatus.DELETED
+        return task
+
+    def update_task_details(
+        self,
+        task: Task,
+        servicenow_data: dict,
+        severity_field,
+        status_field,
+        assignee_field,
+    ) -> Task:
+        """Update task fields with data fetched from ServiceNow.
+
+        Args:
+            task (Task): CE task.
+            servicenow_data (dict): Updated data from ServiceNow.
+            severity_field (str): Severity field based on the table.
+            status_field (str): Status field based on the table.
+            assignee_field (str): Assignee field based on the table.
+
+        Returns:
+            Task: Task with updated status, severity and assignee.
+        """
+        if task.updatedValues:
+            task.updatedValues.status = servicenow_data.get(
+                status_field, TaskStatus.OTHER
+            )
+            task.updatedValues.oldAssignee = task.dataItem.rawData.get(
+                "assignee", None
+            )
+        else:
+            # Status and Severity are managed from core.
+            task.updatedValues = UpdatedTaskValues(
+                assignee=None,
+                oldAssignee=task.dataItem.rawData.get("assignee", None),
+            )
+
+        if servicenow_data.get(severity_field):
+            task.updatedValues.severity = servicenow_data.get(
+                severity_field, Severity.OTHER
+            )
+
+        if servicenow_data.get(assignee_field):
+            task.updatedValues.assignee = servicenow_data.get(assignee_field)
+
+        task.status = servicenow_data.get(status_field, TaskStatus.OTHER)
+        task.severity = servicenow_data.get(severity_field, Severity.OTHER)
+        return task
+
+    # ------------------------------------------------------------------
+    # Assignee / manager resolution
+    # ------------------------------------------------------------------
+
+    def _resolve_manager_assignee(
+        self,
+        mappings: dict,
+        alert: Union[Alert, Event],
+        assignee_field: str,
+    ) -> None:
+        """Resolve the assignee when the 'Assigned to Manager' field is set.
+
+        Runs only when the queue maps the virtual 'Assigned to Manager'
+        field, so the normal assignment flow is completely unchanged.
+        Resolution order:
+          1. Assign to the acting user's manager (preferred).
+          2. If the manager cannot be resolved, fall back to the user
+             mapped to the assignee field (e.g. the acting user), resolving
+             their email to the user's sys_id.
+          3. If neither resolves, leave the assignee empty so the ticket is
+             created without an assignee.
+
+        The mappings dictionary is mutated in place. No-op when the virtual
+        manager field is not mapped.
+
+        Args:
+            mappings (dict): Resolved destination-field to value mapping.
+                Mutated in place.
+            alert (Union[Alert, Event]): The triggering alert or event.
+            assignee_field (str): Assignee column name for the configured
+                table ('assigned_to' or the custom assignee field).
+        """
+        if MANAGER_ASSIGNEE_FIELD not in mappings:
+            return
+
+        manager_email = str(mappings.pop(MANAGER_ASSIGNEE_FIELD, "")).strip()
+        # Keep the user mapped to the assignee field (if any) as a fallback
+        # for when the manager cannot be resolved.
+        fallback_email = str(mappings.get(assignee_field, "")).strip()
+        event_type = self._get_event_type(alert)
+
+        # 1. Prefer the acting user's manager.
+        manager_sys_id = (
+            self.servicenow_helper.fetch_manager_sys_id(
+                self.configuration,
+                manager_email,
+                self.ssl_validation,
+                self.proxy,
+            )
+            if manager_email
+            else None
+        )
+        if manager_sys_id:
+            mappings[assignee_field] = manager_sys_id
+            self.logger.info(
+                f"{self.log_prefix}: Ticket for {event_type} ID "
+                f"'{alert.id}' will be assigned to the manager of "
+                f"'{manager_email}' on {PLATFORM_NAME}."
+            )
+            return
+
+        # 2. Manager not found; fall back to the user mapped to the
+        #    assignee field, resolving their email to the user's sys_id.
+        user_sys_id = (
+            self.servicenow_helper.fetch_user_sys_id(
+                self.configuration,
+                fallback_email,
+                self.ssl_validation,
+                self.proxy,
+            )
+            if fallback_email
+            else None
+        )
+        if user_sys_id:
+            mappings[assignee_field] = user_sys_id
+            self.logger.info(
+                f"{self.log_prefix}: Manager not found for {event_type} "
+                f"ID '{alert.id}'. Falling back to the mapped user "
+                f"'{fallback_email}' on {PLATFORM_NAME}."
+            )
+            return
+
+        # 3. Nothing resolved; leave the ticket unassigned.
+        mappings.pop(assignee_field, None)
+        self.logger.info(
+            f"{self.log_prefix}: Could not determine an assignee for "
+            f"{event_type} ID '{alert.id}'. The ticket will be created "
+            "without an assignee."
+        )
+
+    def fetch_assignee_usernames(
+        self, results: list, assignee_field: str
+    ) -> list:
+        """Resolve assignee sys_ids to email addresses for ticket records.
+
+        Each record's 'user_name' key is populated with the assignee's
+        email address (or an empty string when there is no assignee or it
+        cannot be resolved).
+
+        A persistent sys_id -> email cache (in CE storage) is used so that
+        only assignee sys_ids not seen before are looked up on ServiceNow.
+        The sys_id -> email identity is stable, so caching it is safe; the
+        ticket's current assignee sys_id is always read fresh from the
+        ticket response and never from the cache.
+
+        Args:
+            results (list): List of ticket records from ServiceNow.
+            assignee_field (str): Assignee field based on the table.
+
+        Returns:
+            list: The same records with a 'user_name' key added.
+        """
+        assignee_sys_ids = {}
+        for result in results:
+            sys_id = result.get("sys_id", "")
+            assignee = result.get(assignee_field, {})
+            if assignee and isinstance(assignee, dict):
+                assignee_sys_ids[sys_id] = assignee.get("value", "")
+            else:
+                assignee_sys_ids[sys_id] = ""
+
+        # Distinct assignee sys_ids that actually need resolving.
+        required_ids = {
+            sys_id for sys_id in assignee_sys_ids.values() if sys_id
+        }
+        if not required_ids:
+            for result in results:
+                result["user_name"] = ""
+            return results
+
+        # Resolve sys_id -> email via the persistent cache, querying
+        # ServiceNow only for sys_ids not already cached.
+        cache = self._get_storage().setdefault(USER_EMAIL_CACHE_KEY, {})
+        unknown_ids = [
+            sys_id for sys_id in required_ids if sys_id not in cache
+        ]
+        if unknown_ids:
+            self.logger.debug(
+                f"{self.log_prefix}: Fetching {len(unknown_ids)} "
+                f"assignee(s) from {PLATFORM_NAME}."
+            )
+            try:
+                fetched = self.servicenow_helper.fetch_user_emails(
+                    self.configuration,
+                    unknown_ids,
+                    self.ssl_validation,
+                    self.proxy,
+                )
+                cache.update(fetched)
+                # Cache sys_ids that returned no record as empty so they
+                # are not re-queried on every cycle.
+                for sys_id in unknown_ids:
+                    cache.setdefault(sys_id, "")
+            except Exception as exp:
+                # Assignee resolution must never block ticket creation,
+                # updates, or the sync cycle. Log and continue; the
+                # unresolved sys_ids are left uncached so they are retried
+                # on the next cycle.
+                self.logger.error(
+                    message=(
+                        f"{self.log_prefix}: Error occurred while resolving "
+                        f"assignee email(s) from {PLATFORM_NAME}. The "
+                        "assignee will be left empty for this cycle. "
+                        f"Error: {exp}"
+                    ),
+                    details=traceback.format_exc(),
+                    resolution=(
+                        "Ensure that the configured Username has read "
+                        f"access to the 'sys_user' table on {PLATFORM_NAME}."
+                    ),
+                )
+
+        for result in results:
+            assignee_sys_id = assignee_sys_ids.get(result.get("sys_id", ""))
+            result["user_name"] = (
+                cache.get(assignee_sys_id, "") if assignee_sys_id else ""
+            )
+        return results
+
+    # ------------------------------------------------------------------
+    # Ticket operations
+    # ------------------------------------------------------------------
+
+    def _apply_default_mappings(
+        self, alert: Union[Alert, Event], mappings: Dict
+    ) -> Dict:
+        """Return default mappings when 'Use Default Mappings' is enabled.
+
+        When the 'Use Default Mappings' configuration parameter is 'yes',
+        the queue mappings are replaced by the plugin's default field
+        mappings resolved against the alert. Otherwise the provided
+        mappings are returned unchanged.
+
+        Args:
+            alert (Union[Alert, Event]): The triggering alert or event.
+            mappings (Dict): Queue-provided field mappings.
+
+        Returns:
+            Dict: The mappings to use for the ticket operation.
+        """
+        config_params = self.configuration.get("params", {})
+        if config_params.get("default_mappings", "no") == "yes":
+            mappings_default = self.get_default_mappings(self.configuration)
+            return self.map_values(
+                alert, mappings_default.get("mappings", [])
+            )
+        return mappings
+
+    def _resolve_and_stringify_mappings(
+        self,
+        mappings: Dict,
+        alert: Union[Alert, Event],
+        assignee_field: str,
+    ) -> Dict:
+        """Resolve the manager assignee and coerce all values to strings.
+
+        Resolves the virtual 'Assigned to Manager' field (a no-op when it
+        is not mapped) and converts every mapped value to a string so the
+        payload is JSON-serialisable. Mutates and returns the same dict.
+
+        Args:
+            mappings (Dict): Field mappings to prepare (mutated in place).
+            alert (Union[Alert, Event]): The triggering alert or event.
+            assignee_field (str): Assignee column name for the table.
+
+        Returns:
+            Dict: The prepared mappings.
+        """
+        self._resolve_manager_assignee(mappings, alert, assignee_field)
+        for key, value in list(mappings.items()):
+            if not isinstance(value, str):
+                mappings[key] = str(value)
+        return mappings
+
+    def create_task(
+        self,
+        alert: Union[Alert, Event],
+        mappings: Dict,
+        queue: Queue,
+    ) -> Task:
+        """Create an incident/issue on the ServiceNow platform.
+
+        Args:
+            alert (Union[Alert, Event]): Alert or Event object.
             mappings (Dict): Field mappings.
             queue (Queue): Queue object.
 
         Returns:
             Task: Task object.
         """
-        config_params = self.configuration.get("params", {})
-        auth_params = self.configuration.get("auth", {})
-        status_field = "state"
-        severity_field = "severity"
-        assignee_field = "assigned_to"
-        assignment_group_field = "assignment_group"
+        table_config = self.servicenow_helper.get_table_config(
+            self.configuration
+        )
+        table = table_config.table
+        status_field = table_config.status_field
+        severity_field = table_config.severity_field
+        assignee_field = table_config.assignee_field
+        assignment_group_field = table_config.assignment_group_field
 
-        table = auth_params.get("table", "")
-        if table == "custom_table":
-            (
-                table,
-                status_field,
-                severity_field,
-                assignee_field,
-                assignment_group_field,
-                update_field
-            ) = self._get_custom_table_fields(config_params)
-        event_type = "Alert"
-        if "eventType" in alert.model_dump():
-            event_type = "Event"
-        ticket_type = "incident"
-        if table == "sn_grc_issue":
-            ticket_type = "issue"
-        if config_params.get("default_mappings", "no") == "yes":
-            mappings_default = self.get_default_mappings(self.configuration)
-            mappings_list = mappings_default.get("mappings", [])
-            mappings = self.map_values(alert, mappings_list)
+        event_type = self._get_event_type(alert)
+        ticket_type = self._get_ticket_type(table)
+
+        mappings = self._apply_default_mappings(alert, mappings)
 
         if not mappings:
-            err_msg = (
-                "No mappings found in Queue Configuration."
-            )
+            err_msg = "No mappings found in Queue Configuration."
             self.logger.error(
                 f"{self.log_prefix}: {err_msg} Queue mapping "
                 f"is required to create an {ticket_type} if "
@@ -260,30 +634,29 @@ class ServiceNowITSMPlugin(PluginBase):
             )
             raise ServiceNowITSMPluginException(err_msg)
 
-        for key, value in list(mappings.items()):
-            if type(value) is not str:
-                mappings[key] = str(value)
+        # Resolve the manager assignee (no-op unless the virtual field is
+        # mapped) and coerce all mapped values to strings.
+        self._resolve_and_stringify_mappings(mappings, alert, assignee_field)
         values = (
             mappings
             if queue.value == "no_queue"
             else {**mappings, assignment_group_field: queue.value}
         )
-        if "sys_id" in values:
-            values.pop("sys_id")  # special field; do not allow overriding
+        # 'sys_id' is a special field; do not allow overriding it.
+        values.pop("sys_id", None)
 
         url, username, password = self.servicenow_helper.get_auth_params(
             self.configuration
         )
-        endpoint = f"{url}/api/now/table/{table}"
+        endpoint = f"{url}{TABLE_ENDPOINT.format(table=table)}"
 
         self.logger.info(
             f"{self.log_prefix}: Creating an {ticket_type} for "
             f"{event_type} ID {alert.id} on {PLATFORM_NAME}."
         )
-        headers = self.servicenow_helper.basic_auth(username, password)
-        headers.update({
-            "Content-Type": "application/json",
-        })
+        headers = self.servicenow_helper.get_headers(
+            username, password, with_content_type=True
+        )
 
         try:
             response = self.servicenow_helper.api_helper(
@@ -301,36 +674,42 @@ class ServiceNowITSMPlugin(PluginBase):
 
             result = response.get("result", {})
             sys_id = result.get("sys_id", "")
+            if not sys_id:
+                err_msg = (
+                    "Received an empty ticket ID in the response while "
+                    f"creating {ticket_type} for {event_type} ID "
+                    f"'{alert.id}' on {PLATFORM_NAME}."
+                )
+                self.logger.error(
+                    message=f"{self.log_prefix}: {err_msg}",
+                    details=f"Received response: {response}",
+                )
+                raise ServiceNowITSMPluginException(err_msg)
             severity = getattr(alert, "rawData").get(
                 "severity", Severity.OTHER
             )
-            state = getattr(alert, "rawData").get(
-                "status", TaskStatus.OTHER
-            )
+            state = getattr(alert, "rawData").get("status", TaskStatus.OTHER)
             task = Task(
                 id=sys_id,
                 status=state if state else TaskStatus.OTHER,
                 severity=severity if severity else Severity.OTHER,
-                link=(
-                    f"{url}/{table}.do?sys_id={sys_id}"
-                ),
-                dataItem=alert
+                link=f"{url}/{table}.do?sys_id={sys_id}",
+                dataItem=alert,
             )
             self.logger.info(
                 f"{self.log_prefix}: Successfully created an {ticket_type} "
-                f"with ID '{sys_id}' "
-                f"for {event_type} ID '{alert.id}' on {PLATFORM_NAME}."
+                f"with ID '{sys_id}' for {event_type} ID '{alert.id}' on "
+                f"{PLATFORM_NAME}."
             )
             results = self.fetch_assignee_usernames([result], assignee_field)
-            result = results[0] if len(results) > 0 else {}
-            task = self.update_task_details(task, {
-                status_field: result.get(status_field, ""),
-                severity_field: (
-                    result.get(severity_field, "") if table != "sn_grc_issue"
-                    else result.get("impact", "")
-                ),
-                assignee_field: result.get("user_name", "")
-            }, severity_field, status_field, assignee_field)
+            result = results[0] if results else {}
+            task = self.update_task_details(
+                task,
+                self._build_task_data(result, table_config),
+                severity_field,
+                status_field,
+                assignee_field,
+            )
             return task
         except ServiceNowITSMPluginException:
             raise
@@ -341,335 +720,81 @@ class ServiceNowITSMPlugin(PluginBase):
             )
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {exp}",
-                details=str(traceback.format_exc()),
-            )
-            raise ServiceNowITSMPluginException(err_msg)
-
-    def fetch_assignee_usernames(self, results: list, assignee_field):
-        """Fetch assignee usernames from ServiceNow.
-
-        Args:
-            results (list): List of results.
-            assignee_field (str): Assignee field based on table.
-        """
-        usernames_ids = {}
-        for result in results:
-            usernames_ids[result["sys_id"]] = ""
-            assignee = result.get(assignee_field, {})
-            if assignee and isinstance(assignee, dict):
-                usernames_ids[result["sys_id"]] = assignee.get("value", "")
-        ids = list(usernames_ids.values())
-
-        self.logger.info(
-            f"{self.log_prefix}: Fetching assignee "
-            f"from {PLATFORM_NAME}."
-        )
-        url, username, password = self.servicenow_helper.get_auth_params(
-            self.configuration
-        )
-        endpoint = f"{url}/api/now/table/sys_user"
-        headers = self.servicenow_helper.basic_auth(username, password)
-
-        params = {
-            "sysparm_fields": "sys_id,email",
-            "sysparm_query": (f"sys_idIN{','.join(ids)}"),
-        }
-
-        try:
-            response = self.servicenow_helper.api_helper(
-                url=endpoint,
-                method="GET",
-                headers=headers,
-                params=params,
-                verify=self.ssl_validation,
-                proxies=self.proxy,
-                logger_msg=(
-                    f"fetching assignee from {PLATFORM_NAME} platform"
+                details=traceback.format_exc(),
+                resolution=(
+                    "Ensure that the queue mapping is valid and the "
+                    "configured Username has sufficient permissions to "
+                    f"create {ticket_type}s on {PLATFORM_NAME}."
                 ),
             )
-
-            user_results = response.get("result", [])
-            user_results = {
-                result["sys_id"]: result.get("email", None)
-                for result in user_results
-            }
-        except ServiceNowITSMPluginException:
-            raise
-        except Exception as exp:
-            err_msg = (
-                "Error occurred while fetching assignee "
-                f"from {PLATFORM_NAME}."
-            )
-            self.logger.error(
-                message=f"{self.log_prefix}: {err_msg} Error: {exp}",
-                details=str(traceback.format_exc()),
-            )
             raise ServiceNowITSMPluginException(err_msg)
-
-        for result in results:
-            if not usernames_ids[result["sys_id"]]:
-                result["user_name"] = ""
-                continue
-            result["user_name"] = user_results.get(
-                usernames_ids[result["sys_id"]], ""
-            )
-        return results
-
-    def update_task_details(
-        self,
-        task: dict,
-        servicenow_data: dict,
-        severity_field,
-        status_field,
-        assignee_field
-    ):
-        """Update task fields with ServiceNow data.
-
-        Args:
-            task (Task): CE task.
-            servicenow_data (dict): Updated data from servicenow.
-            severity_field (str): Severity field based on table.
-            status_field (str): Status field based on table.
-            assignee_field (str): Assignee field based on table.
-        """
-
-        if task.updatedValues:
-            task.updatedValues.status = servicenow_data.get(
-                status_field, TaskStatus.OTHER
-            )
-            task.updatedValues.oldAssignee = task.dataItem.rawData.get(
-                "assignee", None
-            )
-        else:
-            # Status and Severity are managed from core
-            task.updatedValues = UpdatedTaskValues(
-                assignee=None,
-                oldAssignee=task.dataItem.rawData.get("assignee", None),
-            )
-
-        if servicenow_data[severity_field]:
-            task.updatedValues.severity = servicenow_data.get(
-                severity_field, Severity.OTHER
-            )
-
-        if servicenow_data[assignee_field]:
-            task.updatedValues.assignee = servicenow_data[assignee_field]
-
-        task.status = servicenow_data.get(status_field, TaskStatus.OTHER)
-        task.severity = servicenow_data.get(severity_field, Severity.OTHER)
-        return task
-
-    def sync_states(self, tasks: List[Task]) -> List[Task]:
-        """Sync States.
-
-        Args:
-            tasks (List[Task]): Task list received from Core.
-
-        Returns:
-            List[Task]: Task List with updated status.
-        """
-        status_field = "state"
-        severity_field = "severity"
-        assignee_field = "assigned_to"
-
-        table = self.configuration.get("auth", {}).get("table", "")
-        if table == "custom_table":
-            custom_fields = self.configuration.get("params", {})
-            (
-                table,
-                status_field,
-                severity_field,
-                assignee_field,
-                assignment_group_field,
-                update_field
-            ) = self._get_custom_table_fields(custom_fields)
-        ticket_type = "incident"
-        if table == "sn_grc_issue":
-            ticket_type = "issue"
-        self.logger.info(
-            f"{self.log_prefix}: Syncing status for {len(tasks)} "
-            f"tickets with {PLATFORM_NAME} {ticket_type}s."
-        )
-
-        url, username, password = self.servicenow_helper.get_auth_params(
-            self.configuration
-        )
-        endpoint = f"{url}/api/now/table/{table}"
-        headers = self.servicenow_helper.basic_auth(username, password)
-
-        sys_ids = [task.id for task in tasks]
-        skip, size = 0, 50
-        batch_count = 1
-        data = {}
-
-        while True:
-            try:
-                ids = sys_ids[skip:skip + size]
-                if not ids:
-                    break
-
-                params = {
-                    "sysparm_fields": (
-                        f"sys_id,{status_field},{severity_field},"
-                        f"{assignee_field}" + ",impact"
-                        if table == "sn_grc_issue" else "",
-                    ),
-                    "sysparm_query": (f"sys_idIN{','.join(ids)}"),
-                }
-                response = self.servicenow_helper.api_helper(
-                    url=endpoint,
-                    method="GET",
-                    params=params,
-                    headers=headers,
-                    verify=self.ssl_validation,
-                    proxies=self.proxy,
-                    logger_msg=(
-                        f"getting {ticket_type}s for batch {batch_count} "
-                        f"from {PLATFORM_NAME}"
-                    ),
-                )
-                results = response.get("result", [])
-                results = self.fetch_assignee_usernames(
-                    results, assignee_field
-                )
-
-                for result in results:
-                    data[result.get("sys_id", "")] = {
-                        status_field: result.get(status_field, ""),
-                        severity_field: (
-                            result.get(severity_field, "")
-                            if table != "sn_grc_issue"
-                            else result.get("impact", "")
-                        ),
-                        assignee_field: result.get("user_name", "")
-                    }
-                skip += size
-                batch_count += 1
-            except ServiceNowITSMPluginException:
-                raise
-            except Exception as exp:
-                err_msg = (
-                    f"Error occurred while getting {ticket_type}s "
-                    f"from {PLATFORM_NAME}."
-                )
-                self.logger.error(
-                    message=f"{self.log_prefix}: {err_msg} Error: {exp}",
-                    details=str(traceback.format_exc()),
-                )
-                raise ServiceNowITSMPluginException(err_msg)
-
-        for task in tasks:
-            if data.get(task.id, ""):
-                task = self.update_task_details(
-                    task,
-                    data.get(task.id),
-                    severity_field,
-                    status_field,
-                    assignee_field
-                )
-            else:
-                if (
-                    task.updatedValues.status and
-                    task.updatedValues.status != TaskStatus.DELETED
-                ):
-                    task.updatedValues.oldStatus, task.updatedValues.status = (
-                        task.updatedValues.status, TaskStatus.DELETED
-                    )
-                else:
-                    task.updatedValues.oldStatus, task.updatedValues.status = (
-                        TaskStatus.DELETED, TaskStatus.DELETED
-                    )
-                task.status = TaskStatus.DELETED
-        self.logger.info(
-            f"{self.log_prefix}: Successfully synced "
-            f"{len(tasks)} ticket(s) with the {PLATFORM_NAME}."
-        )
-        return tasks
 
     def update_task(
         self,
         task: Task,
         alert: Union[Alert, Event],
-        mappings,
-        queue,
-        upsert_task=False
+        mappings: Dict,
+        queue: Queue,
+        upsert_task: bool = False,
     ) -> Task:
-        """Add a comment in existing ServiceNow incident/issue.
+        """Update an existing ServiceNow incident/issue.
+
+        When ``upsert_task`` is True the mapped fields (and the resolved
+        manager assignee, if mapped) are written to the ticket in addition
+        to the work note; otherwise only a dedup work note is added.
 
         Args:
-            task (Task): Existing task/ticket created in Tickets page.
-            alert (Alert): Alert or Event received from tenant.
+            task (Task): Existing task/ticket created in the Tickets page.
+            alert (Union[Alert, Event]): Alert or Event received from the
+                tenant.
             mappings (Dict): Dictionary of the mapped fields.
             queue (Queue): Selected queue configuration.
-            upsert_task (bool): True if incident event.
+            upsert_task (bool): True if this is an incident event.
 
         Returns:
-            Task: Task containing ticket ID and status.
+            Task: Task containing the ticket ID and status.
         """
         updates = {}
-        config_params = self.configuration.get("params", {})
-        auth_params = self.configuration.get("auth", {})
-        status_field = "state"
-        severity_field = "severity"
-        assignee_field = "assigned_to"
-        update_field = "work_notes"
+        table_config = self.servicenow_helper.get_table_config(
+            self.configuration
+        )
+        table = table_config.table
+        status_field = table_config.status_field
+        severity_field = table_config.severity_field
+        assignee_field = table_config.assignee_field
+        update_field = table_config.update_field
 
-        table = auth_params.get("table", "")
-        if table == "custom_table":
-            (
-                table,
-                status_field,
-                severity_field,
-                assignee_field,
-                assignment_group_field,
-                update_field
-            ) = self._get_custom_table_fields(config_params)
+        event_type = self._get_event_type(alert)
+        ticket_type = self._get_ticket_type(table)
 
-        event_type = "Alert"
-        if "eventType" in alert.model_dump():
-            event_type = "Event"
         if upsert_task:
-            if config_params.get("default_mappings", "no") == "yes":
-                mappings_default = self.get_default_mappings(
-                    self.configuration
-                )
-                mappings_list = mappings_default.get("mappings", [])
-                mappings = self.map_values(alert, mappings_list)
-            if "sys_id" in mappings:
-                mappings.pop("sys_id")  # special field; do not allow overriding # noqa
-            for key, value in list(mappings.items()):
-                if type(value) is not str:
-                    mappings[key] = str(value)
+            mappings = self._apply_default_mappings(alert, mappings)
+            # 'sys_id' is a special field; do not allow overriding it.
+            mappings.pop("sys_id", None)
+            # Resolve the manager assignee (no-op unless the virtual field
+            # is mapped) and coerce all mapped values to strings.
+            self._resolve_and_stringify_mappings(
+                mappings, alert, assignee_field
+            )
             updates = mappings
 
         if mappings.get(update_field, None):
             data = mappings.get(update_field, "")
         else:
             data = (
-                f"New {event_type.lower()} with ID "
-                f"'{alert.id}' received at {str(alert.timestamp)}."
+                f"New {event_type.lower()} with ID '{alert.id}' received "
+                f"at {str(alert.timestamp)}."
             )
         updates[update_field] = data
 
-        ticket_type = "incident"
-        if table == "sn_grc_issue":
-            ticket_type = "issue"
         url, username, password = self.servicenow_helper.get_auth_params(
             self.configuration
         )
-        endpoint = f"{url}/api/now/table/{table}/{task.id}"
-
-        headers = self.servicenow_helper.basic_auth(username, password)
-        headers.update({
-            "Content-Type": "application/json",
-        })
-        params = {
-            "sysparm_fields": (
-                f"sys_id,{status_field},{severity_field},"
-                f"{assignee_field}" + ",impact"
-                if table == "sn_grc_issue" else "",
-            )
-        }
+        endpoint = f"{url}{TABLE_ENDPOINT.format(table=table)}/{task.id}"
+        headers = self.servicenow_helper.get_headers(
+            username, password, with_content_type=True
+        )
+        params = {"sysparm_fields": self._build_sysparm_fields(table_config)}
 
         log_msg = (
             f"updating an {ticket_type} having ID '{task.id}' "
@@ -695,16 +820,15 @@ class ServiceNowITSMPlugin(PluginBase):
                 results = self.fetch_assignee_usernames(
                     [result], assignee_field
                 )
-                result = results[0] if len(results) > 0 else {}
+                result = results[0] if results else {}
                 task.dataItem = alert
-                task = self.update_task_details(task, {
-                    status_field: result.get(status_field),
-                    severity_field: (
-                        result.get(severity_field) if table != "sn_grc_issue"
-                        else result.get("impact", "")
-                    ),
-                    assignee_field: result.get("user_name", "")
-                }, severity_field, status_field, assignee_field)
+                task = self.update_task_details(
+                    task,
+                    self._build_task_data(result, table_config),
+                    severity_field,
+                    status_field,
+                    assignee_field,
+                )
                 self.logger.info(
                     f"{self.log_prefix}: Successfully updated an "
                     f"{ticket_type} having ID {task.id} on "
@@ -712,18 +836,7 @@ class ServiceNowITSMPlugin(PluginBase):
                 )
                 return task
             elif response.status_code == 404:
-                if (
-                    task.updatedValues.status and
-                    task.updatedValues.status != TaskStatus.DELETED
-                ):
-                    task.updatedValues.oldStatus, task.updatedValues.status = (
-                        task.updatedValues.status, TaskStatus.DELETED
-                    )
-                else:
-                    task.updatedValues.oldStatus, task.updatedValues.status = (
-                        TaskStatus.DELETED, TaskStatus.DELETED
-                    )
-                task.status = TaskStatus.DELETED
+                self._mark_task_deleted(task)
                 self.logger.info(
                     f"{self.log_prefix}: {ticket_type.title()} "
                     f"with sys_id '{task.id}' no longer exists on "
@@ -731,112 +844,160 @@ class ServiceNowITSMPlugin(PluginBase):
                 )
                 return task
             else:
-                self.servicenow_helper.handle_error(
-                    response,
-                    log_msg,
-                    False
-                )
+                # handle_error raises for genuine errors; for a no-content
+                # success (e.g. 204) it returns without raising, in which
+                # case the update succeeded, so return the task as-is.
+                self.servicenow_helper.handle_error(response, log_msg, False)
+                return task
         except ServiceNowITSMPluginException:
             raise
         except Exception as exp:
             err_msg = f"Error occurred while {log_msg}."
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {exp}",
-                details=str(traceback.format_exc()),
+                details=traceback.format_exc(),
+                resolution=(
+                    f"Ensure that the {ticket_type} exists and the "
+                    "configured Username has sufficient permissions to "
+                    f"update {ticket_type}s on {PLATFORM_NAME}."
+                ),
             )
             raise ServiceNowITSMPluginException(err_msg)
 
-    def _validate_url(self, url: str) -> bool:
-        """Validate the given URL.
+    def sync_states(self, tasks: List[Task]) -> List[Task]:
+        """Sync ticket status, severity and assignee from ServiceNow.
 
         Args:
-            url (str): URL to validate.
+            tasks (List[Task]): Task list received from Core.
 
         Returns:
-            bool: True if URL is valid else False.
+            List[Task]: Task list with updated status.
         """
-        parsed = urlparse(url.strip())
-        return parsed.scheme and parsed.netloc
+        table_config = self.servicenow_helper.get_table_config(
+            self.configuration
+        )
+        table = table_config.table
+        status_field = table_config.status_field
+        severity_field = table_config.severity_field
+        assignee_field = table_config.assignee_field
 
-    def _validate_connectivity(
-        self,
-        url: str,
-        username: str,
-        password: str,
-        table_name: str,
-        configuration: dict
-    ) -> ValidationResult:
-        """Validate connectivity with ServiceNow server.
+        ticket_type = self._get_ticket_type(table)
+        self.logger.info(
+            f"{self.log_prefix}: Syncing status for {len(tasks)} "
+            f"tickets with {PLATFORM_NAME} {ticket_type}s."
+        )
 
-        Args:
-            url (str): Instance URL.
-            username (str): Instance username.
-            password (str): Instance password.
-            table_name (str): Selected destination table.
-            configuration (dict): Configuration dictionary.
+        url, username, password = self.servicenow_helper.get_auth_params(
+            self.configuration
+        )
+        endpoint = f"{url}{TABLE_ENDPOINT.format(table=table)}"
+        headers = self.servicenow_helper.get_headers(username, password)
+        sysparm_fields = self._build_sysparm_fields(table_config)
 
-        Returns:
-            ValidationResult: Validation Result.
-        """
-        try:
-            logger_msg = (
-                f"connectivity with {PLATFORM_NAME} server"
-            )
+        sys_ids = [task.id for task in tasks]
+        skip, size = 0, BATCH_SIZE
+        batch_count = 1
+        data = {}
+        # sys_ids that were successfully queried this cycle. Only these are
+        # eligible to be marked DELETED when absent from the response; tasks
+        # in a failed batch are left untouched so a transient error does not
+        # wrongly delete them.
+        processed_ids = set()
 
-            if table_name == "custom_table":
-                return ValidationResult(
-                    success=True,
-                    message=(
-                        f"Validation successful for {MODULE_NAME} "
-                        f"{self.plugin_name} plugin configuration."
+        while True:
+            ids = sys_ids[skip:skip + size]
+            if not ids:
+                break
+            try:
+                params = {
+                    "sysparm_fields": sysparm_fields,
+                    "sysparm_query": f"sys_idIN{','.join(ids)}",
+                }
+                response = self.servicenow_helper.api_helper(
+                    url=endpoint,
+                    method="GET",
+                    params=params,
+                    headers=headers,
+                    verify=self.ssl_validation,
+                    proxies=self.proxy,
+                    logger_msg=(
+                        f"getting {ticket_type}s for batch {batch_count} "
+                        f"from {PLATFORM_NAME}"
                     ),
                 )
+                results = response.get("result", [])
+                results = self.fetch_assignee_usernames(
+                    results, assignee_field
+                )
 
-            self.logger.debug(
-                f"{self.log_prefix}: Validating {logger_msg}."
-            )
-            headers = self.servicenow_helper.basic_auth(
-                username=username, password=password
-            )
-            api_endpoint = f"{url}/api/now/table/{table_name}"
-            params = {"sysparm_limit": 1}
-            self.servicenow_helper.api_helper(
-                url=api_endpoint,
-                method="GET",
-                params=params,
-                headers=headers,
-                verify=self.ssl_validation,
-                proxies=self.proxy,
-                logger_msg=(
-                    f"validating {logger_msg}"
-                ),
-                is_validation=True,
-            )
+                for result in results:
+                    data[result.get("sys_id", "")] = self._build_task_data(
+                        result, table_config
+                    )
+                processed_ids.update(ids)
+            except Exception as exp:
+                # A single batch failure must not abort the whole sync
+                # cycle. Log and continue; the tasks in this batch are left
+                # unchanged (not marked DELETED) and retried next cycle.
+                self.logger.error(
+                    message=(
+                        f"{self.log_prefix}: Error occurred while getting "
+                        f"{ticket_type}s for batch {batch_count} from "
+                        f"{PLATFORM_NAME}. Skipping this batch for the "
+                        f"current sync cycle. Error: {exp}"
+                    ),
+                    details=traceback.format_exc(),
+                    resolution=(
+                        "Ensure that the configured Username has "
+                        f"sufficient permissions to read {ticket_type}s "
+                        f"on {PLATFORM_NAME}."
+                    ),
+                )
+            skip += size
+            batch_count += 1
 
-            validation_msg = (
-                f"Successfully validated {logger_msg}."
-            )
-            self.logger.debug(
-                f"{self.log_prefix}: {validation_msg}"
-            )
+        for task in tasks:
+            if data.get(task.id, ""):
+                task = self.update_task_details(
+                    task,
+                    data.get(task.id),
+                    severity_field,
+                    status_field,
+                    assignee_field,
+                )
+            elif task.id in processed_ids:
+                # Successfully queried but not returned by ServiceNow, so
+                # the ticket no longer exists on the platform.
+                self._mark_task_deleted(task)
+            # else: this task's batch failed this cycle; leave it unchanged.
+        self.logger.info(
+            f"{self.log_prefix}: Successfully synced "
+            f"{len(tasks)} ticket(s) with the {PLATFORM_NAME}."
+        )
+        return tasks
+
+    # ------------------------------------------------------------------
+    # Validation
+    # ------------------------------------------------------------------
+
+    def validate_step(self, name, configuration):
+        """Validate a given configuration step.
+
+        Args:
+            name (str): Configuration step name.
+            configuration (dict): Configuration parameters dictionary.
+
+        Returns:
+            ValidationResult: Validation result with success flag and
+                message.
+        """
+        if name == "auth":
+            return self._validate_auth(configuration)
+        elif name == "params":
+            return self._validate_params(configuration)
+        else:
             return ValidationResult(
-                success=True,
-                message=validation_msg,
-            )
-        except ServiceNowITSMPluginException as exp:
-            return ValidationResult(
-                success=False,
-                message=f"{str(exp)}"
-            )
-        except Exception as exp:
-            err_msg = "Unexpected validation error occurred."
-            self.logger.error(
-                message=f"{self.log_prefix}: {err_msg} Error: {exp}",
-                details=str(traceback.format_exc()),
-            )
-            return ValidationResult(
-                success=False,
-                message=f"{err_msg} Check logs for more details.",
+                success=True, message="Validation successful."
             )
 
     def _validate_auth(self, configuration) -> ValidationResult:
@@ -849,86 +1010,60 @@ class ServiceNowITSMPlugin(PluginBase):
             ValidationResult: Validation result.
         """
         auth_params = configuration.get("auth", {})
-        validation_error = "Validation error occurred."
+        validation_err_msg = "Validation error occurred."
 
-        # Validate URL
         url = auth_params.get("url", "").strip().strip("/")
-        if not url:
-            err_msg = "Instance URL is required Authentication parameter."
-            self.logger.error(
-                f"{self.log_prefix}: {validation_error} {err_msg}"
-            )
-            return ValidationResult(success=False, message=err_msg)
-        elif not (
-            isinstance(url, str) and self._validate_url(url)
+        if result := self.servicenow_helper.validate_parameters(
+            field_name="Instance URL",
+            field_value=url,
+            field_type=str,
+            parameter_type="Authentication",
+            custom_validation_func=self.servicenow_helper._validate_url,
+            validation_err_msg=validation_err_msg,
         ):
-            err_msg = (
-                "Invalid Instance URL provided in Authentication parameters."
-            )
-            self.logger.error(
-                f"{self.log_prefix}: {validation_error} {err_msg}"
-            )
-            return ValidationResult(success=False, message=err_msg)
+            return result
 
-        # Validate username
         username = auth_params.get("username", "").strip()
-        if not username:
-            err_msg = "Username is required Authentication parameter."
-            self.logger.error(
-                f"{self.log_prefix}: {validation_error} {err_msg}"
-            )
-            return ValidationResult(success=False, message=err_msg)
-        elif not isinstance(username, str):
-            err_msg = (
-                "Invalid username provided in Authentication parameters."
-            )
-            self.logger.error(
-                f"{self.log_prefix}: {validation_error} {err_msg}"
-            )
-            return ValidationResult(success=False, message=err_msg)
+        if result := self.servicenow_helper.validate_parameters(
+            field_name="Username",
+            field_value=username,
+            field_type=str,
+            parameter_type="Authentication",
+            validation_err_msg=validation_err_msg,
+        ):
+            return result
 
-        # Validate password
         password = auth_params.get("password")
-        if not password:
-            err_msg = "Password is required Authentication parameter."
-            self.logger.error(
-                f"{self.log_prefix}: {validation_error} {err_msg}"
-            )
-            return ValidationResult(success=False, message=err_msg)
-        elif not isinstance(password, str):
-            err_msg = (
-                "Invalid password provided in Authentication parameters."
-            )
-            self.logger.error(
-                f"{self.log_prefix}: {validation_error} {err_msg}"
-            )
-            return ValidationResult(success=False, message=err_msg)
+        if result := self.servicenow_helper.validate_parameters(
+            field_name="Password",
+            field_value=password,
+            field_type=str,
+            parameter_type="Authentication",
+            validation_err_msg=validation_err_msg,
+        ):
+            return result
 
-        # Validate table field
         table = auth_params.get("table", "")
-        if not table:
-            err_msg = "Destination Table is required Authentication parameter."
-            self.logger.error(
-                f"{self.log_prefix}: {validation_error} {err_msg}"
-            )
-            return ValidationResult(success=False, message=err_msg)
-        elif table not in [
-            "sn_si_incident",
-            "incident",
-            "sn_grc_issue",
-            "custom_table",
-        ]:
+        if result := self.servicenow_helper.validate_parameters(
+            field_name="Destination Table",
+            field_value=table,
+            field_type=str,
+            parameter_type="Authentication",
+            validation_err_msg=validation_err_msg,
+        ):
+            return result
+        if table not in VALID_TABLES:
             err_msg = (
                 "Invalid 'Destination Table' provided in Authentication "
-                "parameters. Valid selections are 'Security Incidents' "
-                "or 'Incidents' or 'GRC Issues' or 'Custom Table'."
+                "parameters. Valid selections are 'Security Incidents', "
+                "'Incidents', 'GRC Issues' or 'Custom Table'."
             )
             self.logger.error(
-                f"{self.log_prefix}: {validation_error} {err_msg}"
+                f"{self.log_prefix}: {validation_err_msg} {err_msg}"
             )
             return ValidationResult(success=False, message=err_msg)
 
-        # Validate connectivity with ServiceNow server.
+        # Validate connectivity with the ServiceNow server.
         return self._validate_connectivity(
             url=url,
             username=username,
@@ -937,35 +1072,77 @@ class ServiceNowITSMPlugin(PluginBase):
             configuration=configuration,
         )
 
+    def _validate_params(self, configuration) -> ValidationResult:
+        """Validate plugin configuration parameters.
+
+        Args:
+            configuration (Dict): Configuration dictionary.
+
+        Returns:
+            ValidationResult: Validation result with success flag and
+                message.
+        """
+        params = configuration.get("params", {})
+        auth_params = configuration.get("auth", {})
+        validation_err_msg = "Validation error occurred."
+        table = auth_params.get("table", "")
+
+        if table == CUSTOM_TABLE:
+            return self._validate_custom_table(
+                params, auth_params, validation_err_msg
+            )
+
+        default_mappings = params.get("default_mappings", "")
+        if result := self.servicenow_helper.validate_parameters(
+            field_name="Use Default Mappings",
+            field_value=default_mappings,
+            field_type=str,
+            parameter_type="Configuration",
+            validation_err_msg=validation_err_msg,
+        ):
+            return result
+        if default_mappings not in ["yes", "no"]:
+            err_msg = (
+                "Invalid 'Use Default Mappings' provided in Configuration "
+                "parameters. Valid selections are 'Yes' or 'No'."
+            )
+            self.logger.error(
+                f"{self.log_prefix}: {validation_err_msg} {err_msg}"
+            )
+            return ValidationResult(success=False, message=err_msg)
+
+        validation_msg = "Successfully validated Configuration Parameters."
+        self.logger.debug(f"{self.log_prefix}: {validation_msg}")
+        return ValidationResult(success=True, message=validation_msg)
+
     def _validate_custom_table(
         self,
         config_params: dict,
         auth_params: dict,
-        validation_error: str
-    ):
-        """Check custom table and fields are available \
-            on the ServiceNow or not.
+        validation_err_msg: str,
+    ) -> ValidationResult:
+        """Check the custom table and its fields exist on ServiceNow.
 
         Args:
             config_params (Dict): Configuration parameters dictionary.
             auth_params (Dict): Authentication parameters dictionary.
-            validation_error (str): Validation error message.
+            validation_err_msg (str): Validation error message prefix.
 
         Returns:
-            ValidationResult: Validation Result.
+            ValidationResult: Validation result.
         """
         try:
-            custom_table_name = (
-                config_params.get("custom_table_name", "").strip()
-            )
-            if not custom_table_name:
-                err_msg = (
-                    "Custom Table Name is required Configuration Parameter."
-                )
-                self.logger.error(
-                    f"{self.log_prefix}: {validation_error} {err_msg}"
-                )
-                return ValidationResult(success=False, message=err_msg)
+            custom_table_name = config_params.get(
+                "custom_table_name", ""
+            ).strip()
+            if result := self.servicenow_helper.validate_parameters(
+                field_name="Custom Table Name",
+                field_value=custom_table_name,
+                field_type=str,
+                parameter_type="Configuration",
+                validation_err_msg=validation_err_msg,
+            ):
+                return result
 
             url = auth_params.get("url", "").strip().strip("/")
             username = auth_params.get("username", "").strip()
@@ -974,21 +1151,19 @@ class ServiceNowITSMPlugin(PluginBase):
                 f"custom table '{custom_table_name}' and its fields on "
                 f"the {PLATFORM_NAME}"
             )
-            self.logger.debug(
-                f"{self.log_prefix}: Validating {logger_msg}."
-            )
-            headers = self.servicenow_helper.basic_auth(
+            self.logger.debug(f"{self.log_prefix}: Validating {logger_msg}.")
+            headers = self.servicenow_helper.get_headers(
                 username=username, password=password
             )
-            custom_fields = []
-
-            endpoint = f"{url}/api/now/table/sys_dictionary"
+            endpoint = f"{url}{SYS_DICTIONARY_ENDPOINT}"
             params = {
                 "sysparm_query": f"name={custom_table_name}",
                 "sysparm_fields": "element",
                 "sysparm_offset": 0,
                 "sysparm_limit": LIMIT,
             }
+
+            custom_fields = []
             while True:
                 response = self.servicenow_helper.api_helper(
                     url=endpoint,
@@ -997,34 +1172,31 @@ class ServiceNowITSMPlugin(PluginBase):
                     params=params,
                     verify=self.ssl_validation,
                     proxies=self.proxy,
-                    logger_msg=(
-                        f"validating {logger_msg}"
-                    ),
+                    logger_msg=f"validating {logger_msg}",
                     is_validation=True,
                 )
-
                 fields = response.get("result", [])
-                if not fields:
-                    err_msg = (
-                        f"Custom table '{custom_table_name}' is not "
-                        "present on the ServiceNow. Verify the custom "
-                        "table provided in Configuration Parameters."
-                    )
-                    self.logger.error(
-                        f"{self.log_prefix}: {validation_error} {err_msg}"
-                    )
-                    return ValidationResult(success=False, message=err_msg)
                 custom_fields.extend(fields)
-
                 if len(fields) < LIMIT:
                     break
                 params["sysparm_offset"] += LIMIT
 
-            custom_table_fields = [item["element"] for item in fields]
+            if not custom_fields:
+                err_msg = (
+                    f"Custom table '{custom_table_name}' is not present on "
+                    "the ServiceNow. Verify the custom table provided in "
+                    "Configuration Parameters."
+                )
+                self.logger.error(
+                    f"{self.log_prefix}: {validation_err_msg} {err_msg}"
+                )
+                return ValidationResult(success=False, message=err_msg)
+
+            custom_table_fields = [item["element"] for item in custom_fields]
             for key, value in config_params.items():
                 if (
-                    key == "custom_table_name" or
-                    key not in CUSTOM_TABLE_CONFIG_FIELDS
+                    key == "custom_table_name"
+                    or key not in CUSTOM_TABLE_CONFIG_FIELDS
                 ):
                     continue
                 value = value.strip()
@@ -1037,112 +1209,105 @@ class ServiceNowITSMPlugin(PluginBase):
                         "provided in Configuration Parameters."
                     )
                     self.logger.error(
-                        f"{self.log_prefix}: {validation_error} {err_msg}"
+                        f"{self.log_prefix}: {validation_err_msg} {err_msg}"
                     )
                     return ValidationResult(success=False, message=err_msg)
 
-            validation_msg = (
-                f"Successfully validated {logger_msg}."
-            )
-            self.logger.debug(
-                f"{self.log_prefix}: {validation_msg}"
-            )
-            return ValidationResult(
-                success=True,
-                message=validation_msg
-            )
+            validation_msg = f"Successfully validated {logger_msg}."
+            self.logger.debug(f"{self.log_prefix}: {validation_msg}")
+            return ValidationResult(success=True, message=validation_msg)
         except ServiceNowITSMPluginException as exp:
-            return ValidationResult(
-                success=False,
-                message=f"{str(exp)}"
-            )
+            return ValidationResult(success=False, message=str(exp))
         except Exception as exp:
             err_msg = "Unexpected validation error occurred."
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} Error: {exp}",
-                details=str(traceback.format_exc()),
+                details=traceback.format_exc(),
+                resolution=(
+                    "Ensure that the Instance URL and Authentication "
+                    "parameters provided in the configuration are correct."
+                ),
             )
             return ValidationResult(
                 success=False,
                 message=f"{err_msg} Check logs for more details.",
             )
 
-    def _validate_params(self, configuration):
-        """Validate plugin configuration parameters.
+    def _validate_connectivity(
+        self,
+        url: str,
+        username: str,
+        password: str,
+        table_name: str,
+        configuration: dict,
+    ) -> ValidationResult:
+        """Validate connectivity with the ServiceNow server.
 
         Args:
-            configuration (Dict): Configuration dictionary.
+            url (str): Instance URL.
+            username (str): Instance username.
+            password (str): Instance password.
+            table_name (str): Selected destination table.
+            configuration (dict): Configuration dictionary.
 
         Returns:
-            ValidationResult: Validation result with success flag and message.
+            ValidationResult: Validation result.
         """
-        params = configuration.get("params", {})
-        auth_params = configuration.get("auth", {})
-        validation_error = "Validation error occurred."
-        table = auth_params.get("table", "")
+        try:
+            logger_msg = f"connectivity with {PLATFORM_NAME} server"
 
-        if table == "custom_table":
-            return self._validate_custom_table(
-                params,
-                auth_params,
-                validation_error
+            if table_name == CUSTOM_TABLE:
+                return ValidationResult(
+                    success=True,
+                    message=(
+                        f"Validation successful for {MODULE_NAME} "
+                        f"{self.plugin_name} plugin configuration."
+                    ),
+                )
+
+            self.logger.debug(f"{self.log_prefix}: Validating {logger_msg}.")
+            headers = self.servicenow_helper.get_headers(
+                username=username, password=password
+            )
+            api_endpoint = f"{url}{TABLE_ENDPOINT.format(table=table_name)}"
+            params = {"sysparm_limit": 1}
+            self.servicenow_helper.api_helper(
+                url=api_endpoint,
+                method="GET",
+                params=params,
+                headers=headers,
+                verify=self.ssl_validation,
+                proxies=self.proxy,
+                logger_msg=f"validating {logger_msg}",
+                is_validation=True,
             )
 
-        # Validate use default mappings field
-        if table != "custom_table":
-            default_mappings = params.get("default_mappings", "")
-            if not default_mappings:
-                err_msg = (
-                    "Use Default Mappings is required "
-                    "Configuration parameter."
-                )
-                self.logger.error(
-                    f"{self.log_prefix}: {validation_error} {err_msg}"
-                )
-                return ValidationResult(success=False, message=err_msg)
-            elif default_mappings not in ["yes", "no"]:
-                err_msg = (
-                    "Invalid 'Use Default Mappings' provided in "
-                    "Configuration parameters. "
-                    "Valid selections are 'Yes' or 'No'."
-                )
-                self.logger.error(
-                    f"{self.log_prefix}: {validation_error} {err_msg}"
-                )
-                return ValidationResult(success=False, message=err_msg)
-
-        validation_msg = (
-            "Successfully validated Configuration Parameters"
-        )
-        self.logger.debug(
-            f"{self.log_prefix}: {validation_msg}."
-        )
-        return ValidationResult(
-            success=True,
-            message=validation_msg
-        )
-
-    def validate_step(self, name, configuration):
-        """Validate a given configuration step.
-
-        Args:
-            name (str): Configuration step name.
-            configuration (dict): Configuration parameters dictionary.
-
-        Returns:
-            ValidationResult: Validation result with success flag and message.
-        """
-        if name == "auth":
-            return self._validate_auth(configuration)
-        elif name == "params":
-            return self._validate_params(configuration)
-        else:
+            validation_msg = f"Successfully validated {logger_msg}."
+            self.logger.debug(f"{self.log_prefix}: {validation_msg}")
+            return ValidationResult(success=True, message=validation_msg)
+        except ServiceNowITSMPluginException as exp:
+            return ValidationResult(success=False, message=str(exp))
+        except Exception as exp:
+            err_msg = "Unexpected validation error occurred."
+            self.logger.error(
+                message=f"{self.log_prefix}: {err_msg} Error: {exp}",
+                details=traceback.format_exc(),
+                resolution=(
+                    "Ensure that the Instance URL and Authentication "
+                    "parameters provided in the configuration are correct."
+                ),
+            )
             return ValidationResult(
-                success=True, message="Validation successful."
+                success=False,
+                message=f"{err_msg} Check logs for more details.",
             )
+
+    # ------------------------------------------------------------------
+    # Fields, mappings and queues
+    # ------------------------------------------------------------------
 
     def get_available_fields(self, configuration):
-        """Get list of all the available fields.
+        """Get the list of all the available fields.
 
         Args:
             configuration (dict): Configuration parameters dictionary.
@@ -1154,26 +1319,21 @@ class ServiceNowITSMPlugin(PluginBase):
         auth_params = configuration.get("auth", {})
         update_field = "work_notes"
         table = auth_params.get("table", "")
-        if table != "custom_table":
-            default_mappings = config_params.get(
-                "default_mappings", "no"
-            )
+        if table != CUSTOM_TABLE:
+            default_mappings = config_params.get("default_mappings", "no")
             if default_mappings == "yes":
                 return []
 
-        if table == "sn_si_incident":
+        if table == SECURITY_INCIDENT_TABLE:
             query = "name=sn_si_incident^ORname=task^internal_type!=collection"
-        elif table == "incident":
+        elif table == INCIDENT_TABLE:
             query = "name=incident^ORname=task^internal_type!=collection"
-        elif table == "custom_table":
-            (
-                table,
-                status_field,
-                severity_field,
-                assignee_field,
-                assignment_group_field,
-                update_field
-            ) = self._get_custom_table_fields(config_params)
+        elif table == CUSTOM_TABLE:
+            table_config = self.servicenow_helper.get_table_config(
+                configuration
+            )
+            table = table_config.table
+            update_field = table_config.update_field
             query = f"name={table}"
         else:
             query = "name=sn_grc_issue^ORname=task^internal_type!=collection"
@@ -1182,8 +1342,8 @@ class ServiceNowITSMPlugin(PluginBase):
         url, username, password = self.servicenow_helper.get_auth_params(
             configuration
         )
-        endpoint = f"{url}/api/now/table/sys_dictionary"
-        headers = self.servicenow_helper.basic_auth(username, password)
+        endpoint = f"{url}{SYS_DICTIONARY_ENDPOINT}"
+        headers = self.servicenow_helper.get_headers(username, password)
         log_msg = (
             f"fetching list of all the available fields from {PLATFORM_NAME}"
         )
@@ -1215,36 +1375,56 @@ class ServiceNowITSMPlugin(PluginBase):
             except ServiceNowITSMPluginException:
                 raise
             except Exception as error:
-                error_message = "Unexpected error occurred"
                 err_msg = (
-                    f"{error_message} while getting mapping "
+                    "Unexpected error occurred while getting mapping "
                     f"fields from {PLATFORM_NAME}."
                 )
                 self.logger.error(
-                    message=f"{self.log_prefix}: {err_msg} Error: {error}"
+                    message=f"{self.log_prefix}: {err_msg} Error: {error}",
+                    details=traceback.format_exc(),
+                    resolution=(
+                        "Ensure that the configured Username has read "
+                        "access to the 'sys_dictionary' table on "
+                        f"{PLATFORM_NAME}."
+                    ),
                 )
                 raise ServiceNowITSMPluginException(err_msg)
 
         if fields:
-            return [
+            mapping_fields = [
                 MappingField(
                     label=item.get("column_label", ""),
                     value=item.get("element", ""),
-                    updateAble=item.get("element", "") in [update_field]
+                    updateAble=item.get("element", "") in [update_field],
                 )
                 for item in fields
                 if (
-                    not item.get("element", "").startswith("sys_") and
-                    item.get("element", "")
+                    not item.get("element", "").startswith("sys_")
+                    and item.get("element", "")
                 )
             ]
+            # Virtual destination field: assign the ticket to the alert
+            # user's manager. Not a real ServiceNow column; the plugin
+            # intercepts it at ticket creation/update time and injects the
+            # resolved manager sys_id into the assignee field.
+            mapping_fields.append(
+                MappingField(
+                    label=MANAGER_ASSIGNEE_LABEL,
+                    value=MANAGER_ASSIGNEE_FIELD,
+                    updateAble=False,
+                )
+            )
+            return mapping_fields
         else:
             err_msg = (
-                "Error occurred while getting "
-                f"fields from {PLATFORM_NAME}"
+                f"Error occurred while getting fields from {PLATFORM_NAME}"
             )
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg}",
+                resolution=(
+                    "Ensure that the configured Username has read access "
+                    f"to the 'sys_dictionary' table on {PLATFORM_NAME}."
+                ),
             )
             raise ServiceNowITSMPluginException(err_msg)
 
@@ -1257,31 +1437,30 @@ class ServiceNowITSMPlugin(PluginBase):
         Returns:
             dict: Default mappings.
         """
-        config_params = configuration.get("params", {})
         auth_params = configuration.get("auth", {})
         table = auth_params.get("table", "")
-        if table == "custom_table":
-            (
-                table,
-                status_field,
-                severity_field,
-                assignee_field,
-                assignment_group_field,
-                update_field
-            ) = self._get_custom_table_fields(config_params)
+        if table == CUSTOM_TABLE:
+            table_config = self.servicenow_helper.get_table_config(
+                configuration
+            )
+            update_field = table_config.update_field
             return {
                 "mappings": [],
-                "dedup": [
-                    FieldMapping(
-                        extracted_field="custom_message",
-                        destination_field=update_field,
-                        custom_message=(
-                            "Received new alert/event with Alert/Event ID: "
-                            "$id and Alert Name: $alertName, Event Name: "
-                            "$alert_name in Cloud Exchange."
+                "dedup": (
+                    [
+                        FieldMapping(
+                            extracted_field="custom_message",
+                            destination_field=update_field,
+                            custom_message=(
+                                "Received new alert/event with Alert/Event "
+                                "ID: $id and Alert Name: $alertName, Event "
+                                "Name: $alert_name in Cloud Exchange."
+                            ),
                         ),
-                    ),
-                ] if update_field else []
+                    ]
+                    if update_field
+                    else []
+                ),
             }
         return {
             "mappings": [
@@ -1319,7 +1498,7 @@ class ServiceNowITSMPlugin(PluginBase):
         }
 
     def get_queues(self) -> List[Queue]:
-        """Get list of ServiceNow groups as queues.
+        """Get the list of ServiceNow groups as queues.
 
         Returns:
             List[Queue]: List of queues.
@@ -1329,8 +1508,8 @@ class ServiceNowITSMPlugin(PluginBase):
         url, username, password = self.servicenow_helper.get_auth_params(
             self.configuration
         )
-        endpoint = f"{url}/api/now/table/sys_user_group"
-        headers = self.servicenow_helper.basic_auth(username, password)
+        endpoint = f"{url}{SYS_USER_GROUP_ENDPOINT}"
+        headers = self.servicenow_helper.get_headers(username, password)
         log_msg = f"fetching list of {PLATFORM_NAME} groups as queues"
         params = {
             "sysparm_fields": "name,sys_id",
@@ -1357,13 +1536,18 @@ class ServiceNowITSMPlugin(PluginBase):
             except ServiceNowITSMPluginException:
                 raise
             except Exception as error:
-                error_message = "Unexpected error occurred"
                 err_msg = (
-                    f"{error_message} while getting groups "
+                    "Unexpected error occurred while getting groups "
                     f"as queues from {PLATFORM_NAME}."
                 )
                 self.logger.error(
-                    message=f"{self.log_prefix}: {err_msg} Error: {error}"
+                    message=f"{self.log_prefix}: {err_msg} Error: {error}",
+                    details=traceback.format_exc(),
+                    resolution=(
+                        "Ensure that the configured Username has read "
+                        "access to the 'sys_user_group' table on "
+                        f"{PLATFORM_NAME}."
+                    ),
                 )
                 raise ServiceNowITSMPluginException(err_msg)
         if queue:
@@ -1376,15 +1560,17 @@ class ServiceNowITSMPlugin(PluginBase):
                     queue,
                 )
             )
-            queue_list = no_queue_list + queue_list
-            return queue_list
+            return no_queue_list + queue_list
         else:
             err_msg = (
-                "Error occurred while getting "
-                f"queues from {PLATFORM_NAME}"
+                f"Error occurred while getting queues from {PLATFORM_NAME}"
             )
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg}",
+                resolution=(
+                    "Ensure that the configured Username has read access "
+                    f"to the 'sys_user_group' table on {PLATFORM_NAME}."
+                ),
             )
             raise ServiceNowITSMPluginException(err_msg)
 
@@ -1392,18 +1578,16 @@ class ServiceNowITSMPlugin(PluginBase):
         """Get dynamic configuration fields.
 
         Args:
-            name (str): Stepper name
+            name (str): Stepper name.
             configuration (dict): Configuration parameters dictionary.
 
         Returns:
-            dict: List of fields.
+            list: List of fields.
         """
         fields = []
         if name == "params":
-            table = configuration.get("auth", {}).get(
-                "table", ""
-            )
-            if table == "custom_table":
+            table = configuration.get("auth", {}).get("table", "")
+            if table == CUSTOM_TABLE:
                 fields.extend(
                     [
                         {
@@ -1417,7 +1601,7 @@ class ServiceNowITSMPlugin(PluginBase):
                                 "Custom table can be generated from "
                                 "System Definition > Tables > "
                                 "Click on New and provide Name."
-                            )
+                            ),
                         },
                         {
                             "label": "Custom Status",
@@ -1491,7 +1675,7 @@ class ServiceNowITSMPlugin(PluginBase):
                                 "Tables > Select Custom Table > Columns > "
                                 "Update field Column name."
                             ),
-                        }
+                        },
                     ]
                 )
             else:
@@ -1502,14 +1686,8 @@ class ServiceNowITSMPlugin(PluginBase):
                             "key": "default_mappings",
                             "type": "choice",
                             "choices": [
-                                {
-                                    "key": "Yes",
-                                    "value": "yes"
-                                },
-                                {
-                                    "key": "No",
-                                    "value": "no"
-                                }
+                                {"key": "Yes", "value": "yes"},
+                                {"key": "No", "value": "no"},
                             ],
                             "default": "no",
                             "mandatory": True,
@@ -1523,21 +1701,20 @@ class ServiceNowITSMPlugin(PluginBase):
                                 "have read access to the 'sys_dictionary' "
                                 "table. Refer plugin guide for "
                                 "default mapping."
-                            )
+                            ),
                         }
                     ]
                 )
         return fields
 
-    def get_default_custom_mappings(self) -> list[
-        CustomFieldsSectionWithMappings
-    ]:
-        """
-        Get default custom field mappings with values for Netskope ITSM plugin.
+    def get_default_custom_mappings(
+        self,
+    ) -> List[CustomFieldsSectionWithMappings]:
+        """Get default custom field mappings for the Netskope ITSM plugin.
 
         Returns:
-            list[CustomFieldsSectionWithMappings]: List of sections with \
-                field-to-value mappings
+            List[CustomFieldsSectionWithMappings]: List of sections with
+                field-to-value mappings.
         """
         return [
             CustomFieldsSectionWithMappings(
@@ -1546,36 +1723,24 @@ class ServiceNowITSMPlugin(PluginBase):
                 destination_label="ServiceNow",
                 field_mappings=[
                     CustomFieldMapping(
-                        name="New",
-                        mapped_value="1",
-                        is_default=True
+                        name="New", mapped_value="1", is_default=True
                     ),
                     CustomFieldMapping(
-                        name="In Progress",
-                        mapped_value="2",
-                        is_default=True
+                        name="In Progress", mapped_value="2", is_default=True
                     ),
                     CustomFieldMapping(
-                        name="On Hold",
-                        mapped_value="3",
-                        is_default=True
+                        name="On Hold", mapped_value="3", is_default=True
                     ),
                     CustomFieldMapping(
-                        name="Closed",
-                        mapped_value="7",
-                        is_default=True
+                        name="Closed", mapped_value="7", is_default=True
                     ),
                     CustomFieldMapping(
-                        name="Deleted",
-                        mapped_value="",
-                        is_default=True
+                        name="Deleted", mapped_value="", is_default=True
                     ),
                     CustomFieldMapping(
-                        name="Other",
-                        mapped_value="",
-                        is_default=True
+                        name="Other", mapped_value="", is_default=True
                     ),
-                ]
+                ],
             ),
             CustomFieldsSectionWithMappings(
                 section="severity",
@@ -1583,35 +1748,25 @@ class ServiceNowITSMPlugin(PluginBase):
                 destination_label="ServiceNow",
                 field_mappings=[
                     CustomFieldMapping(
-                        name="Critical",
-                        mapped_value="",
-                        is_default=True
+                        name="Critical", mapped_value="", is_default=True
                     ),
                     CustomFieldMapping(
-                        name="High",
-                        mapped_value="1",
-                        is_default=True
+                        name="High", mapped_value="1", is_default=True
                     ),
                     CustomFieldMapping(
-                        name="Medium",
-                        mapped_value="2",
-                        is_default=True
+                        name="Medium", mapped_value="2", is_default=True
                     ),
                     CustomFieldMapping(
-                        name="Low",
-                        mapped_value="3",
-                        is_default=True
+                        name="Low", mapped_value="3", is_default=True
                     ),
                     CustomFieldMapping(
                         name="Informational",
                         mapped_value="",
-                        is_default=True
+                        is_default=True,
                     ),
                     CustomFieldMapping(
-                        name="Other",
-                        mapped_value="",
-                        is_default=True
+                        name="Other", mapped_value="", is_default=True
                     ),
-                ]
-            )
+                ],
+            ),
         ]

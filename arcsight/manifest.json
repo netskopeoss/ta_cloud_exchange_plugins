@@ -1,83 +1,61 @@
 {
-  "name": "ArcSight",
-  "id": "arcsight",
-  "version": "3.1.0",
-  "mapping": "ArcSight Default Mappings",
-  "types": [
-    "alerts",
-    "events",
-    "webtx",
-    "logs"
-  ],
-  "description": "This plugin is used to ingest alerts and events data to the ArcSight platform.",
-  "configuration": [
-    {
-      "label": "ArcSight Server",
-      "key": "arcsight_server",
-      "type": "text",
-      "default": "",
-      "mandatory": true,
-      "description": "IP address/FQDN of ArcSight server in which data will be ingested."
-    },
-    {
-      "label": "ArcSight Format",
-      "key": "arcsight_format",
-      "type": "choice",
-      "choices": [
+    "name": "ArcSight",
+    "id": "arcsight",
+    "version": "3.2.0",
+    "module": "CLS",
+    "minimum_version": "6.1.0",
+    "mapping": "ArcSight Default Mappings",
+    "format_options": [
         {
-          "key": "CEF",
-          "value": "CEF"
-        }
-      ],
-      "default": "CEF",
-      "mandatory": true,
-      "description": "Data format required to ingest data."
-    },
-    {
-      "label": "ArcSight Protocol",
-      "key": "arcsight_protocol",
-      "type": "choice",
-      "choices": [
-        {
-          "key": "TLS",
-          "value": "TLS"
+            "label": "CEF",
+            "value": "cef"
         },
         {
-          "key": "UDP",
-          "value": "UDP"
+            "label": "JSON",
+            "value": "json"
+        }
+    ],
+    "types": [
+        "alerts",
+        "events",
+        "webtx",
+        "logs"
+    ],
+    "description": "This plugin supports ingestion of Alerts (DLP, Malware, Policy, Compromised Credential, Malsite, Quarantine, Remediation, Security Assessment, Watchlist, UBA, CTEP, Device, Content), Events (Page, Application, Audit, Infrastructure, Network, Incident, Endpoint, Client Status), WebTx and Logs (Debug, Information, Error, Warning). The data will be ingested in ArcSight platform over Syslog. This plugin supports ingestion in CEF and JSON format.",
+    "configuration": [
+        {
+            "label": "ArcSight Server",
+            "key": "arcsight_server",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "IP address/FQDN of ArcSight server in which data will be ingested."
         },
         {
-          "key": "TCP",
-          "value": "TCP"
+            "label": "ArcSight Protocol",
+            "key": "arcsight_protocol",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "TLS",
+                    "value": "TLS"
+                },
+                {
+                    "key": "UDP",
+                    "value": "UDP"
+                },
+                {
+                    "key": "TCP",
+                    "value": "TCP"
+                }
+            ],
+            "has_api_call": true,
+            "payload_fields": [
+                "arcsight_protocol"
+            ],
+            "default": "UDP",
+            "mandatory": true,
+            "description": "Protocol to be used while ingesting data."
         }
-      ],
-      "default": "UDP",
-      "mandatory": true,
-      "description": "Protocol to be used while ingesting data."
-    },
-    {
-      "label": "ArcSight Port",
-      "key": "arcsight_port",
-      "type": "number",
-      "default": "",
-      "mandatory": true,
-      "description": "ArcSight port"
-    },
-    {
-      "label": "ArcSight Certificate",
-      "key": "arcsight_certificate",
-      "type": "textarea",
-      "default": "",
-      "mandatory": false,
-      "description": "certificate is required only for TLS protocol."
-    },
-    {
-      "label": "Log Source Identifier",
-      "key": "log_source_identifier",
-      "type": "text",
-      "default": "netskopece",
-      "mandatory": true,
-      "description": "This will be added as prefix to all the logs. (The log source identifier should not contain the whitespace)."
-    }
-  ]
+    ]
 }

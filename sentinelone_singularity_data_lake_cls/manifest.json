@@ -1,0 +1,189 @@
+{
+    "name": "SentinelOne Singularity Data Lake",
+    "id": "sentinelone_singularity_data_lake_cls",
+    "version": "1.0.0",
+    "module": "CLS",
+    "minimum_version": "6.1.0",
+    "mapping": "SentinelOne Singularity Data Lake Default Mappings",
+    "netskope": false,
+    "types": [
+        "alerts",
+        "events",
+        "webtx"
+    ],
+    "format_options": [
+        {
+            "label": "JSON",
+            "value": "json"
+        },
+        {
+            "label": "CEF",
+            "value": "cef"
+        }
+    ],
+    "description": "This plugin supports the ingestion of Netskope Alerts (DLP, Malware, Policy, Compromised Credential, Malsite, Quarantine, Remediation, Security Assessment, Watchlist, UBA, CTEP, Device, Content), Events (Page, Application, Audit, Infrastructure, Network, Incident, Endpoint, Client Status) and WebTx into SentinelOne Singularity Data Lake using the HTTP Event Collector (HEC) API. JSON logs are sent to the HEC event endpoint and CEF logs are sent to the HEC raw endpoint.",
+    "configuration": [
+        {
+            "label": "HEC Base URL",
+            "key": "hec_base_url",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "US (ingest.us1.sentinelone.net)",
+                    "value": "https://ingest.us1.sentinelone.net"
+                },
+                {
+                    "key": "Canada (ingest.ca1.sentinelone.net)",
+                    "value": "https://ingest.ca1.sentinelone.net"
+                },
+                {
+                    "key": "Germany (ingest.eu1.sentinelone.net)",
+                    "value": "https://ingest.eu1.sentinelone.net"
+                },
+                {
+                    "key": "Singapore (ingest.ap1.sentinelone.net)",
+                    "value": "https://ingest.ap1.sentinelone.net"
+                },
+                {
+                    "key": "India (ingest.aps1.sentinelone.net)",
+                    "value": "https://ingest.aps1.sentinelone.net"
+                },
+                {
+                    "key": "Australia (ingest.apse2.sentinelone.net)",
+                    "value": "https://ingest.apse2.sentinelone.net"
+                },
+                {
+                    "key": "Custom URL",
+                    "value": "custom"
+                }
+            ],
+            "default": "https://ingest.us1.sentinelone.net",
+            "mandatory": true,
+            "description": "HEC ingestion host of your Singularity Data Lake datacenter. Select Custom URL if your datacenter is not listed, for example US GCP (NA4) or Saudi Arabia (ME1). Use the ingest host, not the xdr console host."
+        },
+        {
+            "label": "Custom HEC Base URL",
+            "key": "custom_hec_base_url",
+            "type": "text",
+            "default": "",
+            "mandatory": false,
+            "description": "Required only when HEC Base URL is Custom URL. Enter the https base URL with no path, for example https://ingest.<datacenter>.sentinelone.net.",
+            "condition": {
+                "key": "hec_base_url",
+                "values": [
+                    "custom"
+                ]
+            }
+        },
+        {
+            "label": "Log Access Write Key",
+            "key": "api_token",
+            "type": "password",
+            "default": "",
+            "mandatory": true,
+            "description": "Singularity Data Lake Log Access Write Key. To generate it, navigate to API Keys > Log Access Key > Add Write Key in Singularity Data Lake. Generate it in the scope (Global, Account or Site) where the data should land; the key decides the scope."
+        },
+        {
+            "label": "Source",
+            "key": "host",
+            "type": "text",
+            "default": "Netskope Cloud Exchange",
+            "mandatory": false,
+            "description": "Name of this Cloud Exchange deployment. Shown under the Sources tab in Singularity Data Lake Event Search. Default value is Netskope Cloud Exchange."
+        },
+        {
+            "label": "Parser",
+            "key": "sourcetype",
+            "type": "text",
+            "default": "",
+            "mandatory": false,
+            "description": "Name of a parser from User > Manage Logs > Parsers in Singularity Data Lake. Leave empty to use json for JSON logs and cef for CEF logs. JSON logs are parsed automatically. For CEF logs, enter the name of a CEF parser that exists in Singularity Data Lake."
+        },
+        {
+            "label": "Timestamp Field Value",
+            "key": "time_mode",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Netskope Event Time",
+                    "value": "event"
+                },
+                {
+                    "key": "Cloud Exchange Ingestion Time",
+                    "value": "ingestion"
+                }
+            ],
+            "default": "event",
+            "mandatory": true,
+            "description": "Which time is used as the event time of a JSON log in Singularity Data Lake. Netskope Event Time uses the time the activity happened, so searches by time match the Netskope timeline. Cloud Exchange Ingestion Time uses the time Cloud Exchange sent the log, which keeps a backfill of older data inside the Singularity Data Lake retention window; logs older than that window are accepted but never become searchable. Both times are always added to the log as netskope_event_time and netskope_ce_ingestion_time, whichever option is selected. This does not apply to CEF logs, which always get the ingestion time."
+        },
+        {
+            "label": "Log File Mode",
+            "key": "source_mode",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Single Log File",
+                    "value": "single"
+                },
+                {
+                    "key": "Different Log File per Data Type",
+                    "value": "per_type"
+                }
+            ],
+            "default": "single",
+            "mandatory": true,
+            "description": "Single Log File sends Alerts, Events and WebTx under one Log File name. Different Log File per Data Type gives each data type its own Log File name, so you can filter the Log Files tab in Singularity Data Lake by data type."
+        },
+        {
+            "label": "Logs to Ingest",
+            "key": "logs_to_ingest",
+            "type": "multichoice",
+            "choices": [
+                {
+                    "key": "Alerts",
+                    "value": "alerts"
+                },
+                {
+                    "key": "Events",
+                    "value": "events"
+                },
+                {
+                    "key": "WebTx",
+                    "value": "webtx"
+                }
+            ],
+            "default": [
+                "alerts",
+                "events",
+                "webtx"
+            ],
+            "mandatory": true,
+            "condition": {
+                "key": "source_mode",
+                "values": [
+                    "per_type"
+                ]
+            },
+            "has_api_call": true,
+            "payload_fields": [
+                "logs_to_ingest"
+            ],
+            "description": "Which data types this configuration sends when Log File Mode is Different Log File per Data Type. A data type that is not selected here is not sent at all. Each selected data type gets its own Log File Name field below; leaving that name empty still sends the logs, just without a Log File name in Singularity Data Lake."
+        },
+        {
+            "label": "Log File Name",
+            "key": "source_name",
+            "type": "text",
+            "default": "Netskope Logs",
+            "mandatory": false,
+            "condition": {
+                "key": "source_mode",
+                "values": [
+                    "single"
+                ]
+            },
+            "description": "Log File name for Alerts, Events and WebTx. Shown under the Log Files tab in Singularity Data Lake Event Search, not the Sources tab. Default value is Netskope Logs."
+        }
+    ]
+}

@@ -29,57 +29,39 @@ CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-CLS Darktrace Plugin constants."""
+Darktrace Plugin exceptions."""
 
-PLATFORM_NAME = "Darktrace"
-MODULE_NAME = "CLS"
-PLUGIN_VERSION = "1.0.0"
 
-DARKTRACE_PROTOCOLS = ["UDP", "TCP", "TLS"]
+class DarktracePluginError(Exception):
+    """Exception raised by the plugin to Cloud Exchange."""
 
-SEVERITY_LOW = "Low"
-SEVERITY_MEDIUM = "Medium"
-SEVERITY_HIGH = "High"
-SEVERITY_VERY_HIGH = "Very-High"
-SEVERITY_UNKNOWN = "Unknown"
-SEVERITY_INFO = "Info"
 
-SEVERITY_MAP = {
-    "low": SEVERITY_LOW,
-    "med": SEVERITY_MEDIUM,
-    "medium": SEVERITY_MEDIUM,
-    "high": SEVERITY_HIGH,
-    "very-high": SEVERITY_VERY_HIGH,
-    "critical": SEVERITY_VERY_HIGH,
-    "0": SEVERITY_LOW,
-    "1": SEVERITY_LOW,
-    "2": SEVERITY_LOW,
-    "3": SEVERITY_LOW,
-    "4": SEVERITY_MEDIUM,
-    "5": SEVERITY_MEDIUM,
-    "6": SEVERITY_MEDIUM,
-    "7": SEVERITY_HIGH,
-    "8": SEVERITY_HIGH,
-    "9": SEVERITY_VERY_HIGH,
-    "10": SEVERITY_VERY_HIGH,
-}
+class DarktraceCertificateError(Exception):
+    """Exception raised when the Darktrace Certificate can not be loaded."""
 
-AUDIT_SEVERITY_MAP = {
-    "low": SEVERITY_LOW,
-    "med": SEVERITY_MEDIUM,
-    "medium": SEVERITY_MEDIUM,
-    "high": SEVERITY_HIGH,
-    "very-high": SEVERITY_HIGH,
-    "critical": SEVERITY_HIGH,
-    "0": SEVERITY_UNKNOWN,
-    "1": SEVERITY_HIGH,
-    "2": SEVERITY_MEDIUM,
-    "3": SEVERITY_UNKNOWN,
-    "4": SEVERITY_LOW,
-    "5": SEVERITY_UNKNOWN,
-    "6": SEVERITY_INFO,
-    "7": SEVERITY_UNKNOWN,
-    "8": SEVERITY_UNKNOWN,
-    "9": SEVERITY_UNKNOWN,
-    "10": SEVERITY_UNKNOWN,
-}
+
+class DarktraceSendError(Exception):
+    """Exception raised when a record can not be sent to Darktrace.
+
+    Attributes:
+        processed (int): Number of records handled (sent, empty or
+            oversized) before the record that failed.
+        sent (int): Number of records sent before the failure.
+        oversized (int): Number of oversized records skipped before the
+            failure.
+    """
+
+    def __init__(self, message, processed, sent, oversized):
+        """Initialize."""
+        super().__init__(message)
+        self.processed = processed
+        self.sent = sent
+        self.oversized = oversized
+
+
+class MappingValidationError(Exception):
+    """Exception raised when the Darktrace mapping file is not valid."""
+
+
+class FieldNotFoundError(Exception):
+    """Exception raised when a mapped field is not found in the data."""

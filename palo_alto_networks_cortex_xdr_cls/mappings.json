@@ -1,0 +1,5 @@
+{
+    "name": "Palo Alto Networks Cortex XDR Default Mappings",
+    "jsonData": "{\"cortex_xdr_map_version\": \"1.0.0\", \"taxonomy\": {\"json\": {\"alerts\": {\"anomaly\": [], \"dlp\": [], \"malware\": [], \"policy\": [], \"Compromised Credential\": [], \"Legal Hold\": [], \"Malsite\": [], \"Quarantine\": [], \"Remediation\": [], \"Security Assessment\": [], \"Watchlist\": [], \"uba\": [], \"ctep\": [], \"content\": [], \"device\": []}, \"events\": {\"application\": [], \"audit\": [], \"infrastructure\": [], \"page\": [], \"network\": [], \"incident\": [], \"endpoint\": [], \"clientstatus\": []}, \"webtx\": {\"v2\": []}}}}",
+    "isDefault": true
+}

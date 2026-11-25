@@ -1,1 +1,1 @@
-"""Azure Object Storage plugin."""
+"""Microsoft Azure Cloud Storage CLS plugin."""

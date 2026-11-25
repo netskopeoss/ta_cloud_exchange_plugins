@@ -1,20 +1,31 @@
 {
     "name": "Microsoft Azure Cloud Storage",
     "id": "azure_object_storage",
-    "version": "1.0.1",
-    "mapping": "Azure Default Mappings",
+    "version": "1.1.0",
+    "module": "CLS",
+    "minimum_version": "6.1.0",
+    "mapping": "Microsoft Azure Cloud Storage Default Mappings",
+    "netskope": false,
     "types": [
+        "alerts",
+        "events",
         "webtx"
     ],
-    "description": "This plugin is used to deliver web transactions data to Microsoft Azure platform.",
+    "format_options": [
+        {
+            "label": "JSON",
+            "value": "json"
+        }
+    ],
+    "description": "This plugin supports ingestion of Alerts (DLP, Malware, Policy, Compromised Credential, Malsite, Quarantine, Remediation, Security Assessment, Watchlist, UBA, CTEP, Device, Content), Events (Page, Application, Audit, Infrastructure, Network, Incident, Endpoint, Client Status) and WebTx. The data will be ingested as JSON Lines blobs, either gzip-compressed or uncompressed based on the Compression parameter, inside a container of the Microsoft Azure Storage Account. This plugin supports ingestion in JSON format only.",
     "configuration": [
         {
             "label": "Azure Connection String",
             "key": "azure_connection_string",
-            "type": "text",
+            "type": "password",
             "default": "",
             "mandatory": true,
-            "description": "Azure connection string for Authentication of Storage account."
+            "description": "Connection String of the Microsoft Azure Storage Account, used to authenticate with the storage account. To get the connection string navigate to Microsoft Azure > Storage Account > Security + networking > Access keys > 'Connection string'. Eg: DefaultEndpointsProtocol=https;AccountName={STORAGE_ACCOUNT_NAME};AccountKey={STORAGE_ACCOUNT_KEY};EndpointSuffix=core.windows.net"
         },
         {
             "label": "Container Name",
@@ -22,7 +33,8 @@
             "type": "text",
             "default": "",
             "mandatory": true,
-            "description": "Container Name in which the files will be stored. Container names must start with a letter or number, and can contain only letters, numbers, and the dash  character. Every dash  character must be immediately preceded and followed by a letter or number; consecutive dashes are not permitted in container names. All letters in a container name must be lowercase. Container names must be from 3 through 63 characters long."
+            "placeholder": "e.g. netskope-webtx-logs",
+            "description": "Name of the container in which the blobs will be stored. The container is created if it does not already exist. Container names must be 3 to 63 characters long, may only contain lowercase letters, numbers and dashes, must start and end with a letter or number, and may not contain consecutive dashes."
         },
         {
             "label": "Object Prefix",
@@ -30,23 +42,26 @@
             "type": "text",
             "default": "",
             "mandatory": true,
-            "description": "Object prefix for the file while pushing it to Azure."
+            "placeholder": "e.g. netskope",
+            "description": "Name of the top-level folder in the container under which the blobs of this plugin configuration are stored. Blobs are stored as <prefix>/<data_type>/feedname=<subtype>/year=<YYYY>/month=<M>/day=<D>/hour=<H>/<epoch>_<uuid> (UTC), followed by the .json.gz (Gzip) or .json (None) extension. The prefix can be at most 200 characters, may contain '/' for nested folders (a leading or trailing '/' is ignored, so '/netskope/' is the same as 'netskope'), and cannot have empty, '.' or '..' folder names, backslashes or control characters."
         },
         {
-            "label": "Maximum File Size (in MBs)",
-            "key": "max_file_size",
-            "type": "number",
-            "default": 10,
+            "label": "Compression",
+            "key": "compression",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Gzip (Compressed)",
+                    "value": "gzip"
+                },
+                {
+                    "key": "None (Uncompressed)",
+                    "value": "none"
+                }
+            ],
+            "default": "gzip",
             "mandatory": true,
-            "description": "Maximum size of data object to be stored in the container. (Value should be between 0 to 100.)"
-        },
-        {
-            "label": "Maximum Duration (in Seconds)",
-            "key": "max_duration",
-            "type": "number",
-            "default": 30,
-            "mandatory": true,
-            "description": "Maximum duration after which the data object should be stored in the container."
+            "description": "Whether the blobs are gzip-compressed before being stored in the container. Compressed blobs are named with the '.json.gz' extension and uncompressed blobs with the '.json' extension. Both contain one JSON log per line."
         }
     ]
 }

@@ -1,0 +1,88 @@
+{
+    "name": "Armis Centrix",
+    "id": "armis_centrix_ztre",
+    "version": "1.0.0",
+    "module": "CRE",
+    "minimum_version": "7.0.0",
+    "description": "This plugin is used to pull Devices from the Assets > Devices page of the Armis Centrix platform, optionally with their custom properties. It also supports the 'Set Custom Property Value' action and the 'Remove Custom Property Value' action.",
+    "configuration": [
+        {
+            "label": "API Base URL",
+            "key": "api_base_url",
+            "type": "text",
+            "default": "https://api.armis.com",
+            "mandatory": true,
+            "description": "API Base URL of the Armis Centrix platform. e.g. https://api.armis.com.",
+            "placeholder": "https://api.armis.com"
+        },
+        {
+            "label": "Tenant URL",
+            "key": "tenant_url",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "Tenant URL of the Armis Centrix platform. e.g. https://acme.armis.com.",
+            "placeholder": "https://<tenant>.armis.com"
+        },
+        {
+            "label": "Client ID",
+            "key": "client_id",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "Email address of the Armis Centrix user who generated the Secret API key.",
+            "placeholder": "user@example.com"
+        },
+        {
+            "label": "Client Secret",
+            "key": "client_secret",
+            "type": "password",
+            "default": "",
+            "mandatory": true,
+            "description": "Secret API key of the Armis Centrix platform. To get the Secret API key, go to Settings > Asset Management & Security > Data Sources > API Management > Generate Tokens > Secret API key."
+        },
+        {
+            "label": "Vendor ID",
+            "key": "vendor_id",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "Vendor ID of the Armis Centrix platform. To get the Vendor ID, go to Settings > Asset Management & Security > Data Sources > API Management > Developer Portal > Your Vendor ID.",
+            "placeholder": "e.g. vAbcd1Efgh"
+        },
+        {
+            "label": "Scopes",
+            "key": "scopes",
+            "type": "multichoice",
+            "choices": [
+                {
+                    "key": "Device Pull",
+                    "value": "device_pull"
+                },
+                {
+                    "key": "Custom Properties Pull",
+                    "value": "custom_properties_pull"
+                },
+                {
+                    "key": "Custom Actions",
+                    "value": "custom_actions"
+                },
+                {
+                    "key": "Custom Permissions",
+                    "value": "custom"
+                }
+            ],
+            "default": [
+                "device_pull",
+                "custom_properties_pull",
+                "custom_actions"
+            ],
+            "mandatory": false,
+            "has_api_call": true,
+            "payload_fields": [
+                "scopes"
+            ],
+            "description": "Armis Centrix permissions requested for the access token. 'Device Pull' (PERMISSION.DEVICE.READ, PERMISSION.PII.DEVICE, FULL_VISIBILITY) pulls the devices. 'Custom Properties Pull' (PERMISSION.SETTINGS.CUSTOM_PROPERTIES.READ) reads the custom properties; it is required when Pull Custom Properties is 'Yes' and for the actions. 'Custom Actions' (PERMISSION.DEVICE.MANAGE.EDIT, PERMISSION.SETTINGS.CUSTOM_PROPERTIES.MANAGE) is required for the actions. Select 'Custom Permissions' to request additional permissions."
+        }
+    ]
+}

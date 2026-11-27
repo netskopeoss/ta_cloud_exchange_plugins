@@ -28,55 +28,24 @@ SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
 CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+Palo Alto Networks Cortex XDR Plugin exceptions.
 """
 
-"""azure validator."""
+
+class CortexXDRPluginException(Exception):
+    """Palo Alto Networks Cortex XDR plugin custom exception class."""
+
+    pass
 
 
-class AzureValidator(object):
-    """Azure validator class."""
+class MappingValidationError(CortexXDRPluginException):
+    """Raised when the mapping file can not be used."""
 
-    def __init__(self, logger):
-        """Initialize."""
-        super().__init__()
-        self.logger = logger
+    pass
 
-    def validate_max_file_size(self, max_file_size):
-        """Validate max file size.
 
-        Args:
-            max_file_size: the max file size to be validated
+class CortexXDRRequestRejectedException(CortexXDRPluginException):
+    """Raised when Cortex XDR rejects the content of one request."""
 
-        Returns:
-            Whether the provided value is valid or not. True in case of valid value, False otherwise
-        """
-        if max_file_size:
-            try:
-                max_file_size = int(max_file_size)
-                if 0 < max_file_size <= 100:
-                    return True
-                return False
-            except ValueError:
-                return False
-        else:
-            return False
-
-    def validate_max_duration(self, max_duration):
-        """Validate max duration.
-
-        Args:
-            max_duration: the max duration to be validated
-
-        Returns:
-            Whether the provided value is valid or not. True in case of valid value, False otherwise
-        """
-        if max_duration:
-            try:
-                max_duration = int(max_duration)
-                if max_duration > 0:
-                    return True
-                return False
-            except ValueError:
-                return False
-        else:
-            return False
+    pass

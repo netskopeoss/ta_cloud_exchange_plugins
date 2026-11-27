@@ -1,0 +1,66 @@
+{
+    "name": "Palo Alto Networks Cortex XDR",
+    "id": "palo_alto_networks_cortex_xdr_cls",
+    "version": "1.0.0",
+    "module": "CLS",
+    "minimum_version": "6.1.0",
+    "mapping": "Palo Alto Networks Cortex XDR Default Mappings",
+    "netskope": false,
+    "types": [
+        "alerts",
+        "events",
+        "webtx",
+        "logs"
+    ],
+    "description": "This plugin supports ingestion of Alerts (DLP, Malware, Policy, Compromised Credential, Malsite, Quarantine, Remediation, Security Assessment, Watchlist, UBA, CTEP, Device, Content), Events (Page, Application, Audit, Infrastructure, Network, Incident, Endpoint, Client Status) and WebTx to a Palo Alto Networks Cortex XDR HTTP Log Collector. This plugin supports ingestion in JSON format only.",
+    "format_options": [
+        {
+            "label": "JSON",
+            "value": "json"
+        }
+    ],
+    "configuration": [
+        {
+            "label": "HTTP Log Collector URL",
+            "key": "http_log_collector_url",
+            "type": "text",
+            "default": "",
+            "mandatory": true,
+            "description": "HTTP POST URL of the Cortex XDR HTTP Log Collector. Navigate to Settings > Data Sources & Integrations > Custom - HTTP based Collector > (your HTTP Log Collector) in Cortex XDR to get it. Example: https://api-<tenant external URL>/logs/v1/event"
+        },
+        {
+            "label": "API Key",
+            "key": "api_key",
+            "type": "password",
+            "default": "",
+            "mandatory": true,
+            "description": "API Key generated when the Cortex XDR HTTP Log Collector is saved. Navigate to Settings > Data Sources & Integrations > Custom - HTTP based Collector > (your HTTP Log Collector) in Cortex XDR to generate a new one."
+        },
+        {
+            "label": "Compression",
+            "key": "compression",
+            "type": "choice",
+            "choices": [
+                {
+                    "key": "Uncompressed",
+                    "value": "uncompressed"
+                },
+                {
+                    "key": "Gzip",
+                    "value": "gzip"
+                }
+            ],
+            "default": "uncompressed",
+            "mandatory": true,
+            "description": "Compression of the requests. It must match the Compression configured on the Cortex XDR HTTP Log Collector."
+        },
+        {
+            "label": "Log Source Identifier",
+            "key": "log_source_identifier",
+            "type": "text",
+            "default": "netskopece",
+            "mandatory": false,
+            "description": "Identifier added as the 'log_source_identifier' field to each log, to identify the logs ingested by this configuration in Cortex XDR. Leave empty to ingest the logs without this field."
+        }
+    ]
+}

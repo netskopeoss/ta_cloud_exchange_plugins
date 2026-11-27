@@ -28,51 +28,23 @@ SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
 CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+Google Cloud Storage plugin exceptions.
 """
 
-"""GCP Storage Constant."""
 
+class GCPStorageException(Exception):
+    """Exception raised by the Google Cloud Storage plugin.
 
-locations_list = [
-    "US",
-    "EU",
-    "ASIA",
-    "ASIA1",
-    "EUR4",
-    "NAM4",
-    "NORTHAMERICA-NORTHEAST1",
-    "NORTHAMERICA-NORTHEAST2",
-    "US-CENTRAL1",
-    "US-EAST1",
-    "US-EAST4",
-    "US-WEST1",
-    "US-WEST2",
-    "US-WEST3",
-    "US-WEST4",
-    "SOUTHAMERICA-EAST1",
-    "EUROPE-CENTRAL2",
-    "EUROPE-NORTH1",
-    "EUROPE-WEST1",
-    "EUROPE-WEST2",
-    "EUROPE-WEST3",
-    "EUROPE-WEST4",
-    "EUROPE-WEST6",
-    "ASIA-EAST1",
-    "ASIA-EAST2",
-    "ASIA-NORTHEAST1",
-    "ASIA-NORTHEAST2",
-    "ASIA-NORTHEAST3",
-    "ASIA-SOUTH1",
-    "ASIA-SOUTH2",
-    "ASIA-SOUTHEAST1",
-    "ASIA-SOUTHEAST2",
-    "AUSTRALIA-SOUTHEAST1",
-    "AUSTRALIA-SOUTHEAST2",
-]
+    The message is the error text that was already logged (without the
+    log prefix), so it can be shown to the user as it is. Raising it from
+    ``push`` makes CE retry the push.
+    """
 
-storage_classes_list = [
-    "STANDARD",
-    "NEARLINE",
-    "COLDLINE",
-    "ARCHIVE",
-]
+    def __init__(self, message: str = "") -> None:
+        """Initialize the exception.
+
+        Args:
+            message (str): Error message without the log prefix.
+        """
+        self.message = message
+        super().__init__(message)

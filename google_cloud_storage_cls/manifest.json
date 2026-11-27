@@ -1,12 +1,23 @@
 {
     "name": "Google Cloud Storage",
-    "id": "gcp_storage",
-    "version": "1.0.0",
+    "id": "google_cloud_storage_cls",
+    "version": "2.0.0",
+    "module": "CLS",
+    "minimum_version": "6.1.0",
     "mapping": "Google Cloud Storage Default Mappings",
+    "netskope": false,
     "types": [
+        "alerts",
+        "events",
         "webtx"
     ],
-    "description": "This plugin is used to deliver web transactions data to GCP platform. To access the plugin, you would need the Service Account in GCP.",
+    "format_options": [
+        {
+            "label": "JSON",
+            "value": "json"
+        }
+    ],
+    "description": "This plugin supports ingestion of Alerts (DLP, Malware, Policy, Compromised Credential, Malsite, Quarantine, Remediation, Security Assessment, Watchlist, UBA, CTEP, Device, Content), Events (Page, Application, Audit, Infrastructure, Network, Incident, Endpoint, Client Status) and WebTx. The data will be ingested as JSON Lines objects, either gzip-compressed or uncompressed based on the Compression parameter, inside a bucket of the Google Cloud Storage. This plugin supports ingestion in JSON format only.",
     "configuration": [
         {
             "label": "Key File",
@@ -14,7 +25,8 @@
             "type": "textarea",
             "default": "",
             "mandatory": true,
-            "description": "Key file of GCP Service Account. Key file should be in JSON."
+            "placeholder": "Paste the contents of the Service Account JSON key file",
+            "description": "Contents of the Service Account key file in JSON format. It can be created from Google Cloud Console > IAM & Admin > Service Accounts > select the account > Keys > Add Key > Create new key > JSON."
         },
         {
             "label": "Bucket Name",
@@ -22,7 +34,8 @@
             "type": "text",
             "default": "",
             "mandatory": true,
-            "description": "Bucket Name in which the data object will be stored."
+            "placeholder": "e.g. netskope-webtx-logs",
+            "description": "Name of the bucket in which the data objects will be stored. The bucket is created if it does not exist and the Service Account is allowed to create buckets. Bucket names must be 3 to 63 characters long and can contain only lowercase letters, numbers, dashes, underscores and dots."
         },
         {
             "label": "Region Name",
@@ -164,61 +177,19 @@
                 {
                     "key": "AUSTRALIA-SOUTHEAST2 (Melbourne) [Single-Region]",
                     "value": "AUSTRALIA-SOUTHEAST2"
+                },
+                {
+                    "key": "Custom Region",
+                    "value": "custom"
                 }
             ],
             "default": "US",
             "mandatory": true,
-            "description": "This location(s) will be used while creating bucket in GCP cloud storage."
-        },
-        {
-            "label": "Storage Class",
-            "key": "storage_class",
-            "type": "choice",
-            "choices": [
-                {
-                    "key": "STANDARD",
-                    "value": "STANDARD"
-                },
-                {
-                    "key": "NEARLINE",
-                    "value": "NEARLINE"
-                },
-                {
-                    "key": "COLDLINE",
-                    "value": "COLDLINE"
-                },
-                {
-                    "key": "ARCHIVE",
-                    "value": "ARCHIVE"
-                }
-            ],
-            "default": "STANDARD",
-            "mandatory": true,
-            "description": "This storage class determines costs for storing, retrieving, and performing various operations on the objects."
-        },
-        {
-            "label": "Object Prefix",
-            "key": "obj_prefix",
-            "type": "text",
-            "default": "",
-            "mandatory": true,
-            "description": "Object prefix for the data object name while pushing it to Google Cloud Storage."
-        },
-        {
-            "label": "Maximum File Size (in MBs)",
-            "key": "max_file_size",
-            "type": "number",
-            "default": 10,
-            "mandatory": true,
-            "description": "Maximum size of data object to be stored in the bucket. (Value should be between 0 to 100.)"
-        },
-        {
-            "label": "Maximum Duration (in Seconds)",
-            "key": "max_duration",
-            "type": "number",
-            "default": 30,
-            "mandatory": true,
-            "description": "Maximum duration after which the data object should be stored in the bucket."
+            "description": "Location used while creating the bucket. It is ignored if the bucket already exists. Select 'Custom Region' to provide a location that is not in the list.",
+            "has_api_call": true,
+            "payload_fields": [
+                "location"
+            ]
         }
     ]
 }
